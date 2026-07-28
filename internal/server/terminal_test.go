@@ -152,6 +152,18 @@ func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	var output strings.Builder
+	_, historyPayload, err := second.Read(ctx)
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	var historyMessage serverMessage
+	if err := json.Unmarshal(historyPayload, &historyMessage); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	if historyMessage.Type != "history" {
+		t.Fatalf("replayed message type = %q, want history", historyMessage.Type)
+	}
+	output.WriteString(historyMessage.Data)
 	for !strings.Contains(output.String(), "after-reconnect\r\n") {
 		_, payload, err := second.Read(ctx)
 		if err != nil {
@@ -161,7 +173,7 @@ func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 		if err := json.Unmarshal(payload, &message); err != nil {
 			t.Fatalf("decode message: %v", err)
 		}
-		if message.Type == "output" {
+		if message.Type == "output" || message.Type == "history" {
 			output.WriteString(message.Data)
 		}
 	}

@@ -102,6 +102,7 @@ export function TerminalView({
     const host = hostRef.current;
     if (!host) return;
     let active = true;
+    let replayingHistory = false;
     let socket: WebSocketLike | undefined;
     const terminal = createTerminal();
     terminal.open(host);
@@ -114,7 +115,9 @@ export function TerminalView({
         currentSocket.send(JSON.stringify(message));
       }
     };
-    const removeData = terminal.onData((data) => send({ type: "input", data }));
+    const removeData = terminal.onData((data) => {
+      if (!replayingHistory) send({ type: "input", data });
+    });
     const removeResize = terminal.onResize((cols, rows) => send({ type: "resize", cols, rows }));
     let selectionTimer: ReturnType<typeof setTimeout> | undefined;
     let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -162,7 +165,14 @@ export function TerminalView({
             exitCode?: number;
             message?: string;
           };
-          if (message.type === "output" && message.data) {
+          if (message.type === "history" && message.data) {
+            replayingHistory = true;
+            try {
+              terminal.write(message.data);
+            } finally {
+              replayingHistory = false;
+            }
+          } else if (message.type === "output" && message.data) {
             terminal.write(message.data);
           } else if (message.type === "exit") {
             setConnection("exited");

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -10,16 +12,76 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ryotarai/euphony/internal/agenthook"
 	"github.com/ryotarai/euphony/internal/server"
+	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func run(args []string, stdin io.Reader, stdout io.Writer) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "setup":
+			return runSetup(stdout)
+		case "hook":
+			return runHook(args[1:], stdin)
+		default:
+			return fmt.Errorf("unknown command %q; use euphony setup or run euphony without arguments", args[0])
+		}
+	}
+	return runServer()
+}
+
+func runSetup(stdout io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	result, err := euphonysetup.Install(euphonysetup.Config{
+		HomeDir:    home,
+		CodexDir:   os.Getenv("CODEX_HOME"),
+		ClaudeDir:  os.Getenv("CLAUDE_CONFIG_DIR"),
+		Executable: executable,
+		Path:       os.Getenv("PATH"),
+	})
+	if err != nil {
+		return err
+	}
+	if len(result.Installed) == 0 {
+		_, _ = fmt.Fprintln(stdout, "No supported coding agents found.")
+		return nil
+	}
+	for _, agent := range result.Installed {
+		_, _ = fmt.Fprintf(stdout, "Installed %s hooks.\n", agent)
+	}
+	return nil
+}
+
+func runHook(args []string, stdin io.Reader) error {
+	if len(args) != 2 {
+		return errors.New("usage: euphony hook <agent> <status>")
+	}
+	// Hooks must never interrupt the coding agent when Euphony is unavailable.
+	_ = agenthook.Report(context.Background(), agenthook.Config{
+		URL:        os.Getenv("EUPHONY_HOOK_URL"),
+		Token:      os.Getenv("EUPHONY_TOKEN"),
+		TerminalID: os.Getenv("EUPHONY_TERMINAL_ID"),
+		Agent:      args[0],
+		Status:     args[1],
+	}, stdin)
+	return nil
+}
+
+func runServer() error {
 	address := os.Getenv("EUPHONY_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"

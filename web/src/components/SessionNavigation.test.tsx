@@ -22,6 +22,13 @@ const sessions: Session[] = [
     createdAt: "2026-07-28T00:01:00Z",
     exitCode: 0,
   },
+  {
+    id: "three",
+    name: "Terminal",
+    state: "running",
+    cwd: "/workspace/plain-shell",
+    createdAt: "2026-07-28T00:02:00Z",
+  },
 ];
 
 test("opens and closes the mobile drawer with keyboard focus restoration", async () => {
@@ -87,6 +94,7 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
 
   expect(screen.getByRole("heading", { name: "Running" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Exited" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Terminal" })).toBeVisible();
   expect(screen.getByText("/workspace/euphony")).toBeVisible();
   expect(screen.getByText("Implement v0.2")).toBeVisible();
 

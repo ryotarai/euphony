@@ -42,6 +42,22 @@ network, place it behind an HTTPS reverse proxy and restrict network access.
 
 The token is stored in the browser's `sessionStorage`. Terminal WebSockets use
 single-use tickets instead of placing the long-lived token in their URLs.
+When the authenticated workspace has no terminals, Euphony starts and selects
+one terminal automatically.
+
+## Coding agent setup
+
+Install hooks for supported coding agents found on `PATH`:
+
+```sh
+euphony setup
+```
+
+The command currently detects Codex and Claude Code. It preserves existing
+hooks, can be run repeatedly without adding duplicates, and enables Codex's
+lifecycle hook feature. It respects `CODEX_HOME` and `CLAUDE_CONFIG_DIR`.
+Agents started inside an Euphony terminal inherit the terminal identifier,
+hook endpoint, and authentication token used by the installed hooks.
 
 ## Development
 

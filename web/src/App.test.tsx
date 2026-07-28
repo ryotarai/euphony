@@ -36,6 +36,14 @@ const thirdRunningSession: Session = {
   createdAt: "2026-07-28T00:02:00Z",
 };
 
+const plainTerminalSession: Session = {
+  id: "session-plain",
+  name: "Terminal",
+  state: "running",
+  cwd: "/workspace/shell",
+  createdAt: "2026-07-28T00:03:00Z",
+};
+
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -45,27 +53,44 @@ function jsonResponse(body: unknown, status = 200) {
   );
 }
 
-test("stores a valid token in sessionStorage and shows the empty workspace", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(() => jsonResponse([]));
+test("stores a valid token and starts one terminal when the session list is empty", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([]))
+    .mockImplementationOnce(() => jsonResponse(runningSession, 201));
   const user = userEvent.setup();
-  render(<App />);
+  render(<App renderTerminal={(session) => <div>{session.name}</div>} />);
 
   await user.type(screen.getByLabelText("Access token"), "valid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
 
-  expect(await screen.findByRole("button", { name: "Start a terminal" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Select Codex" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenLastCalledWith(
+    "/api/sessions",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ name: "Terminal" }),
+    }),
+  );
   expect(sessionStorage.getItem("euphony.token")).toBe("valid-token");
 });
 
 test("consumes a token from the URL without leaving it in browser history", async () => {
   history.replaceState(null, "", "/?token=development-token");
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => jsonResponse([]));
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([]))
+    .mockImplementationOnce(() => jsonResponse(runningSession, 201));
 
-  render(<App />);
+  render(<App renderTerminal={(session) => <div>{session.name}</div>} />);
 
-  expect(await screen.findByRole("button", { name: "Start a terminal" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Select Codex" })).toBeVisible();
   expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
-  expect(window.location.search).toBe("");
+  expect(new URLSearchParams(window.location.search).has("token")).toBe(false);
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/sessions",
     expect.objectContaining({
@@ -91,14 +116,14 @@ test("returns to token entry after an invalid token", async () => {
 test("creates a terminal without asking for a name, selects it, and deletes it", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
-    .mockImplementationOnce(() => jsonResponse([]))
-    .mockImplementationOnce(() => jsonResponse(runningSession, 201))
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse(secondRunningSession, 201))
     .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })));
 
   const user = userEvent.setup();
   render(<App initialToken="valid-token" renderTerminal={(session) => <div>{session.name}</div>} />);
 
-  await user.click(await screen.findByRole("button", { name: "Start a terminal" }));
+  await user.click(await screen.findByRole("button", { name: "New terminal" }));
 
   expect(screen.queryByLabelText("Terminal name")).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenNthCalledWith(
@@ -109,11 +134,11 @@ test("creates a terminal without asking for a name, selects it, and deletes it",
       body: JSON.stringify({ name: "Terminal" }),
     }),
   );
-  expect(await screen.findByRole("button", { name: "Select Codex" })).toHaveAttribute("aria-current", "true");
-  fireEvent.click(screen.getByRole("button", { name: "Delete Codex" }));
+  expect(await screen.findByRole("button", { name: "Select Claude" })).toHaveAttribute("aria-current", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Delete Claude" }));
 
   await waitFor(() => {
-    expect(screen.queryByRole("button", { name: "Delete Codex" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Claude" })).not.toBeInTheDocument();
   });
 });
 
@@ -195,4 +220,21 @@ test("a checked activity group automatically adds newly matching terminal panes"
   expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
   expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["running"]);
   vi.useRealTimers();
+});
+
+test("the Terminal activity checkbox selects shells without a coding agent", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, plainTerminalSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Terminal terminals" }));
+
+  expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
 });

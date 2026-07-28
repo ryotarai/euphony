@@ -51,7 +51,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(outputDone)
 		if len(history) > 0 {
-			payload, _ := json.Marshal(serverMessage{Type: "output", Data: string(history)})
+			payload, _ := json.Marshal(serverMessage{Type: "history", Data: string(history)})
 			if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
 				return
 			}

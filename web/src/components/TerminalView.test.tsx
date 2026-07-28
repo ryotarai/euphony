@@ -117,6 +117,50 @@ test("shows a reconnect action when the socket closes", async () => {
   await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(2));
 });
 
+test("does not send terminal query responses generated while replaying history", async () => {
+  const socket = new FakeSocket();
+  let onData: ((data: string) => void) | undefined;
+  const writes: string[] = [];
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: (data) => {
+      writes.push(data);
+      if (data.includes("query")) onData?.("\u001b[1;2R");
+    },
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: (callback) => {
+      onData = callback;
+      return () => undefined;
+    },
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => socket.receive({ type: "history", data: "query" }));
+  expect(writes).toEqual(["query"]);
+  expect(socket.sent).toEqual([]);
+
+  act(() => socket.receive({ type: "output", data: "query" }));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "input", data: "\u001b[1;2R" },
+  ]);
+});
+
 test("copies a completed selection and then clears it", async () => {
   vi.useFakeTimers();
   let onSelectionChange: (() => void) | undefined;

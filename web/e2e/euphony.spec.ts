@@ -28,9 +28,9 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   await clearSessions(page);
   await page.goto("/?token=test-token");
 
-  await expect(page.getByRole("button", { name: "Start a terminal" })).toBeVisible();
+  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Access token")).toHaveCount(0);
-  await expect(page).toHaveURL("http://127.0.0.1:18080/");
+  expect(new URL(page.url()).searchParams.has("token")).toBe(false);
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
@@ -49,9 +49,8 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   await page.goto("/");
   await page.getByLabel("Access token").fill("test-token");
   await page.getByRole("button", { name: "Open Euphony" }).click();
-  await page.getByRole("button", { name: "Start a terminal" }).click();
 
-  const terminal = page.getByLabel("Terminal terminal");
+  const terminal = page.getByLabel("Terminal terminal", { exact: true });
   await expect(terminal).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
@@ -99,9 +98,8 @@ test("reloads a running terminal with its previous output", async ({ page }) => 
   await page.goto("/");
   await page.getByLabel("Access token").fill("test-token");
   await page.getByRole("button", { name: "Open Euphony" }).click();
-  await page.getByRole("button", { name: "Start a terminal" }).click();
 
-  const terminal = page.getByLabel("Terminal terminal");
+  const terminal = page.getByLabel("Terminal terminal", { exact: true });
   await expect(terminal).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
@@ -116,7 +114,7 @@ test("reloads a running terminal with its previous output", async ({ page }) => 
   await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
 
   await page.reload();
-  await expect(page.getByLabel("Terminal terminal")).toBeVisible();
+  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
 });
@@ -196,7 +194,9 @@ async function readTerminalHistory(
       }, 250);
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(String(event.data)) as { type: string; data?: string };
-        if (message.type === "output" && message.data) output += message.data;
+        if ((message.type === "output" || message.type === "history") && message.data) {
+          output += message.data;
+        }
       });
       socket.addEventListener("error", () => {
         window.clearTimeout(timeout);

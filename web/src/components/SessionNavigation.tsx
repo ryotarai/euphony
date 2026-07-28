@@ -12,7 +12,8 @@ interface SessionNavigationProps {
 }
 
 function activity(session: Session) {
-  return session.agentStatus || session.state;
+  if (session.agentStatus) return session.agentStatus;
+  return session.state === "running" ? "terminal" : session.state;
 }
 
 function statusLabel(status: string) {

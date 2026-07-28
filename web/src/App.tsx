@@ -10,6 +10,11 @@ interface AppProps {
   renderTerminal?: (session: Session, api: ApiClient) => ReactNode;
 }
 
+function sessionActivity(session: Session) {
+  if (session.agentStatus) return session.agentStatus;
+  return session.state === "running" ? "terminal" : session.state;
+}
+
 function resolveInitialToken(explicitToken?: string): string {
   if (explicitToken) return explicitToken;
 
@@ -89,8 +94,13 @@ export function App({
     let active = true;
     api
       .listSessions()
-      .then((items) => {
+      .then(async (items) => {
         if (!active) return;
+        if (items.length === 0) {
+          const created = await api.createSession("Terminal");
+          if (!active) return;
+          items = [created];
+        }
         setSessions(items);
         const workspace = workspaceFromURL(items);
         setSelectedIDs(workspace.selectedIDs);
@@ -129,7 +139,7 @@ export function App({
   useEffect(() => {
     if (!sessions || statusFilters.length === 0) return;
     const matches = sessions
-      .filter((session) => statusFilters.includes(session.agentStatus || session.state))
+      .filter((session) => statusFilters.includes(sessionActivity(session)))
       .map((session) => session.id);
     const next = [...new Set([...selectedIDs, ...matches])];
     if (next.length !== selectedIDs.length) {
@@ -173,7 +183,7 @@ export function App({
       ? [...statusFilters, status]
       : statusFilters.filter((item) => item !== status);
     const matching = sessions
-      ?.filter((session) => nextFilters.includes(session.agentStatus || session.state))
+      ?.filter((session) => nextFilters.includes(sessionActivity(session)))
       .map((session) => session.id) ?? [];
     const nextIDs = checked ? [...new Set([...selectedIDs, ...matching])] : selectedIDs;
     const nextFocus = focusedID ?? nextIDs[0] ?? null;
