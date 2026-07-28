@@ -26,6 +26,7 @@ type Session struct {
 	terminal *os.File
 	waitDone chan struct{}
 	close    sync.Once
+	fileMu   sync.Mutex
 }
 
 func (s *Session) Read(buffer []byte) (int, error) {
@@ -33,6 +34,8 @@ func (s *Session) Read(buffer []byte) (int, error) {
 }
 
 func (s *Session) Write(data []byte) (int, error) {
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
 	return s.terminal.Write(data)
 }
 
@@ -40,11 +43,15 @@ func (s *Session) Resize(cols, rows uint16) error {
 	if cols < 1 || cols > 1000 || rows < 1 || rows > 1000 {
 		return errors.New("terminal dimensions must be between 1 and 1000")
 	}
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
 	return pty.Setsize(s.terminal, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
 func (s *Session) terminate() {
 	s.close.Do(func() {
+		s.fileMu.Lock()
+		defer s.fileMu.Unlock()
 		if s.command.Process != nil {
 			_ = s.command.Process.Signal(syscall.SIGTERM)
 		}
