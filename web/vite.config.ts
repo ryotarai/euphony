@@ -1,6 +1,8 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
+const apiTarget = process.env.EUPHONY_DEV_API_URL ?? "http://127.0.0.1:8080";
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -11,7 +13,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8080",
+        target: apiTarget,
         ws: true,
       },
     },

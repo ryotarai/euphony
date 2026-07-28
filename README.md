@@ -45,19 +45,28 @@ single-use tickets instead of placing the long-lived token in their URLs.
 
 ## Development
 
-Run the API and Vite development server in separate terminals:
+Start the Go API and Vite development server together:
 
 ```sh
-EUPHONY_TOKEN=development-token go run ./cmd/euphony
+make dev
 ```
+
+Open <http://127.0.0.1:5173> and use `development-token` to sign in. The
+command installs frontend dependencies when needed, waits for the API to
+become healthy, and stops both processes when you press Ctrl+C.
+
+The development settings can be overridden:
 
 ```sh
-cd web
-npm install
-npm run dev
+EUPHONY_TOKEN=custom-token \
+EUPHONY_ADDR=127.0.0.1:19090 \
+EUPHONY_DEV_API_URL=http://127.0.0.1:19090 \
+EUPHONY_DEV_HOST=0.0.0.0 \
+EUPHONY_DEV_PORT=5199 \
+make dev
 ```
 
-Vite proxies `/api` requests and WebSockets to `127.0.0.1:8080`.
+Vite proxies `/api` requests and WebSockets to the configured API URL.
 
 Run all automated checks with:
 
@@ -71,4 +80,3 @@ Sessions live in server memory and do not survive a server restart. Browser
 disconnects do not terminate their PTY processes. Split panes, multi-user
 accounts, file management, and terminal-output replay are intentionally
 outside the v0.1 scope.
-
