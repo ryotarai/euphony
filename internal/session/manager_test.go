@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -32,16 +31,15 @@ func TestSessionRunsCommandsAndRecordsExit(t *testing.T) {
 		t.Fatalf("Get(%q) ok = false", metadata.ID)
 	}
 
+	_, outputStream, unsubscribe := running.Subscribe()
+	defer unsubscribe()
 	if _, err := running.Write([]byte("printf 'euphony-ready\\n'\n")); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
-	output := readUntilCount(t, running, "euphony-ready", 2, 3*time.Second)
+	output := receiveUntilCount(t, outputStream, "euphony-ready", 2, 3*time.Second)
 	if !strings.Contains(output, "euphony-ready") {
 		t.Fatalf("PTY output = %q, want command output", output)
 	}
-	go func() {
-		_, _ = io.Copy(io.Discard, running)
-	}()
 	if _, err := running.Write([]byte("exit 7\n")); err != nil {
 		t.Fatalf("Write(exit) error = %v", err)
 	}
@@ -114,36 +112,123 @@ func TestDeleteTerminatesAndRemovesRunningSession(t *testing.T) {
 	}
 }
 
-func readUntilCount(t *testing.T, session *Session, needle string, count int, timeout time.Duration) string {
-	t.Helper()
-	result := make(chan string, 1)
-	go func() {
-		var output strings.Builder
-		buffer := make([]byte, 1024)
-		for {
-			n, err := session.Read(buffer)
-			if n > 0 {
-				output.Write(buffer[:n])
-				if strings.Count(output.String(), needle) >= count {
-					result <- output.String()
-					return
-				}
-			}
-			if err != nil {
-				if err != io.EOF {
-					result <- output.String()
-				}
-				return
-			}
-		}
-	}()
+func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Reload")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatalf("Get(%q) ok = false", metadata.ID)
+	}
 
+	initialHistory, initialOutput, unsubscribe := running.Subscribe()
+	if len(initialHistory) != 0 {
+		t.Fatalf("initial history = %q, want empty", initialHistory)
+	}
+	if _, err := running.Write([]byte("printf 'before-reload\\n'\n")); err != nil {
+		t.Fatalf("Write(before reload) error = %v", err)
+	}
+	beforeReload := receiveUntil(t, initialOutput, "before-reload\r\n", 3*time.Second)
+	unsubscribe()
+
+	history, liveOutput, unsubscribeReloaded := running.Subscribe()
+	defer unsubscribeReloaded()
+	if !strings.Contains(string(history), "before-reload\r\n") {
+		t.Fatalf("reloaded history = %q, want previous terminal output", history)
+	}
+
+	if _, err := running.Write([]byte("printf 'after-reload\\n'\n")); err != nil {
+		t.Fatalf("Write(after reload) error = %v", err)
+	}
+	afterReload := receiveUntil(t, liveOutput, "after-reload\r\n", 3*time.Second)
+	if !strings.Contains(afterReload, "after-reload\r\n") {
+		t.Fatalf("live output = %q, want new terminal output", afterReload)
+	}
+	if !strings.Contains(beforeReload, "before-reload\r\n") {
+		t.Fatalf("initial output = %q, want command output", beforeReload)
+	}
+}
+
+func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Exited")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+	_, output, unsubscribe := running.Subscribe()
+	if _, err := running.Write([]byte("printf 'final-output\\n'; exit 0\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	_ = receiveUntil(t, output, "final-output\r\n", 3*time.Second)
+	unsubscribe()
+	waitFor(t, 3*time.Second, func() bool {
+		select {
+		case <-running.pumpDone:
+			return true
+		default:
+			return false
+		}
+	})
+
+	history, exitedOutput, unsubscribeExited := running.Subscribe()
+	defer unsubscribeExited()
+	if !strings.Contains(string(history), "final-output\r\n") {
+		t.Fatalf("history = %q, want final output", history)
+	}
 	select {
-	case output := <-result:
-		return output
-	case <-time.After(timeout):
-		t.Fatalf("timed out waiting for %q", needle)
-		return ""
+	case _, ok := <-exitedOutput:
+		if ok {
+			t.Fatal("exited output channel is open, want closed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("exited output channel did not close")
+	}
+}
+
+func receiveUntil(t *testing.T, output <-chan []byte, needle string, timeout time.Duration) string {
+	t.Helper()
+	var received strings.Builder
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case data, ok := <-output:
+			if !ok {
+				t.Fatalf("output closed while waiting for %q; received %q", needle, received.String())
+			}
+			received.Write(data)
+			if strings.Contains(received.String(), needle) {
+				return received.String()
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %q; received %q", needle, received.String())
+		}
+	}
+}
+
+func receiveUntilCount(t *testing.T, output <-chan []byte, needle string, count int, timeout time.Duration) string {
+	t.Helper()
+	var received strings.Builder
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case data, ok := <-output:
+			if !ok {
+				t.Fatalf("output closed while waiting for %q; received %q", needle, received.String())
+			}
+			received.Write(data)
+			if strings.Count(received.String(), needle) >= count {
+				return received.String()
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %q; received %q", needle, received.String())
+		}
 	}
 }
 

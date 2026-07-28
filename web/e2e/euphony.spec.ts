@@ -1,4 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function clearSessions(page: Page) {
+  const existing = await page.request.get("/api/sessions", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const existingSessions = (await existing.json()) as Array<{ id: string }>;
+  for (const session of existingSessions) {
+    await page.request.delete(`/api/sessions/${session.id}`, {
+      headers: { Authorization: "Bearer test-token" },
+    });
+  }
+}
 
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {
   const consoleErrors: string[] = [];
@@ -10,15 +22,7 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
     failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`);
   });
 
-  const existing = await page.request.get("/api/sessions", {
-    headers: { Authorization: "Bearer test-token" },
-  });
-  const existingSessions = (await existing.json()) as Array<{ id: string }>;
-  for (const session of existingSessions) {
-    await page.request.delete(`/api/sessions/${session.id}`, {
-      headers: { Authorization: "Bearer test-token" },
-    });
-  }
+  await clearSessions(page);
 
   await page.goto("/");
   await page.getByLabel("Access token").fill("test-token");
@@ -69,3 +73,67 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   expect(consoleErrors).toEqual([]);
   expect(failedRequests).toEqual([]);
 });
+
+test("reloads a running terminal with its previous output", async ({ page }) => {
+  await clearSessions(page);
+  await page.goto("/");
+  await page.getByLabel("Access token").fill("test-token");
+  await page.getByRole("button", { name: "Open Euphony" }).click();
+  await page.getByRole("button", { name: "Start a terminal" }).click();
+  await page.getByLabel("Terminal name").fill("Reload check");
+  await page.getByRole("button", { name: "Start terminal" }).click();
+
+  const terminal = page.getByLabel("Reload check terminal");
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await terminal.click();
+  await page.keyboard.type("printf 'reload-history-marker\\n'");
+  await page.keyboard.press("Enter");
+
+  const sessionsResponse = await page.request.get("/api/sessions", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const [session] = (await sessionsResponse.json()) as Array<{ id: string; state: string }>;
+  expect(session.state).toBe("running");
+  await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
+
+  await page.reload();
+  await expect(page.getByLabel("Reload check terminal")).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
+});
+
+async function readTerminalHistory(
+  page: Page,
+  sessionID: string,
+): Promise<string> {
+  return page.evaluate(async ({ id }) => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/tickets`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      },
+    });
+    const { ticket } = (await response.json()) as { ticket: string };
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(
+      `${protocol}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/terminal?ticket=${encodeURIComponent(ticket)}`,
+    );
+    return await new Promise<string>((resolve, reject) => {
+      let output = "";
+      const timeout = window.setTimeout(() => {
+        socket.close();
+        resolve(output);
+      }, 250);
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(String(event.data)) as { type: string; data?: string };
+        if (message.type === "output" && message.data) output += message.data;
+      });
+      socket.addEventListener("error", () => {
+        window.clearTimeout(timeout);
+        reject(new Error("terminal history WebSocket failed"));
+      });
+    });
+  }, { id: sessionID });
+}

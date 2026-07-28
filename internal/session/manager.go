@@ -76,16 +76,19 @@ func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
 			CreatedAt: time.Now().UTC(),
 		},
 		session: &Session{
-			id:       id,
-			command:  command,
-			terminal: terminal,
-			waitDone: make(chan struct{}),
+			id:          id,
+			command:     command,
+			terminal:    terminal,
+			waitDone:    make(chan struct{}),
+			pumpDone:    make(chan struct{}),
+			subscribers: make(map[uint64]chan []byte),
 		},
 	}
 	m.mu.Lock()
 	m.sessions[id] = item
 	m.mu.Unlock()
 
+	go item.session.pump()
 	go m.watch(item)
 	return item.metadata, nil
 }

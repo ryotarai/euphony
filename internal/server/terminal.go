@@ -45,22 +45,31 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	history, output, unsubscribe := terminal.Subscribe()
+	defer unsubscribe()
 	outputDone := make(chan struct{})
 	go func() {
 		defer close(outputDone)
-		buffer := make([]byte, 32*1024)
+		if len(history) > 0 {
+			payload, _ := json.Marshal(serverMessage{Type: "output", Data: string(history)})
+			if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+				return
+			}
+		}
 		for {
-			n, readErr := terminal.Read(buffer)
-			if n > 0 {
-				payload, _ := json.Marshal(serverMessage{Type: "output", Data: string(buffer[:n])})
+			select {
+			case data, ok := <-output:
+				if !ok {
+					exitCode := s.sessionExitCode(id)
+					payload, _ := json.Marshal(serverMessage{Type: "exit", ExitCode: exitCode})
+					_ = connection.Write(ctx, websocket.MessageText, payload)
+					return
+				}
+				payload, _ := json.Marshal(serverMessage{Type: "output", Data: string(data)})
 				if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
 					return
 				}
-			}
-			if readErr != nil {
-				exitCode := s.sessionExitCode(id)
-				payload, _ := json.Marshal(serverMessage{Type: "exit", ExitCode: exitCode})
-				_ = connection.Write(ctx, websocket.MessageText, payload)
+			case <-ctx.Done():
 				return
 			}
 		}
