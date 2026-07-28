@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -86,10 +87,19 @@ func runServer() error {
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
+	databasePath := os.Getenv("EUPHONY_DB")
+	if databasePath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve database path: %w", err)
+		}
+		databasePath = filepath.Join(home, ".local", "euphony", "euphony.sqlite3")
+	}
 	srv, err := server.New(server.Config{
-		Token:   os.Getenv("EUPHONY_TOKEN"),
-		Shell:   os.Getenv("SHELL"),
-		HookURL: "http://" + address + "/api/hooks/terminal",
+		Token:        os.Getenv("EUPHONY_TOKEN"),
+		Shell:        os.Getenv("SHELL"),
+		HookURL:      "http://" + address + "/api/hooks/terminal",
+		DatabasePath: databasePath,
 	})
 	if err != nil {
 		log.Fatal(err)

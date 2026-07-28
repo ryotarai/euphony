@@ -36,11 +36,12 @@ func TestReportTranslatesAgentHookInputToTerminalActivity(t *testing.T) {
 		t.Fatalf("Authorization = %q", authorization)
 	}
 	want := map[string]string{
-		"terminalId": "terminal-123",
-		"agent":      "claude",
-		"status":     "running",
-		"title":      "Fix setup",
-		"cwd":        "/repo",
+		"terminalId":     "terminal-123",
+		"agent":          "claude",
+		"agentSessionId": "agent-1",
+		"status":         "running",
+		"title":          "Fix setup",
+		"cwd":            "/repo",
 	}
 	for key, value := range want {
 		if payload[key] != value {
@@ -76,5 +77,8 @@ func TestReportClearsAgentWhenSessionEnds(t *testing.T) {
 	}
 	if payload["agent"] != "" || payload["status"] != "" {
 		t.Fatalf("session-end payload = %#v, want cleared agent and status", payload)
+	}
+	if payload["resumeAgent"] != "claude" {
+		t.Fatalf("session-end payload = %#v, want resumable claude agent", payload)
 	}
 }

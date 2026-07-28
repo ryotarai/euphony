@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -118,17 +119,78 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	}
 
 	updated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
-		Agent:  "codex",
-		Status: "running",
-		Title:  "Implement v0.2",
-		CWD:    "/workspace/euphony",
+		Agent: "codex", AgentSessionID: "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
+		Status: "running", Title: "Implement v0.2", CWD: "/workspace/euphony",
 	})
 	if err != nil {
 		t.Fatalf("UpdateAgent() error = %v", err)
 	}
 	if updated.Agent != "codex" || updated.AgentStatus != "running" ||
-		updated.AgentTitle != "Implement v0.2" || updated.CWD != "/workspace/euphony" {
+		updated.AgentTitle != "Implement v0.2" ||
+		updated.AgentSessionID != "019c43d4-95d9-7af0-92c4-d9f670ccaa32" ||
+		updated.CWD != "/workspace/euphony" {
 		t.Fatalf("updated metadata = %#v", updated)
+	}
+}
+
+func TestRestoredCommandResumesKnownAgents(t *testing.T) {
+	tests := []struct {
+		agent string
+		id    string
+		want  []string
+	}{
+		{agent: "codex", id: "codex-session", want: []string{"codex", "resume", "codex-session"}},
+		{agent: "claude", id: "claude-session", want: []string{"claude", "--resume", "claude-session"}},
+		{want: []string{"/bin/sh"}},
+	}
+	for _, test := range tests {
+		command := restoredCommand("/bin/sh", Metadata{Agent: test.agent, AgentSessionID: test.id})
+		if strings.Join(command.Args, "\x00") != strings.Join(test.want, "\x00") {
+			t.Errorf("restoredCommand(%q) args = %#v, want %#v", test.agent, command.Args, test.want)
+		}
+	}
+}
+
+func TestPersistentManagerRestoresTerminalWithItsCWD(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	cwd := t.TempDir()
+	store, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	createdAt := time.Now().UTC()
+	if err := store.Save(context.Background(), Metadata{
+		ID: "restored-terminal", Name: "Terminal", State: StateExited,
+		CWD: cwd, CreatedAt: createdAt,
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	terminal, ok := manager.Get("restored-terminal")
+	if !ok {
+		t.Fatal("restored terminal is missing")
+	}
+	_, output, unsubscribe := terminal.Subscribe()
+	defer unsubscribe()
+	if _, err := terminal.Write([]byte("pwd\n")); err != nil {
+		t.Fatalf("Write(pwd) error = %v", err)
+	}
+	got := receiveUntil(t, output, cwd, 3*time.Second)
+	if !strings.Contains(got, cwd) {
+		t.Fatalf("pwd output = %q, want %q", got, cwd)
+	}
+	metadata := manager.List()
+	if len(metadata) != 1 || metadata[0].ID != "restored-terminal" ||
+		metadata[0].State != StateRunning || !metadata[0].CreatedAt.Equal(createdAt) {
+		t.Fatalf("restored metadata = %#v", metadata)
 	}
 }
 

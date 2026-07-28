@@ -107,6 +107,20 @@ curl --fail --silent \
 Use the agent's start, stop, notification, and session-title hooks to send the
 corresponding status and title. The sidebar refreshes activity automatically.
 
+## Persistence
+
+Euphony stores terminal metadata in SQLite at
+`~/.local/euphony/euphony.sqlite3`. Set `EUPHONY_DB` to use a different path:
+
+```sh
+EUPHONY_DB=/path/to/euphony.sqlite3 make dev
+```
+
+After Euphony restarts, terminal processes are recreated in their saved working
+directories. Codex and Claude Code sessions are resumed automatically when
+their hooks have reported a session ID. Regular terminals reopen their shell in
+the saved working directory.
+
 Run all automated checks with:
 
 ```sh
@@ -115,6 +129,6 @@ make test
 
 ## Current boundaries
 
-Sessions live in server memory and do not survive a server restart. Browser
-disconnects do not terminate their PTY processes. Multi-user accounts and file
-management are not implemented.
+Browser disconnects do not terminate PTY processes. Terminal scrollback is not
+persisted across server restarts. Multi-user accounts and file management are
+not implemented.

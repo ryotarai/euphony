@@ -12,10 +12,11 @@ import (
 )
 
 type Config struct {
-	Token   string
-	Shell   string
-	HookURL string
-	Assets  fs.FS
+	Token        string
+	Shell        string
+	HookURL      string
+	DatabasePath string
+	Assets       fs.FS
 }
 
 type Server struct {
@@ -29,10 +30,20 @@ func New(config Config) (*Server, error) {
 		return nil, errors.New("EUPHONY_TOKEN is required")
 	}
 
-	sessionManager := session.NewManager(config.Shell, session.HookConfig{
+	hooks := session.HookConfig{
 		URL:   config.HookURL,
 		Token: config.Token,
-	})
+	}
+	var sessionManager *session.Manager
+	var err error
+	if config.DatabasePath == "" {
+		sessionManager = session.NewManager(config.Shell, hooks)
+	} else {
+		sessionManager, err = session.NewPersistentManager(config.Shell, hooks, config.DatabasePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	tickets := newTicketStore(time.Now)
 	server := &Server{sessions: sessionManager, tickets: tickets}
 
