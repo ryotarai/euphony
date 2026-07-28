@@ -95,6 +95,7 @@ export function TerminalView({
   const [connection, setConnection] = useState<"connecting" | "connected" | "disconnected" | "exited">(
     "connecting",
   );
+  const [copied, setCopied] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -116,6 +117,7 @@ export function TerminalView({
     const removeData = terminal.onData((data) => send({ type: "input", data }));
     const removeResize = terminal.onResize((cols, rows) => send({ type: "resize", cols, rows }));
     let selectionTimer: ReturnType<typeof setTimeout> | undefined;
+    let copiedTimer: ReturnType<typeof setTimeout> | undefined;
     const removeSelectionChange = terminal.onSelectionChange(() => {
       clearTimeout(selectionTimer);
       selectionTimer = setTimeout(() => {
@@ -124,7 +126,11 @@ export function TerminalView({
         void navigator.clipboard
           .writeText(selection)
           .then(() => {
-            if (active) terminal.clearSelection();
+            if (!active) return;
+            terminal.clearSelection();
+            setCopied(true);
+            clearTimeout(copiedTimer);
+            copiedTimer = setTimeout(() => setCopied(false), 1600);
           })
           .catch(() => undefined);
       }, 150);
@@ -180,6 +186,7 @@ export function TerminalView({
       removeResize();
       removeSelectionChange();
       clearTimeout(selectionTimer);
+      clearTimeout(copiedTimer);
       socket?.close();
       terminal.dispose();
     };
@@ -188,6 +195,11 @@ export function TerminalView({
   return (
     <div className="terminal-view" data-connection={connection}>
       <div className="terminal-host" ref={hostRef} aria-label={`${session.name} terminal`} />
+      {copied && (
+        <div className="copied-toast" role="status">
+          Copied
+        </div>
+      )}
       <div className="signal-status" aria-live="polite">
         <span>{connection}</span>
         {connection === "disconnected" && (

@@ -118,10 +118,11 @@ test("restores the selected session from the URL and follows browser navigation"
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
-test("splits two sessions vertically and stores both panes in the URL", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-    jsonResponse([runningSession, secondRunningSession]),
-  );
+test("creates a new terminal for a vertical split and stores both panes in the URL", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse(secondRunningSession, 201));
   const user = userEvent.setup();
   render(
     <App
@@ -134,7 +135,15 @@ test("splits two sessions vertically and stores both panes in the URL", async ()
   await user.click(screen.getByRole("button", { name: "Split vertically" }));
 
   expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
-  expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ name: "Terminal" }),
+    }),
+  );
   const parameters = new URLSearchParams(window.location.search);
   expect(parameters.get("session")).toBe("session-1");
   expect(parameters.get("split")).toBe("session-2");

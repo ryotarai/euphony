@@ -61,6 +61,7 @@ export function App({
   const [activePane, setActivePane] = useState<PaneIndex>(0);
   const [authError, setAuthError] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [splitting, setSplitting] = useState(false);
   const [name, setName] = useState("Terminal");
   const [requestError, setRequestError] = useState("");
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
@@ -119,14 +120,22 @@ export function App({
     writePanesToURL(nextPanes);
   }
 
-  function splitVertically() {
-    if (!sessions || paneIDs[1]) return;
-    const second = sessions.find((session) => session.id !== paneIDs[0]);
-    if (!second) return;
-    const nextPanes: PaneIDs = [paneIDs[0], second.id];
-    setPaneIDs(nextPanes);
-    setActivePane(1);
-    writePanesToURL(nextPanes);
+  async function splitVertically() {
+    if (!api || paneIDs[1] || splitting) return;
+    setSplitting(true);
+    try {
+      const created = await api.createSession("Terminal");
+      setSessions((current) => [...(current ?? []), created]);
+      const nextPanes: PaneIDs = [paneIDs[0], created.id];
+      setPaneIDs(nextPanes);
+      setActivePane(1);
+      writePanesToURL(nextPanes);
+      setRequestError("");
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : "The split terminal could not start.");
+    } finally {
+      setSplitting(false);
+    }
   }
 
   function closeSplit() {
@@ -252,15 +261,14 @@ export function App({
                   ×
                 </button>
               ) : (
-                sessions.length > 1 && (
-                  <button
-                    aria-label="Split vertically"
-                    title="Split vertically"
-                    onClick={splitVertically}
-                  >
-                    ◫
-                  </button>
-                )
+                <button
+                  aria-label="Split vertically"
+                  title="Split vertically"
+                  disabled={splitting}
+                  onClick={() => void splitVertically()}
+                >
+                  ◫
+                </button>
               )}
             </div>
           </>

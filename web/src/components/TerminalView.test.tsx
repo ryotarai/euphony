@@ -161,5 +161,11 @@ test("copies a completed selection and then clears it", async () => {
 
   expect(writeText).toHaveBeenCalledWith("selected output");
   expect(clearSelection).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("status")).toHaveTextContent("Copied");
+
+  act(() => {
+    vi.advanceTimersByTime(1600);
+  });
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
   vi.useRealTimers();
 });

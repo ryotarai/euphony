@@ -147,14 +147,13 @@ test("keeps the selected terminal in the URL across navigation and reload", asyn
 test("shows a vertical split and keeps one active pane on mobile", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "Left");
-  const second = await createSession(page, "Right");
 
   await page.goto("/?token=test-token");
   await page.getByRole("button", { name: "Split vertically" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await expect(page.getByLabel("Left terminal")).toBeVisible();
-  await expect(page.getByLabel("Right terminal")).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`session=${first.id}.*split=${second.id}`));
+  await expect(page.getByLabel("Terminal terminal")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`session=${first.id}.*split=.+`));
 
   await page.reload();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);

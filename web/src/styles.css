@@ -325,6 +325,26 @@ input {
   scrollbar-width: thin;
 }
 
+.copied-toast {
+  position: absolute;
+  z-index: 4;
+  top: 0.8rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.42rem 0.65rem;
+  color: #111417;
+  background: #b8f34a;
+  border-radius: 2px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 32%);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  animation: copied-toast-in 140ms ease-out;
+}
+
 .signal-status {
   position: absolute;
   z-index: 3;
@@ -413,6 +433,13 @@ input {
   50% {
     opacity: 0.48;
     box-shadow: 0 0 5px rgb(184 243 74 / 35%);
+  }
+}
+
+@keyframes copied-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -0.35rem);
   }
 }
 
