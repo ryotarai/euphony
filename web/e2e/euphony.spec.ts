@@ -12,6 +12,16 @@ async function clearSessions(page: Page) {
   }
 }
 
+test("opens from a development token URL and immediately scrubs it", async ({ page }) => {
+  await clearSessions(page);
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByRole("button", { name: "Start a terminal" })).toBeVisible();
+  await expect(page.getByLabel("Access token")).toHaveCount(0);
+  await expect(page).toHaveURL("http://127.0.0.1:18080/");
+  expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
+});
+
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {
   const consoleErrors: string[] = [];
   const failedRequests: string[] = [];

@@ -56,7 +56,8 @@ if ! curl --fail --silent --output /dev/null "$api_url/api/health"; then
   exit 1
 fi
 
+encoded_token="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$token")"
 echo "Starting Euphony web UI at http://$vite_host:$vite_port"
 cd "$repo_root/web"
 export EUPHONY_DEV_API_URL="$api_url"
-npm run dev -- --host "$vite_host" --port "$vite_port"
+npm run dev -- --host "$vite_host" --port "$vite_port" --open "/?token=$encoded_token"

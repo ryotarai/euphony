@@ -11,11 +11,27 @@ interface AppProps {
   renderTerminal?: (session: Session, api: ApiClient) => ReactNode;
 }
 
+function resolveInitialToken(explicitToken?: string): string {
+  if (explicitToken) return explicitToken;
+
+  const parameters = new URLSearchParams(window.location.search);
+  const queryToken = parameters.get("token")?.trim();
+  if (queryToken) {
+    parameters.delete("token");
+    const query = parameters.toString();
+    const cleanURL = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", cleanURL);
+    sessionStorage.setItem(tokenKey, queryToken);
+    return queryToken;
+  }
+  return sessionStorage.getItem(tokenKey) ?? "";
+}
+
 export function App({
   initialToken,
   renderTerminal = (session, api) => <TerminalView key={session.id} session={session} api={api} />,
 }: AppProps) {
-  const [token, setToken] = useState(() => initialToken ?? sessionStorage.getItem(tokenKey) ?? "");
+  const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [selectedID, setSelectedID] = useState<string | null>(null);

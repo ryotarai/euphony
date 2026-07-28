@@ -51,9 +51,11 @@ Start the Go API and Vite development server together:
 make dev
 ```
 
-Open <http://127.0.0.1:5173> and use `development-token` to sign in. The
-command installs frontend dependencies when needed, waits for the API to
-become healthy, and stops both processes when you press Ctrl+C.
+The command opens <http://127.0.0.1:5173> in the default browser and signs in
+with `development-token`. The token is removed from the address bar
+immediately after the page consumes it. The command installs frontend
+dependencies when needed, waits for the API to become healthy, and stops both
+processes when you press Ctrl+C.
 
 The development settings can be overridden:
 

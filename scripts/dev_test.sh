@@ -59,7 +59,7 @@ grep -q '^addr=127.0.0.1:19090$' "$fixture/log/go-started"
 grep -q '^args=run ./cmd/euphony$' "$fixture/log/go-started"
 grep -q '^installed$' "$fixture/log/npm-installed"
 grep -q '^api_url=http://127.0.0.1:19090$' "$fixture/log/vite-started"
-grep -q '^args=run dev -- --host 0.0.0.0 --port 5199$' "$fixture/log/vite-started"
+grep -q '^args=run dev -- --host 0.0.0.0 --port 5199 --open /?token=custom-token$' "$fixture/log/vite-started"
 grep -q '^stopped$' "$fixture/log/go-stopped"
 
 echo "dev process orchestration passed"

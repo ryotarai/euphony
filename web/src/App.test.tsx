@@ -31,6 +31,23 @@ test("stores a valid token in sessionStorage and shows the empty workspace", asy
   expect(sessionStorage.getItem("euphony.token")).toBe("valid-token");
 });
 
+test("consumes a token from the URL without leaving it in browser history", async () => {
+  history.replaceState(null, "", "/?token=development-token");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => jsonResponse([]));
+
+  render(<App />);
+
+  expect(await screen.findByRole("button", { name: "Start a terminal" })).toBeVisible();
+  expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
+  expect(window.location.search).toBe("");
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer development-token" }),
+    }),
+  );
+});
+
 test("returns to token entry after an invalid token", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse({ code: "unauthorized", message: "A valid access token is required." }, 401),
