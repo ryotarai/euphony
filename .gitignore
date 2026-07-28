@@ -1,4 +1,5 @@
 /tmp/worktrees/
+/tmp/herdr/
 /web/dist/
 /web/node_modules/
 /web/*.tsbuildinfo
