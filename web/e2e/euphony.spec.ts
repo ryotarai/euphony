@@ -12,6 +12,18 @@ async function clearSessions(page: Page) {
   }
 }
 
+async function createSession(page: Page, name: string): Promise<{ id: string; name: string }> {
+  const response = await page.request.post("/api/sessions", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: { name },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
 test("opens from a development token URL and immediately scrubs it", async ({ page }) => {
   await clearSessions(page);
   await page.goto("/?token=test-token");
@@ -111,6 +123,44 @@ test("reloads a running terminal with its previous output", async ({ page }) => 
   await expect(page.getByLabel("Reload check terminal")).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
+});
+
+test("keeps the selected terminal in the URL across navigation and reload", async ({ page }) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First");
+  const second = await createSession(page, "Second");
+
+  await page.goto("/?token=test-token");
+  await expect(page.getByLabel("First terminal")).toBeVisible();
+  await page.getByRole("button", { name: "Select Second" }).click();
+  await expect(page).toHaveURL(new RegExp(`session=${second.id}`));
+  await expect(page.getByLabel("Second terminal")).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByLabel("Second terminal")).toBeVisible();
+  await page.getByRole("button", { name: "Select First" }).click();
+  await expect(page).toHaveURL(new RegExp(`session=${first.id}`));
+  await page.goBack();
+  await expect(page.getByLabel("Second terminal")).toBeVisible();
+});
+
+test("shows a vertical split and keeps one active pane on mobile", async ({ page }) => {
+  await clearSessions(page);
+  const first = await createSession(page, "Left");
+  const second = await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("button", { name: "Split vertically" }).click();
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+  await expect(page.getByLabel("Left terminal")).toBeVisible();
+  await expect(page.getByLabel("Right terminal")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`session=${first.id}.*split=${second.id}`));
+
+  await page.reload();
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.terminal-pane[data-active="true"]')).toBeVisible();
+  await expect(page.locator('.terminal-pane[data-active="false"]')).toBeHidden();
 });
 
 async function readTerminalHistory(

@@ -10,6 +10,9 @@ export interface TerminalDriver {
   write(data: string): void;
   focus(): void;
   fit(): void;
+  getSelection(): string;
+  clearSelection(): void;
+  onSelectionChange(callback: () => void): () => void;
   onData(callback: (data: string) => void): () => void;
   onResize(callback: (cols: number, rows: number) => void): () => void;
   dispose(): void;
@@ -60,6 +63,12 @@ function defaultTerminal(): TerminalDriver {
     write: (data) => terminal.write(data),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
+    getSelection: () => terminal.getSelection(),
+    clearSelection: () => terminal.clearSelection(),
+    onSelectionChange: (callback) => {
+      const disposable = terminal.onSelectionChange(callback);
+      return () => disposable.dispose();
+    },
     onData: (callback) => {
       const disposable = terminal.onData(callback);
       return () => disposable.dispose();
@@ -106,6 +115,20 @@ export function TerminalView({
     };
     const removeData = terminal.onData((data) => send({ type: "input", data }));
     const removeResize = terminal.onResize((cols, rows) => send({ type: "resize", cols, rows }));
+    let selectionTimer: ReturnType<typeof setTimeout> | undefined;
+    const removeSelectionChange = terminal.onSelectionChange(() => {
+      clearTimeout(selectionTimer);
+      selectionTimer = setTimeout(() => {
+        const selection = terminal.getSelection();
+        if (!selection || !navigator.clipboard?.writeText) return;
+        void navigator.clipboard
+          .writeText(selection)
+          .then(() => {
+            if (active) terminal.clearSelection();
+          })
+          .catch(() => undefined);
+      }, 150);
+    });
     const fit = () => terminal.fit();
     window.addEventListener("resize", fit);
 
@@ -155,6 +178,8 @@ export function TerminalView({
       window.removeEventListener("resize", fit);
       removeData();
       removeResize();
+      removeSelectionChange();
+      clearTimeout(selectionTimer);
       socket?.close();
       terminal.dispose();
     };

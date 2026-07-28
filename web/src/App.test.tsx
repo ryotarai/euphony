@@ -10,6 +10,13 @@ const runningSession: Session = {
   createdAt: "2026-07-28T00:00:00Z",
 };
 
+const secondRunningSession: Session = {
+  id: "session-2",
+  name: "Claude",
+  state: "running",
+  createdAt: "2026-07-28T00:01:00Z",
+};
+
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -84,4 +91,55 @@ test("creates, selects, and deletes a session", async () => {
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Delete Codex" })).not.toBeInTheDocument();
   });
+});
+
+test("restores the selected session from the URL and follows browser navigation", async () => {
+  history.replaceState(null, "", "/?session=session-2");
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Select Codex" }));
+  expect(new URLSearchParams(window.location.search).get("session")).toBe("session-1");
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+
+  history.pushState(null, "", "/?session=session-2");
+  fireEvent(window, new PopStateEvent("popstate"));
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
+test("splits two sessions vertically and stores both panes in the URL", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  await user.click(screen.getByRole("button", { name: "Split vertically" }));
+
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.get("session")).toBe("session-1");
+  expect(parameters.get("split")).toBe("session-2");
+
+  await user.click(screen.getByRole("button", { name: "Close split" }));
+  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  expect(new URLSearchParams(window.location.search).has("split")).toBe(false);
 });

@@ -5,6 +5,8 @@ import { TerminalView } from "./components/TerminalView";
 import type { Session } from "./types";
 
 const tokenKey = "euphony.token";
+type PaneIndex = 0 | 1;
+type PaneIDs = [string | null, string | null];
 
 interface AppProps {
   initialToken?: string;
@@ -27,6 +29,27 @@ function resolveInitialToken(explicitToken?: string): string {
   return sessionStorage.getItem(tokenKey) ?? "";
 }
 
+function panesFromURL(sessions: Session[]): PaneIDs {
+  const parameters = new URLSearchParams(window.location.search);
+  const available = new Set(sessions.map((session) => session.id));
+  const primary = parameters.get("session");
+  const primaryID = primary && available.has(primary) ? primary : sessions[0]?.id ?? null;
+  const split = parameters.get("split");
+  const splitID = split && split !== primaryID && available.has(split) ? split : null;
+  return [primaryID, splitID];
+}
+
+function writePanesToURL([primaryID, splitID]: PaneIDs, mode: "push" | "replace" = "push") {
+  const parameters = new URLSearchParams(window.location.search);
+  if (primaryID) parameters.set("session", primaryID);
+  else parameters.delete("session");
+  if (splitID) parameters.set("split", splitID);
+  else parameters.delete("split");
+  const query = parameters.toString();
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  window.history[mode === "push" ? "pushState" : "replaceState"](window.history.state, "", url);
+}
+
 export function App({
   initialToken,
   renderTerminal = (session, api) => <TerminalView key={session.id} session={session} api={api} />,
@@ -34,7 +57,8 @@ export function App({
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [selectedID, setSelectedID] = useState<string | null>(null);
+  const [paneIDs, setPaneIDs] = useState<PaneIDs>([null, null]);
+  const [activePane, setActivePane] = useState<PaneIndex>(0);
   const [authError, setAuthError] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("Terminal");
@@ -52,7 +76,10 @@ export function App({
       .then((items) => {
         if (!active) return;
         setSessions(items);
-        setSelectedID((current) => current ?? items[0]?.id ?? null);
+        const nextPanes = panesFromURL(items);
+        setPaneIDs(nextPanes);
+        setActivePane(nextPanes[1] ? 1 : 0);
+        writePanesToURL(nextPanes, "replace");
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -69,6 +96,46 @@ export function App({
     };
   }, [api]);
 
+  useEffect(() => {
+    if (!sessions) return;
+    const restore = () => {
+      const nextPanes = panesFromURL(sessions);
+      setPaneIDs(nextPanes);
+      setActivePane((current) => (current === 1 && nextPanes[1] ? 1 : 0));
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [sessions]);
+
+  function selectSession(id: string) {
+    const existingPane = paneIDs[0] === id ? 0 : paneIDs[1] === id ? 1 : null;
+    if (existingPane !== null) {
+      setActivePane(existingPane);
+      return;
+    }
+    const nextPanes: PaneIDs = [...paneIDs];
+    nextPanes[activePane] = id;
+    setPaneIDs(nextPanes);
+    writePanesToURL(nextPanes);
+  }
+
+  function splitVertically() {
+    if (!sessions || paneIDs[1]) return;
+    const second = sessions.find((session) => session.id !== paneIDs[0]);
+    if (!second) return;
+    const nextPanes: PaneIDs = [paneIDs[0], second.id];
+    setPaneIDs(nextPanes);
+    setActivePane(1);
+    writePanesToURL(nextPanes);
+  }
+
+  function closeSplit() {
+    const nextPanes: PaneIDs = [paneIDs[0], null];
+    setPaneIDs(nextPanes);
+    setActivePane(0);
+    writePanesToURL(nextPanes);
+  }
+
   function authenticate(event: FormEvent) {
     event.preventDefault();
     const value = draftToken.trim();
@@ -84,7 +151,10 @@ export function App({
     try {
       const created = await api.createSession(name.trim());
       setSessions((current) => [...(current ?? []), created]);
-      setSelectedID(created.id);
+      const nextPanes: PaneIDs = [...paneIDs];
+      nextPanes[activePane] = created.id;
+      setPaneIDs(nextPanes);
+      writePanesToURL(nextPanes);
       setShowCreate(false);
       setRequestError("");
     } catch (error) {
@@ -96,8 +166,17 @@ export function App({
     if (!api) return;
     try {
       await api.deleteSession(item.id);
-      setSessions((current) => current?.filter((candidate) => candidate.id !== item.id) ?? []);
-      setSelectedID((current) => (current === item.id ? null : current));
+      const remaining = sessions?.filter((candidate) => candidate.id !== item.id) ?? [];
+      setSessions(remaining);
+      let nextPanes: PaneIDs = [
+        paneIDs[0] === item.id ? null : paneIDs[0],
+        paneIDs[1] === item.id ? null : paneIDs[1],
+      ];
+      if (!nextPanes[0] && nextPanes[1]) nextPanes = [nextPanes[1], null];
+      if (!nextPanes[0]) nextPanes = [remaining[0]?.id ?? null, null];
+      setPaneIDs(nextPanes);
+      setActivePane(nextPanes[1] && activePane === 1 ? 1 : 0);
+      writePanesToURL(nextPanes);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
@@ -130,21 +209,61 @@ export function App({
     return <main className="loading-screen">Connecting to Euphony…</main>;
   }
 
-  const selected = sessions.find((item) => item.id === selectedID) ?? sessions[0] ?? null;
+  const panes = paneIDs.map((id) => sessions.find((item) => item.id === id) ?? null) as [
+    Session | null,
+    Session | null,
+  ];
+  const selected = panes[activePane] ?? panes[0];
 
   return (
     <main className="workspace">
       <SessionNavigation
         sessions={sessions}
         selectedID={selected?.id ?? null}
-        onSelect={setSelectedID}
+        onSelect={selectSession}
         onCreate={() => setShowCreate(true)}
         onDelete={(item) => void deleteSession(item)}
       />
-      <section className="terminal-stage">
+      <section className="terminal-stage" data-split={Boolean(panes[1])}>
         {requestError && <p role="alert">{requestError}</p>}
-        {selected && api ? (
-          renderTerminal(selected, api)
+        {panes[0] && api ? (
+          <>
+            <div
+              className="terminal-pane"
+              data-active={activePane === 0}
+              aria-label={`${panes[0].name} pane`}
+              onMouseDown={() => setActivePane(0)}
+            >
+              {renderTerminal(panes[0], api)}
+            </div>
+            {panes[1] && (
+              <div
+                className="terminal-pane"
+                data-active={activePane === 1}
+                aria-label={`${panes[1].name} pane`}
+                onMouseDown={() => setActivePane(1)}
+              >
+                {renderTerminal(panes[1], api)}
+              </div>
+            )}
+            <div className="pane-controls">
+              {panes[1] ? (
+                <button aria-label="Close split" title="Close split" onClick={closeSplit}>
+                  ×
+                </button>
+              ) : (
+                sessions.length > 1 && (
+                  <button
+                    aria-label="Split vertically"
+                    title="Split vertically"
+                    onClick={splitVertically}
+                  >
+                    ◫
+                  </button>
+                )
+              )}
+            </div>
+          </>
         ) : (
           <div className="empty-state">
             <p>No signal yet.</p>

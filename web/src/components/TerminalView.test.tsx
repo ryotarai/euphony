@@ -38,6 +38,9 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
     write: (data) => writes.push(data),
     focus: () => undefined,
     fit: () => onResize?.(120, 40),
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
     onData: (callback) => {
       onData = callback;
       return () => undefined;
@@ -88,6 +91,9 @@ test("shows a reconnect action when the socket closes", async () => {
     write: () => undefined,
     focus: () => undefined,
     fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
     onData: () => () => undefined,
     onResize: () => () => undefined,
     dispose: () => undefined,
@@ -108,4 +114,52 @@ test("shows a reconnect action when the socket closes", async () => {
 
   await user.click(await screen.findByRole("button", { name: "Reconnect" }));
   await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(2));
+});
+
+test("copies a completed selection and then clears it", async () => {
+  vi.useFakeTimers();
+  let onSelectionChange: (() => void) | undefined;
+  const clearSelection = vi.fn();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "selected output",
+    clearSelection,
+    onSelectionChange: (callback) => {
+      onSelectionChange = callback;
+      return () => undefined;
+    },
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => new FakeSocket()}
+    />,
+  );
+
+  act(() => {
+    onSelectionChange?.();
+    vi.advanceTimersByTime(150);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  expect(writeText).toHaveBeenCalledWith("selected output");
+  expect(clearSelection).toHaveBeenCalledTimes(1);
+  vi.useRealTimers();
 });
