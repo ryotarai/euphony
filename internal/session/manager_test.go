@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,61 @@ func TestSessionsHaveUniqueIDsAndCreationOrder(t *testing.T) {
 	list := manager.List()
 	if len(list) != 2 || list[0].ID != first.ID || list[1].ID != second.ID {
 		t.Fatalf("List() = %#v, want creation order", list)
+	}
+}
+
+func TestCreateRecordsCWDAndExposesTerminalHookEnvironment(t *testing.T) {
+	manager := NewManager("/bin/sh", HookConfig{
+		URL:   "http://127.0.0.1:8080/api/hooks/terminal",
+		Token: "secret",
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	wantCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if metadata.CWD != wantCWD {
+		t.Fatalf("CWD = %q, want %q", metadata.CWD, wantCWD)
+	}
+
+	running, _ := manager.Get(metadata.ID)
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if _, err := running.Write([]byte("printf '%s|%s|%s\\n' \"$EUPHONY_TERMINAL_ID\" \"$EUPHONY_HOOK_URL\" \"$EUPHONY_TOKEN\"\n")); err != nil {
+		t.Fatalf("Write(environment) error = %v", err)
+	}
+	result := receiveUntil(t, output, "secret", 3*time.Second)
+	want := metadata.ID + "|http://127.0.0.1:8080/api/hooks/terminal|secret"
+	if !strings.Contains(result, want) {
+		t.Fatalf("environment output = %q, want %q", result, want)
+	}
+}
+
+func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent:  "codex",
+		Status: "running",
+		Title:  "Implement v0.2",
+		CWD:    "/workspace/euphony",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if updated.Agent != "codex" || updated.AgentStatus != "running" ||
+		updated.AgentTitle != "Implement v0.2" || updated.CWD != "/workspace/euphony" {
+		t.Fatalf("updated metadata = %#v", updated)
 	}
 }
 

@@ -12,9 +12,10 @@ import (
 )
 
 type Config struct {
-	Token  string
-	Shell  string
-	Assets fs.FS
+	Token   string
+	Shell   string
+	HookURL string
+	Assets  fs.FS
 }
 
 type Server struct {
@@ -28,7 +29,10 @@ func New(config Config) (*Server, error) {
 		return nil, errors.New("EUPHONY_TOKEN is required")
 	}
 
-	sessionManager := session.NewManager(config.Shell)
+	sessionManager := session.NewManager(config.Shell, session.HookConfig{
+		URL:   config.HookURL,
+		Token: config.Token,
+	})
 	tickets := newTicketStore(time.Now)
 	server := &Server{sessions: sessionManager, tickets: tickets}
 
@@ -43,6 +47,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/sessions", server.createSession)
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
+	protected.HandleFunc("POST /api/hooks/terminal", server.updateTerminalHook)
 	protected.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "api_not_found", "The API endpoint does not exist.")
 	})

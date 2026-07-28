@@ -7,6 +7,10 @@ const runningSession: Session = {
   id: "session-1",
   name: "Codex",
   state: "running",
+  cwd: "/workspace/euphony",
+  agent: "codex",
+  agentStatus: "running",
+  agentTitle: "Implement v0.2",
   createdAt: "2026-07-28T00:00:00Z",
 };
 
@@ -14,7 +18,22 @@ const secondRunningSession: Session = {
   id: "session-2",
   name: "Claude",
   state: "running",
+  cwd: "/workspace/website",
+  agent: "claude",
+  agentStatus: "waiting",
+  agentTitle: "Needs approval",
   createdAt: "2026-07-28T00:01:00Z",
+};
+
+const thirdRunningSession: Session = {
+  id: "session-3",
+  name: "Terminal",
+  state: "running",
+  cwd: "/workspace/api",
+  agent: "codex",
+  agentStatus: "running",
+  agentTitle: "Fix API",
+  createdAt: "2026-07-28T00:02:00Z",
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -115,20 +134,18 @@ test("restores the selected session from the URL and follows browser navigation"
   expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Select Codex" }));
-  expect(new URLSearchParams(window.location.search).get("session")).toBe("session-1");
+  expect(new URLSearchParams(window.location.search).get("terminal")).toBe("session-1");
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
 
-  history.pushState(null, "", "/?session=session-2");
+  history.pushState(null, "", "/?terminal=session-2");
   fireEvent(window, new PopStateEvent("popstate"));
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
-test("creates a new terminal for a vertical split and stores both panes in the URL", async () => {
-  const fetchMock = vi.spyOn(globalThis, "fetch");
-  fetchMock
-    .mockImplementationOnce(() => jsonResponse([runningSession]))
-    .mockImplementationOnce(() => jsonResponse(secondRunningSession, 201));
-  const user = userEvent.setup();
+test("command-click selects multiple terminal panes and stores them in the URL", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
   render(
     <App
       initialToken="valid-token"
@@ -137,34 +154,45 @@ test("creates a new terminal for a vertical split and stores both panes in the U
   );
 
   await screen.findByLabelText("Codex terminal pane");
-  await user.click(screen.getByRole("button", { name: "Split vertically" }));
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), { metaKey: true });
 
   expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
-    "/api/sessions",
-    expect.objectContaining({
-      method: "POST",
-      body: JSON.stringify({ name: "Terminal" }),
-    }),
-  );
   const parameters = new URLSearchParams(window.location.search);
-  expect(parameters.get("session")).toBe("session-1");
-  expect(parameters.get("split")).toBe("session-2");
+  expect(parameters.getAll("terminal")).toEqual(["session-1", "session-2"]);
   expect(parameters.get("focus")).toBe("session-2");
 
   fireEvent.mouseDown(screen.getByLabelText("Codex pane"));
   expect(screen.getByLabelText("Codex pane")).toHaveAttribute("data-active", "true");
   expect(new URLSearchParams(window.location.search).get("focus")).toBe("session-1");
 
-  history.pushState(null, "", "/?session=session-1&split=session-2&focus=session-2");
+  history.pushState(null, "", "/?terminal=session-1&terminal=session-2&focus=session-2");
   fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => {
     expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
   });
+});
 
-  await user.click(screen.getByRole("button", { name: "Close split" }));
-  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
-  expect(new URLSearchParams(window.location.search).has("split")).toBe(false);
+test("a checked activity group automatically adds newly matching terminal panes", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession, secondRunningSession]))
+    .mockImplementation(() =>
+      jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+    );
+  render(
+    <App
+      initialToken="valid-token"
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  await vi.advanceTimersByTimeAsync(1500);
+
+  expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
+  expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["running"]);
+  vi.useRealTimers();
 });

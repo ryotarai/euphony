@@ -4,6 +4,10 @@ export interface Session {
   id: string;
   name: string;
   state: SessionState;
+  cwd: string;
+  agent?: string;
+  agentStatus?: string;
+  agentTitle?: string;
   createdAt: string;
   exitedAt?: string;
   exitCode?: number;
@@ -14,4 +18,3 @@ export interface ApiErrorBody {
   code: string;
   message: string;
 }
-

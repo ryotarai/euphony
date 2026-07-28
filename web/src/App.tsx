@@ -5,9 +5,6 @@ import { TerminalView } from "./components/TerminalView";
 import type { Session } from "./types";
 
 const tokenKey = "euphony.token";
-type PaneIndex = 0 | 1;
-type PaneIDs = [string | null, string | null];
-
 interface AppProps {
   initialToken?: string;
   renderTerminal?: (session: Session, api: ApiClient) => ReactNode;
@@ -29,32 +26,41 @@ function resolveInitialToken(explicitToken?: string): string {
   return sessionStorage.getItem(tokenKey) ?? "";
 }
 
-function workspaceFromURL(sessions: Session[]): { paneIDs: PaneIDs; activePane: PaneIndex } {
+function workspaceFromURL(sessions: Session[]): {
+  selectedIDs: string[];
+  focusedID: string | null;
+  statusFilters: string[];
+} {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
-  const primary = parameters.get("session");
-  const primaryID = primary && available.has(primary) ? primary : sessions[0]?.id ?? null;
-  const split = parameters.get("split");
-  const splitID = split && split !== primaryID && available.has(split) ? split : null;
+  let selectedIDs = parameters.getAll("terminal").filter((id) => available.has(id));
+  if (selectedIDs.length === 0) {
+    selectedIDs = [parameters.get("session"), parameters.get("split")]
+      .filter((id): id is string => Boolean(id && available.has(id)));
+  }
+  if (selectedIDs.length === 0 && sessions[0]) selectedIDs = [sessions[0].id];
   const focus = parameters.get("focus");
   return {
-    paneIDs: [primaryID, splitID],
-    activePane: focus && focus === splitID ? 1 : 0,
+    selectedIDs,
+    focusedID: focus && selectedIDs.includes(focus) ? focus : selectedIDs[0] ?? null,
+    statusFilters: parameters.getAll("status"),
   };
 }
 
 function writeWorkspaceToURL(
-  [primaryID, splitID]: PaneIDs,
-  activePane: PaneIndex,
+  selectedIDs: string[],
+  focusedID: string | null,
+  statusFilters: string[],
   mode: "push" | "replace" = "push",
 ) {
   const parameters = new URLSearchParams(window.location.search);
-  if (primaryID) parameters.set("session", primaryID);
-  else parameters.delete("session");
-  if (splitID) parameters.set("split", splitID);
-  else parameters.delete("split");
-  const focusID = activePane === 1 ? splitID : primaryID;
-  if (focusID) parameters.set("focus", focusID);
+  parameters.delete("session");
+  parameters.delete("split");
+  parameters.delete("terminal");
+  parameters.delete("status");
+  selectedIDs.forEach((id) => parameters.append("terminal", id));
+  statusFilters.forEach((status) => parameters.append("status", status));
+  if (focusedID) parameters.set("focus", focusedID);
   else parameters.delete("focus");
   const query = parameters.toString();
   const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
@@ -68,10 +74,10 @@ export function App({
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [paneIDs, setPaneIDs] = useState<PaneIDs>([null, null]);
-  const [activePane, setActivePane] = useState<PaneIndex>(0);
+  const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [focusedID, setFocusedID] = useState<string | null>(null);
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [authError, setAuthError] = useState(false);
-  const [splitting, setSplitting] = useState(false);
   const [requestError, setRequestError] = useState("");
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
 
@@ -87,9 +93,15 @@ export function App({
         if (!active) return;
         setSessions(items);
         const workspace = workspaceFromURL(items);
-        setPaneIDs(workspace.paneIDs);
-        setActivePane(workspace.activePane);
-        writeWorkspaceToURL(workspace.paneIDs, workspace.activePane, "replace");
+        setSelectedIDs(workspace.selectedIDs);
+        setFocusedID(workspace.focusedID);
+        setStatusFilters(workspace.statusFilters);
+        writeWorkspaceToURL(
+          workspace.selectedIDs,
+          workspace.focusedID,
+          workspace.statusFilters,
+          "replace",
+        );
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -107,57 +119,72 @@ export function App({
   }, [api]);
 
   useEffect(() => {
+    if (!api || !sessions) return;
+    const timer = window.setInterval(() => {
+      api.listSessions().then(setSessions).catch(() => undefined);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [api, sessions !== null]);
+
+  useEffect(() => {
+    if (!sessions || statusFilters.length === 0) return;
+    const matches = sessions
+      .filter((session) => statusFilters.includes(session.agentStatus || session.state))
+      .map((session) => session.id);
+    const next = [...new Set([...selectedIDs, ...matches])];
+    if (next.length !== selectedIDs.length) {
+      setSelectedIDs(next);
+      const nextFocus = focusedID ?? next[0] ?? null;
+      setFocusedID(nextFocus);
+      writeWorkspaceToURL(next, nextFocus, statusFilters, "replace");
+    }
+  }, [sessions, statusFilters, selectedIDs, focusedID]);
+
+  useEffect(() => {
     if (!sessions) return;
     const restore = () => {
       const workspace = workspaceFromURL(sessions);
-      setPaneIDs(workspace.paneIDs);
-      setActivePane(workspace.activePane);
+      setSelectedIDs(workspace.selectedIDs);
+      setFocusedID(workspace.focusedID);
+      setStatusFilters(workspace.statusFilters);
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, [sessions]);
 
-  function selectSession(id: string) {
-    const existingPane = paneIDs[0] === id ? 0 : paneIDs[1] === id ? 1 : null;
-    if (existingPane !== null) {
-      setActivePane(existingPane);
-      writeWorkspaceToURL(paneIDs, existingPane);
-      return;
+  function selectSession(id: string, multiple: boolean) {
+    let nextIDs: string[];
+    if (!multiple) {
+      nextIDs = [id];
+      setStatusFilters([]);
+    } else if (selectedIDs.includes(id)) {
+      nextIDs = selectedIDs.length === 1 ? selectedIDs : selectedIDs.filter((item) => item !== id);
+    } else {
+      nextIDs = [...selectedIDs, id];
     }
-    const nextPanes: PaneIDs = [...paneIDs];
-    nextPanes[activePane] = id;
-    setPaneIDs(nextPanes);
-    writeWorkspaceToURL(nextPanes, activePane);
+    const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+    setSelectedIDs(nextIDs);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(nextIDs, nextFocus, multiple ? statusFilters : []);
   }
 
-  function focusPane(index: PaneIndex) {
-    setActivePane(index);
-    writeWorkspaceToURL(paneIDs, index);
+  function updateStatusFilter(status: string, checked: boolean) {
+    const nextFilters = checked
+      ? [...statusFilters, status]
+      : statusFilters.filter((item) => item !== status);
+    const matching = sessions
+      ?.filter((session) => nextFilters.includes(session.agentStatus || session.state))
+      .map((session) => session.id) ?? [];
+    const nextIDs = checked ? [...new Set([...selectedIDs, ...matching])] : selectedIDs;
+    const nextFocus = focusedID ?? nextIDs[0] ?? null;
+    setStatusFilters(nextFilters);
+    setSelectedIDs(nextIDs);
+    writeWorkspaceToURL(nextIDs, nextFocus, nextFilters);
   }
 
-  async function splitVertically() {
-    if (!api || paneIDs[1] || splitting) return;
-    setSplitting(true);
-    try {
-      const created = await api.createSession("Terminal");
-      setSessions((current) => [...(current ?? []), created]);
-      const nextPanes: PaneIDs = [paneIDs[0], created.id];
-      setPaneIDs(nextPanes);
-      setActivePane(1);
-      writeWorkspaceToURL(nextPanes, 1);
-      setRequestError("");
-    } catch (error) {
-      setRequestError(error instanceof Error ? error.message : "The split terminal could not start.");
-    } finally {
-      setSplitting(false);
-    }
-  }
-
-  function closeSplit() {
-    const nextPanes: PaneIDs = [paneIDs[0], null];
-    setPaneIDs(nextPanes);
-    setActivePane(0);
-    writeWorkspaceToURL(nextPanes, 0);
+  function focusPane(id: string) {
+    setFocusedID(id);
+    writeWorkspaceToURL(selectedIDs, id, statusFilters);
   }
 
   function authenticate(event: FormEvent) {
@@ -174,10 +201,10 @@ export function App({
     try {
       const created = await api.createSession("Terminal");
       setSessions((current) => [...(current ?? []), created]);
-      const nextPanes: PaneIDs = [...paneIDs];
-      nextPanes[activePane] = created.id;
-      setPaneIDs(nextPanes);
-      writeWorkspaceToURL(nextPanes, activePane);
+      setSelectedIDs([created.id]);
+      setFocusedID(created.id);
+      setStatusFilters([]);
+      writeWorkspaceToURL([created.id], created.id, []);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -190,16 +217,12 @@ export function App({
       await api.deleteSession(item.id);
       const remaining = sessions?.filter((candidate) => candidate.id !== item.id) ?? [];
       setSessions(remaining);
-      let nextPanes: PaneIDs = [
-        paneIDs[0] === item.id ? null : paneIDs[0],
-        paneIDs[1] === item.id ? null : paneIDs[1],
-      ];
-      if (!nextPanes[0] && nextPanes[1]) nextPanes = [nextPanes[1], null];
-      if (!nextPanes[0]) nextPanes = [remaining[0]?.id ?? null, null];
-      setPaneIDs(nextPanes);
-      const nextActivePane = nextPanes[1] && activePane === 1 ? 1 : 0;
-      setActivePane(nextActivePane);
-      writeWorkspaceToURL(nextPanes, nextActivePane);
+      let nextIDs = selectedIDs.filter((id) => id !== item.id);
+      if (nextIDs.length === 0 && remaining[0]) nextIDs = [remaining[0].id];
+      const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;
+      setSelectedIDs(nextIDs);
+      setFocusedID(nextFocus);
+      writeWorkspaceToURL(nextIDs, nextFocus, statusFilters);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
@@ -232,60 +255,40 @@ export function App({
     return <main className="loading-screen">Connecting to Euphony…</main>;
   }
 
-  const panes = paneIDs.map((id) => sessions.find((item) => item.id === id) ?? null) as [
-    Session | null,
-    Session | null,
-  ];
-  const selected = panes[activePane] ?? panes[0];
+  const panes = selectedIDs
+    .map((id) => sessions.find((item) => item.id === id))
+    .filter((item): item is Session => Boolean(item));
+  const selected = sessions.find((item) => item.id === focusedID) ?? panes[0];
 
   return (
     <main className="workspace">
       <SessionNavigation
         sessions={sessions}
-        selectedID={selected?.id ?? null}
+        selectedIDs={selectedIDs}
+        statusFilters={statusFilters}
         onSelect={selectSession}
+        onStatusFilter={updateStatusFilter}
         onCreate={() => void createSession()}
         onDelete={(item) => void deleteSession(item)}
       />
-      <section className="terminal-stage" data-split={Boolean(panes[1])}>
+      <section
+        className="terminal-stage"
+        data-multiple={panes.length > 1}
+        style={{ gridTemplateColumns: `repeat(${Math.max(panes.length, 1)}, minmax(0, 1fr))` }}
+      >
         {requestError && <p role="alert">{requestError}</p>}
-        {panes[0] && api ? (
-          <>
-            <div
-              className="terminal-pane"
-              data-active={activePane === 0}
-              aria-label={`${panes[0].name} pane`}
-              onMouseDown={() => focusPane(0)}
-            >
-              {renderTerminal(panes[0], api)}
-            </div>
-            {panes[1] && (
+        {panes.length > 0 && api ? (
+          panes.map((pane) => (
               <div
+                key={pane.id}
                 className="terminal-pane"
-                data-active={activePane === 1}
-                aria-label={`${panes[1].name} pane`}
-                onMouseDown={() => focusPane(1)}
+                data-active={focusedID === pane.id}
+                aria-label={`${pane.name} pane`}
+                onMouseDown={() => focusPane(pane.id)}
               >
-                {renderTerminal(panes[1], api)}
+                {renderTerminal(pane, api)}
               </div>
-            )}
-            <div className="pane-controls">
-              {panes[1] ? (
-                <button aria-label="Close split" title="Close split" onClick={closeSplit}>
-                  ×
-                </button>
-              ) : (
-                <button
-                  aria-label="Split vertically"
-                  title="Split vertically"
-                  disabled={splitting}
-                  onClick={() => void splitVertically()}
-                >
-                  ◫
-                </button>
-              )}
-            </div>
-          </>
+          ))
         ) : (
           <div className="empty-state">
             <p>No signal yet.</p>

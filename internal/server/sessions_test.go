@@ -63,6 +63,33 @@ func TestCreateSessionValidatesRequest(t *testing.T) {
 	}
 }
 
+func TestTerminalHookUpdatesSessionMetadata(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+
+	hook := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":"`+metadata.ID+`","agent":"claude","status":"waiting","title":"Review changes","cwd":"/repo"}`)
+	if hook.Code != http.StatusOK {
+		t.Fatalf("POST hook status = %d, body = %s", hook.Code, hook.Body.String())
+	}
+
+	listed := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	var sessions []session.Metadata
+	decodeResponse(t, listed, &sessions)
+	if len(sessions) != 1 || sessions[0].Agent != "claude" ||
+		sessions[0].AgentStatus != "waiting" || sessions[0].AgentTitle != "Review changes" ||
+		sessions[0].CWD != "/repo" {
+		t.Fatalf("sessions after hook = %#v", sessions)
+	}
+}
+
 func performRequest(t *testing.T, srv *Server, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))

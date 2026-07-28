@@ -8,6 +8,7 @@ const runningSession: Session = {
   id: "session-1",
   name: "Codex",
   state: "running",
+  cwd: "/workspace/euphony",
   createdAt: "2026-07-28T00:00:00Z",
 };
 

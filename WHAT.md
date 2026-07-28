@@ -24,4 +24,3 @@ terminal-based agents such as Claude Code CLI and Codex.
 - Ship a Go API and a TypeScript/React frontend embedded in the Go binary.
 
 The product will grow incrementally; v0.1 intentionally keeps the scope small.
-

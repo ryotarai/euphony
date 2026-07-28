@@ -1,8 +1,8 @@
 # Euphony
 
-Euphony is a browser workspace for terminal-based coding agents. The v0.1
-release runs real local PTY sessions, streams them over authenticated
-WebSockets, and provides desktop and mobile session navigation.
+Euphony is a browser workspace for terminal-based coding agents. It runs real
+local PTY sessions, streams them over authenticated WebSockets, and provides
+desktop and mobile terminal navigation.
 
 ## Requirements
 
@@ -70,15 +70,35 @@ make dev
 
 Vite proxies `/api` requests and WebSockets to the configured API URL.
 
+## Agent hooks
+
+Every Euphony terminal receives these environment variables:
+
+- `EUPHONY_TERMINAL_ID`: the terminal associated with the agent process
+- `EUPHONY_HOOK_URL`: the endpoint that accepts agent activity
+- `EUPHONY_TOKEN`: the bearer token for that endpoint
+
+Codex, Claude Code, or a wrapper script can report hook events with:
+
+```sh
+curl --fail --silent \
+  -H "Authorization: Bearer $EUPHONY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"terminalId\":\"$EUPHONY_TERMINAL_ID\",\"agent\":\"codex\",\"status\":\"running\",\"title\":\"Implement terminal groups\",\"cwd\":\"$PWD\"}" \
+  "$EUPHONY_HOOK_URL"
+```
+
+Use the agent's start, stop, notification, and session-title hooks to send the
+corresponding status and title. The sidebar refreshes activity automatically.
+
 Run all automated checks with:
 
 ```sh
 make test
 ```
 
-## v0.1 boundaries
+## Current boundaries
 
 Sessions live in server memory and do not survive a server restart. Browser
-disconnects do not terminate their PTY processes. Split panes, multi-user
-accounts, file management, and terminal-output replay are intentionally
-outside the v0.1 scope.
+disconnects do not terminate their PTY processes. Multi-user accounts and file
+management are not implemented.

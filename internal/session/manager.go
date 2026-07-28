@@ -18,13 +18,29 @@ import (
 var ErrNotFound = errors.New("session not found")
 
 type Metadata struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	State     State      `json:"state"`
-	CreatedAt time.Time  `json:"createdAt"`
-	ExitedAt  *time.Time `json:"exitedAt,omitempty"`
-	ExitCode  *int       `json:"exitCode,omitempty"`
-	Message   string     `json:"message,omitempty"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	State       State      `json:"state"`
+	CWD         string     `json:"cwd"`
+	Agent       string     `json:"agent,omitempty"`
+	AgentStatus string     `json:"agentStatus,omitempty"`
+	AgentTitle  string     `json:"agentTitle,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	ExitedAt    *time.Time `json:"exitedAt,omitempty"`
+	ExitCode    *int       `json:"exitCode,omitempty"`
+	Message     string     `json:"message,omitempty"`
+}
+
+type HookConfig struct {
+	URL   string
+	Token string
+}
+
+type AgentUpdate struct {
+	Agent  string
+	Status string
+	Title  string
+	CWD    string
 }
 
 type entry struct {
@@ -35,17 +51,22 @@ type entry struct {
 type Manager struct {
 	mu       sync.RWMutex
 	shell    string
+	hooks    HookConfig
 	sessions map[string]*entry
 }
 
-func NewManager(shell string) *Manager {
+func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	if shell == "" {
 		shell = os.Getenv("SHELL")
 	}
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	return &Manager{shell: shell, sessions: make(map[string]*entry)}
+	var hooks HookConfig
+	if len(hookConfigs) > 0 {
+		hooks = hookConfigs[0]
+	}
+	return &Manager{shell: shell, hooks: hooks, sessions: make(map[string]*entry)}
 }
 
 func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
@@ -61,8 +82,18 @@ func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return Metadata{}, err
+	}
 	command := exec.Command(m.shell)
-	command.Env = append(os.Environ(), "TERM=xterm-256color")
+	command.Dir = cwd
+	command.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"EUPHONY_TERMINAL_ID="+id,
+		"EUPHONY_HOOK_URL="+m.hooks.URL,
+		"EUPHONY_TOKEN="+m.hooks.Token,
+	)
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: 80, Rows: 24})
 	if err != nil {
 		return Metadata{}, err
@@ -73,6 +104,7 @@ func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
 			ID:        id,
 			Name:      name,
 			State:     StateRunning,
+			CWD:       cwd,
 			CreatedAt: time.Now().UTC(),
 		},
 		session: &Session{
@@ -90,6 +122,22 @@ func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
 
 	go item.session.pump()
 	go m.watch(item)
+	return item.metadata, nil
+}
+
+func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.sessions[id]
+	if !ok {
+		return Metadata{}, ErrNotFound
+	}
+	item.metadata.Agent = strings.TrimSpace(update.Agent)
+	item.metadata.AgentStatus = strings.TrimSpace(update.Status)
+	item.metadata.AgentTitle = strings.TrimSpace(update.Title)
+	if cwd := strings.TrimSpace(update.CWD); cwd != "" {
+		item.metadata.CWD = cwd
+	}
 	return item.metadata, nil
 }
 

@@ -3,44 +3,77 @@ import type { Session } from "../types";
 
 interface SessionNavigationProps {
   sessions: Session[];
-  selectedID: string | null;
-  onSelect(id: string): void;
+  selectedIDs: string[];
+  statusFilters: string[];
+  onSelect(id: string, multiple: boolean): void;
+  onStatusFilter(status: string, checked: boolean): void;
   onCreate(): void;
   onDelete(session: Session): void;
 }
 
+function activity(session: Session) {
+  return session.agentStatus || session.state;
+}
+
+function statusLabel(status: string) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 function SessionList({
   sessions,
-  selectedID,
+  selectedIDs,
+  statusFilters,
   onSelect,
+  onStatusFilter,
   onCreate,
   onDelete,
 }: SessionNavigationProps) {
+  const groups = [...new Set(sessions.map(activity))];
   return (
     <>
       <div className="session-list">
-        {sessions.map((session) => (
-          <div className="session-channel" key={session.id} data-state={session.state}>
-            <span className="channel-signal" aria-hidden="true" />
-            <button
-              className="session-select"
-              aria-label={`Select ${session.name}`}
-              aria-current={selectedID === session.id ? "true" : undefined}
-              title={session.name}
-              onClick={() => onSelect(session.id)}
-            >
-              <span className="session-monogram">{session.name.slice(0, 2).toUpperCase()}</span>
-              <span className="session-full-name">{session.name}</span>
-            </button>
-            <button
-              className="session-delete"
-              aria-label={`Delete ${session.name}`}
-              title={`Delete ${session.name}`}
-              onClick={() => onDelete(session)}
-            >
-              ×
-            </button>
-          </div>
+        {groups.map((status) => (
+          <section className="session-group" key={status}>
+            <label className="status-heading">
+              <input
+                type="checkbox"
+                aria-label={`Show all ${statusLabel(status)} terminals`}
+                checked={statusFilters.includes(status)}
+                onChange={(event) => onStatusFilter(status, event.target.checked)}
+              />
+              <h2>{statusLabel(status)}</h2>
+              <span>{sessions.filter((session) => activity(session) === status).length}</span>
+            </label>
+            {sessions.filter((session) => activity(session) === status).map((session) => (
+              <div className="session-channel" key={session.id} data-state={activity(session)}>
+                <span className="channel-signal" aria-hidden="true" />
+                <button
+                  className="session-select"
+                  aria-label={`Select ${session.name}`}
+                  aria-pressed={selectedIDs.includes(session.id)}
+                  aria-current={selectedIDs.includes(session.id) ? "true" : undefined}
+                  title={session.cwd}
+                  onClick={(event) => onSelect(session.id, event.metaKey || event.ctrlKey)}
+                >
+                  <span className="terminal-identity">
+                    <span className="session-full-name">
+                      {session.agent ? session.agent : session.name}
+                    </span>
+                    <span className="session-cwd">{session.cwd}</span>
+                  </span>
+                  {session.agentTitle && <span className="agent-title">{session.agentTitle}</span>}
+                </button>
+                <button
+                  className="session-delete"
+                  aria-label={`Delete ${session.name}`}
+                  title={`Delete ${session.name}`}
+                  onClick={() => onDelete(session)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </section>
         ))}
       </div>
       <button className="create-channel" onClick={onCreate}>
@@ -55,7 +88,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const selected = props.sessions.find((session) => session.id === props.selectedID);
+  const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -86,7 +119,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
   }, [drawerOpen]);
 
   const mobileSelect = (id: string) => {
-    props.onSelect(id);
+    props.onSelect(id, false);
     setDrawerOpen(false);
     queueMicrotask(() => menuButtonRef.current?.focus());
   };
@@ -129,11 +162,10 @@ export function SessionNavigation(props: SessionNavigationProps) {
                 ×
               </button>
             </div>
-            <SessionList {...props} onSelect={mobileSelect} />
+            <SessionList {...props} onSelect={(id) => mobileSelect(id)} />
           </div>
         </div>
       )}
     </>
   );
 }
-

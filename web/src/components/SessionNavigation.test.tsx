@@ -8,12 +8,17 @@ const sessions: Session[] = [
     id: "one",
     name: "Codex",
     state: "running",
+    cwd: "/workspace/euphony",
+    agent: "codex",
+    agentStatus: "running",
+    agentTitle: "Implement v0.2",
     createdAt: "2026-07-28T00:00:00Z",
   },
   {
     id: "two",
     name: "Claude",
     state: "exited",
+    cwd: "/workspace/website",
     createdAt: "2026-07-28T00:01:00Z",
     exitCode: 0,
   },
@@ -24,8 +29,10 @@ test("opens and closes the mobile drawer with keyboard focus restoration", async
   render(
     <SessionNavigation
       sessions={sessions}
-      selectedID="one"
+      selectedIDs={["one"]}
+      statusFilters={[]}
       onSelect={() => undefined}
+      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -46,8 +53,10 @@ test("selecting a mobile session closes the drawer", async () => {
   render(
     <SessionNavigation
       sessions={sessions}
-      selectedID="one"
+      selectedIDs={["one"]}
+      statusFilters={[]}
       onSelect={onSelect}
+      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -57,6 +66,30 @@ test("selecting a mobile session closes the drawer", async () => {
   const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
   await user.click(within(drawer).getByRole("button", { name: "Select Claude" }));
 
-  expect(onSelect).toHaveBeenCalledWith("two");
+  expect(onSelect).toHaveBeenCalledWith("two", false);
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
+});
+
+test("groups terminals by activity and exposes cwd, agent title, and status filters", async () => {
+  const onStatusFilter = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={onStatusFilter}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: "Running" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Exited" })).toBeVisible();
+  expect(screen.getByText("/workspace/euphony")).toBeVisible();
+  expect(screen.getByText("Implement v0.2")).toBeVisible();
+
+  await user.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  expect(onStatusFilter).toHaveBeenCalledWith("running", true);
 });

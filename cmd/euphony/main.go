@@ -20,18 +20,19 @@ func main() {
 }
 
 func run() error {
+	address := os.Getenv("EUPHONY_ADDR")
+	if address == "" {
+		address = "127.0.0.1:8080"
+	}
 	srv, err := server.New(server.Config{
-		Token: os.Getenv("EUPHONY_TOKEN"),
-		Shell: os.Getenv("SHELL"),
+		Token:   os.Getenv("EUPHONY_TOKEN"),
+		Shell:   os.Getenv("SHELL"),
+		HookURL: "http://" + address + "/api/hooks/terminal",
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	address := os.Getenv("EUPHONY_ADDR")
-	if address == "" {
-		address = "127.0.0.1:8080"
-	}
 	log.Printf("Euphony listening on http://%s", address)
 	httpServer := &http.Server{
 		Addr:              address,

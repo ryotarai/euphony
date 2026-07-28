@@ -129,37 +129,36 @@ test("keeps the selected terminal in the URL across navigation and reload", asyn
   await page.goto("/?token=test-token");
   await expect(page.getByLabel("First terminal")).toBeVisible();
   await page.getByRole("button", { name: "Select Second" }).click();
-  await expect(page).toHaveURL(new RegExp(`session=${second.id}`));
+  await expect(page).toHaveURL(new RegExp(`terminal=${second.id}`));
   await expect(page.getByLabel("Second terminal")).toBeVisible();
 
   await page.reload();
   await expect(page.getByLabel("Second terminal")).toBeVisible();
   await page.getByRole("button", { name: "Select First" }).click();
-  await expect(page).toHaveURL(new RegExp(`session=${first.id}`));
+  await expect(page).toHaveURL(new RegExp(`terminal=${first.id}`));
   await page.goBack();
   await expect(page.getByLabel("Second terminal")).toBeVisible();
 });
 
-test("shows a vertical split and keeps one active pane on mobile", async ({ page }) => {
+test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "Left");
+  const second = await createSession(page, "Right");
 
   await page.goto("/?token=test-token");
-  await page.getByRole("button", { name: "Split vertically" }).click();
+  await page.getByRole("button", { name: "Select Right" }).click({ modifiers: ["Meta"] });
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await expect(page.getByLabel("Left terminal")).toBeVisible();
-  await expect(page.getByLabel("Terminal terminal")).toBeVisible();
-  const splitState = await page.evaluate(() => {
+  await expect(page.getByLabel("Right terminal")).toBeVisible();
+  const paneState = await page.evaluate(() => {
     const parameters = new URLSearchParams(window.location.search);
     return {
-      session: parameters.get("session"),
-      split: parameters.get("split"),
+      terminals: parameters.getAll("terminal"),
       focus: parameters.get("focus"),
     };
   });
-  expect(splitState.session).toBe(first.id);
-  expect(splitState.split).toBeTruthy();
-  expect(splitState.focus).toBe(splitState.split);
+  expect(paneState.terminals).toEqual([first.id, second.id]);
+  expect(paneState.focus).toBe(second.id);
 
   await page.getByLabel("Left pane").click();
   await expect(page).toHaveURL(new RegExp(`focus=${first.id}`));
