@@ -1,0 +1,118 @@
+:root {
+  color: #dce5e8;
+  background: #111417;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.auth-shell,
+.loading-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+}
+
+.auth-panel {
+  width: min(28rem, calc(100% - 2rem));
+  display: grid;
+  gap: 1rem;
+}
+
+.auth-panel h1 {
+  margin: 0;
+  font-size: clamp(3rem, 12vw, 6rem);
+  letter-spacing: -0.08em;
+}
+
+.eyebrow {
+  color: #b8f34a;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+input {
+  color: #dce5e8;
+  background: #1b2026;
+  border: 1px solid #829099;
+  padding: 0.8rem;
+}
+
+button {
+  color: #111417;
+  background: #b8f34a;
+  border: 0;
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid #b8f34a;
+  outline-offset: 3px;
+}
+
+.field-error,
+[role="alert"] {
+  color: #ff6b5f;
+}
+
+.workspace {
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  overflow: hidden;
+}
+
+.workspace nav {
+  background: #1b2026;
+  padding: 1rem 0.6rem;
+}
+
+.terminal-stage {
+  min-width: 0;
+  display: grid;
+  place-items: center;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(5 7 9 / 75%);
+}
+
+.create-dialog {
+  width: min(24rem, calc(100% - 2rem));
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: #1b2026;
+}
+
+@media (max-width: 700px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace nav {
+    display: none;
+  }
+}
+
