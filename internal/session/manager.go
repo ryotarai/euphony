@@ -35,8 +35,9 @@ type Metadata struct {
 }
 
 type HookConfig struct {
-	URL   string
-	Token string
+	URL               string
+	Token             string
+	CodexSessionIndex string
 }
 
 type AgentUpdate struct {
@@ -254,6 +255,7 @@ func (m *Manager) watch(item *entry) {
 }
 
 func (m *Manager) List() []Metadata {
+	m.refreshCodexTitles()
 	m.mu.RLock()
 	result := make([]Metadata, 0, len(m.sessions))
 	for _, item := range m.sessions {
@@ -264,6 +266,31 @@ func (m *Manager) List() []Metadata {
 		return result[i].CreatedAt.Before(result[j].CreatedAt)
 	})
 	return result
+}
+
+func (m *Manager) refreshCodexTitles() {
+	if m.hooks.CodexSessionIndex == "" {
+		return
+	}
+	titles, err := loadCodexSessionTitles(m.hooks.CodexSessionIndex)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, item := range m.sessions {
+		if item.metadata.Agent != "codex" || item.metadata.AgentSessionID == "" {
+			continue
+		}
+		title := titles[item.metadata.AgentSessionID]
+		if title == "" || title == item.metadata.AgentTitle {
+			continue
+		}
+		item.metadata.AgentTitle = title
+		if m.store != nil {
+			_ = m.store.Save(context.Background(), item.metadata)
+		}
+	}
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {

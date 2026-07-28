@@ -128,6 +128,28 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	}
 }
 
+func TestListRefreshesCodexTitleFromSessionIndex(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "session_index.jsonl")
+	if err := os.WriteFile(indexPath, []byte(
+		"{\"id\":\"codex-session\",\"thread_name\":\"Old title\"}\n"+
+			"{\"id\":\"codex-session\",\"thread_name\":\"hello\"}\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	manager := NewManager("/bin/sh", HookConfig{CodexSessionIndex: indexPath})
+	manager.sessions["terminal-1"] = &entry{metadata: Metadata{
+		ID: "terminal-1", Name: "Terminal", State: StateRunning,
+		Agent: "codex", AgentSessionID: "codex-session",
+		AgentTitle: "Old title", CreatedAt: time.Now().UTC(),
+	}}
+
+	items := manager.List()
+
+	if len(items) != 1 || items[0].AgentTitle != "hello" {
+		t.Fatalf("List() = %#v, want refreshed Codex title", items)
+	}
+}
+
 func TestRestoredCommandResumesKnownAgents(t *testing.T) {
 	tests := []struct {
 		agent string

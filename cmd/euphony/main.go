@@ -88,18 +88,27 @@ func runServer() error {
 		address = "127.0.0.1:8080"
 	}
 	databasePath := os.Getenv("EUPHONY_DB")
-	if databasePath == "" {
-		home, err := os.UserHomeDir()
+	codexDirectory := os.Getenv("CODEX_HOME")
+	var home string
+	if databasePath == "" || codexDirectory == "" {
+		var err error
+		home, err = os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("resolve database path: %w", err)
+			return fmt.Errorf("resolve home directory: %w", err)
 		}
+	}
+	if databasePath == "" {
 		databasePath = filepath.Join(home, ".local", "euphony", "euphony.sqlite3")
 	}
+	if codexDirectory == "" {
+		codexDirectory = filepath.Join(home, ".codex")
+	}
 	srv, err := server.New(server.Config{
-		Token:        os.Getenv("EUPHONY_TOKEN"),
-		Shell:        os.Getenv("SHELL"),
-		HookURL:      "http://" + address + "/api/hooks/terminal",
-		DatabasePath: databasePath,
+		Token:             os.Getenv("EUPHONY_TOKEN"),
+		Shell:             os.Getenv("SHELL"),
+		HookURL:           "http://" + address + "/api/hooks/terminal",
+		DatabasePath:      databasePath,
+		CodexSessionIndex: filepath.Join(codexDirectory, "session_index.jsonl"),
 	})
 	if err != nil {
 		log.Fatal(err)

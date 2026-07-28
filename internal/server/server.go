@@ -12,11 +12,12 @@ import (
 )
 
 type Config struct {
-	Token        string
-	Shell        string
-	HookURL      string
-	DatabasePath string
-	Assets       fs.FS
+	Token             string
+	Shell             string
+	HookURL           string
+	DatabasePath      string
+	CodexSessionIndex string
+	Assets            fs.FS
 }
 
 type Server struct {
@@ -31,8 +32,9 @@ func New(config Config) (*Server, error) {
 	}
 
 	hooks := session.HookConfig{
-		URL:   config.HookURL,
-		Token: config.Token,
+		URL:               config.HookURL,
+		Token:             config.Token,
+		CodexSessionIndex: config.CodexSessionIndex,
 	}
 	var sessionManager *session.Manager
 	var err error
