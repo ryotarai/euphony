@@ -1,14 +1,20 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { ApiClient, ApiError } from "./api";
+import { SessionNavigation } from "./components/SessionNavigation";
+import { TerminalView } from "./components/TerminalView";
 import type { Session } from "./types";
 
 const tokenKey = "euphony.token";
 
 interface AppProps {
   initialToken?: string;
+  renderTerminal?: (session: Session, api: ApiClient) => ReactNode;
 }
 
-export function App({ initialToken }: AppProps) {
+export function App({
+  initialToken,
+  renderTerminal = (session, api) => <TerminalView key={session.id} session={session} api={api} />,
+}: AppProps) {
   const [token, setToken] = useState(() => initialToken ?? sessionStorage.getItem(tokenKey) ?? "");
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
@@ -112,32 +118,17 @@ export function App({ initialToken }: AppProps) {
 
   return (
     <main className="workspace">
-      <nav aria-label="Terminal sessions">
-        <strong>Euphony</strong>
-        <div>
-          {sessions.map((item) => (
-            <div key={item.id}>
-              <button
-                aria-label={`Select ${item.name}`}
-                aria-current={selected?.id === item.id ? "true" : undefined}
-                onClick={() => setSelectedID(item.id)}
-              >
-                {item.name.slice(0, 2).toUpperCase()}
-              </button>
-              <button aria-label={`Delete ${item.name}`} onClick={() => void deleteSession(item)}>
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-        <button aria-label="Create terminal" onClick={() => setShowCreate(true)}>
-          +
-        </button>
-      </nav>
+      <SessionNavigation
+        sessions={sessions}
+        selectedID={selected?.id ?? null}
+        onSelect={setSelectedID}
+        onCreate={() => setShowCreate(true)}
+        onDelete={(item) => void deleteSession(item)}
+      />
       <section className="terminal-stage">
         {requestError && <p role="alert">{requestError}</p>}
-        {selected ? (
-          <div data-session-id={selected.id}>{selected.name}</div>
+        {selected && api ? (
+          renderTerminal(selected, api)
         ) : (
           <div className="empty-state">
             <p>No signal yet.</p>
@@ -169,4 +160,3 @@ export function App({ initialToken }: AppProps) {
     </main>
   );
 }
-

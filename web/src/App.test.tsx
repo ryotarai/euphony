@@ -53,7 +53,7 @@ test("creates, selects, and deletes a session", async () => {
     .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })));
 
   const user = userEvent.setup();
-  render(<App initialToken="valid-token" />);
+  render(<App initialToken="valid-token" renderTerminal={(session) => <div>{session.name}</div>} />);
 
   await user.click(await screen.findByRole("button", { name: "Start a terminal" }));
   const nameInput = screen.getByLabelText("Terminal name");
