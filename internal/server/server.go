@@ -3,15 +3,18 @@ package server
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"time"
 
 	"github.com/ryotarai/euphony/internal/session"
+	webassets "github.com/ryotarai/euphony/web"
 )
 
 type Config struct {
-	Token string
-	Shell string
+	Token  string
+	Shell  string
+	Assets fs.FS
 }
 
 type Server struct {
@@ -40,7 +43,24 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/sessions", server.createSession)
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
+	protected.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "api_not_found", "The API endpoint does not exist.")
+	})
 	public.Handle("/api/", bearerAuth(config.Token, protected))
+
+	assets := config.Assets
+	if assets == nil {
+		assets = webassets.Assets
+	}
+	static, err := newStaticHandler(assets)
+	if err != nil {
+		static = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write(webassets.FallbackHTML)
+		})
+	}
+	public.Handle("/", static)
 
 	server.handler = public
 	return server, nil

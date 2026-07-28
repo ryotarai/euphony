@@ -2,3 +2,6 @@
 /web/dist/
 /web/node_modules/
 /web/*.tsbuildinfo
+/bin/
+/web/test-results/
+/web/playwright-report/
