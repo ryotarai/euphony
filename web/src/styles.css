@@ -80,8 +80,7 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
-.auth-panel label,
-.create-dialog label {
+.auth-panel label {
   color: #829099;
   font-size: 0.78rem;
   letter-spacing: 0.08em;
@@ -99,7 +98,6 @@ input {
 }
 
 .auth-panel button,
-.create-dialog button:last-child,
 .empty-state button,
 .signal-status button {
   min-height: 44px;
@@ -385,7 +383,6 @@ input {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
-.dialog-backdrop,
 .drawer-layer {
   position: fixed;
   z-index: 20;
@@ -394,34 +391,6 @@ input {
   place-items: center;
   background: rgb(5 7 9 / 78%);
   backdrop-filter: blur(5px);
-}
-
-.create-dialog {
-  width: min(25rem, calc(100% - 2rem));
-  display: grid;
-  gap: 1rem;
-  padding: 1.5rem;
-  background: #1b2026;
-  border: 1px solid #394149;
-  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
-}
-
-.create-dialog h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.4rem;
-}
-
-.create-dialog > div {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.65rem;
-}
-
-.create-dialog button:first-child {
-  min-height: 44px;
-  color: #dce5e8;
-  background: transparent;
-  padding: 0.7rem 1rem;
 }
 
 .mobile-header,

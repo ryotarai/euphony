@@ -29,22 +29,33 @@ function resolveInitialToken(explicitToken?: string): string {
   return sessionStorage.getItem(tokenKey) ?? "";
 }
 
-function panesFromURL(sessions: Session[]): PaneIDs {
+function workspaceFromURL(sessions: Session[]): { paneIDs: PaneIDs; activePane: PaneIndex } {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
   const primary = parameters.get("session");
   const primaryID = primary && available.has(primary) ? primary : sessions[0]?.id ?? null;
   const split = parameters.get("split");
   const splitID = split && split !== primaryID && available.has(split) ? split : null;
-  return [primaryID, splitID];
+  const focus = parameters.get("focus");
+  return {
+    paneIDs: [primaryID, splitID],
+    activePane: focus && focus === splitID ? 1 : 0,
+  };
 }
 
-function writePanesToURL([primaryID, splitID]: PaneIDs, mode: "push" | "replace" = "push") {
+function writeWorkspaceToURL(
+  [primaryID, splitID]: PaneIDs,
+  activePane: PaneIndex,
+  mode: "push" | "replace" = "push",
+) {
   const parameters = new URLSearchParams(window.location.search);
   if (primaryID) parameters.set("session", primaryID);
   else parameters.delete("session");
   if (splitID) parameters.set("split", splitID);
   else parameters.delete("split");
+  const focusID = activePane === 1 ? splitID : primaryID;
+  if (focusID) parameters.set("focus", focusID);
+  else parameters.delete("focus");
   const query = parameters.toString();
   const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history[mode === "push" ? "pushState" : "replaceState"](window.history.state, "", url);
@@ -60,9 +71,7 @@ export function App({
   const [paneIDs, setPaneIDs] = useState<PaneIDs>([null, null]);
   const [activePane, setActivePane] = useState<PaneIndex>(0);
   const [authError, setAuthError] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
   const [splitting, setSplitting] = useState(false);
-  const [name, setName] = useState("Terminal");
   const [requestError, setRequestError] = useState("");
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
 
@@ -77,10 +86,10 @@ export function App({
       .then((items) => {
         if (!active) return;
         setSessions(items);
-        const nextPanes = panesFromURL(items);
-        setPaneIDs(nextPanes);
-        setActivePane(nextPanes[1] ? 1 : 0);
-        writePanesToURL(nextPanes, "replace");
+        const workspace = workspaceFromURL(items);
+        setPaneIDs(workspace.paneIDs);
+        setActivePane(workspace.activePane);
+        writeWorkspaceToURL(workspace.paneIDs, workspace.activePane, "replace");
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -100,9 +109,9 @@ export function App({
   useEffect(() => {
     if (!sessions) return;
     const restore = () => {
-      const nextPanes = panesFromURL(sessions);
-      setPaneIDs(nextPanes);
-      setActivePane((current) => (current === 1 && nextPanes[1] ? 1 : 0));
+      const workspace = workspaceFromURL(sessions);
+      setPaneIDs(workspace.paneIDs);
+      setActivePane(workspace.activePane);
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -112,12 +121,18 @@ export function App({
     const existingPane = paneIDs[0] === id ? 0 : paneIDs[1] === id ? 1 : null;
     if (existingPane !== null) {
       setActivePane(existingPane);
+      writeWorkspaceToURL(paneIDs, existingPane);
       return;
     }
     const nextPanes: PaneIDs = [...paneIDs];
     nextPanes[activePane] = id;
     setPaneIDs(nextPanes);
-    writePanesToURL(nextPanes);
+    writeWorkspaceToURL(nextPanes, activePane);
+  }
+
+  function focusPane(index: PaneIndex) {
+    setActivePane(index);
+    writeWorkspaceToURL(paneIDs, index);
   }
 
   async function splitVertically() {
@@ -129,7 +144,7 @@ export function App({
       const nextPanes: PaneIDs = [paneIDs[0], created.id];
       setPaneIDs(nextPanes);
       setActivePane(1);
-      writePanesToURL(nextPanes);
+      writeWorkspaceToURL(nextPanes, 1);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The split terminal could not start.");
@@ -142,7 +157,7 @@ export function App({
     const nextPanes: PaneIDs = [paneIDs[0], null];
     setPaneIDs(nextPanes);
     setActivePane(0);
-    writePanesToURL(nextPanes);
+    writeWorkspaceToURL(nextPanes, 0);
   }
 
   function authenticate(event: FormEvent) {
@@ -154,17 +169,15 @@ export function App({
     setToken(value);
   }
 
-  async function createSession(event: FormEvent) {
-    event.preventDefault();
+  async function createSession() {
     if (!api) return;
     try {
-      const created = await api.createSession(name.trim());
+      const created = await api.createSession("Terminal");
       setSessions((current) => [...(current ?? []), created]);
       const nextPanes: PaneIDs = [...paneIDs];
       nextPanes[activePane] = created.id;
       setPaneIDs(nextPanes);
-      writePanesToURL(nextPanes);
-      setShowCreate(false);
+      writeWorkspaceToURL(nextPanes, activePane);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -184,8 +197,9 @@ export function App({
       if (!nextPanes[0] && nextPanes[1]) nextPanes = [nextPanes[1], null];
       if (!nextPanes[0]) nextPanes = [remaining[0]?.id ?? null, null];
       setPaneIDs(nextPanes);
-      setActivePane(nextPanes[1] && activePane === 1 ? 1 : 0);
-      writePanesToURL(nextPanes);
+      const nextActivePane = nextPanes[1] && activePane === 1 ? 1 : 0;
+      setActivePane(nextActivePane);
+      writeWorkspaceToURL(nextPanes, nextActivePane);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
@@ -230,7 +244,7 @@ export function App({
         sessions={sessions}
         selectedID={selected?.id ?? null}
         onSelect={selectSession}
-        onCreate={() => setShowCreate(true)}
+        onCreate={() => void createSession()}
         onDelete={(item) => void deleteSession(item)}
       />
       <section className="terminal-stage" data-split={Boolean(panes[1])}>
@@ -241,7 +255,7 @@ export function App({
               className="terminal-pane"
               data-active={activePane === 0}
               aria-label={`${panes[0].name} pane`}
-              onMouseDown={() => setActivePane(0)}
+              onMouseDown={() => focusPane(0)}
             >
               {renderTerminal(panes[0], api)}
             </div>
@@ -250,7 +264,7 @@ export function App({
                 className="terminal-pane"
                 data-active={activePane === 1}
                 aria-label={`${panes[1].name} pane`}
-                onMouseDown={() => setActivePane(1)}
+                onMouseDown={() => focusPane(1)}
               >
                 {renderTerminal(panes[1], api)}
               </div>
@@ -275,31 +289,10 @@ export function App({
         ) : (
           <div className="empty-state">
             <p>No signal yet.</p>
-            <button onClick={() => setShowCreate(true)}>Start a terminal</button>
+            <button onClick={() => void createSession()}>Start a terminal</button>
           </div>
         )}
       </section>
-      {showCreate && (
-        <div className="dialog-backdrop">
-          <form className="create-dialog" onSubmit={createSession}>
-            <h2>Start a terminal</h2>
-            <label htmlFor="session-name">Terminal name</label>
-            <input
-              id="session-name"
-              value={name}
-              maxLength={80}
-              onChange={(event) => setName(event.target.value)}
-              autoFocus
-            />
-            <div>
-              <button type="button" onClick={() => setShowCreate(false)}>
-                Cancel
-              </button>
-              <button type="submit">Start terminal</button>
-            </div>
-          </form>
-        </div>
-      )}
     </main>
   );
 }

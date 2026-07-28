@@ -50,10 +50,8 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   await page.getByLabel("Access token").fill("test-token");
   await page.getByRole("button", { name: "Open Euphony" }).click();
   await page.getByRole("button", { name: "Start a terminal" }).click();
-  await page.getByLabel("Terminal name").fill("Browser check");
-  await page.getByRole("button", { name: "Start terminal" }).click();
 
-  const terminal = page.getByLabel("Browser check terminal");
+  const terminal = page.getByLabel("Terminal terminal");
   await expect(terminal).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
@@ -66,7 +64,7 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
         headers: { Authorization: "Bearer test-token" },
       });
       const sessions = (await response.json()) as Array<{ name: string; state: string }>;
-      return sessions.some((session) => session.name === "Browser check" && session.state === "running");
+      return sessions.some((session) => session.name === "Terminal" && session.state === "running");
     })
     .toBe(true);
   await page.screenshot({ path: testInfo.outputPath("desktop-workspace.png") });
@@ -102,10 +100,8 @@ test("reloads a running terminal with its previous output", async ({ page }) => 
   await page.getByLabel("Access token").fill("test-token");
   await page.getByRole("button", { name: "Open Euphony" }).click();
   await page.getByRole("button", { name: "Start a terminal" }).click();
-  await page.getByLabel("Terminal name").fill("Reload check");
-  await page.getByRole("button", { name: "Start terminal" }).click();
 
-  const terminal = page.getByLabel("Reload check terminal");
+  const terminal = page.getByLabel("Terminal terminal");
   await expect(terminal).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
@@ -120,7 +116,7 @@ test("reloads a running terminal with its previous output", async ({ page }) => 
   await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
 
   await page.reload();
-  await expect(page.getByLabel("Reload check terminal")).toBeVisible();
+  await expect(page.getByLabel("Terminal terminal")).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
 });
@@ -153,10 +149,24 @@ test("shows a vertical split and keeps one active pane on mobile", async ({ page
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await expect(page.getByLabel("Left terminal")).toBeVisible();
   await expect(page.getByLabel("Terminal terminal")).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`session=${first.id}.*split=.+`));
+  const splitState = await page.evaluate(() => {
+    const parameters = new URLSearchParams(window.location.search);
+    return {
+      session: parameters.get("session"),
+      split: parameters.get("split"),
+      focus: parameters.get("focus"),
+    };
+  });
+  expect(splitState.session).toBe(first.id);
+  expect(splitState.split).toBeTruthy();
+  expect(splitState.focus).toBe(splitState.split);
+
+  await page.getByLabel("Left pane").click();
+  await expect(page).toHaveURL(new RegExp(`focus=${first.id}`));
 
   await page.reload();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
+  await expect(page.getByLabel("Left pane")).toHaveAttribute("data-active", "true");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.terminal-pane[data-active="true"]')).toBeVisible();
   await expect(page.locator('.terminal-pane[data-active="false"]')).toBeHidden();

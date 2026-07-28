@@ -69,7 +69,7 @@ test("returns to token entry after an invalid token", async () => {
   expect(sessionStorage.getItem("euphony.token")).toBeNull();
 });
 
-test("creates, selects, and deletes a session", async () => {
+test("creates a terminal without asking for a name, selects it, and deletes it", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([]))
@@ -80,11 +80,16 @@ test("creates, selects, and deletes a session", async () => {
   render(<App initialToken="valid-token" renderTerminal={(session) => <div>{session.name}</div>} />);
 
   await user.click(await screen.findByRole("button", { name: "Start a terminal" }));
-  const nameInput = screen.getByLabelText("Terminal name");
-  await user.clear(nameInput);
-  await user.type(nameInput, "Codex");
-  await user.click(screen.getByRole("button", { name: "Start terminal" }));
 
+  expect(screen.queryByLabelText("Terminal name")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ name: "Terminal" }),
+    }),
+  );
   expect(await screen.findByRole("button", { name: "Select Codex" })).toHaveAttribute("aria-current", "true");
   fireEvent.click(screen.getByRole("button", { name: "Delete Codex" }));
 
@@ -147,6 +152,17 @@ test("creates a new terminal for a vertical split and stores both panes in the U
   const parameters = new URLSearchParams(window.location.search);
   expect(parameters.get("session")).toBe("session-1");
   expect(parameters.get("split")).toBe("session-2");
+  expect(parameters.get("focus")).toBe("session-2");
+
+  fireEvent.mouseDown(screen.getByLabelText("Codex pane"));
+  expect(screen.getByLabelText("Codex pane")).toHaveAttribute("data-active", "true");
+  expect(new URLSearchParams(window.location.search).get("focus")).toBe("session-1");
+
+  history.pushState(null, "", "/?session=session-1&split=session-2&focus=session-2");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await waitFor(() => {
+    expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
+  });
 
   await user.click(screen.getByRole("button", { name: "Close split" }));
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
