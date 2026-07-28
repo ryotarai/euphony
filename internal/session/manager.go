@@ -59,6 +59,7 @@ type Manager struct {
 	hooks    HookConfig
 	sessions map[string]*entry
 	store    metadataStore
+	closing  bool
 }
 
 func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager, error) {
@@ -74,6 +75,13 @@ func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager
 		return nil, err
 	}
 	for _, metadata := range items {
+		if metadata.State == StateExited {
+			if err := store.Delete(context.Background(), metadata.ID); err != nil {
+				_ = manager.Close(context.Background())
+				return nil, fmt.Errorf("purge exited terminal %s: %w", metadata.ID, err)
+			}
+			continue
+		}
 		if err := manager.restore(metadata); err != nil {
 			_ = manager.Close(context.Background())
 			return nil, fmt.Errorf("restore terminal %s: %w", metadata.ID, err)
@@ -230,20 +238,15 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 }
 
 func (m *Manager) watch(item *entry) {
-	err := item.session.command.Wait()
-	now := time.Now().UTC()
-	exitCode := item.session.command.ProcessState.ExitCode()
+	_ = item.session.command.Wait()
 
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
-		current.metadata.State = StateExited
-		current.metadata.ExitedAt = &now
-		current.metadata.ExitCode = &exitCode
-		if err != nil {
-			current.metadata.Message = err.Error()
-		}
-		if m.store != nil {
-			_ = m.store.Save(context.Background(), current.metadata)
+		if !m.closing {
+			delete(m.sessions, item.metadata.ID)
+			if m.store != nil {
+				_ = m.store.Delete(context.Background(), item.metadata.ID)
+			}
 		}
 	}
 	m.mu.Unlock()
@@ -296,12 +299,13 @@ func (m *Manager) Delete(id string) error {
 }
 
 func (m *Manager) Close(ctx context.Context) error {
-	m.mu.RLock()
+	m.mu.Lock()
+	m.closing = true
 	items := make([]*entry, 0, len(m.sessions))
 	for _, item := range m.sessions {
 		items = append(items, item)
 	}
-	m.mu.RUnlock()
+	m.mu.Unlock()
 
 	for _, item := range items {
 		item.session.terminate()

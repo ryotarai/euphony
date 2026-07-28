@@ -20,7 +20,7 @@ func TestCreateRejectsBlankName(t *testing.T) {
 	}
 }
 
-func TestSessionRunsCommandsAndRecordsExit(t *testing.T) {
+func TestSessionExitRemovesTerminalFromManager(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
@@ -47,12 +47,7 @@ func TestSessionRunsCommandsAndRecordsExit(t *testing.T) {
 	}
 
 	waitFor(t, 3*time.Second, func() bool {
-		for _, item := range manager.List() {
-			if item.ID == metadata.ID {
-				return item.State == StateExited && item.ExitCode != nil && *item.ExitCode == 7
-			}
-		}
-		return false
+		return len(manager.List()) == 0
 	})
 }
 
@@ -160,7 +155,7 @@ func TestPersistentManagerRestoresTerminalWithItsCWD(t *testing.T) {
 	}
 	createdAt := time.Now().UTC()
 	if err := store.Save(context.Background(), Metadata{
-		ID: "restored-terminal", Name: "Terminal", State: StateExited,
+		ID: "restored-terminal", Name: "Terminal", State: StateRunning,
 		CWD: cwd, CreatedAt: createdAt,
 	}); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -191,6 +186,107 @@ func TestPersistentManagerRestoresTerminalWithItsCWD(t *testing.T) {
 	if len(metadata) != 1 || metadata[0].ID != "restored-terminal" ||
 		metadata[0].State != StateRunning || !metadata[0].CreatedAt.Equal(createdAt) {
 		t.Fatalf("restored metadata = %#v", metadata)
+	}
+}
+
+func TestPersistentManagerDeletesExitedTerminalFromSQLite(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	terminal, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatal("created terminal is missing")
+	}
+	if _, err := terminal.Write([]byte("exit 0\n")); err != nil {
+		t.Fatalf("Write(exit) error = %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		return len(manager.List()) == 0
+	})
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	store, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	items, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("persisted terminals = %#v, want none", items)
+	}
+}
+
+func TestPersistentManagerPurgesPreviouslyExitedTerminal(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	if err := store.Save(context.Background(), Metadata{
+		ID: "exited-terminal", Name: "Terminal", State: StateExited,
+		CWD: t.TempDir(), CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	if got := manager.List(); len(got) != 0 {
+		t.Fatalf("List() = %#v, want exited terminal purged", got)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	store, err = OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("reopen SQLite: %v", err)
+	}
+	defer store.Close()
+	items, err := store.Load(context.Background())
+	if err != nil || len(items) != 0 {
+		t.Fatalf("Load() = %#v, %v; want none", items, err)
+	}
+}
+
+func TestPersistentManagerCloseKeepsTerminalForRestart(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	created, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	restarted, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
+	if err != nil {
+		t.Fatalf("restart manager: %v", err)
+	}
+	defer restarted.Close(context.Background())
+	items := restarted.List()
+	if len(items) != 1 || items[0].ID != created.ID || items[0].State != StateRunning {
+		t.Fatalf("restored terminals = %#v, want %q running", items, created.ID)
 	}
 }
 
