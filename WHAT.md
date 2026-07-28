@@ -1,3 +1,15 @@
+# Euphony v0.2
+
+既存のtab, paneの概念を刷新する。
+
+まず、ターミナルを1st citizenとし、そのリストを左サイドバーに置く。
+そのリストのアイテムにはcwdを表示する。
+ターミナルでCodex, Claudeを起動している場合は、そのステータス（Runningなど）とsession titleも表示する。これはHerdrがやっているようにhooksを利用して行う。ターミナルを起動するときに環境変数をセットすることでどのterminalなのかを判断する必要がある。
+
+itemをクリックすると、そのターミナルに切り替わる（1 pane）
+Cmdを押しながらterminal itemクリックすると、複数選択になり複数pane表示（横並び）になる
+ターミナルリストはStatus (Runningなど）でグルーピングされており、そのステータスのチェックボックスを入れている状態にすると、マッチするターミナルの複数pane表示になる（statusが変わると自動で追加される）
+
 # Euphony v0.1
 
 Euphony is a web UI for coding agents. It can run locally or on a remote
