@@ -264,12 +264,18 @@ export function App({
       ? [...statusFilters, status]
       : statusFilters.filter((item) => item !== status);
     const matching = sessions
-      ?.filter((session) => nextFilters.includes(sessionActivity(session)))
+      ?.filter((session) => sessionActivity(session) === status)
       .map((session) => session.id) ?? [];
-    const nextIDs = checked ? [...new Set([...selectedIDs, ...matching])] : selectedIDs;
-    const nextFocus = focusedID ?? nextIDs[0] ?? null;
+    const matchingIDs = new Set(matching);
+    const nextIDs = checked
+      ? [...new Set([...selectedIDs, ...matching])]
+      : selectedIDs.filter((id) => !matchingIDs.has(id));
+    const nextFocus = focusedID && nextIDs.includes(focusedID)
+      ? focusedID
+      : nextIDs[0] ?? null;
     setStatusFilters(nextFilters);
     setSelectedIDs(nextIDs);
+    setFocusedID(nextFocus);
     writeWorkspaceToURL(nextIDs, nextFocus, nextFilters);
   }
 

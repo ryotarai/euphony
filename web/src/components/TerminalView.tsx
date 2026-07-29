@@ -146,6 +146,10 @@ export function TerminalView({
     });
     const fit = () => terminal.fit();
     window.addEventListener("resize", fit);
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? undefined
+      : new ResizeObserver(fit);
+    resizeObserver?.observe(host);
 
     void api
       .createTicket(session.id)
@@ -198,6 +202,7 @@ export function TerminalView({
     return () => {
       active = false;
       window.removeEventListener("resize", fit);
+      resizeObserver?.disconnect();
       removeData();
       removeResize();
       removeSelectionChange();

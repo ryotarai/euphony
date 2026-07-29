@@ -84,6 +84,53 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
   ]);
 });
 
+test("fits the terminal when its pane changes size", async () => {
+  let notifyResize: (() => void) | undefined;
+  const observe = vi.fn();
+  const disconnect = vi.fn();
+  class FakeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      notifyResize = () => callback([], this as unknown as ResizeObserver);
+    }
+
+    observe = observe;
+    unobserve = vi.fn();
+    disconnect = disconnect;
+  }
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: vi.fn(),
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  const { unmount } = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => new FakeSocket()}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => notifyResize?.());
+
+  expect(observe).toHaveBeenCalledWith(screen.getByLabelText("Codex terminal"));
+  expect(terminal.fit).toHaveBeenCalledTimes(1);
+  unmount();
+  expect(disconnect).toHaveBeenCalledTimes(1);
+  vi.unstubAllGlobals();
+});
+
 test("shows a reconnect action when the socket closes", async () => {
   const sockets = [new FakeSocket(), new FakeSocket()];
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;

@@ -265,6 +265,47 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
 });
 
+test("unchecking an activity group removes only its terminal panes", async () => {
+  const terminals = Array.from({ length: 4 }, (_, index) => ({
+    ...plainTerminalSession,
+    id: `terminal-${index + 1}`,
+    name: `Terminal ${index + 1}`,
+  }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, ...terminals]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  const terminalGroup = screen.getByRole("checkbox", {
+    name: "Show all Terminal terminals",
+  });
+  fireEvent.click(terminalGroup);
+  for (const terminal of terminals) {
+    expect(await screen.findByLabelText(`${terminal.id} terminal pane`)).toBeVisible();
+  }
+
+  fireEvent.click(terminalGroup);
+
+  expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  for (const terminal of terminals) {
+    expect(screen.queryByLabelText(`${terminal.id} terminal pane`)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: `Include ${terminal.name} pane` }),
+    ).not.toBeChecked();
+  }
+  const params = new URLSearchParams(window.location.search);
+  expect(params.getAll("terminal")).toEqual(["session-1"]);
+  expect(params.getAll("status")).toEqual([]);
+  expect(params.get("focus")).toBe("session-1");
+});
+
 test("clicking a status label replaces the current pane selection", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
