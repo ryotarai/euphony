@@ -296,6 +296,88 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	return item.metadata, nil
 }
 
+func (m *Manager) UpdateCWD(id, cwd string) (Metadata, error) {
+	cwd, err := normalizeReportedCWD(cwd)
+	if err != nil {
+		return Metadata{}, err
+	}
+	return m.updateCWD(id, cwd, false)
+}
+
+func normalizeReportedCWD(cwd string) (string, error) {
+	cwd = strings.TrimSpace(cwd)
+	if len(cwd) > 4096 {
+		return "", errors.New("working directory is too long")
+	}
+	if cwd == "~" || strings.HasPrefix(cwd, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		if cwd == "~" {
+			cwd = home
+		} else {
+			cwd = filepath.Join(home, strings.TrimPrefix(cwd, "~/"))
+		}
+	}
+	if !filepath.IsAbs(cwd) {
+		return "", errors.New("working directory must be absolute")
+	}
+	cwd = filepath.Clean(cwd)
+	info, err := os.Stat(cwd)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("working directory must be an existing directory")
+	}
+	return cwd, nil
+}
+
+func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.sessions[id]
+	if !ok {
+		return Metadata{}, ErrNotFound
+	}
+	if item.metadata.CWD == cwd {
+		return item.metadata, nil
+	}
+	if preserveEquivalentPath {
+		currentInfo, currentErr := os.Stat(item.metadata.CWD)
+		nextInfo, nextErr := os.Stat(cwd)
+		if currentErr == nil && nextErr == nil && os.SameFile(currentInfo, nextInfo) {
+			return item.metadata, nil
+		}
+	}
+	next := item.metadata
+	next.CWD = cwd
+	next.RepoRoot = repositoryRoot(cwd)
+	if m.store != nil {
+		if err := m.store.Save(context.Background(), next); err != nil {
+			return Metadata{}, err
+		}
+	}
+	item.metadata = next
+	return next, nil
+}
+
+func (m *Manager) RefreshCWD(id string) (Metadata, error) {
+	m.mu.RLock()
+	item, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return Metadata{}, ErrNotFound
+	}
+	cwd, err := item.session.WorkingDirectory()
+	if err != nil {
+		return Metadata{}, err
+	}
+	cwd, err = normalizeReportedCWD(cwd)
+	if err != nil {
+		return Metadata{}, err
+	}
+	return m.updateCWD(id, cwd, true)
+}
+
 func repositoryRoot(cwd string) string {
 	resolved, err := filepath.EvalSymlinks(cwd)
 	if err != nil {

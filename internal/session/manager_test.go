@@ -129,6 +129,74 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	}
 }
 
+func TestUpdateCWDExpandsHomeDirectoryTitle(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir() error = %v", err)
+	}
+
+	updated, err := manager.UpdateCWD(metadata.ID, "~")
+	if err != nil {
+		t.Fatalf("UpdateCWD() error = %v", err)
+	}
+	if updated.CWD != home {
+		t.Fatalf("CWD = %q, want home %q", updated.CWD, home)
+	}
+}
+
+func TestUpdateCWDKeepsMemoryUnchangedWhenPersistenceFails(t *testing.T) {
+	store, err := OpenSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(store) error = %v", err)
+	}
+
+	if _, err := manager.UpdateCWD(metadata.ID, t.TempDir()); err == nil {
+		t.Fatal("UpdateCWD() error = nil, want persistence error")
+	}
+	listed := manager.List()
+	if len(listed) != 1 || listed[0].CWD != metadata.CWD {
+		t.Fatalf("List() = %#v, want original cwd %q", listed, metadata.CWD)
+	}
+}
+
+func TestRefreshCWDPreservesEquivalentLogicalPath(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", link)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := manager.RefreshCWD(metadata.ID)
+	if err != nil {
+		t.Fatalf("RefreshCWD() error = %v", err)
+	}
+	if updated.CWD != link {
+		t.Fatalf("CWD = %q, want logical path %q", updated.CWD, link)
+	}
+}
+
 func TestUpdateAgentPromotesRunningToAttentionAndPreservesTitle(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

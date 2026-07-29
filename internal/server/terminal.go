@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -45,6 +46,12 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	var cancelCWDRefresh context.CancelFunc
+	defer func() {
+		if cancelCWDRefresh != nil {
+			cancelCWDRefresh()
+		}
+	}()
 	history, output, unsubscribe := terminal.Subscribe()
 	defer unsubscribe()
 	outputDone := make(chan struct{})
@@ -92,10 +99,22 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					invalidMessages++
 				} else if _, err := terminal.Write([]byte(message.Data)); err != nil {
 					return
+				} else if strings.ContainsAny(message.Data, "\r\n") {
+					if cancelCWDRefresh != nil {
+						cancelCWDRefresh()
+					}
+					refreshContext, cancelRefresh := context.WithCancel(ctx)
+					cancelCWDRefresh = cancelRefresh
+					go s.refreshCWDWhileCommandSettles(refreshContext, id)
 				}
 			case "resize":
 				if err := terminal.Resize(message.Cols, message.Rows); err != nil {
 					invalidMessages++
+				}
+			case "cwd":
+				if _, err := s.sessions.UpdateCWD(id, message.Data); err == nil && cancelCWDRefresh != nil {
+					cancelCWDRefresh()
+					cancelCWDRefresh = nil
 				}
 			default:
 				invalidMessages++
@@ -109,6 +128,31 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		case <-outputDone:
 			return
 		default:
+		}
+	}
+}
+
+func (s *Server) refreshCWDWhileCommandSettles(ctx context.Context, id string) {
+	delays := [...]time.Duration{
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		15 * time.Second,
+	}
+	for _, delay := range delays {
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		}
+		if _, err := s.sessions.RefreshCWD(id); err != nil {
+			return
 		}
 	}
 }
