@@ -133,7 +133,11 @@ test("updates the sidebar after the shell changes directory", async ({ page }) =
   await page.keyboard.type("cd /etc");
   await page.keyboard.press("Enter");
 
-  await expect(page.getByRole("button", { name: "Select Terminal" })).toContainText("/etc");
+  await expect(page.getByRole("heading", { name: "/etc" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Select Terminal" })).toHaveAttribute(
+    "title",
+    "/etc",
+  );
 });
 
 test("reloads a running terminal with its previous output", async ({ page }) => {
