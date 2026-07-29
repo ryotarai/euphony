@@ -117,6 +117,49 @@ test("shows a reconnect action when the socket closes", async () => {
   await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(2));
 });
 
+test("focuses the terminal only when its pane becomes active", async () => {
+  const socket = new FakeSocket();
+  const focus = vi.fn();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+  const createTerminal = () => terminal;
+  const createSocket = () => socket;
+  const { rerender } = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active={false}
+      createTerminal={createTerminal}
+      createSocket={createSocket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  expect(focus).not.toHaveBeenCalled();
+
+  rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active
+      createTerminal={createTerminal}
+      createSocket={createSocket}
+    />,
+  );
+
+  expect(focus).toHaveBeenCalledTimes(1);
+});
+
 test("does not send terminal query responses generated while replaying history", async () => {
   const socket = new FakeSocket();
   let onData: ((data: string) => void) | undefined;

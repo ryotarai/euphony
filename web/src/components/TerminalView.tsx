@@ -28,6 +28,7 @@ export interface WebSocketLike extends EventTarget {
 interface TerminalViewProps {
   session: Session;
   api: ApiClient;
+  active?: boolean;
   createTerminal?: () => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
@@ -88,10 +89,14 @@ function defaultSocket(url: string): WebSocketLike {
 export function TerminalView({
   session,
   api,
+  active = true,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
 }: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<TerminalDriver | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [connection, setConnection] = useState<"connecting" | "connected" | "disconnected" | "exited">(
     "connecting",
   );
@@ -105,8 +110,9 @@ export function TerminalView({
     let replayingHistory = false;
     let socket: WebSocketLike | undefined;
     const terminal = createTerminal();
+    terminalRef.current = terminal;
     terminal.open(host);
-    terminal.focus();
+    if (activeRef.current) terminal.focus();
     setConnection("connecting");
 
     const send = (message: unknown) => {
@@ -155,7 +161,7 @@ export function TerminalView({
           if (!active) return;
           setConnection("connected");
           terminal.fit();
-          terminal.focus();
+          if (activeRef.current) terminal.focus();
         });
         connectionSocket.addEventListener("message", (event) => {
           if (!active || !(event instanceof MessageEvent) || typeof event.data !== "string") return;
@@ -199,8 +205,13 @@ export function TerminalView({
       clearTimeout(copiedTimer);
       socket?.close();
       terminal.dispose();
+      if (terminalRef.current === terminal) terminalRef.current = null;
     };
   }, [api, attempt, createSocket, createTerminal, session.id]);
+
+  useEffect(() => {
+    if (active) terminalRef.current?.focus();
+  }, [active]);
 
   return (
     <div className="terminal-view" data-connection={connection}>

@@ -322,6 +322,37 @@ test("tmux keys work when the focused terminal stops key event propagation", asy
   expect(await screen.findByLabelText("session-2 terminal input")).toBeVisible();
 });
 
+test("tmux split keys are not delivered to the focused terminal", async () => {
+  const created = { ...plainTerminalSession, id: "created-v" };
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse(created, 201));
+  const terminalKeyDown = vi.fn();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div className="terminal-host">
+          <textarea
+            aria-label={`${session.id} terminal input`}
+            onKeyDown={terminalKeyDown}
+          />
+        </div>
+      )}
+    />,
+  );
+  const terminalInput = await screen.findByLabelText("session-1 terminal input");
+  terminalInput.focus();
+
+  fireEvent.keyDown(terminalInput, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(terminalInput, { key: "v" });
+
+  expect(await screen.findByLabelText("created-v terminal input")).toBeVisible();
+  expect(terminalKeyDown).not.toHaveBeenCalled();
+});
+
 test("tmux create and vertical split keys create the expected selection", async () => {
   const createdByC = { ...plainTerminalSession, id: "created-c" };
   const createdByV = { ...plainTerminalSession, id: "created-v" };

@@ -193,6 +193,17 @@ test("command-selects terminal panes and keeps one active pane on mobile", async
   await page.reload();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await expect(page.getByLabel("Left pane")).toHaveAttribute("data-active", "true");
+  const leftPane = page.getByLabel("Left pane");
+  const rightPane = page.getByLabel("Right pane");
+  await rightPane.locator(".xterm-helper-textarea").click();
+  await page.keyboard.press("Control+B");
+  await page.keyboard.press("h");
+  await expect(leftPane).toHaveAttribute("data-active", "true");
+  await expect(leftPane.locator(".xterm-helper-textarea")).toBeFocused();
+  await page.keyboard.press("Control+B");
+  await page.keyboard.press("l");
+  await expect(rightPane).toHaveAttribute("data-active", "true");
+  await expect(rightPane.locator(".xterm-helper-textarea")).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.terminal-pane[data-active="true"]')).toBeVisible();
   await expect(page.locator('.terminal-pane[data-active="false"]')).toBeHidden();
@@ -232,6 +243,14 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.keyboard.press("Control+A");
   await page.keyboard.press("n");
   await expect(page.getByLabel("Claude terminal", { exact: true })).toBeVisible();
+  const historyBeforeSplit = await readTerminalHistory(page, claude.id);
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("v");
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+  expect(await readTerminalHistory(page, claude.id)).toBe(historyBeforeSplit);
+  await expect(
+    page.locator('.terminal-pane[data-active="true"] .xterm-helper-textarea'),
+  ).toBeFocused();
 
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();

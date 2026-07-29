@@ -9,7 +9,7 @@ const tokenKey = "euphony.token";
 interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
-  renderTerminal?: (session: Session, api: ApiClient) => ReactNode;
+  renderTerminal?: (session: Session, api: ApiClient, active: boolean) => ReactNode;
 }
 
 const defaultSettings: Settings = {
@@ -83,7 +83,9 @@ function writeWorkspaceToURL(
 export function App({
   initialToken,
   initialSettings,
-  renderTerminal = (session, api) => <TerminalView key={session.id} session={session} api={api} />,
+  renderTerminal = (session, api, active) => (
+    <TerminalView key={session.id} session={session} api={api} active={active} />
+  ),
 }: AppProps) {
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
@@ -204,6 +206,7 @@ export function App({
       if (!prefixActive) {
         if (!matchesPrefix(event, settings.prefix)) return;
         event.preventDefault();
+        event.stopPropagation();
         prefixActive = true;
         prefixTimer = window.setTimeout(clearPrefix, 1500);
         return;
@@ -212,6 +215,7 @@ export function App({
       const command = event.key.toLowerCase();
       if (!["c", "h", "l", "n", "p", "v"].includes(command)) return;
       event.preventDefault();
+      event.stopPropagation();
       if (command === "c") {
         void createSession(false);
       } else if (command === "v") {
@@ -404,7 +408,7 @@ export function App({
                 aria-label={`${pane.name} pane`}
                 onMouseDown={() => focusPane(pane.id)}
               >
-                {renderTerminal(pane, api)}
+                {renderTerminal(pane, api, focusedID === pane.id)}
               </div>
           ))
         ) : (
