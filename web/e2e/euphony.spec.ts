@@ -187,7 +187,7 @@ test("command-selects terminal panes and keeps one active pane on mobile", async
   expect(paneState.terminals).toEqual([first.id, second.id]);
   expect(paneState.focus).toBe(second.id);
 
-  await page.getByLabel("Left pane").click();
+  await page.getByLabel("Left pane", { exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`focus=${first.id}`));
 
   await page.reload();
@@ -224,7 +224,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(claudeItem.getByRole("img", { name: "Claude" })).toBeVisible();
   await expect(codexItem).not.toContainText("Codex");
   await expect(codexItem).toContainText("~/work/euphony");
-  await page.getByRole("checkbox", { name: "Include Claude pane" }).click();
+  await page.getByRole("checkbox", { name: "Include Claude in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await page.getByRole("button", { name: "Show only Terminal terminals" }).click();
   await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();

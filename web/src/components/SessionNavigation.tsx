@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { PlusIcon, Settings2Icon } from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Session, Settings } from "../types";
 
-const defaultSidebarWidth = 304;
+const defaultSidebarWidth = 256;
 const minimumSidebarWidth = 180;
 const maximumSidebarWidth = 600;
 
@@ -63,11 +67,10 @@ function SessionList({
         {groups.map((status) => (
           <section className="session-group" key={status}>
             <div className="status-heading">
-              <input
-                type="checkbox"
+              <Checkbox
                 aria-label={`Show all ${statusLabel(status)} terminals`}
                 checked={statusFilters.includes(status)}
-                onChange={(event) => onStatusFilter(status, event.target.checked)}
+                onCheckedChange={(checked) => onStatusFilter(status, checked === true)}
               />
               <button
                 className="status-select"
@@ -75,7 +78,9 @@ function SessionList({
                 onClick={() => onStatusSelect?.(status)}
               >
                 <h2>{statusLabel(status)}</h2>
-                <span>{sessions.filter((session) => activity(session) === status).length}</span>
+                <Badge variant="secondary">
+                  {sessions.filter((session) => activity(session) === status).length}
+                </Badge>
               </button>
             </div>
             {sessions.filter((session) => activity(session) === status).map((session) => {
@@ -83,12 +88,11 @@ function SessionList({
               return (
               <div className="session-channel" key={session.id} data-state={activity(session)}>
                 <span className="channel-signal" aria-hidden="true" />
-                <input
+                <Checkbox
                   className="pane-checkbox"
-                  type="checkbox"
-                  aria-label={`Include ${session.name} pane`}
+                  aria-label={`Include ${session.name} in split`}
                   checked={selectedIDs.includes(session.id)}
-                  onChange={() => onSelect(session.id, true)}
+                  onCheckedChange={() => onSelect(session.id, true)}
                 />
                 <button
                   className="session-select"
@@ -126,10 +130,10 @@ function SessionList({
           </section>
         ))}
       </div>
-      <button className="create-channel" onClick={onCreate}>
-        <span aria-hidden="true">＋</span>
+      <Button className="create-channel" variant="outline" onClick={onCreate}>
+        <PlusIcon data-icon="inline-start" aria-hidden="true" />
         <span className="create-label">New terminal</span>
-      </button>
+      </Button>
     </>
   );
 }
@@ -248,13 +252,15 @@ export function SessionNavigation(props: SessionNavigationProps) {
                   EU
                 </div>
                 <div className="sidebar-actions">
-                  <button
+                  <Button
                     className="sidebar-settings"
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label="Open settings"
                     onClick={props.onOpenSettings}
                   >
-                    <span aria-hidden="true">⚙</span>
-                  </button>
+                    <Settings2Icon aria-hidden="true" />
+                  </Button>
                   <button
                     className="sidebar-collapse"
                     aria-label="Collapse sidebar"

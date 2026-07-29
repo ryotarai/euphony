@@ -125,8 +125,8 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
   await user.click(screen.getByRole("button", { name: "Show only Running terminals" }));
   expect(onStatusSelect).toHaveBeenCalledWith("running");
 
-  expect(screen.getByRole("checkbox", { name: "Include Codex pane" })).toBeChecked();
-  const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal pane" });
+  expect(screen.getByRole("checkbox", { name: "Include Codex in split" })).toBeChecked();
+  const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal in split" });
   expect(terminalCheckbox).not.toBeChecked();
   await user.click(terminalCheckbox);
   expect(onSelect).toHaveBeenCalledWith("three", true);
@@ -155,6 +155,22 @@ test("collapses and restores the desktop sidebar", async () => {
     "false",
   );
   expect(onSettingsChange).toHaveBeenCalledWith({ ...settings, sidebarCollapsed: true });
+});
+
+test("uses a compact 256px sidebar by default", () => {
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(screen.getByLabelText("Terminal sessions").parentElement).toHaveStyle({ width: "256px" });
 });
 
 test("resizes the desktop sidebar by dragging its separator", () => {

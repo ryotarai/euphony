@@ -297,7 +297,7 @@ test("unchecking an activity group removes only its terminal panes", async () =>
   for (const terminal of terminals) {
     expect(screen.queryByLabelText(`${terminal.id} terminal pane`)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: `Include ${terminal.name} pane` }),
+      screen.getByRole("checkbox", { name: `Include ${terminal.name} in split` }),
     ).not.toBeChecked();
   }
   const params = new URLSearchParams(window.location.search);
@@ -318,7 +318,7 @@ test("clicking a status label replaces the current pane selection", async () => 
     />,
   );
   await screen.findByLabelText("session-1 terminal pane");
-  fireEvent.click(screen.getByRole("checkbox", { name: "Include Claude pane" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Include Claude in split" }));
   expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
 
   fireEvent.click(screen.getByRole("button", { name: "Show only Waiting terminals" }));

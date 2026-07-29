@@ -14,7 +14,7 @@ interface AppProps {
 
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
-  sidebarWidth: 304,
+  sidebarWidth: 256,
   sidebarCollapsed: false,
 };
 
