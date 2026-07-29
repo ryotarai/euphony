@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -128,6 +129,85 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentPromotesRunningToAttentionAndPreservesTitle(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "running", Title: "Fix terminal rendering",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running) error = %v", err)
+	}
+
+	updated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "waiting",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(waiting) error = %v", err)
+	}
+	if updated.AgentStatus != "attention" {
+		t.Fatalf("AgentStatus = %q, want attention", updated.AgentStatus)
+	}
+	if updated.AgentTitle != "Fix terminal rendering" {
+		t.Fatalf("AgentTitle = %q, want preserved title", updated.AgentTitle)
+	}
+}
+
+func TestCreateUsesRequestedWorkingDirectoryAndUTF8Locale(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	cwd := t.TempDir()
+
+	metadata, err := manager.Create(context.Background(), "Terminal", cwd)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	resolvedCWD, _ := filepath.EvalSymlinks(cwd)
+	if metadata.CWD != cwd || metadata.RepoRoot != resolvedCWD {
+		t.Fatalf("created metadata = %#v, want cwd %q and repo root %q", metadata, cwd, resolvedCWD)
+	}
+	running, _ := manager.Get(metadata.ID)
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if _, err := running.Write([]byte("printf '%s|%s' \"$LANG\" \"$LC_CTYPE\"\n")); err != nil {
+		t.Fatalf("Write(locale) error = %v", err)
+	}
+	got := receiveUntil(t, output, "UTF-8", 3*time.Second)
+	if !strings.Contains(got, "UTF-8") {
+		t.Fatalf("locale output = %q, want UTF-8", got)
+	}
+}
+
+func TestRepositoryRootUsesMainCheckoutForLinkedWorktree(t *testing.T) {
+	repository := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", repository}, args...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repository, "README"), []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README")
+	runGit("commit", "-m", "initial")
+	worktree := filepath.Join(t.TempDir(), "linked")
+	runGit("worktree", "add", worktree, "-b", "linked")
+
+	got := repositoryRoot(worktree)
+	resolvedRepository, _ := filepath.EvalSymlinks(repository)
+	if got != resolvedRepository {
+		t.Fatalf("repositoryRoot(%q) = %q, want %q", worktree, got, resolvedRepository)
+	}
+}
+
 func TestListRefreshesCodexTitleFromSessionIndex(t *testing.T) {
 	indexPath := filepath.Join(t.TempDir(), "session_index.jsonl")
 	if err := os.WriteFile(indexPath, []byte(
@@ -208,6 +288,35 @@ func TestPersistentManagerRestoresTerminalWithItsCWD(t *testing.T) {
 	if len(metadata) != 1 || metadata[0].ID != "restored-terminal" ||
 		metadata[0].State != StateRunning || !metadata[0].CreatedAt.Equal(createdAt) {
 		t.Fatalf("restored metadata = %#v", metadata)
+	}
+}
+
+func TestPersistentManagerRestoresTerminalAfterItsCWDWasRemoved(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "removed-worktree")
+	if err := store.Save(context.Background(), Metadata{
+		ID: "missing-cwd", Name: "Terminal", State: StateRunning,
+		CWD: missing, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v, want cwd fallback", err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	items := manager.List()
+	current, _ := os.Getwd()
+	if len(items) != 1 || items[0].CWD != current {
+		t.Fatalf("restored metadata = %#v, want fallback cwd %q", items, current)
 	}
 }
 

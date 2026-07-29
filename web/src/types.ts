@@ -5,6 +5,7 @@ export interface Session {
   name: string;
   state: SessionState;
   cwd: string;
+  repoRoot?: string;
   agent?: string;
   agentStatus?: string;
   agentTitle?: string;

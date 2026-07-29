@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/ryotarai/euphony/internal/session"
@@ -60,6 +61,32 @@ func TestCreateSessionValidatesRequest(t *testing.T) {
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("POST body %q status = %d, want 400", body, response.Code)
 		}
+	}
+}
+
+func TestCreateSessionAcceptsWorkingDirectory(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	cwd := t.TempDir()
+
+	response := performRequest(t, srv, http.MethodPost, "/api/sessions",
+		`{"name":"Scoped","cwd":`+strconv.Quote(cwd)+`}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("POST status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var metadata session.Metadata
+	decodeResponse(t, response, &metadata)
+	if metadata.CWD != cwd {
+		t.Fatalf("CWD = %q, want %q", metadata.CWD, cwd)
+	}
+
+	invalid := performRequest(t, srv, http.MethodPost, "/api/sessions",
+		`{"name":"Invalid","cwd":"/definitely/missing/euphony-directory"}`)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cwd status = %d, want 400", invalid.Code)
 	}
 }
 

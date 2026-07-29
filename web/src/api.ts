@@ -17,10 +17,10 @@ export class ApiClient {
     return this.request("/api/sessions");
   }
 
-  createSession(name: string): Promise<Session> {
+  createSession(name: string, cwd?: string): Promise<Session> {
     return this.request("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(cwd ? { cwd } : {}) }),
     });
   }
 

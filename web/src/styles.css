@@ -269,6 +269,85 @@ input {
   scrollbar-width: none;
 }
 
+.repository-group {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.repository-heading {
+  margin: 0;
+  padding: 0 0.45rem;
+  overflow: hidden;
+  color: #aab6bc;
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-layer {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding: min(15vh, 8rem) 1rem 1rem;
+  background: rgb(5 7 9 / 72%);
+  backdrop-filter: blur(8px);
+}
+
+.command-dialog {
+  width: min(38rem, 100%);
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  color: #dce5e8;
+  background: #171c21;
+  border: 1px solid #394149;
+  border-top: 2px solid #b8f34a;
+  box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 48%);
+}
+
+.command-dialog > label {
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.command-results {
+  max-height: min(28rem, 60vh);
+  display: grid;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.command-results button {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+  color: #dce5e8;
+  background: transparent;
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+}
+
+.command-results button:hover,
+.command-results button:focus-visible {
+  background: #242b32;
+}
+
+.command-results small {
+  overflow: hidden;
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-group {
   display: grid;
   gap: 0.35rem;

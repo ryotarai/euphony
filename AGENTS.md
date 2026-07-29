@@ -11,3 +11,5 @@
   during the current task.
 - Remove repetitive manual steps from development workflows when they can be
   automated safely.
+- Run end-to-end servers with an isolated test database so persisted local
+  sessions cannot leak into browser tests.

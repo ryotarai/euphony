@@ -35,7 +35,23 @@ function activity(session: Session) {
 }
 
 function statusLabel(status: string) {
+  if (status === "attention") return "Need attention";
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+const activityOrder = new Map([
+  ["attention", 0],
+  ["running", 1],
+  ["waiting", 2],
+  ["terminal", 3],
+]);
+
+function orderedActivities(sessions: Session[]) {
+  return [...new Set(sessions.map(activity))].sort(
+    (left, right) =>
+      (activityOrder.get(left) ?? 100) - (activityOrder.get(right) ?? 100) ||
+      left.localeCompare(right),
+  );
 }
 
 function displayPath(path: string) {
@@ -60,11 +76,24 @@ function SessionList({
   onCreate,
   onDelete,
 }: SessionNavigationProps) {
-  const groups = [...new Set(sessions.map(activity))];
+  const repositories = sessions.some((session) => session.repoRoot)
+    ? [...new Set(sessions.map((session) => session.repoRoot || session.cwd))]
+    : [""];
   return (
     <>
       <div className="session-list">
-        {groups.map((status) => (
+        {repositories.map((repository) => {
+          const repositorySessions = repository
+            ? sessions.filter((session) => (session.repoRoot || session.cwd) === repository)
+            : sessions;
+          return (
+          <div className="repository-group" key={repository || "all"}>
+            {repository && (
+              <h2 className="repository-heading" title={repository}>
+                {displayPath(repository)}
+              </h2>
+            )}
+        {orderedActivities(repositorySessions).map((status) => (
           <section className="session-group" key={status}>
             <div className="status-heading">
               <Checkbox
@@ -79,11 +108,11 @@ function SessionList({
               >
                 <h2>{statusLabel(status)}</h2>
                 <Badge variant="secondary">
-                  {sessions.filter((session) => activity(session) === status).length}
+                  {repositorySessions.filter((session) => activity(session) === status).length}
                 </Badge>
               </button>
             </div>
-            {sessions.filter((session) => activity(session) === status).map((session) => {
+            {repositorySessions.filter((session) => activity(session) === status).map((session) => {
               const icon = agentIcon(session);
               return (
               <div className="session-channel" key={session.id} data-state={activity(session)}>
@@ -129,6 +158,9 @@ function SessionList({
             })}
           </section>
         ))}
+          </div>
+          );
+        })}
       </div>
       <Button className="create-channel" variant="outline" onClick={onCreate}>
         <PlusIcon data-icon="inline-start" aria-hidden="true" />

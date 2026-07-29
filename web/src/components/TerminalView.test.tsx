@@ -213,9 +213,10 @@ test("does not send terminal query responses generated while replaying history",
   const writes: string[] = [];
   const terminal: TerminalDriver = {
     open: () => undefined,
-    write: (data) => {
+    write: (data, callback) => {
       writes.push(data);
       if (data.includes("query")) onData?.("\u001b[1;2R");
+      callback?.();
     },
     focus: () => undefined,
     fit: () => undefined,
@@ -248,6 +249,93 @@ test("does not send terminal query responses generated while replaying history",
   act(() => socket.receive({ type: "output", data: "query" }));
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "input", data: "\u001b[1;2R" },
+  ]);
+});
+
+test("keeps replay-generated terminal replies suppressed until the write completes", async () => {
+  const socket = new FakeSocket();
+  let onData: ((data: string) => void) | undefined;
+  let finishWrite: (() => void) | undefined;
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: (_data, callback) => {
+      finishWrite = callback;
+    },
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: (callback) => {
+      onData = callback;
+      return () => undefined;
+    },
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => {
+    socket.receive({ type: "history", data: "\u001b[c" });
+    onData?.("\u001b[?1;2c");
+  });
+  expect(socket.sent).toEqual([]);
+
+  act(() => {
+    finishWrite?.();
+    onData?.("pwd\r");
+  });
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "input", data: "pwd\r" },
+  ]);
+});
+
+test("sends LF for Shift+Enter without submitting the prompt", async () => {
+  const socket = new FakeSocket();
+  let keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    attachCustomKeyEventHandler: (handler) => {
+      keyHandler = handler;
+    },
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  const event = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true });
+  act(() => {
+    expect(keyHandler?.(event)).toBe(false);
+  });
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "input", data: "\n" },
   ]);
 });
 
