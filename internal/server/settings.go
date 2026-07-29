@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 
@@ -16,14 +17,24 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
-	var settings session.Settings
+	var input struct {
+		Prefix           string  `json:"prefix"`
+		SidebarWidth     float64 `json:"sidebarWidth"`
+		SidebarCollapsed bool    `json:"sidebarCollapsed"`
+	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&settings); err != nil || ensureJSONEnd(decoder) != nil ||
-		!prefixPattern.MatchString(settings.Prefix) ||
-		settings.SidebarWidth < 180 || settings.SidebarWidth > 600 {
+	if err := decoder.Decode(&input); err != nil || ensureJSONEnd(decoder) != nil ||
+		!prefixPattern.MatchString(input.Prefix) ||
+		math.IsNaN(input.SidebarWidth) || math.IsInf(input.SidebarWidth, 0) ||
+		input.SidebarWidth < 180 || input.SidebarWidth > 600 {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
+	}
+	settings := session.Settings{
+		Prefix:           input.Prefix,
+		SidebarWidth:     int(math.Round(input.SidebarWidth)),
+		SidebarCollapsed: input.SidebarCollapsed,
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")

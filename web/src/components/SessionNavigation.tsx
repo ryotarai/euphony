@@ -7,6 +7,10 @@ const defaultSidebarWidth = 304;
 const minimumSidebarWidth = 180;
 const maximumSidebarWidth = 600;
 
+function normalizeSidebarWidth(width: number): number {
+  return Math.round(Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, width)));
+}
+
 interface SessionNavigationProps {
   sessions: Session[];
   selectedIDs: string[];
@@ -163,10 +167,10 @@ export function SessionNavigation(props: SessionNavigationProps) {
   useEffect(() => {
     if (!resizing) return;
     const resize = (event: PointerEvent) => {
-      setSidebarWidth(Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, event.clientX)));
+      setSidebarWidth(normalizeSidebarWidth(event.clientX));
     };
     const finish = (event: PointerEvent) => {
-      const width = Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, event.clientX));
+      const width = normalizeSidebarWidth(event.clientX);
       setSidebarWidth(width);
       props.onSettingsChange?.({ ...settings, sidebarWidth: width });
       setResizing(false);

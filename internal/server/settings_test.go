@@ -61,3 +61,25 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsAPIRoundsFractionalSidebarWidth(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		DatabasePath: filepath.Join(t.TempDir(), "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodPatch, "/api/settings",
+		`{"prefix":"Ctrl+Q","sidebarWidth":229.96875,"sidebarCollapsed":false}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var updated session.Settings
+	decodeResponse(t, response, &updated)
+	if updated.SidebarWidth != 230 {
+		t.Fatalf("sidebar width = %d, want 230", updated.SidebarWidth)
+	}
+}

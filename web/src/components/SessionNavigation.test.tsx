@@ -163,11 +163,11 @@ test("resizes the desktop sidebar by dragging its separator", () => {
 
   const separator = screen.getByRole("separator", { name: "Resize sidebar" });
   fireEvent.pointerDown(separator, { clientX: 304, pointerId: 1 });
-  fireEvent.pointerMove(document, { clientX: 420, pointerId: 1 });
-  fireEvent.pointerUp(document, { clientX: 420, pointerId: 1 });
+  fireEvent.pointerMove(document, { clientX: 229.96875, pointerId: 1 });
+  fireEvent.pointerUp(document, { clientX: 229.96875, pointerId: 1 });
 
-  expect(separator).toHaveAttribute("aria-valuenow", "420");
-  expect(onSettingsChange).toHaveBeenCalledWith({ ...settings, sidebarWidth: 420 });
+  expect(separator).toHaveAttribute("aria-valuenow", "230");
+  expect(onSettingsChange).toHaveBeenCalledWith({ ...settings, sidebarWidth: 230 });
 });
 
 test("opens settings from the desktop sidebar", async () => {
