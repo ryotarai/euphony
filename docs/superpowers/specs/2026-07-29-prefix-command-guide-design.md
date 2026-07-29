@@ -11,7 +11,7 @@ Make tmux-style prefix mode explicit and unhurried. After the configured prefix 
 - `Escape` cancels prefix mode and is not sent to the terminal.
 - `c`, `v`, `h`, `l`, `n`, and `p` run their existing commands and leave prefix mode.
 - Any other key leaves prefix mode and continues through to the terminal.
-- Prefix mode is cleared when the keybinding effect is unmounted or rebuilt.
+- Session polling, pane updates, and keybinding listener rebuilds do not clear prefix mode.
 
 ## Presentation
 
@@ -23,7 +23,7 @@ The legend uses Euphony's existing terminal palette and monospace utility type. 
 
 ## State and Accessibility
 
-Prefix mode becomes React state because the UI must render it. The legend uses `role="status"` with a stable accessible label. It must not receive focus or intercept pointer input.
+Prefix mode becomes React state because the UI must render it. The legend uses `role="status"` with a stable accessible label. It has no focusable controls; its narrow-screen overflow remains touch-scrollable.
 
 ## Verification
 
@@ -31,3 +31,10 @@ Prefix mode becomes React state because the UI must render it. The legend uses `
 - Unit tests prove Escape dismisses it without reaching the focused terminal.
 - Existing keybinding tests prove commands still work.
 - Playwright verifies the legend and Escape behavior while xterm owns focus.
+
+## Sidebar Selection Addendum
+
+- Each terminal row has a checkbox on its left. Checking it adds that terminal to the current pane selection; unchecking removes it while preserving the existing at-least-one-pane rule.
+- Clicking the terminal row itself keeps the existing exclusive-selection behavior.
+- Clicking status text replaces the current pane selection with every terminal in that status.
+- Status checkboxes retain their existing additive monitoring behavior.

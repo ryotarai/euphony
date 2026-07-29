@@ -237,7 +237,7 @@ input {
 
 .status-heading {
   display: grid;
-  grid-template-columns: 1rem 1fr auto;
+  grid-template-columns: 1rem minmax(0, 1fr);
   align-items: center;
   gap: 0.55rem;
   min-height: 1.8rem;
@@ -246,7 +246,8 @@ input {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
-.status-heading input {
+.status-heading input,
+.pane-checkbox {
   width: 0.85rem;
   min-height: 0;
   height: 0.85rem;
@@ -254,7 +255,22 @@ input {
   accent-color: #b8f34a;
 }
 
-.status-heading h2 {
+.status-select {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  color: inherit;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.status-select:hover {
+  color: #dce5e8;
+}
+
+.status-select h2 {
   margin: 0;
   font-size: 0.66rem;
   font-weight: 600;
@@ -262,14 +278,16 @@ input {
   text-transform: uppercase;
 }
 
-.status-heading > span {
+.status-select > span {
   font-size: 0.62rem;
 }
 
 .session-channel {
   position: relative;
   display: grid;
-  grid-template-columns: 3px 1fr;
+  grid-template-columns: 3px 1rem minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.45rem;
   min-height: 4.25rem;
 }
 
@@ -280,6 +298,10 @@ input {
   background: #394149;
   box-shadow: none;
   transition: background 180ms ease, box-shadow 180ms ease;
+}
+
+.pane-checkbox {
+  justify-self: center;
 }
 
 .session-channel:has(.session-select[aria-current="true"]) .channel-signal {
@@ -573,6 +595,45 @@ input {
   pointer-events: auto;
 }
 
+.prefix-command-guide {
+  position: fixed;
+  z-index: 15;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 0.38rem 0.8rem max(0.38rem, env(safe-area-inset-bottom));
+  overflow-x: auto;
+  color: #829099;
+  background: rgb(27 32 38 / 97%);
+  border-top: 1px solid #394149;
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 24%);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.68rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.prefix-command-guide span,
+.prefix-command-guide i {
+  flex: 0 0 auto;
+}
+
+.prefix-command-guide i {
+  color: #394149;
+  font-style: normal;
+}
+
+.prefix-command-guide kbd {
+  color: #b8f34a;
+  font: inherit;
+  font-weight: 700;
+}
+
 .terminal-view[data-connection="connected"] .signal-status span {
   color: #b8f34a;
 }
@@ -671,6 +732,10 @@ input {
     padding: 0.6rem 0.35rem max(0.45rem, env(safe-area-inset-bottom));
   }
 
+  .prefix-command-guide {
+    justify-content: flex-start;
+  }
+
   .terminal-stage[data-multiple="true"] {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -721,7 +786,7 @@ input {
   }
 
   .session-drawer .session-channel {
-    grid-template-columns: 4px 1fr;
+    grid-template-columns: 4px 1rem minmax(0, 1fr);
   }
 
   .session-drawer .session-select {

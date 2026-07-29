@@ -86,14 +86,17 @@ test("selecting a mobile session closes the drawer", async () => {
 
 test("groups terminals by activity and exposes cwd, agent title, and status filters", async () => {
   const onStatusFilter = vi.fn();
+  const onStatusSelect = vi.fn();
+  const onSelect = vi.fn();
   const user = userEvent.setup();
   render(
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
       statusFilters={[]}
-      onSelect={() => undefined}
+      onSelect={onSelect}
       onStatusFilter={onStatusFilter}
+      onStatusSelect={onStatusSelect}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -118,6 +121,15 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
 
   await user.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
   expect(onStatusFilter).toHaveBeenCalledWith("running", true);
+
+  await user.click(screen.getByRole("button", { name: "Show only Running terminals" }));
+  expect(onStatusSelect).toHaveBeenCalledWith("running");
+
+  expect(screen.getByRole("checkbox", { name: "Include Codex pane" })).toBeChecked();
+  const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal pane" });
+  expect(terminalCheckbox).not.toBeChecked();
+  await user.click(terminalCheckbox);
+  expect(onSelect).toHaveBeenCalledWith("three", true);
 });
 
 test("collapses and restores the desktop sidebar", async () => {

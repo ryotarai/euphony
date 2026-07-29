@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import type { Session, Settings } from "./types";
@@ -265,6 +265,28 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
 });
 
+test("clicking a status label replaces the current pane selection", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Include Claude pane" }));
+  expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Show only Waiting terminals" }));
+
+  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("session-2 terminal pane")).toBeVisible();
+  expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["waiting"]);
+});
+
 test("tmux navigation keys switch terminals and focus panes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
@@ -320,6 +342,61 @@ test("tmux keys work when the focused terminal stops key event propagation", asy
   fireEvent.keyDown(terminalInput, { key: "n" });
 
   expect(await screen.findByLabelText("session-2 terminal input")).toBeVisible();
+});
+
+test("keeps prefix mode active without a timeout", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  expect(screen.getByRole("status", { name: "Prefix commands" })).toBeVisible();
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+
+  expect(screen.getByRole("status", { name: "Prefix commands" })).toBeVisible();
+  vi.useRealTimers();
+});
+
+test("Escape cancels prefix mode without reaching the focused terminal", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const terminalKeyDown = vi.fn();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div className="terminal-host">
+          <textarea
+            aria-label={`${session.id} terminal input`}
+            onKeyDown={terminalKeyDown}
+          />
+        </div>
+      )}
+    />,
+  );
+  const terminalInput = await screen.findByLabelText("session-1 terminal input");
+  terminalInput.focus();
+
+  fireEvent.keyDown(terminalInput, { key: "b", ctrlKey: true });
+  expect(screen.getByRole("status", { name: "Prefix commands" })).toBeVisible();
+  fireEvent.keyDown(terminalInput, { key: "Escape" });
+
+  expect(screen.queryByRole("status", { name: "Prefix commands" })).not.toBeInTheDocument();
+  expect(terminalKeyDown).not.toHaveBeenCalled();
 });
 
 test("tmux split keys are not delivered to the focused terminal", async () => {

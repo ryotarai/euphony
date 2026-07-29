@@ -17,6 +17,7 @@ interface SessionNavigationProps {
   statusFilters: string[];
   onSelect(id: string, multiple: boolean): void;
   onStatusFilter(status: string, checked: boolean): void;
+  onStatusSelect?(status: string): void;
   onCreate(): void;
   onDelete(session: Session): void;
   settings?: Settings;
@@ -51,6 +52,7 @@ function SessionList({
   statusFilters,
   onSelect,
   onStatusFilter,
+  onStatusSelect,
   onCreate,
   onDelete,
 }: SessionNavigationProps) {
@@ -60,21 +62,34 @@ function SessionList({
       <div className="session-list">
         {groups.map((status) => (
           <section className="session-group" key={status}>
-            <label className="status-heading">
+            <div className="status-heading">
               <input
                 type="checkbox"
                 aria-label={`Show all ${statusLabel(status)} terminals`}
                 checked={statusFilters.includes(status)}
                 onChange={(event) => onStatusFilter(status, event.target.checked)}
               />
-              <h2>{statusLabel(status)}</h2>
-              <span>{sessions.filter((session) => activity(session) === status).length}</span>
-            </label>
+              <button
+                className="status-select"
+                aria-label={`Show only ${statusLabel(status)} terminals`}
+                onClick={() => onStatusSelect?.(status)}
+              >
+                <h2>{statusLabel(status)}</h2>
+                <span>{sessions.filter((session) => activity(session) === status).length}</span>
+              </button>
+            </div>
             {sessions.filter((session) => activity(session) === status).map((session) => {
               const icon = agentIcon(session);
               return (
               <div className="session-channel" key={session.id} data-state={activity(session)}>
                 <span className="channel-signal" aria-hidden="true" />
+                <input
+                  className="pane-checkbox"
+                  type="checkbox"
+                  aria-label={`Include ${session.name} pane`}
+                  checked={selectedIDs.includes(session.id)}
+                  onChange={() => onSelect(session.id, true)}
+                />
                 <button
                   className="session-select"
                   aria-label={`Select ${session.name}`}
@@ -300,7 +315,13 @@ export function SessionNavigation(props: SessionNavigationProps) {
                 ×
               </button>
             </div>
-            <SessionList {...props} onSelect={(id) => mobileSelect(id)} />
+            <SessionList
+              {...props}
+              onSelect={(id, multiple) => {
+                if (multiple) props.onSelect(id, true);
+                else mobileSelect(id);
+              }}
+            />
           </div>
         </div>
       )}

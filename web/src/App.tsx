@@ -1,4 +1,4 @@
-import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, ApiError } from "./api";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
@@ -99,6 +99,8 @@ export function App({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [settingsError, setSettingsError] = useState("");
+  const [prefixActive, setPrefixActive] = useState(false);
+  const prefixActiveRef = useRef(false);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
 
   useEffect(() => {
@@ -195,23 +197,26 @@ export function App({
   }, [sessions]);
 
   useEffect(() => {
-    let prefixActive = false;
-    let prefixTimer: number | undefined;
     const clearPrefix = () => {
-      prefixActive = false;
-      if (prefixTimer !== undefined) window.clearTimeout(prefixTimer);
+      prefixActiveRef.current = false;
+      setPrefixActive(false);
     };
     const handleKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return;
-      if (!prefixActive) {
+      if (!prefixActiveRef.current) {
         if (!matchesPrefix(event, settings.prefix)) return;
         event.preventDefault();
         event.stopPropagation();
-        prefixActive = true;
-        prefixTimer = window.setTimeout(clearPrefix, 1500);
+        prefixActiveRef.current = true;
+        setPrefixActive(true);
         return;
       }
       clearPrefix();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const command = event.key.toLowerCase();
       if (!["c", "h", "l", "n", "p", "v"].includes(command)) return;
       event.preventDefault();
@@ -235,7 +240,6 @@ export function App({
     window.addEventListener("keydown", handleKey, { capture: true });
     return () => {
       window.removeEventListener("keydown", handleKey, { capture: true });
-      clearPrefix();
     };
   }, [focusedID, selectedIDs, sessions, settings.prefix]);
 
@@ -267,6 +271,18 @@ export function App({
     setStatusFilters(nextFilters);
     setSelectedIDs(nextIDs);
     writeWorkspaceToURL(nextIDs, nextFocus, nextFilters);
+  }
+
+  function selectStatus(status: string) {
+    const nextIDs = sessions
+      ?.filter((session) => sessionActivity(session) === status)
+      .map((session) => session.id) ?? [];
+    if (nextIDs.length === 0) return;
+    const nextFocus = nextIDs[0];
+    setStatusFilters([status]);
+    setSelectedIDs(nextIDs);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(nextIDs, nextFocus, [status]);
   }
 
   function focusPane(id: string) {
@@ -387,6 +403,7 @@ export function App({
         statusFilters={statusFilters}
         onSelect={selectSession}
         onStatusFilter={updateStatusFilter}
+        onStatusSelect={selectStatus}
         onCreate={() => void createSession()}
         onDelete={(item) => void deleteSession(item)}
         settings={settings}
@@ -418,6 +435,19 @@ export function App({
           </div>
         )}
       </section>
+      {prefixActive && (
+        <div className="prefix-command-guide" role="status" aria-label="Prefix commands">
+          <span><kbd>c</kbd>: Create a terminal</span>
+          <i aria-hidden="true">|</i>
+          <span><kbd>v</kbd>: Split vertically</span>
+          <i aria-hidden="true">|</i>
+          <span><kbd>h/l</kbd>: Focus pane</span>
+          <i aria-hidden="true">|</i>
+          <span><kbd>n/p</kbd>: Switch terminal</span>
+          <i aria-hidden="true">|</i>
+          <span><kbd>Esc</kbd>: Cancel</span>
+        </div>
+      )}
       {settingsOpen && (
         <div
           className="settings-layer"

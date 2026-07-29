@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Prefix mode has no timeout.
+- Prefix mode has no timeout and survives session polling or listener rebuilds.
 - Escape cancels without reaching xterm.
 - Unsupported keys leave prefix mode and continue to xterm.
 - The command guide uses existing Euphony visual tokens.
@@ -22,6 +22,8 @@
 **Files:**
 - Modify: `web/src/App.tsx`
 - Modify: `web/src/App.test.tsx`
+- Modify: `web/src/components/SessionNavigation.tsx`
+- Modify: `web/src/components/SessionNavigation.test.tsx`
 - Modify: `web/src/styles.css`
 - Modify: `web/e2e/euphony.spec.ts`
 
@@ -56,3 +58,7 @@ Focus `.xterm-helper-textarea`, press the configured prefix, verify the guide, p
 - [ ] **Step 7: Run the full suite**
 
 Run `make test`. Expect Go, Vitest, and TypeScript checks to pass.
+
+- [ ] **Step 8: Verify sidebar selection controls**
+
+Add component and App tests proving terminal checkboxes toggle additive pane membership and status text replaces the current selection without changing status-checkbox semantics.

@@ -209,10 +209,11 @@ test("command-selects terminal panes and keeps one active pane on mobile", async
   await expect(page.locator('.terminal-pane[data-active="false"]')).toBeHidden();
 });
 
-test("persists sidebar controls, settings, and tmux-style commands", async ({ page }) => {
+test("persists sidebar controls, settings, and tmux-style commands", async ({ page }, testInfo) => {
   await clearSessions(page);
   const codex = await createSession(page, "Codex");
   const claude = await createSession(page, "Claude");
+  await createSession(page, "Shell");
   await reportAgent(page, codex.id, "codex", "Review persistence");
   await reportAgent(page, claude.id, "claude", "Check shortcuts");
 
@@ -223,6 +224,12 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(claudeItem.getByRole("img", { name: "Claude" })).toBeVisible();
   await expect(codexItem).not.toContainText("Codex");
   await expect(codexItem).toContainText("~/work/euphony");
+  await page.getByRole("checkbox", { name: "Include Claude pane" }).click();
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+  await page.getByRole("button", { name: "Show only Terminal terminals" }).click();
+  await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Codex terminal", { exact: true })).toHaveCount(0);
+  await codexItem.click();
 
   const sidebar = page.locator(".desktop-sidebar");
   const separator = page.getByRole("separator", { name: "Resize sidebar" });
@@ -240,6 +247,11 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.getByLabel("Prefix").fill("Ctrl+A");
   await page.getByRole("button", { name: "Save settings" }).click();
   await page.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.press("Control+A");
+  await expect(page.getByRole("status", { name: "Prefix commands" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("prefix-command-guide.png") });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("status", { name: "Prefix commands" })).toHaveCount(0);
   await page.keyboard.press("Control+A");
   await page.keyboard.press("n");
   await expect(page.getByLabel("Claude terminal", { exact: true })).toBeVisible();
