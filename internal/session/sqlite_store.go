@@ -16,6 +16,8 @@ type metadataStore interface {
 	Load(context.Context) ([]Metadata, error)
 	Save(context.Context, Metadata) error
 	Delete(context.Context, string) error
+	LoadSettings(context.Context) (Settings, error)
+	SaveSettings(context.Context, Settings) error
 	Close() error
 }
 
@@ -64,12 +66,47 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			exit_code INTEGER,
 			message TEXT NOT NULL DEFAULT ''
 		)`,
-		"PRAGMA user_version = 1",
+		`CREATE TABLE IF NOT EXISTS settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			prefix TEXT NOT NULL,
+			sidebar_width INTEGER NOT NULL,
+			sidebar_collapsed INTEGER NOT NULL
+		)`,
+		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
+			VALUES (1, 'Ctrl+B', 304, 0)`,
+		"PRAGMA user_version = 2",
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate SQLite database: %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
+	var result Settings
+	var collapsed int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT prefix, sidebar_width, sidebar_collapsed FROM settings WHERE id = 1",
+	).Scan(&result.Prefix, &result.SidebarWidth, &collapsed)
+	if err != nil {
+		return Settings{}, fmt.Errorf("load settings: %w", err)
+	}
+	result.SidebarCollapsed = collapsed != 0
+	return result, nil
+}
+
+func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error {
+	collapsed := 0
+	if settings.SidebarCollapsed {
+		collapsed = 1
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE settings
+		SET prefix = ?, sidebar_width = ?, sidebar_collapsed = ?
+		WHERE id = 1`, settings.Prefix, settings.SidebarWidth, collapsed)
+	if err != nil {
+		return fmt.Errorf("save settings: %w", err)
 	}
 	return nil
 }

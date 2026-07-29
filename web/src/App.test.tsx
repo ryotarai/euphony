@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
-import type { Session } from "./types";
+import type { Session, Settings } from "./types";
+
+const defaultSettings: Settings = {
+  prefix: "Ctrl+B",
+  sidebarWidth: 304,
+  sidebarCollapsed: false,
+};
 
 const runningSession: Session = {
   id: "session-1",
@@ -59,7 +65,12 @@ test("stores a valid token and starts one terminal when the session list is empt
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(runningSession, 201));
   const user = userEvent.setup();
-  render(<App renderTerminal={(session) => <div>{session.name}</div>} />);
+  render(
+    <App
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.name}</div>}
+    />,
+  );
 
   await user.type(screen.getByLabelText("Access token"), "valid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
@@ -86,7 +97,12 @@ test("consumes a token from the URL without leaving it in browser history", asyn
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(runningSession, 201));
 
-  render(<App renderTerminal={(session) => <div>{session.name}</div>} />);
+  render(
+    <App
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.name}</div>}
+    />,
+  );
 
   expect(await screen.findByRole("button", { name: "Select Codex" })).toBeVisible();
   expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
@@ -104,7 +120,7 @@ test("returns to token entry after an invalid token", async () => {
     jsonResponse({ code: "unauthorized", message: "A valid access token is required." }, 401),
   );
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialSettings={defaultSettings} />);
 
   await user.type(screen.getByLabelText("Access token"), "invalid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
@@ -121,7 +137,13 @@ test("creates a terminal without asking for a name, selects it, and deletes it",
     .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })));
 
   const user = userEvent.setup();
-  render(<App initialToken="valid-token" renderTerminal={(session) => <div>{session.name}</div>} />);
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.name}</div>}
+    />,
+  );
 
   await user.click(await screen.findByRole("button", { name: "New terminal" }));
 
@@ -151,6 +173,7 @@ test("restores the selected session from the URL and follows browser navigation"
   render(
     <App
       initialToken="valid-token"
+      initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
     />,
   );
@@ -174,6 +197,7 @@ test("command-click selects multiple terminal panes and stores them in the URL",
   render(
     <App
       initialToken="valid-token"
+      initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
     />,
   );
@@ -209,6 +233,7 @@ test("a checked activity group automatically adds newly matching terminal panes"
   render(
     <App
       initialToken="valid-token"
+      initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
     />,
   );
@@ -229,6 +254,7 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   render(
     <App
       initialToken="valid-token"
+      initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
     />,
   );
@@ -237,4 +263,98 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   fireEvent.click(screen.getByRole("checkbox", { name: "Show all Terminal terminals" }));
 
   expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
+});
+
+test("tmux navigation keys switch terminals and focus panes", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "n" });
+  expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "p" });
+  expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), { metaKey: true });
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "h" });
+  expect(screen.getByLabelText("Codex pane")).toHaveAttribute("data-active", "true");
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "l" });
+  expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
+});
+
+test("tmux create and vertical split keys create the expected selection", async () => {
+  const createdByC = { ...plainTerminalSession, id: "created-c" };
+  const createdByV = { ...plainTerminalSession, id: "created-v" };
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse(createdByC, 201))
+    .mockImplementationOnce(() => jsonResponse(createdByV, 201));
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "c" });
+  expect(await screen.findByLabelText("created-c terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "v" });
+  expect(await screen.findByLabelText("created-v terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("created-c terminal pane")).toBeVisible();
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toEqual([
+    "created-c",
+    "created-v",
+  ]);
+});
+
+test("loads settings and saves a changed prefix", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    if (input === "/api/settings") return jsonResponse(defaultSettings);
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const prefix = screen.getByLabelText("Prefix");
+  await user.clear(prefix);
+  await user.type(prefix, "Ctrl+A");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ ...defaultSettings, prefix: "Ctrl+A" }),
+    }),
+  );
 });

@@ -1,14 +1,22 @@
 import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { ApiClient, ApiError } from "./api";
 import { SessionNavigation } from "./components/SessionNavigation";
+import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
 import { TerminalView } from "./components/TerminalView";
-import type { Session } from "./types";
+import type { Session, Settings } from "./types";
 
 const tokenKey = "euphony.token";
 interface AppProps {
   initialToken?: string;
+  initialSettings?: Settings;
   renderTerminal?: (session: Session, api: ApiClient) => ReactNode;
 }
+
+const defaultSettings: Settings = {
+  prefix: "Ctrl+B",
+  sidebarWidth: 304,
+  sidebarCollapsed: false,
+};
 
 function sessionActivity(session: Session) {
   if (session.agentStatus) return session.agentStatus;
@@ -74,6 +82,7 @@ function writeWorkspaceToURL(
 
 export function App({
   initialToken,
+  initialSettings,
   renderTerminal = (session, api) => <TerminalView key={session.id} session={session} api={api} />,
 }: AppProps) {
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
@@ -84,7 +93,28 @@ export function App({
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [authError, setAuthError] = useState(false);
   const [requestError, setRequestError] = useState("");
+  const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
+  const [settingsError, setSettingsError] = useState("");
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+
+  useEffect(() => {
+    if (!api || initialSettings) return;
+    let active = true;
+    api.getSettings().then((loaded) => {
+      if (!active) return;
+      setSettings(loaded);
+      setPrefixDraft(loaded.prefix);
+    }).catch((error: unknown) => {
+      if (active) {
+        setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [api, initialSettings]);
 
   useEffect(() => {
     if (!api) {
@@ -162,6 +192,49 @@ export function App({
     return () => window.removeEventListener("popstate", restore);
   }, [sessions]);
 
+  useEffect(() => {
+    let prefixActive = false;
+    let prefixTimer: number | undefined;
+    const clearPrefix = () => {
+      prefixActive = false;
+      if (prefixTimer !== undefined) window.clearTimeout(prefixTimer);
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      if (!prefixActive) {
+        if (!matchesPrefix(event, settings.prefix)) return;
+        event.preventDefault();
+        prefixActive = true;
+        prefixTimer = window.setTimeout(clearPrefix, 1500);
+        return;
+      }
+      clearPrefix();
+      const command = event.key.toLowerCase();
+      if (!["c", "h", "l", "n", "p", "v"].includes(command)) return;
+      event.preventDefault();
+      if (command === "c") {
+        void createSession(false);
+      } else if (command === "v") {
+        void createSession(true);
+      } else if (command === "h" || command === "l") {
+        const current = Math.max(0, selectedIDs.indexOf(focusedID ?? ""));
+        const offset = command === "h" ? -1 : 1;
+        const next = selectedIDs[current + offset];
+        if (next) focusPane(next);
+      } else if (sessions && sessions.length > 0) {
+        const current = Math.max(0, sessions.findIndex((item) => item.id === focusedID));
+        const offset = command === "p" ? -1 : 1;
+        const next = sessions[(current + offset + sessions.length) % sessions.length];
+        if (next) selectSession(next.id, false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      clearPrefix();
+    };
+  }, [focusedID, selectedIDs, sessions, settings.prefix]);
+
   function selectSession(id: string, multiple: boolean) {
     let nextIDs: string[];
     if (!multiple) {
@@ -206,15 +279,16 @@ export function App({
     setToken(value);
   }
 
-  async function createSession() {
+  async function createSession(split = false) {
     if (!api) return;
     try {
       const created = await api.createSession("Terminal");
       setSessions((current) => [...(current ?? []), created]);
-      setSelectedIDs([created.id]);
+      const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
+      setSelectedIDs(nextIDs);
       setFocusedID(created.id);
       setStatusFilters([]);
-      writeWorkspaceToURL([created.id], created.id, []);
+      writeWorkspaceToURL(nextIDs, created.id, []);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -236,6 +310,37 @@ export function App({
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
+  }
+
+  async function persistSettings(next: Settings) {
+    if (!api) return;
+    const previous = settings;
+    setSettings(next);
+    try {
+      const saved = await api.updateSettings(next);
+      setSettings(saved);
+      setRequestError("");
+    } catch (error) {
+      setSettings(previous);
+      setRequestError(error instanceof Error ? error.message : "Settings could not be saved.");
+    }
+  }
+
+  function openSettings() {
+    setPrefixDraft(settings.prefix);
+    setSettingsError("");
+    setSettingsOpen(true);
+  }
+
+  async function saveSettings(event: FormEvent) {
+    event.preventDefault();
+    const prefix = normalizePrefix(prefixDraft);
+    if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(prefix)) {
+      setSettingsError("Use modifiers and one key, for example Ctrl+B.");
+      return;
+    }
+    await persistSettings({ ...settings, prefix });
+    setSettingsOpen(false);
   }
 
   if (!token) {
@@ -280,6 +385,9 @@ export function App({
         onStatusFilter={updateStatusFilter}
         onCreate={() => void createSession()}
         onDelete={(item) => void deleteSession(item)}
+        settings={settings}
+        onSettingsChange={(next) => void persistSettings(next)}
+        onOpenSettings={openSettings}
       />
       <section
         className="terminal-stage"
@@ -306,6 +414,40 @@ export function App({
           </div>
         )}
       </section>
+      {settingsOpen && (
+        <div
+          className="settings-layer"
+          onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}
+        >
+          <form
+            className="settings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings"
+            onSubmit={(event) => void saveSettings(event)}
+          >
+            <p className="eyebrow">Key bindings</p>
+            <h2>Settings</h2>
+            <label htmlFor="prefix">Prefix</label>
+            <input
+              id="prefix"
+              value={prefixDraft}
+              onChange={(event) => setPrefixDraft(event.target.value)}
+              autoFocus
+            />
+            <p className="settings-hint">
+              Commands: c new, v split, h/l pane, n/p terminal.
+            </p>
+            {settingsError && <p className="field-error">{settingsError}</p>}
+            <div className="settings-controls">
+              <button type="button" onClick={() => setSettingsOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit">Save settings</button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }

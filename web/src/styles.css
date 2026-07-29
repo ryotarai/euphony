@@ -117,32 +117,107 @@ input {
   width: 100%;
   height: 100dvh;
   display: grid;
-  grid-template-columns: 19rem minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   overflow: hidden;
   background: #111417;
 }
 
-.session-rail {
+.desktop-sidebar {
   position: relative;
   z-index: 2;
+  min-width: 0;
+  height: 100%;
+  background: #1b2026;
+}
+
+.desktop-sidebar[data-resizing="true"] {
+  user-select: none;
+}
+
+.session-rail {
+  width: 100%;
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
   padding: 0.8rem;
   background: #1b2026;
-  border-right: 1px solid #293038;
+}
+
+.sidebar-heading {
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 0.45rem;
 }
 
 .wordmark {
-  height: 3rem;
-  display: grid;
-  place-items: center start;
-  padding: 0 0.45rem;
   color: #dce5e8;
   font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
   font-size: 1.25rem;
   letter-spacing: -0.04em;
+}
+
+.sidebar-collapse,
+.sidebar-settings,
+.sidebar-expand {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  color: #64717a;
+  background: transparent;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 1.25rem;
+}
+
+.sidebar-collapse:hover,
+.sidebar-settings:hover,
+.sidebar-expand:hover {
+  color: #dce5e8;
+}
+
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-settings {
+  font-size: 0.85rem;
+}
+
+.sidebar-expand {
+  margin: 0.8rem auto;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 3px;
+  width: 1px;
+  height: 100%;
+  background: #293038;
+  transition: background 120ms ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.desktop-sidebar[data-resizing="true"] .sidebar-resizer::after {
+  background: #b8f34a;
 }
 
 .session-list {
@@ -216,13 +291,26 @@ input {
 .session-select {
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   align-content: center;
-  gap: 0.3rem;
+  gap: 0.7rem;
   color: #829099;
   background: transparent;
   border-radius: 2px;
   padding: 0.55rem 0.7rem;
   text-align: left;
+}
+
+.session-agent-icon {
+  width: 1.12rem;
+  height: 1.12rem;
+  object-fit: contain;
+  opacity: 0.82;
+}
+
+.session-select[aria-current="true"] .session-agent-icon {
+  opacity: 1;
 }
 
 .session-select[aria-current="true"] {
@@ -233,16 +321,7 @@ input {
 .terminal-identity {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.5rem;
-  align-items: baseline;
-}
-
-.session-full-name {
-  color: #dce5e8;
-  font-size: 0.78rem;
-  font-weight: 650;
-  text-transform: capitalize;
+  gap: 0.28rem;
 }
 
 .session-cwd,
@@ -256,11 +335,27 @@ input {
 }
 
 .session-cwd {
+  direction: rtl;
+  text-align: left;
   color: #64717a;
 }
 
+.session-cwd > span {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
 .agent-title {
+  color: #dce5e8;
+  font-size: 0.78rem;
+  font-weight: 650;
+  direction: ltr;
+  text-align: left;
+}
+
+.session-select:not(:has(.agent-title)) .session-cwd {
   color: #9da9af;
+  font-size: 0.7rem;
 }
 
 .create-label {
@@ -280,6 +375,74 @@ input {
   background: #1b2026;
   border-radius: 50%;
   opacity: 0;
+  z-index: 2;
+}
+
+.settings-layer {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(5 7 9 / 72%);
+  backdrop-filter: blur(5px);
+}
+
+.settings-dialog {
+  width: min(28rem, 100%);
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.4rem;
+  background: #1b2026;
+  border: 1px solid #394149;
+  box-shadow: 0 28px 80px rgb(0 0 0 / 50%);
+}
+
+.settings-dialog h2,
+.settings-dialog p {
+  margin: 0;
+}
+
+.settings-dialog h2 {
+  font-size: 1.5rem;
+}
+
+.settings-dialog label {
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.settings-hint {
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.settings-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 0.3rem;
+}
+
+.settings-controls button {
+  min-height: 40px;
+  padding: 0.55rem 0.85rem;
+  color: #dce5e8;
+  background: transparent;
+  border: 1px solid #394149;
+}
+
+.settings-controls button[type="submit"] {
+  color: #111417;
+  background: #b8f34a;
+  border-color: #b8f34a;
+  font-weight: 700;
 }
 
 .session-channel:hover .session-delete,
@@ -466,6 +629,10 @@ input {
   }
 
   .session-rail {
+    display: none;
+  }
+
+  .desktop-sidebar {
     display: none;
   }
 

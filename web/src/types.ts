@@ -18,3 +18,9 @@ export interface ApiErrorBody {
   code: string;
   message: string;
 }
+
+export interface Settings {
+  prefix: string;
+  sidebarWidth: number;
+  sidebarCollapsed: boolean;
+}

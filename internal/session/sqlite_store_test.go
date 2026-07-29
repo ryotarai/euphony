@@ -51,6 +51,41 @@ func TestSQLiteStorePersistsTerminalMetadata(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defaults, err := store.LoadSettings(context.Background())
+	if err != nil {
+		t.Fatalf("LoadSettings() error = %v", err)
+	}
+	if defaults.Prefix != "Ctrl+B" || defaults.SidebarWidth != 304 || defaults.SidebarCollapsed {
+		t.Fatalf("default settings = %#v", defaults)
+	}
+	want := Settings{Prefix: "Ctrl+A", SidebarWidth: 420, SidebarCollapsed: true}
+	if err := store.SaveSettings(context.Background(), want); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	store, err = OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store.Close()
+	got, err := store.LoadSettings(context.Background())
+	if err != nil {
+		t.Fatalf("LoadSettings() after reopen error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)
+	}
+}
+
 func metadataEqual(left, right Metadata) bool {
 	return left.ID == right.ID && left.Name == right.Name && left.State == right.State &&
 		left.CWD == right.CWD && left.Agent == right.Agent &&

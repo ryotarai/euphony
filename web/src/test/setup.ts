@@ -10,6 +10,7 @@ Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   history.replaceState(null, "", "/");
   vi.restoreAllMocks();
 });

@@ -49,6 +49,16 @@ type AgentUpdate struct {
 	CWD            string
 }
 
+type Settings struct {
+	Prefix           string `json:"prefix"`
+	SidebarWidth     int    `json:"sidebarWidth"`
+	SidebarCollapsed bool   `json:"sidebarCollapsed"`
+}
+
+func DefaultSettings() Settings {
+	return Settings{Prefix: "Ctrl+B", SidebarWidth: 304}
+}
+
 type entry struct {
 	metadata Metadata
 	session  *Session
@@ -61,6 +71,7 @@ type Manager struct {
 	sessions map[string]*entry
 	store    metadataStore
 	closing  bool
+	settings Settings
 }
 
 func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager, error) {
@@ -70,6 +81,11 @@ func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager
 	}
 	manager := NewManager(shell, hooks)
 	manager.store = store
+	manager.settings, err = store.LoadSettings(context.Background())
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	items, err := store.Load(context.Background())
 	if err != nil {
 		_ = store.Close()
@@ -102,7 +118,10 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	if len(hookConfigs) > 0 {
 		hooks = hookConfigs[0]
 	}
-	return &Manager{shell: shell, hooks: hooks, sessions: make(map[string]*entry)}
+	return &Manager{
+		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
+		settings: DefaultSettings(),
+	}
 }
 
 func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
@@ -291,6 +310,24 @@ func (m *Manager) refreshCodexTitles() {
 			_ = m.store.Save(context.Background(), item.metadata)
 		}
 	}
+}
+
+func (m *Manager) Settings() Settings {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.settings
+}
+
+func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.store != nil {
+		if err := m.store.SaveSettings(ctx, settings); err != nil {
+			return err
+		}
+	}
+	m.settings = settings
+	return nil
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {

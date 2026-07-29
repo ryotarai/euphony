@@ -1,4 +1,4 @@
-import type { ApiErrorBody, Session } from "./types";
+import type { ApiErrorBody, Session, Settings } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -32,6 +32,17 @@ export class ApiClient {
     return this.request(`/api/sessions/${encodeURIComponent(id)}/tickets`, { method: "POST" });
   }
 
+  getSettings(): Promise<Settings> {
+    return this.request("/api/settings");
+  }
+
+  updateSettings(settings: Settings): Promise<Settings> {
+    return this.request("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify(settings),
+    });
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(path, {
       ...init,
@@ -56,4 +67,3 @@ export class ApiClient {
     return (await response.json()) as T;
   }
 }
-

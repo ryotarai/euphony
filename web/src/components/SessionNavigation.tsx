@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { Session } from "../types";
+import claudeIcon from "../assets/claude.svg";
+import openAIIcon from "../assets/openai.svg";
+import type { Session, Settings } from "../types";
+
+const defaultSidebarWidth = 304;
+const minimumSidebarWidth = 180;
+const maximumSidebarWidth = 600;
 
 interface SessionNavigationProps {
   sessions: Session[];
@@ -9,6 +15,9 @@ interface SessionNavigationProps {
   onStatusFilter(status: string, checked: boolean): void;
   onCreate(): void;
   onDelete(session: Session): void;
+  settings?: Settings;
+  onSettingsChange?(settings: Settings): void;
+  onOpenSettings?(): void;
 }
 
 function activity(session: Session) {
@@ -18,6 +27,18 @@ function activity(session: Session) {
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function displayPath(path: string) {
+  return path
+    .replace(/^\/Users\/[^/]+(?=\/|$)/, "~")
+    .replace(/^\/home\/[^/]+(?=\/|$)/, "~");
+}
+
+function agentIcon(session: Session) {
+  if (session.agent === "codex") return { source: openAIIcon, label: "Codex" };
+  if (session.agent === "claude") return { source: claudeIcon, label: "Claude" };
+  return null;
 }
 
 function SessionList({
@@ -45,7 +66,9 @@ function SessionList({
               <h2>{statusLabel(status)}</h2>
               <span>{sessions.filter((session) => activity(session) === status).length}</span>
             </label>
-            {sessions.filter((session) => activity(session) === status).map((session) => (
+            {sessions.filter((session) => activity(session) === status).map((session) => {
+              const icon = agentIcon(session);
+              return (
               <div className="session-channel" key={session.id} data-state={activity(session)}>
                 <span className="channel-signal" aria-hidden="true" />
                 <button
@@ -57,12 +80,18 @@ function SessionList({
                   onClick={(event) => onSelect(session.id, event.metaKey || event.ctrlKey)}
                 >
                   <span className="terminal-identity">
-                    <span className="session-full-name">
-                      {session.agent ? session.agent : session.name}
+                    {session.agentTitle && <span className="agent-title">{session.agentTitle}</span>}
+                    <span className="session-cwd">
+                      <span>{displayPath(session.cwd)}</span>
                     </span>
-                    <span className="session-cwd">{session.cwd}</span>
                   </span>
-                  {session.agentTitle && <span className="agent-title">{session.agentTitle}</span>}
+                  {icon && (
+                    <img
+                      className="session-agent-icon"
+                      src={icon.source}
+                      alt={icon.label}
+                    />
+                  )}
                 </button>
                 <button
                   className="session-delete"
@@ -73,7 +102,8 @@ function SessionList({
                   ×
                 </button>
               </div>
-            ))}
+              );
+            })}
           </section>
         ))}
       </div>
@@ -86,10 +116,21 @@ function SessionList({
 }
 
 export function SessionNavigation(props: SessionNavigationProps) {
+  const settings = props.settings ?? {
+    prefix: "Ctrl+B",
+    sidebarWidth: defaultSidebarWidth,
+    sidebarCollapsed: false,
+  };
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
+  const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);
+  const [resizing, setResizing] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
+
+  useEffect(() => setSidebarWidth(settings.sidebarWidth), [settings.sidebarWidth]);
+  useEffect(() => setCollapsed(settings.sidebarCollapsed), [settings.sidebarCollapsed]);
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -119,6 +160,44 @@ export function SessionNavigation(props: SessionNavigationProps) {
     return () => document.removeEventListener("keydown", handleKey);
   }, [drawerOpen]);
 
+  useEffect(() => {
+    if (!resizing) return;
+    const resize = (event: PointerEvent) => {
+      setSidebarWidth(Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, event.clientX)));
+    };
+    const finish = (event: PointerEvent) => {
+      const width = Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, event.clientX));
+      setSidebarWidth(width);
+      props.onSettingsChange?.({ ...settings, sidebarWidth: width });
+      setResizing(false);
+    };
+    document.addEventListener("pointermove", resize);
+    document.addEventListener("pointerup", finish);
+    return () => {
+      document.removeEventListener("pointermove", resize);
+      document.removeEventListener("pointerup", finish);
+    };
+  }, [resizing, settings, props.onSettingsChange]);
+
+  const toggleSidebar = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    props.onSettingsChange?.({ ...settings, sidebarCollapsed: next });
+  };
+
+  const resizeWithKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let next = sidebarWidth;
+    if (event.key === "ArrowLeft") next -= 16;
+    else if (event.key === "ArrowRight") next += 16;
+    else if (event.key === "Home") next = minimumSidebarWidth;
+    else if (event.key === "End") next = maximumSidebarWidth;
+    else return;
+    event.preventDefault();
+    next = Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, next));
+    setSidebarWidth(next);
+    props.onSettingsChange?.({ ...settings, sidebarWidth: next });
+  };
+
   const mobileSelect = (id: string) => {
     props.onSelect(id, false);
     setDrawerOpen(false);
@@ -127,12 +206,66 @@ export function SessionNavigation(props: SessionNavigationProps) {
 
   return (
     <>
-      <aside className="session-rail" aria-label="Terminal sessions">
-        <div className="wordmark" aria-label="Euphony">
-          EU
-        </div>
-        <SessionList {...props} />
-      </aside>
+      <div
+        className="desktop-sidebar"
+        data-collapsed={collapsed}
+        data-resizing={resizing}
+        style={{ width: collapsed ? 48 : sidebarWidth }}
+      >
+        {collapsed ? (
+          <button
+            className="sidebar-expand"
+            aria-label="Expand sidebar"
+            aria-expanded="false"
+            onClick={toggleSidebar}
+          >
+            <span aria-hidden="true">›</span>
+          </button>
+        ) : (
+          <>
+            <aside className="session-rail" aria-label="Terminal sessions">
+              <div className="sidebar-heading">
+                <div className="wordmark" aria-label="Euphony">
+                  EU
+                </div>
+                <div className="sidebar-actions">
+                  <button
+                    className="sidebar-settings"
+                    aria-label="Open settings"
+                    onClick={props.onOpenSettings}
+                  >
+                    <span aria-hidden="true">⚙</span>
+                  </button>
+                  <button
+                    className="sidebar-collapse"
+                    aria-label="Collapse sidebar"
+                    aria-expanded="true"
+                    onClick={toggleSidebar}
+                  >
+                    <span aria-hidden="true">‹</span>
+                  </button>
+                </div>
+              </div>
+              <SessionList {...props} />
+            </aside>
+            <div
+              className="sidebar-resizer"
+              role="separator"
+              aria-label="Resize sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={minimumSidebarWidth}
+              aria-valuemax={maximumSidebarWidth}
+              aria-valuenow={sidebarWidth}
+              tabIndex={0}
+              onKeyDown={resizeWithKeyboard}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                setResizing(true);
+              }}
+            />
+          </>
+        )}
+      </div>
 
       <header className="mobile-header">
         <button

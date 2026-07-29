@@ -61,6 +61,8 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
 	protected.HandleFunc("POST /api/hooks/terminal", server.updateTerminalHook)
+	protected.HandleFunc("GET /api/settings", server.getSettings)
+	protected.HandleFunc("PATCH /api/settings", server.updateSettings)
 	protected.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "api_not_found", "The API endpoint does not exist.")
 	})

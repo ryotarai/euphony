@@ -1,6 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function clearSessions(page: Page) {
+  await page.request.patch("/api/settings", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: { prefix: "Ctrl+B", sidebarWidth: 304, sidebarCollapsed: false },
+  });
   const existing = await page.request.get("/api/sessions", {
     headers: { Authorization: "Bearer test-token" },
   });
@@ -10,6 +17,28 @@ async function clearSessions(page: Page) {
       headers: { Authorization: "Bearer test-token" },
     });
   }
+}
+
+async function reportAgent(
+  page: Page,
+  terminalID: string,
+  agent: "codex" | "claude",
+  title: string,
+) {
+  const response = await page.request.post("/api/hooks/terminal", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: {
+      terminalId: terminalID,
+      agent,
+      status: "waiting",
+      title,
+      cwd: "/Users/ryotarai/work/euphony",
+    },
+  });
+  expect(response.ok()).toBe(true);
 }
 
 async function createSession(page: Page, name: string): Promise<{ id: string; name: string }> {
@@ -167,6 +196,46 @@ test("command-selects terminal panes and keeps one active pane on mobile", async
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.terminal-pane[data-active="true"]')).toBeVisible();
   await expect(page.locator('.terminal-pane[data-active="false"]')).toBeHidden();
+});
+
+test("persists sidebar controls, settings, and tmux-style commands", async ({ page }) => {
+  await clearSessions(page);
+  const codex = await createSession(page, "Codex");
+  const claude = await createSession(page, "Claude");
+  await reportAgent(page, codex.id, "codex", "Review persistence");
+  await reportAgent(page, claude.id, "claude", "Check shortcuts");
+
+  await page.goto("/?token=test-token");
+  const codexItem = page.getByRole("button", { name: "Select Codex" });
+  const claudeItem = page.getByRole("button", { name: "Select Claude" });
+  await expect(codexItem.getByRole("img", { name: "Codex" })).toBeVisible();
+  await expect(claudeItem.getByRole("img", { name: "Claude" })).toBeVisible();
+  await expect(codexItem).not.toContainText("Codex");
+  await expect(codexItem).toContainText("~/work/euphony");
+
+  const sidebar = page.locator(".desktop-sidebar");
+  const separator = page.getByRole("separator", { name: "Resize sidebar" });
+  const box = await separator.boundingBox();
+  if (!box) throw new Error("Sidebar separator is not visible.");
+  await page.mouse.move(box.x + box.width / 2, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(420, box.y + 20);
+  await page.mouse.up();
+  await expect(sidebar).toHaveCSS("width", "420px");
+  await page.reload();
+  await expect(sidebar).toHaveCSS("width", "420px");
+
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByLabel("Prefix").fill("Ctrl+A");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("n");
+  await expect(page.getByLabel("Claude terminal", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
 });
 
 async function readTerminalHistory(
