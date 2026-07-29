@@ -130,7 +130,7 @@ test("updates the sidebar after the shell changes directory", async ({ page }) =
   await expect(terminal).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
-  await page.keyboard.type("cd /etc && printf '\\033]0;/etc\\007'");
+  await page.keyboard.type("cd /etc");
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("button", { name: "Select Terminal" })).toContainText("/etc");

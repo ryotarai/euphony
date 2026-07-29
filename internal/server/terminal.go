@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -92,6 +93,10 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					invalidMessages++
 				} else if _, err := terminal.Write([]byte(message.Data)); err != nil {
 					return
+				} else if strings.ContainsAny(message.Data, "\r\n") {
+					time.AfterFunc(100*time.Millisecond, func() {
+						_, _ = s.sessions.RefreshCWD(id)
+					})
 				}
 			case "resize":
 				if err := terminal.Resize(message.Cols, message.Rows); err != nil {

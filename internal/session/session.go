@@ -50,6 +50,13 @@ func (s *Session) Resize(cols, rows uint16) error {
 	return pty.Setsize(s.terminal, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
+func (s *Session) WorkingDirectory() (string, error) {
+	if s.command.Process == nil {
+		return "", errors.New("terminal process has not started")
+	}
+	return processWorkingDirectory(s.command.Process.Pid)
+}
+
 func (s *Session) Subscribe() ([]byte, <-chan []byte, func()) {
 	s.outputMu.Lock()
 	history := append([]byte(nil), s.history...)

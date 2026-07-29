@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -180,6 +182,53 @@ func TestTerminalWebSocketUpdatesCurrentWorkingDirectory(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("sessions after cwd update = %#v, want cwd %q", sessions, cwd)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTerminalWebSocketTracksPlainShellCD(t *testing.T) {
+	initialCWD := t.TempDir()
+	nextCWD := t.TempDir()
+	resolvedNextCWD, err := filepath.EvalSymlinks(nextCWD)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(next cwd) error = %v", err)
+	}
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions",
+		`{"name":"Terminal","cwd":`+strconv.Quote(initialCWD)+`}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	connection := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer connection.CloseNow()
+
+	payload, _ := json.Marshal(clientMessage{
+		Type: "input",
+		Data: "cd " + strconv.Quote(nextCWD) + "\n",
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+		t.Fatalf("Write(cd) error = %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		listed := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+		var sessions []session.Metadata
+		decodeResponse(t, listed, &sessions)
+		if len(sessions) == 1 && sessions[0].CWD == resolvedNextCWD {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sessions after plain cd = %#v, want cwd %q", sessions, resolvedNextCWD)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
