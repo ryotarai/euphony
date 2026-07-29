@@ -46,6 +46,12 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	var cancelCWDRefresh context.CancelFunc
+	defer func() {
+		if cancelCWDRefresh != nil {
+			cancelCWDRefresh()
+		}
+	}()
 	history, output, unsubscribe := terminal.Subscribe()
 	defer unsubscribe()
 	outputDone := make(chan struct{})
@@ -94,16 +100,23 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				} else if _, err := terminal.Write([]byte(message.Data)); err != nil {
 					return
 				} else if strings.ContainsAny(message.Data, "\r\n") {
-					time.AfterFunc(100*time.Millisecond, func() {
-						_, _ = s.sessions.RefreshCWD(id)
-					})
+					if cancelCWDRefresh != nil {
+						cancelCWDRefresh()
+					}
+					refreshContext, cancelRefresh := context.WithCancel(ctx)
+					cancelCWDRefresh = cancelRefresh
+					baseline, _ := s.sessions.CurrentCWD(id)
+					go s.refreshCWDUntilChanged(refreshContext, id, baseline)
 				}
 			case "resize":
 				if err := terminal.Resize(message.Cols, message.Rows); err != nil {
 					invalidMessages++
 				}
 			case "cwd":
-				_, _ = s.sessions.UpdateCWD(id, message.Data)
+				if _, err := s.sessions.UpdateCWD(id, message.Data); err == nil && cancelCWDRefresh != nil {
+					cancelCWDRefresh()
+					cancelCWDRefresh = nil
+				}
 			default:
 				invalidMessages++
 			}
@@ -116,6 +129,32 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		case <-outputDone:
 			return
 		default:
+		}
+	}
+}
+
+func (s *Server) refreshCWDUntilChanged(ctx context.Context, id, baseline string) {
+	delays := [...]time.Duration{
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		15 * time.Second,
+	}
+	for _, delay := range delays {
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		}
+		metadata, err := s.sessions.RefreshCWD(id)
+		if err != nil || metadata.CWD != baseline {
+			return
 		}
 	}
 }

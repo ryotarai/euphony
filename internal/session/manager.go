@@ -482,6 +482,16 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return item.session, true
 }
 
+func (m *Manager) CurrentCWD(id string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	item, ok := m.sessions[id]
+	if !ok {
+		return "", false
+	}
+	return item.metadata.CWD, true
+}
+
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	item, ok := m.sessions[id]

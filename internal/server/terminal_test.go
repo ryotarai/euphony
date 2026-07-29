@@ -211,7 +211,7 @@ func TestTerminalWebSocketTracksPlainShellCD(t *testing.T) {
 
 	payload, _ := json.Marshal(clientMessage{
 		Type: "input",
-		Data: "cd " + strconv.Quote(nextCWD) + "\n",
+		Data: "sleep 0.5; cd " + strconv.Quote(nextCWD) + "\n",
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
