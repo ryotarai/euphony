@@ -228,9 +228,9 @@ export function App({
         if (next) selectSession(next.id, false);
       }
     };
-    window.addEventListener("keydown", handleKey);
+    window.addEventListener("keydown", handleKey, { capture: true });
     return () => {
-      window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("keydown", handleKey, { capture: true });
       clearPrefix();
     };
   }, [focusedID, selectedIDs, sessions, settings.prefix]);

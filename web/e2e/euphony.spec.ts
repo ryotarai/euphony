@@ -228,6 +228,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.getByRole("button", { name: "Open settings" }).click();
   await page.getByLabel("Prefix").fill("Ctrl+A");
   await page.getByRole("button", { name: "Save settings" }).click();
+  await page.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+A");
   await page.keyboard.press("n");
   await expect(page.getByLabel("Claude terminal", { exact: true })).toBeVisible();

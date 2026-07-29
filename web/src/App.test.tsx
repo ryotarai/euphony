@@ -295,6 +295,33 @@ test("tmux navigation keys switch terminals and focus panes", async () => {
   expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
 });
 
+test("tmux keys work when the focused terminal stops key event propagation", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div className="terminal-host">
+          <textarea
+            aria-label={`${session.id} terminal input`}
+            onKeyDown={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
+    />,
+  );
+  const terminalInput = await screen.findByLabelText("session-1 terminal input");
+  terminalInput.focus();
+
+  fireEvent.keyDown(terminalInput, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(terminalInput, { key: "n" });
+
+  expect(await screen.findByLabelText("session-2 terminal input")).toBeVisible();
+});
+
 test("tmux create and vertical split keys create the expected selection", async () => {
   const createdByC = { ...plainTerminalSession, id: "created-c" };
   const createdByV = { ...plainTerminalSession, id: "created-v" };
