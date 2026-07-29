@@ -318,8 +318,10 @@ test("clicking a status label replaces the current pane selection", async () => 
     />,
   );
   await screen.findByLabelText("session-1 terminal pane");
-  fireEvent.click(screen.getByRole("checkbox", { name: "Include Claude in split" }));
+  const claudeCheckbox = screen.getByRole("checkbox", { name: "Include Claude in split" });
+  fireEvent.click(claudeCheckbox);
   expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
+  expect(claudeCheckbox).toBeChecked();
 
   fireEvent.click(screen.getByRole("button", { name: "Show only Waiting terminals" }));
 

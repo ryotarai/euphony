@@ -11,3 +11,5 @@
   during the current task.
 - Remove repetitive manual steps from development workflows when they can be
   automated safely.
+- After implementing and verifying changes in a task worktree, commit and merge
+  them back to the base branch automatically unless the user asks otherwise.

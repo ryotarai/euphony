@@ -167,6 +167,20 @@ test("keeps the selected terminal in the URL across navigation and reload", asyn
   await expect(page.getByLabel("Second terminal")).toBeVisible();
 });
 
+test("keeps a selected split checkbox visibly checked", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Left");
+  await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  const checkbox = page.getByRole("checkbox", { name: "Include Right in split" });
+  await checkbox.click();
+
+  await expect(checkbox).toBeChecked();
+  await expect(checkbox).toHaveCSS("background-color", "rgb(96, 165, 250)");
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+});
+
 test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "Left");
