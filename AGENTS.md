@@ -17,3 +17,5 @@
   sessions cannot leak into browser tests.
 - Preserve arbitrary terminal byte streams across JSON boundaries with a
   lossless encoding such as base64; never stringify independent PTY chunks.
+- Run end-to-end tests that mutate shared server state with one worker, or give
+  each worker an isolated backend.

@@ -38,6 +38,43 @@ async function createSession(page: Page, name: string): Promise<{ id: string }> 
   return response.json();
 }
 
+async function readTerminalHistory(page: Page, sessionID: string): Promise<string> {
+  return page.evaluate(async ({ id }) => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/tickets`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      },
+    });
+    const { ticket } = (await response.json()) as { ticket: string };
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(
+      `${protocol}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/terminal?ticket=${encodeURIComponent(ticket)}`,
+    );
+    return await new Promise<string>((resolve, reject) => {
+      const output: number[] = [];
+      const timeout = window.setTimeout(() => {
+        socket.close();
+        resolve(new TextDecoder().decode(Uint8Array.from(output)));
+      }, 250);
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(String(event.data)) as { type: string; data?: string };
+        if ((message.type === "output" || message.type === "history") && message.data) {
+          const decoded = atob(message.data);
+          for (let index = 0; index < decoded.length; index += 1) {
+            output.push(decoded.charCodeAt(index));
+          }
+        }
+      });
+      socket.addEventListener("error", () => {
+        window.clearTimeout(timeout);
+        reject(new Error("terminal history WebSocket failed"));
+      });
+    });
+  }, { id: sessionID });
+}
+
 test("keeps a running Claude terminal fitted across repeated pane changes", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
@@ -81,10 +118,13 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   await page.getByRole("button", { name: "Select Claude" }).click();
   const terminal = page.getByLabel("Claude terminal", { exact: true });
   await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
   await page.keyboard.type("claude");
   await page.keyboard.press("Enter");
-  await page.waitForTimeout(1500);
+  await expect
+    .poll(() => readTerminalHistory(page, claude.id), { timeout: 15_000 })
+    .toMatch(/Claude Code|Not logged in|Welcome back/i);
 
   const leftCheckbox = page.getByRole("checkbox", { name: "Include Left in split" });
   for (let iteration = 0; iteration < 30; iteration += 1) {
