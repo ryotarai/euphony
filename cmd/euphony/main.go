@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -103,8 +108,12 @@ func runServer() error {
 	if codexDirectory == "" {
 		codexDirectory = filepath.Join(home, ".codex")
 	}
+	token, generatedToken, err := resolveToken(os.Getenv("EUPHONY_TOKEN"))
+	if err != nil {
+		return err
+	}
 	srv, err := server.New(server.Config{
-		Token:             os.Getenv("EUPHONY_TOKEN"),
+		Token:             token,
 		Shell:             os.Getenv("SHELL"),
 		HookURL:           "http://" + address + "/api/hooks/terminal",
 		DatabasePath:      databasePath,
@@ -124,6 +133,12 @@ func runServer() error {
 	go func() {
 		result <- httpServer.ListenAndServe()
 	}()
+	if generatedToken {
+		url := browserURL(address, token)
+		if err := openBrowser(url); err != nil {
+			log.Printf("Open %s in a browser: %v", url, err)
+		}
+	}
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -147,4 +162,31 @@ func runServer() error {
 		return shutdownErr
 	}
 	return sessionErr
+}
+
+func resolveToken(configured string) (string, bool, error) {
+	if configured != "" {
+		return configured, false, nil
+	}
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", false, fmt.Errorf("generate EUPHONY_TOKEN: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), true, nil
+}
+
+func browserURL(address, token string) string {
+	url := url.URL{Scheme: "http", Host: address}
+	query := url.Query()
+	query.Set("token", token)
+	url.RawQuery = query.Encode()
+	return url.String()
+}
+
+func openBrowser(url string) error {
+	command := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		command = "open"
+	}
+	return exec.Command(command, url).Start()
 }
