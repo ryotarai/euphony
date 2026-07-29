@@ -97,6 +97,99 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
   ]);
 });
 
+test("reports an absolute terminal title as the current working directory", async () => {
+  const socket = new FakeSocket();
+  let onTitleChange: ((title: string) => void) | undefined;
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    onTitleChange: (callback: (title: string) => void) => {
+      onTitleChange = callback;
+      return () => undefined;
+    },
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    onTitleChange(callback: (title: string) => void): () => void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => {
+    onTitleChange?.("vim README.md");
+    onTitleChange?.("/tmp");
+  });
+
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "cwd", data: "/tmp" },
+  ]);
+});
+
+test("does not report a stale working directory from replayed history", async () => {
+  const socket = new FakeSocket();
+  let onTitleChange: ((title: string) => void) | undefined;
+  const terminal = {
+    open: () => undefined,
+    write: (data: string | Uint8Array, callback?: () => void) => {
+      const title = terminalText(data).includes("stale") ? "/stale" : "/etc";
+      onTitleChange?.(title);
+      callback?.();
+    },
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    onTitleChange: (callback: (title: string) => void) => {
+      onTitleChange = callback;
+      return () => undefined;
+    },
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    onTitleChange(callback: (title: string) => void): () => void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => socket.receive({ type: "history", data: encodeTerminalData("stale title") }));
+  expect(socket.sent).toEqual([]);
+
+  act(() => socket.receive({ type: "output", data: encodeTerminalData("current title") }));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "cwd", data: "/etc" },
+  ]);
+});
+
 test("decodes terminal output into the original bytes", async () => {
   const socket = new FakeSocket();
   const writes: unknown[] = [];

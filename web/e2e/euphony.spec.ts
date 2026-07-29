@@ -122,6 +122,20 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   expect(failedRequests).toEqual([]);
 });
 
+test("updates the sidebar after the shell changes directory", async ({ page }) => {
+  await clearSessions(page);
+  await page.goto("/?token=test-token");
+
+  const terminal = page.getByLabel("Terminal terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await terminal.click();
+  await page.keyboard.type("cd /etc && printf '\\033]0;/etc\\007'");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByRole("button", { name: "Select Terminal" })).toContainText("/etc");
+});
+
 test("reloads a running terminal with its previous output", async ({ page }) => {
   await clearSessions(page);
   await page.goto("/");

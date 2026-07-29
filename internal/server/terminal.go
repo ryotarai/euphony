@@ -97,6 +97,8 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				if err := terminal.Resize(message.Cols, message.Rows); err != nil {
 					invalidMessages++
 				}
+			case "cwd":
+				_, _ = s.sessions.UpdateCWD(id, message.Data)
 			default:
 				invalidMessages++
 			}

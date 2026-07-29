@@ -18,6 +18,7 @@ export interface TerminalDriver {
   onSelectionChange(callback: () => void): () => void;
   onData(callback: (data: string) => void): () => void;
   onResize(callback: (cols: number, rows: number) => void): () => void;
+  onTitleChange?(callback: (title: string) => void): () => void;
   dispose(): void;
 }
 
@@ -90,6 +91,10 @@ function defaultTerminal(): TerminalDriver {
       const disposable = terminal.onResize(({ cols, rows }) => callback(cols, rows));
       return () => disposable.dispose();
     },
+    onTitleChange: (callback) => {
+      const disposable = terminal.onTitleChange(callback);
+      return () => disposable.dispose();
+    },
     dispose: () => terminal.dispose(),
   };
 }
@@ -128,6 +133,7 @@ export function TerminalView({
     let replayingHistory = false;
     let socket: WebSocketLike | undefined;
     let lastSize = "";
+    let lastReportedCWD = session.cwd;
     const terminal = createTerminal();
     terminalRef.current = terminal;
     terminal.open(host);
@@ -161,6 +167,12 @@ export function TerminalView({
       if (!replayingHistory) send({ type: "input", data });
     });
     const removeResize = terminal.onResize(sendResize);
+    const removeTitleChange = terminal.onTitleChange?.((title) => {
+      const cwd = title.trim();
+      const isDirectoryTitle = cwd.startsWith("/") || cwd === "~" || cwd.startsWith("~/");
+      if (replayingHistory || !isDirectoryTitle || cwd === lastReportedCWD) return;
+      if (send({ type: "cwd", data: cwd })) lastReportedCWD = cwd;
+    });
     let selectionTimer: ReturnType<typeof setTimeout> | undefined;
     let copiedTimer: ReturnType<typeof setTimeout> | undefined;
     const removeSelectionChange = terminal.onSelectionChange(() => {
@@ -248,6 +260,7 @@ export function TerminalView({
       resizeObserver?.disconnect();
       removeData();
       removeResize();
+      removeTitleChange?.();
       removeSelectionChange();
       clearTimeout(selectionTimer);
       clearTimeout(copiedTimer);
