@@ -41,9 +41,12 @@ The navigation is composed directly from `SidebarProvider`, `Sidebar`,
 `SidebarMenuBadge`, `SidebarFooter`, `SidebarTrigger`, and `SidebarRail`.
 
 The old `EU` mark is removed. Header controls contain only settings and the
-collapse trigger. Repository paths and activity groups provide the hierarchy.
-Session rows use the standard menu active state and action affordances while
-retaining the split-selection checkbox and agent identity.
+collapse trigger. Navigation uses the hierarchy `status > cwd > terminal`.
+Status checkboxes dynamically track every terminal with that status. Each cwd
+checkbox tracks the narrower `status × cwd` group, automatically adding and
+removing panes as sessions enter or leave that group. Session rows use the
+standard menu active state and action affordances while retaining the
+split-selection checkbox and agent identity.
 
 ## Connection Feedback
 

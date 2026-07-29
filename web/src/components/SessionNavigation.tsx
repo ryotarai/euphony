@@ -1,10 +1,26 @@
-import { useEffect, useRef, useState } from "react";
-import { PlusIcon, Settings2Icon } from "lucide-react";
+import { type CSSProperties, useEffect, useState } from "react";
+import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import type { Session, Settings } from "../types";
 
 const defaultSidebarWidth = 256;
@@ -22,6 +38,8 @@ interface SessionNavigationProps {
   onSelect(id: string, multiple: boolean): void;
   onStatusFilter(status: string, checked: boolean): void;
   onStatusSelect?(status: string): void;
+  cwdFilters?: string[];
+  onCwdFilter?(status: string, cwd: string, checked: boolean): void;
   onCreate(): void;
   onDelete(session: Session): void;
   settings?: Settings;
@@ -60,160 +78,156 @@ function displayPath(path: string) {
     .replace(/^\/home\/[^/]+(?=\/|$)/, "~");
 }
 
+export function cwdFilterKey(status: string, cwd: string) {
+  return `${status}\u0000${cwd}`;
+}
+
 function agentIcon(session: Session) {
   if (session.agent === "codex") return { source: openAIIcon, label: "Codex" };
   if (session.agent === "claude") return { source: claudeIcon, label: "Claude" };
   return null;
 }
 
-function SessionList({
-  sessions,
-  selectedIDs,
-  statusFilters,
-  onSelect,
-  onStatusFilter,
-  onStatusSelect,
-  onCreate,
-  onDelete,
-}: SessionNavigationProps) {
-  const repositories = sessions.some((session) => session.repoRoot)
-    ? [...new Set(sessions.map((session) => session.repoRoot || session.cwd))]
-    : [""];
+function SessionList(props: SessionNavigationProps) {
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const selectSession = (id: string, multiple: boolean) => {
+    props.onSelect(id, multiple);
+    if (isMobile && !multiple) setOpenMobile(false);
+  };
+
   return (
-    <>
-      <div className="session-list">
-        {repositories.map((repository) => {
-          const repositorySessions = repository
-            ? sessions.filter((session) => (session.repoRoot || session.cwd) === repository)
-            : sessions;
-          return (
-          <div className="repository-group" key={repository || "all"}>
-            {repository && (
-              <h2 className="repository-heading" title={repository}>
-                {displayPath(repository)}
-              </h2>
-            )}
-        {orderedActivities(repositorySessions).map((status) => (
-          <section className="session-group" key={status}>
-            <div className="status-heading">
+    <nav className="session-list" aria-label="Terminal sessions">
+      {orderedActivities(props.sessions).map((status) => {
+        const statusSessions = props.sessions.filter(
+          (session) => activity(session) === status,
+        );
+        const cwds = [...new Set(statusSessions.map((session) => session.cwd))];
+        return (
+          <SidebarGroup className="session-group" key={status}>
+            <SidebarGroupLabel className="status-heading">
               <Checkbox
                 aria-label={`Show all ${statusLabel(status)} terminals`}
-                checked={statusFilters.includes(status)}
-                onCheckedChange={(checked) => onStatusFilter(status, checked === true)}
+                checked={props.statusFilters.includes(status)}
+                onCheckedChange={(checked) =>
+                  props.onStatusFilter(status, checked === true)
+                }
               />
               <button
                 className="status-select"
                 aria-label={`Show only ${statusLabel(status)} terminals`}
-                onClick={() => onStatusSelect?.(status)}
+                onClick={() => props.onStatusSelect?.(status)}
               >
                 <h2>{statusLabel(status)}</h2>
-                <Badge variant="secondary">
-                  {repositorySessions.filter((session) => activity(session) === status).length}
-                </Badge>
+                <Badge variant="secondary">{statusSessions.length}</Badge>
               </button>
-            </div>
-            {repositorySessions.filter((session) => activity(session) === status).map((session) => {
-              const icon = agentIcon(session);
-              return (
-              <div className="session-channel" key={session.id} data-state={activity(session)}>
-                <span className="channel-signal" aria-hidden="true" />
-                <Checkbox
-                  className="pane-checkbox"
-                  aria-label={`Include ${session.name} in split`}
-                  checked={selectedIDs.includes(session.id)}
-                  onCheckedChange={() => onSelect(session.id, true)}
-                />
-                <button
-                  className="session-select"
-                  aria-label={`Select ${session.name}`}
-                  aria-pressed={selectedIDs.includes(session.id)}
-                  aria-current={selectedIDs.includes(session.id) ? "true" : undefined}
-                  title={session.cwd}
-                  onClick={(event) => onSelect(session.id, event.metaKey || event.ctrlKey)}
-                >
-                  <span className="terminal-identity">
-                    {session.agentTitle && <span className="agent-title">{session.agentTitle}</span>}
-                    <span className="session-cwd">
-                      <span>{displayPath(session.cwd)}</span>
-                    </span>
-                  </span>
-                  {icon && (
-                    <img
-                      className="session-agent-icon"
-                      src={icon.source}
-                      alt={icon.label}
-                    />
-                  )}
-                </button>
-                <button
-                  className="session-delete"
-                  aria-label={`Delete ${session.name}`}
-                  title={`Delete ${session.name}`}
-                  onClick={() => onDelete(session)}
-                >
-                  ×
-                </button>
-              </div>
-              );
-            })}
-          </section>
-        ))}
-          </div>
-          );
-        })}
-      </div>
-      <Button className="create-channel" variant="outline" onClick={onCreate}>
-        <PlusIcon data-icon="inline-start" aria-hidden="true" />
-        <span className="create-label">New terminal</span>
-      </Button>
-    </>
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              {cwds.map((cwd) => {
+                const cwdSessions = statusSessions.filter(
+                  (session) => session.cwd === cwd,
+                );
+                const filterKey = cwdFilterKey(status, cwd);
+                return (
+                  <SidebarGroup className="cwd-group" key={cwd}>
+                    <SidebarGroupLabel className="cwd-heading" title={cwd}>
+                      <Checkbox
+                        aria-label={`Include all terminals in ${displayPath(cwd)}`}
+                        checked={props.cwdFilters?.includes(filterKey) ?? false}
+                        onCheckedChange={(checked) =>
+                          props.onCwdFilter?.(status, cwd, checked === true)
+                        }
+                      />
+                      <h3>{displayPath(cwd)}</h3>
+                    </SidebarGroupLabel>
+                    <SidebarGroupContent>
+                      <SidebarMenu>
+                        {cwdSessions.map((session) => {
+                          const icon = agentIcon(session);
+                          const selected = props.selectedIDs.includes(session.id);
+                          return (
+                            <SidebarMenuItem
+                              className="session-channel"
+                              key={session.id}
+                              data-state={activity(session)}
+                            >
+                              <Checkbox
+                                className="pane-checkbox"
+                                aria-label={`Include ${session.name} in split`}
+                                checked={selected}
+                                onCheckedChange={() => selectSession(session.id, true)}
+                              />
+                              <SidebarMenuButton
+                                className="session-select"
+                                size="lg"
+                                isActive={selected}
+                                aria-label={`Select ${session.name}`}
+                                aria-pressed={selected}
+                                aria-current={selected ? "true" : undefined}
+                                title={session.cwd}
+                                onClick={(event) =>
+                                  selectSession(
+                                    session.id,
+                                    event.metaKey || event.ctrlKey,
+                                  )
+                                }
+                              >
+                                {icon && (
+                                  <img
+                                    className="session-agent-icon"
+                                    src={icon.source}
+                                    alt={icon.label}
+                                  />
+                                )}
+                                <span className="terminal-identity">
+                                  <span className="agent-title">
+                                    {session.agentTitle || session.name}
+                                  </span>
+                                </span>
+                              </SidebarMenuButton>
+                              <SidebarMenuAction
+                                className="session-delete"
+                                showOnHover
+                                aria-label={`Delete ${session.name}`}
+                                title={`Delete ${session.name}`}
+                                onClick={() => props.onDelete(session)}
+                              >
+                                <Trash2Icon aria-hidden="true" />
+                                <span className="sr-only">Delete {session.name}</span>
+                              </SidebarMenuAction>
+                            </SidebarMenuItem>
+                          );
+                        })}
+                      </SidebarMenu>
+                    </SidebarGroupContent>
+                  </SidebarGroup>
+                );
+              })}
+            </SidebarGroupContent>
+          </SidebarGroup>
+        );
+      })}
+    </nav>
   );
 }
 
-export function SessionNavigation(props: SessionNavigationProps) {
-  const settings = props.settings ?? {
-    prefix: "Ctrl+B",
-    sidebarWidth: defaultSidebarWidth,
-    sidebarCollapsed: false,
-  };
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
-  const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);
-  const [resizing, setResizing] = useState(false);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
+function SessionNavigationContent({
+  settings,
+  sidebarWidth,
+  setSidebarWidth,
+  resizing,
+  setResizing,
+  ...props
+}: SessionNavigationProps & {
+  settings: Settings;
+  sidebarWidth: number;
+  setSidebarWidth(width: number): void;
+  resizing: boolean;
+  setResizing(resizing: boolean): void;
+}) {
+  const { state } = useSidebar();
+  const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
-
-  useEffect(() => setSidebarWidth(settings.sidebarWidth), [settings.sidebarWidth]);
-  useEffect(() => setCollapsed(settings.sidebarCollapsed), [settings.sidebarCollapsed]);
-
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const dialog = dialogRef.current;
-    const first = dialog?.querySelector<HTMLElement>("button");
-    first?.focus();
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setDrawerOpen(false);
-        queueMicrotask(() => menuButtonRef.current?.focus());
-      }
-      if (event.key === "Tab" && dialog) {
-        const controls = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled])")];
-        const firstControl = controls[0];
-        const lastControl = controls.at(-1);
-        if (event.shiftKey && document.activeElement === firstControl) {
-          event.preventDefault();
-          lastControl?.focus();
-        } else if (!event.shiftKey && document.activeElement === lastControl) {
-          event.preventDefault();
-          firstControl?.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [drawerOpen]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -232,15 +246,15 @@ export function SessionNavigation(props: SessionNavigationProps) {
       document.removeEventListener("pointermove", resize);
       document.removeEventListener("pointerup", finish);
     };
-  }, [resizing, settings, props.onSettingsChange]);
+  }, [
+    props.onSettingsChange,
+    resizing,
+    setResizing,
+    setSidebarWidth,
+    settings,
+  ]);
 
-  const toggleSidebar = () => {
-    const next = !collapsed;
-    setCollapsed(next);
-    props.onSettingsChange?.({ ...settings, sidebarCollapsed: next });
-  };
-
-  const resizeWithKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const resizeWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     let next = sidebarWidth;
     if (event.key === "ArrowLeft") next -= 16;
     else if (event.key === "ArrowRight") next += 16;
@@ -248,121 +262,121 @@ export function SessionNavigation(props: SessionNavigationProps) {
     else if (event.key === "End") next = maximumSidebarWidth;
     else return;
     event.preventDefault();
-    next = Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, next));
+    next = normalizeSidebarWidth(next);
     setSidebarWidth(next);
     props.onSettingsChange?.({ ...settings, sidebarWidth: next });
   };
 
-  const mobileSelect = (id: string) => {
-    props.onSelect(id, false);
-    setDrawerOpen(false);
-    queueMicrotask(() => menuButtonRef.current?.focus());
+  return (
+    <>
+      <Sidebar
+        className="desktop-sidebar"
+        data-resizing={resizing}
+        mobileTitle="Terminal menu"
+        mobileDescription="Browse and select terminal sessions."
+      >
+        <SidebarHeader>
+          <SidebarTrigger
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+          />
+        </SidebarHeader>
+        <SidebarContent>
+          <SessionList {...props} settings={settings} />
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton tooltip="New terminal" onClick={props.onCreate}>
+                <PlusIcon aria-hidden="true" />
+                <span>New terminal</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Settings"
+                aria-label="Open settings"
+                onClick={props.onOpenSettings}
+              >
+                <Settings2Icon aria-hidden="true" />
+                <span>Settings</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+        {!collapsed && (
+          <SidebarRail
+            className="sidebar-resizer"
+            role="separator"
+            aria-label="Resize sidebar"
+            aria-orientation="vertical"
+            aria-valuemin={minimumSidebarWidth}
+            aria-valuemax={maximumSidebarWidth}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onClick={(event) => event.preventDefault()}
+            onKeyDown={resizeWithKeyboard}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              setResizing(true);
+            }}
+          />
+        )}
+      </Sidebar>
+
+      <header className="mobile-header">
+        <SidebarTrigger
+          className="menu-button"
+          aria-label="Open terminal menu"
+        />
+        <span>{selected?.name ?? "Euphony"}</span>
+      </header>
+    </>
+  );
+}
+
+export function SessionNavigation(props: SessionNavigationProps) {
+  const settings = props.settings ?? {
+    prefix: "Ctrl+B",
+    sidebarWidth: defaultSidebarWidth,
+    sidebarCollapsed: false,
+  };
+  const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
+  const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);
+  const [resizing, setResizing] = useState(false);
+
+  useEffect(() => setSidebarWidth(settings.sidebarWidth), [settings.sidebarWidth]);
+  useEffect(() => setCollapsed(settings.sidebarCollapsed), [settings.sidebarCollapsed]);
+
+  const setOpen = (open: boolean) => {
+    const nextCollapsed = !open;
+    setCollapsed(nextCollapsed);
+    props.onSettingsChange?.({
+      ...settings,
+      sidebarCollapsed: nextCollapsed,
+    });
   };
 
   return (
-    <>
-      <div
-        className="desktop-sidebar"
-        data-collapsed={collapsed}
-        data-resizing={resizing}
-        style={{ width: collapsed ? 48 : sidebarWidth }}
-      >
-        {collapsed ? (
-          <button
-            className="sidebar-expand"
-            aria-label="Expand sidebar"
-            aria-expanded="false"
-            onClick={toggleSidebar}
-          >
-            <span aria-hidden="true">›</span>
-          </button>
-        ) : (
-          <>
-            <aside className="session-rail" aria-label="Terminal sessions">
-              <div className="sidebar-heading">
-                <div className="wordmark" aria-label="Euphony">
-                  EU
-                </div>
-                <div className="sidebar-actions">
-                  <Button
-                    className="sidebar-settings"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Open settings"
-                    onClick={props.onOpenSettings}
-                  >
-                    <Settings2Icon aria-hidden="true" />
-                  </Button>
-                  <button
-                    className="sidebar-collapse"
-                    aria-label="Collapse sidebar"
-                    aria-expanded="true"
-                    onClick={toggleSidebar}
-                  >
-                    <span aria-hidden="true">‹</span>
-                  </button>
-                </div>
-              </div>
-              <SessionList {...props} />
-            </aside>
-            <div
-              className="sidebar-resizer"
-              role="separator"
-              aria-label="Resize sidebar"
-              aria-orientation="vertical"
-              aria-valuemin={minimumSidebarWidth}
-              aria-valuemax={maximumSidebarWidth}
-              aria-valuenow={sidebarWidth}
-              tabIndex={0}
-              onKeyDown={resizeWithKeyboard}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                setResizing(true);
-              }}
-            />
-          </>
-        )}
-      </div>
-
-      <header className="mobile-header">
-        <button
-          ref={menuButtonRef}
-          className="menu-button"
-          aria-label="Open terminal menu"
-          aria-expanded={drawerOpen}
-          onClick={() => setDrawerOpen(true)}
-        >
-          <span aria-hidden="true">☰</span>
-        </button>
-        <span>{selected?.name ?? "Euphony"}</span>
-        <span className="mobile-signal" data-connected={selected?.state === "running"} aria-hidden="true" />
-      </header>
-
-      {drawerOpen && (
-        <div className="drawer-layer" onMouseDown={(event) => event.target === event.currentTarget && setDrawerOpen(false)}>
-          <div
-            ref={dialogRef}
-            className="session-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Terminal menu"
-          >
-            <div className="drawer-heading">
-              <span>Euphony</span>
-              <button aria-label="Close terminal menu" onClick={() => setDrawerOpen(false)}>
-                ×
-              </button>
-            </div>
-            <SessionList
-              {...props}
-              onSelect={(id, multiple) => {
-                if (multiple) props.onSelect(id, true);
-                else mobileSelect(id);
-              }}
-            />
-          </div>
-        </div>
-      )}
-    </>
+    <SidebarProvider
+      className="contents"
+      open={!collapsed}
+      onOpenChange={setOpen}
+      keyboardShortcut={null}
+      style={
+        {
+          "--sidebar-width": `${sidebarWidth}px`,
+        } as CSSProperties
+      }
+    >
+      <SessionNavigationContent
+        {...props}
+        settings={settings}
+        sidebarWidth={sidebarWidth}
+        setSidebarWidth={setSidebarWidth}
+        resizing={resizing}
+        setResizing={setResizing}
+      />
+    </SidebarProvider>
   );
 }

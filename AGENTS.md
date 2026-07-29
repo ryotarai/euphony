@@ -19,3 +19,7 @@
   lossless encoding such as base64; never stringify independent PTY chunks.
 - Run end-to-end tests that mutate shared server state with one worker, or give
   each worker an isolated backend.
+- Keep terminal panes flush by default: use only separators between panes, and
+  aggregate connection status at workspace level instead of repeating it per pane.
+- Treat checked sidebar groups as persistent dynamic filters: automatically add
+  and remove panes as sessions enter or leave the checked group.

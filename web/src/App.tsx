@@ -1,8 +1,37 @@
-import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ApiClient, ApiError } from "./api";
-import { SessionNavigation } from "./components/SessionNavigation";
+import {
+  cwdFilterKey,
+  SessionNavigation,
+} from "./components/SessionNavigation";
 import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
-import { TerminalView } from "./components/TerminalView";
+import { TerminalView, type ConnectionState } from "./components/TerminalView";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { Session, Settings } from "./types";
 
 const tokenKey = "euphony.token";
@@ -14,6 +43,8 @@ interface AppProps {
     api: ApiClient,
     active: boolean,
     layoutVersion: number,
+    onConnectionChange: (sessionID: string, state: ConnectionState) => void,
+    reconnectSignal: number,
   ) => ReactNode;
 }
 
@@ -26,6 +57,23 @@ const defaultSettings: Settings = {
 function sessionActivity(session: Session) {
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
+}
+
+function activityLabel(status: string) {
+  if (status === "attention") return "Need attention";
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function matchesWorkspaceFilter(
+  session: Session,
+  statusFilters: string[],
+  cwdFilters: string[],
+) {
+  const status = sessionActivity(session);
+  return (
+    statusFilters.includes(status) ||
+    cwdFilters.includes(cwdFilterKey(status, session.cwd))
+  );
 }
 
 export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
@@ -72,6 +120,7 @@ function workspaceFromURL(sessions: Session[]): {
   selectedIDs: string[];
   focusedID: string | null;
   statusFilters: string[];
+  cwdFilters: string[];
 } {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
@@ -86,6 +135,7 @@ function workspaceFromURL(sessions: Session[]): {
     selectedIDs,
     focusedID: focus && selectedIDs.includes(focus) ? focus : selectedIDs[0] ?? null,
     statusFilters: parameters.getAll("status"),
+    cwdFilters: parameters.getAll("cwd"),
   };
 }
 
@@ -93,6 +143,7 @@ function writeWorkspaceToURL(
   selectedIDs: string[],
   focusedID: string | null,
   statusFilters: string[],
+  cwdFilters: string[],
   mode: "push" | "replace" = "push",
 ) {
   const parameters = new URLSearchParams(window.location.search);
@@ -100,8 +151,10 @@ function writeWorkspaceToURL(
   parameters.delete("split");
   parameters.delete("terminal");
   parameters.delete("status");
+  parameters.delete("cwd");
   selectedIDs.forEach((id) => parameters.append("terminal", id));
   statusFilters.forEach((status) => parameters.append("status", status));
+  cwdFilters.forEach((filter) => parameters.append("cwd", filter));
   if (focusedID) parameters.set("focus", focusedID);
   else parameters.delete("focus");
   const query = parameters.toString();
@@ -112,13 +165,22 @@ function writeWorkspaceToURL(
 export function App({
   initialToken,
   initialSettings,
-  renderTerminal = (session, api, active, layoutVersion) => (
+  renderTerminal = (
+    session,
+    api,
+    active,
+    layoutVersion,
+    onConnectionChange,
+    reconnectSignal,
+  ) => (
     <TerminalView
       key={session.id}
       session={session}
       api={api}
       active={active}
       layoutVersion={layoutVersion}
+      onConnectionChange={onConnectionChange}
+      reconnectSignal={reconnectSignal}
     />
   ),
 }: AppProps) {
@@ -128,6 +190,7 @@ export function App({
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const [focusedID, setFocusedID] = useState<string | null>(null);
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [cwdFilters, setCwdFilters] = useState<string[]>([]);
   const [authError, setAuthError] = useState(false);
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
@@ -137,12 +200,21 @@ export function App({
   const [prefixActive, setPrefixActive] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
+  const [commandValue, setCommandValue] = useState("new-terminal");
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
+  const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
+  const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
+  const commandInputRef = useRef<HTMLInputElement>(null);
   const prefixActiveRef = useRef(false);
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
+    setConnectionStates((current) =>
+      current[sessionID] === state ? current : { ...current, [sessionID]: state },
+    );
+  }, []);
 
   useEffect(() => {
     if (!api || initialSettings) return;
@@ -182,10 +254,12 @@ export function App({
         setSelectedIDs(workspace.selectedIDs);
         setFocusedID(workspace.focusedID);
         setStatusFilters(workspace.statusFilters);
+        setCwdFilters(workspace.cwdFilters);
         writeWorkspaceToURL(
           workspace.selectedIDs,
           workspace.focusedID,
           workspace.statusFilters,
+          workspace.cwdFilters,
           "replace",
         );
       })
@@ -226,9 +300,9 @@ export function App({
   }, [api, sessions !== null]);
 
   useEffect(() => {
-    if (!sessions || statusFilters.length === 0) return;
+    if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) return;
     const matches = sessions
-      .filter((session) => statusFilters.includes(sessionActivity(session)))
+      .filter((session) => matchesWorkspaceFilter(session, statusFilters, cwdFilters))
       .map((session) => session.id);
     const previousMatches = filterSelectedIDsRef.current;
     const next = [
@@ -240,15 +314,16 @@ export function App({
       setSelectedIDs(next);
       const nextFocus = focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
       setFocusedID(nextFocus);
-      writeWorkspaceToURL(next, nextFocus, statusFilters, "replace");
+      writeWorkspaceToURL(next, nextFocus, statusFilters, cwdFilters, "replace");
     }
-  }, [sessions, statusFilters, selectedIDs, focusedID]);
+  }, [sessions, statusFilters, cwdFilters, selectedIDs, focusedID]);
 
   useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
       event.preventDefault();
       setCommandQuery("");
+      setCommandValue("new-terminal");
       setCommandOpen(true);
     };
     window.addEventListener("keydown", openCommands, { capture: true });
@@ -256,12 +331,20 @@ export function App({
   }, []);
 
   useEffect(() => {
+    if (!commandOpen) return;
+    const frame = window.requestAnimationFrame(() => commandInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [commandOpen]);
+
+  useEffect(() => {
     if (!sessions) return;
     const restore = () => {
       const workspace = workspaceFromURL(sessions);
+      filterSelectedIDsRef.current.clear();
       setSelectedIDs(workspace.selectedIDs);
       setFocusedID(workspace.focusedID);
       setStatusFilters(workspace.statusFilters);
+      setCwdFilters(workspace.cwdFilters);
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -319,6 +402,7 @@ export function App({
     if (!multiple) {
       nextIDs = [id];
       setStatusFilters([]);
+      setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
     } else if (selectedIDs.includes(id)) {
       nextIDs = selectedIDs.length === 1 ? selectedIDs : selectedIDs.filter((item) => item !== id);
@@ -328,15 +412,22 @@ export function App({
     const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, multiple ? statusFilters : []);
+    writeWorkspaceToURL(
+      nextIDs,
+      nextFocus,
+      multiple ? statusFilters : [],
+      multiple ? cwdFilters : [],
+    );
   }
 
-  function updateStatusFilter(status: string, checked: boolean) {
-    const nextFilters = checked
-      ? [...statusFilters, status]
-      : statusFilters.filter((item) => item !== status);
+  function updateWorkspaceFilters(
+    nextStatusFilters: string[],
+    nextCwdFilters: string[],
+  ) {
     const matching = sessions
-      ?.filter((session) => nextFilters.includes(sessionActivity(session)))
+      ?.filter((session) =>
+        matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
+      )
       .map((session) => session.id) ?? [];
     const base = selectedIDs.filter((id) => !filterSelectedIDsRef.current.has(id));
     const nextIDs = [...new Set([...base, ...matching])];
@@ -344,10 +435,35 @@ export function App({
     const nextFocus = focusedID && nextIDs.includes(focusedID)
       ? focusedID
       : nextIDs[0] ?? null;
-    setStatusFilters(nextFilters);
+    setStatusFilters(nextStatusFilters);
+    setCwdFilters(nextCwdFilters);
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, nextFilters);
+    writeWorkspaceToURL(
+      nextIDs,
+      nextFocus,
+      nextStatusFilters,
+      nextCwdFilters,
+    );
+  }
+
+  function updateStatusFilter(status: string, checked: boolean) {
+    const nextFilters = checked
+      ? [...statusFilters, status]
+      : statusFilters.filter((item) => item !== status);
+    updateWorkspaceFilters(nextFilters, cwdFilters);
+  }
+
+  function updateCwdFilter(
+    status: string,
+    cwd: string,
+    checked: boolean,
+  ) {
+    const key = cwdFilterKey(status, cwd);
+    const nextFilters = checked
+      ? [...cwdFilters, key]
+      : cwdFilters.filter((item) => item !== key);
+    updateWorkspaceFilters(statusFilters, nextFilters);
   }
 
   function selectStatus(status: string) {
@@ -357,15 +473,16 @@ export function App({
     if (nextIDs.length === 0) return;
     const nextFocus = nextIDs[0];
     setStatusFilters([status]);
+    setCwdFilters([]);
     filterSelectedIDsRef.current = new Set(nextIDs);
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, [status]);
+    writeWorkspaceToURL(nextIDs, nextFocus, [status], []);
   }
 
   function focusPane(id: string) {
     setFocusedID(id);
-    writeWorkspaceToURL(selectedIDs, id, statusFilters);
+    writeWorkspaceToURL(selectedIDs, id, statusFilters, cwdFilters);
   }
 
   function authenticate(event: FormEvent) {
@@ -386,7 +503,9 @@ export function App({
       setSelectedIDs(nextIDs);
       setFocusedID(created.id);
       setStatusFilters([]);
-      writeWorkspaceToURL(nextIDs, created.id, []);
+      setCwdFilters([]);
+      filterSelectedIDsRef.current.clear();
+      writeWorkspaceToURL(nextIDs, created.id, [], []);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -424,7 +543,7 @@ export function App({
       const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;
       setSelectedIDs(nextIDs);
       setFocusedID(nextFocus);
-      writeWorkspaceToURL(nextIDs, nextFocus, statusFilters);
+      writeWorkspaceToURL(nextIDs, nextFocus, statusFilters, cwdFilters);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
@@ -492,6 +611,118 @@ export function App({
     .map((id) => sessions.find((item) => item.id === id))
     .filter((item): item is Session => Boolean(item));
   const selected = sessions.find((item) => item.id === focusedID) ?? panes[0];
+  const disconnectedIDs = panes
+    .filter((pane) => connectionStates[pane.id] === "disconnected")
+    .map((pane) => pane.id);
+  const connectingCount = panes.filter(
+    (pane) => connectionStates[pane.id] === "connecting",
+  ).length;
+  const exitedCount = panes.filter(
+    (pane) => connectionStates[pane.id] === "exited",
+  ).length;
+  const quickActions = [
+    {
+      value: "new-terminal",
+      label: "New terminal in directory…",
+      detail: "Choose a working directory",
+      search: "new terminal create directory cwd",
+      run: openCreateDialog,
+      group: "Actions",
+    },
+    {
+      value: "attention-alerts",
+      label: "Enable attention alerts",
+      detail: "Desktop notification and sound",
+      search: "enable attention alerts notification sound",
+      run: () => {
+        setCommandOpen(false);
+        void enableAttentionAlerts();
+      },
+      group: "Actions",
+    },
+    ...["attention", "running", "waiting", "terminal"]
+      .filter((status) => sessions.some((session) => sessionActivity(session) === status))
+      .map((status) => ({
+        value: `status:${status}`,
+        label: `Show only ${activityLabel(status)} terminals`,
+        detail: "Replace the current pane selection",
+        search: `show only ${activityLabel(status)} terminals status`,
+        run: () => {
+          selectStatus(status);
+          setCommandOpen(false);
+        },
+        group: "Actions",
+      })),
+    ...sessions.map((session) => ({
+      value: `session:${session.id}`,
+      label: session.agentTitle || session.name,
+      detail: session.cwd,
+      search: `${session.agentTitle ?? ""} ${session.name} ${session.cwd}`,
+      run: () => {
+        selectSession(session.id, false);
+        setCommandOpen(false);
+      },
+      group: "Terminals",
+    })),
+  ];
+  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
+  const filteredQuickActions = quickActions.filter((action) =>
+    `${action.label} ${action.search}`.toLowerCase().includes(normalizedCommandQuery),
+  );
+
+  const updateCommandQuery = (query: string) => {
+    setCommandQuery(query);
+    const normalized = query.trim().toLowerCase();
+    const first = quickActions.find((action) =>
+      `${action.label} ${action.search}`.toLowerCase().includes(normalized),
+    );
+    setCommandValue(first?.value ?? "");
+  };
+
+  const moveCommandSelection = (offset: number) => {
+    if (filteredQuickActions.length === 0) return;
+    const currentIndex = filteredQuickActions.findIndex(
+      (action) => action.value === commandValue,
+    );
+    const start = currentIndex < 0 ? (offset > 0 ? -1 : 0) : currentIndex;
+    const nextIndex =
+      (start + offset + filteredQuickActions.length) % filteredQuickActions.length;
+    setCommandValue(filteredQuickActions[nextIndex].value);
+  };
+
+  const handleCommandKeyDown = (event: React.KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    const offset =
+      event.key === "ArrowDown" || (event.ctrlKey && key === "n")
+        ? 1
+        : event.key === "ArrowUp" || (event.ctrlKey && key === "p")
+          ? -1
+          : 0;
+    if (offset !== 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      moveCommandSelection(offset);
+      return;
+    }
+    if (event.key === "Enter") {
+      const selectedAction = filteredQuickActions.find(
+        (action) => action.value === commandValue,
+      );
+      if (!selectedAction) return;
+      event.preventDefault();
+      selectedAction.run();
+    }
+  };
+
+  const reconnectDisconnected = () => {
+    setReconnectSignals((current) => {
+      const next = { ...current };
+      disconnectedIDs.forEach((id) => {
+        next[id] = (next[id] ?? 0) + 1;
+      });
+      return next;
+    });
+  };
 
   return (
     <main className="workspace">
@@ -499,9 +730,11 @@ export function App({
         sessions={sessions}
         selectedIDs={selectedIDs}
         statusFilters={statusFilters}
+        cwdFilters={cwdFilters}
         onSelect={selectSession}
         onStatusFilter={updateStatusFilter}
         onStatusSelect={selectStatus}
+        onCwdFilter={updateCwdFilter}
         onCreate={() => void createSession()}
         onDelete={(item) => void deleteSession(item)}
         settings={settings}
@@ -514,6 +747,37 @@ export function App({
         style={{ gridTemplateColumns: `repeat(${Math.max(panes.length, 1)}, minmax(0, 1fr))` }}
       >
         {requestError && <p role="alert">{requestError}</p>}
+        {disconnectedIDs.length > 0 ? (
+          <div
+            className="connection-status"
+            role="status"
+            aria-label="Terminal connection"
+          >
+            <span>
+              Connection interrupted
+              {disconnectedIDs.length > 1 ? ` · ${disconnectedIDs.length} panes` : ""}
+            </span>
+            <Button variant="outline" size="sm" onClick={reconnectDisconnected}>
+              Reconnect
+            </Button>
+          </div>
+        ) : connectingCount > 0 ? (
+          <div
+            className="connection-status"
+            role="status"
+            aria-label="Terminal connection"
+          >
+            Connecting…
+          </div>
+        ) : exitedCount > 0 ? (
+          <div
+            className="connection-status"
+            role="status"
+            aria-label="Terminal connection"
+          >
+            Terminal exited{exitedCount > 1 ? ` · ${exitedCount} panes` : ""}
+          </div>
+        ) : null}
         {panes.length > 0 && api ? (
           panes.map((pane) => (
               <div
@@ -523,7 +787,14 @@ export function App({
                 aria-label={`${pane.name} pane`}
                 onMouseDown={() => focusPane(pane.id)}
               >
-                {renderTerminal(pane, api, focusedID === pane.id, panes.length)}
+                {renderTerminal(
+                  pane,
+                  api,
+                  focusedID === pane.id,
+                  panes.length,
+                  handleConnectionChange,
+                  reconnectSignals[pane.id] ?? 0,
+                )}
               </div>
           ))
         ) : (
@@ -546,68 +817,81 @@ export function App({
           <span><kbd>Esc</kbd>: Cancel</span>
         </div>
       )}
-      {commandOpen && (
-        <div className="command-layer" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setCommandOpen(false);
-        }}>
-          <div className="command-dialog" role="dialog" aria-modal="true" aria-label="Commands">
-            <label htmlFor="command-search">Jump to</label>
-            <input
-              id="command-search"
-              value={commandQuery}
-              onChange={(event) => setCommandQuery(event.target.value)}
-              placeholder="Terminal or status"
-              autoFocus
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setCommandOpen(false);
-              }}
-            />
-            <div className="command-results">
-              <button onClick={openCreateDialog}>New terminal in directory…</button>
-              <button onClick={() => void enableAttentionAlerts()}>Enable attention alerts</button>
-              {["attention", "running", "waiting", "terminal"]
-                .filter((status) => sessions.some((session) => sessionActivity(session) === status))
-                .filter((status) => status.includes(commandQuery.toLowerCase()))
-                .map((status) => (
-                  <button key={status} onClick={() => {
-                    selectStatus(status);
-                    setCommandOpen(false);
-                  }}>
-                    Show only {status === "attention" ? "Need attention" : status}
-                  </button>
-                ))}
-              {sessions
-                .filter((session) =>
-                  `${session.agentTitle ?? ""} ${session.cwd}`.toLowerCase()
-                    .includes(commandQuery.toLowerCase()),
-                )
-                .map((session) => (
-                  <button key={session.id} onClick={() => {
-                    selectSession(session.id, false);
-                    setCommandOpen(false);
-                  }}>
-                    <span>{session.agentTitle || session.name}</span>
-                    <small>{session.cwd}</small>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>
-      )}
-      {createOpen && (
-        <div className="command-layer" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setCreateOpen(false);
-        }}>
-          <form className="command-dialog" role="dialog" aria-modal="true" aria-label="New terminal" onSubmit={(event) => void submitCreate(event)}>
+      <CommandDialog
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        title="Quick Actions"
+        description="Search for a terminal or action."
+        className="sm:max-w-xl"
+        initialFocus={commandInputRef}
+      >
+        <Command
+          value={commandValue}
+          onValueChange={setCommandValue}
+          shouldFilter={false}
+          onKeyDownCapture={handleCommandKeyDown}
+        >
+          <CommandInput
+            ref={commandInputRef}
+            value={commandQuery}
+            onValueChange={updateCommandQuery}
+            placeholder="Terminal or status"
+          />
+          <CommandList>
+            <CommandEmpty>No matching actions.</CommandEmpty>
+            {["Actions", "Terminals"].map((group) => {
+              const actions = filteredQuickActions.filter(
+                (action) => action.group === group,
+              );
+              if (actions.length === 0) return null;
+              return (
+                <CommandGroup heading={group} key={group}>
+                  {actions.map((action) => (
+                    <CommandItem
+                      key={action.value}
+                      value={action.value}
+                      onSelect={action.run}
+                    >
+                      <span className="quick-action-copy">
+                        <span>{action.label}</span>
+                        <small>{action.detail}</small>
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              );
+            })}
+          </CommandList>
+        </Command>
+      </CommandDialog>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>New terminal</DialogTitle>
+            <DialogDescription>
+              Start a terminal in the selected working directory.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="create-terminal-form"
+            onSubmit={(event) => void submitCreate(event)}
+          >
             <label htmlFor="terminal-cwd">Working directory</label>
-            <input id="terminal-cwd" value={cwdDraft} onChange={(event) => setCWDDraft(event.target.value)} autoFocus />
-            <div className="settings-controls">
-              <button type="button" onClick={() => setCreateOpen(false)}>Cancel</button>
-              <button type="submit">Create terminal</button>
-            </div>
+            <input
+              id="terminal-cwd"
+              value={cwdDraft}
+              onChange={(event) => setCWDDraft(event.target.value)}
+              autoFocus
+            />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit">Create terminal</Button>
+            </DialogFooter>
           </form>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
       {settingsOpen && (
         <div
           className="settings-layer"

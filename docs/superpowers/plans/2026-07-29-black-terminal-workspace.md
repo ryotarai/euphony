@@ -15,6 +15,8 @@
 - Terminal panes have no outer margin, gap, card border, or radius.
 - Adjacent panes use one vertical divider.
 - Use shadcn/ui components directly for sidebar composition.
+- Group sidebar terminals as `status > cwd > terminal`.
+- Persist cwd checkboxes as dynamic `status × cwd` pane filters.
 - Connected state is not displayed; non-connected state is aggregated once.
 - Quick actions support Arrow Up/Down, Ctrl+P/N, Enter, and Escape.
 - Preserve the existing sidebar width persistence, tmux-style prefix commands, session filters, and mobile behavior.
@@ -34,32 +36,32 @@
 - Consumes: `SessionNavigationProps`, persisted `Settings`
 - Produces: shadcn Sidebar tree with controlled width and open state
 
-- [ ] **Step 1: Write failing navigation composition tests**
+- [x] **Step 1: Write failing navigation composition tests**
 
 Add assertions that the terminal navigation is rendered by the shadcn Sidebar,
 has no `EU` text, preserves selection controls, and exposes desktop collapse,
 resize, settings, and mobile sheet behavior.
 
-- [ ] **Step 2: Run the navigation test and verify it fails**
+- [x] **Step 2: Run the navigation test and verify it fails**
 
 Run: `npm test -- --run src/components/SessionNavigation.test.tsx`
 
 Expected: failure because the current navigation uses custom sidebar markup and
 renders `EU`.
 
-- [ ] **Step 3: Implement the shadcn Sidebar composition**
+- [x] **Step 3: Implement the shadcn Sidebar composition**
 
 Replace custom rail, drawer, group, and row markup with installed Sidebar
 primitives. Add an opt-out for the SidebarProvider shortcut so Euphony's
 `Ctrl+B` prefix remains authoritative. Keep pointer and keyboard resizing.
 
-- [ ] **Step 4: Apply black semantic tokens and flush pane rules**
+- [x] **Step 4: Apply black semantic tokens and flush pane rules**
 
 Consolidate workspace overrides in `styles.css`, remove terminal-stage padding
 and gap, remove pane cards and glow, and retain only adjacent vertical borders.
 Add a concise reusable terminal UI rule to `AGENTS.md`.
 
-- [ ] **Step 5: Run the navigation tests**
+- [x] **Step 5: Run the navigation tests**
 
 Run: `npm test -- --run src/components/SessionNavigation.test.tsx`
 
@@ -78,25 +80,25 @@ Expected: all navigation tests pass.
 - Produces: `ConnectionState` and `onConnectionChange(sessionID, state)`
 - Consumes: `reconnectSignal` incremented by the workspace reconnect action
 
-- [ ] **Step 1: Write failing terminal and app connection tests**
+- [x] **Step 1: Write failing terminal and app connection tests**
 
 Assert that `TerminalView` reports state transitions without rendering a local
 status, that a connected workspace renders no label, and that disconnected
 panes produce one aggregate alert and one reconnect action.
 
-- [ ] **Step 2: Run focused tests and verify they fail**
+- [x] **Step 2: Run focused tests and verify they fail**
 
 Run: `npm test -- --run src/components/TerminalView.test.tsx src/App.test.tsx`
 
 Expected: failure because status is currently local to every terminal.
 
-- [ ] **Step 3: Lift connection state and retry control**
+- [x] **Step 3: Lift connection state and retry control**
 
 Report TerminalView state changes through a callback, render a single
 workspace status, and reconnect disconnected terminals when its action is
 invoked.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `npm test -- --run src/components/TerminalView.test.tsx src/App.test.tsx`
 
@@ -117,18 +119,18 @@ Expected: all focused tests pass.
 - Consumes: existing create, notification, status-select, and session-select actions
 - Produces: controlled command value with keyboard selection and invocation
 
-- [ ] **Step 1: Write failing keyboard behavior tests**
+- [x] **Step 1: Write failing keyboard behavior tests**
 
 Open Quick Actions, navigate with Arrow keys and Ctrl+P/N, press Enter, and
 assert the selected status or session action runs.
 
-- [ ] **Step 2: Run the App test and verify it fails**
+- [x] **Step 2: Run the App test and verify it fails**
 
 Run: `npm test -- --run src/App.test.tsx`
 
 Expected: failure because the hand-rolled overlay has no active item behavior.
 
-- [ ] **Step 3: Add the official shadcn Command component**
+- [x] **Step 3: Add the official shadcn Command component**
 
 Run: `npx shadcn@latest add @shadcn/command`
 
@@ -136,12 +138,12 @@ Read the generated source, retain the configured Base UI style and Lucide icon
 library, and compose `CommandDialog`, `CommandInput`, `CommandList`,
 `CommandGroup`, and `CommandItem`.
 
-- [ ] **Step 4: Implement controlled navigation**
+- [x] **Step 4: Implement controlled navigation**
 
 Keep one filtered active value. Handle Arrow Up/Down and Ctrl+P/N with
 wraparound and let Enter invoke the active CommandItem.
 
-- [ ] **Step 5: Run the App tests**
+- [x] **Step 5: Run the App tests**
 
 Run: `npm test -- --run src/App.test.tsx`
 
@@ -156,7 +158,7 @@ Expected: all App tests pass.
 - Consumes: completed workspace UI
 - Produces: browser-level regression evidence
 
-- [ ] **Step 1: Add browser assertions**
+- [x] **Step 1: Add browser assertions**
 
 Assert pane edges touch the stage, split panes have no gap, connected labels
 are absent, Quick Actions execute through keyboard navigation, and the

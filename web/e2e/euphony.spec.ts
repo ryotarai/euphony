@@ -177,8 +177,106 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await checkbox.click();
 
   await expect(checkbox).toBeChecked();
-  await expect(checkbox).toHaveCSS("background-color", "rgb(96, 165, 250)");
+  await expect(checkbox).toHaveCSS("background-color", "rgb(245, 245, 245)");
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+});
+
+test("uses a flush black workspace with only a divider between panes", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Left");
+  await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("checkbox", { name: "Include Right in split" }).click();
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+
+  await expect(page.locator('[data-slot="sidebar"]').first()).toBeVisible();
+  await expect(page.getByText("EU", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".signal-status")).toHaveCount(0);
+
+  const layout = await page.evaluate(() => {
+    const stage = document.querySelector<HTMLElement>(".terminal-stage");
+    const panes = [...document.querySelectorAll<HTMLElement>(".terminal-pane")];
+    const terminalViewport = document.querySelector<HTMLElement>(".xterm-viewport");
+    if (!stage || panes.length !== 2 || !terminalViewport) {
+      throw new Error("Expected a split terminal workspace.");
+    }
+    const stageStyle = getComputedStyle(stage);
+    const paneStyles = panes.map((pane) => {
+      const style = getComputedStyle(pane);
+      return {
+        background: style.backgroundColor,
+        borderTop: style.borderTopWidth,
+        borderRight: style.borderRightWidth,
+        borderBottom: style.borderBottomWidth,
+        borderLeft: style.borderLeftWidth,
+        radius: style.borderRadius,
+        shadow: style.boxShadow,
+      };
+    });
+    const boxes = panes.map((pane) => pane.getBoundingClientRect());
+    return {
+      stage: {
+        background: stageStyle.backgroundColor,
+        padding: stageStyle.padding,
+        gap: stageStyle.gap,
+      },
+      terminalBackground: getComputedStyle(terminalViewport).backgroundColor,
+      panes: paneStyles,
+      dividerDelta: Math.abs(boxes[0].right - boxes[1].left),
+    };
+  });
+
+  expect(layout.stage).toEqual({
+    background: "rgb(5, 5, 5)",
+    padding: "0px",
+    gap: "0px",
+  });
+  expect(layout.terminalBackground).toBe("rgb(0, 0, 0)");
+  expect(layout.panes[0]).toEqual({
+    background: "rgb(5, 5, 5)",
+    borderTop: "0px",
+    borderRight: "0px",
+    borderBottom: "0px",
+    borderLeft: "0px",
+    radius: "0px",
+    shadow: "none",
+  });
+  expect(layout.panes[1]).toEqual({
+    ...layout.panes[0],
+    borderLeft: "1px",
+  });
+  expect(layout.dividerDelta).toBeLessThanOrEqual(0.5);
+});
+
+test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Left");
+  await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const command = page.getByPlaceholder("Terminal or status");
+  await expect(command).toBeFocused();
+
+  await page.keyboard.press("Control+N");
+  await expect(page.getByRole("option", { name: /^Enable attention alerts/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Control+P");
+  await expect(
+    page.getByRole("option", { name: /^New terminal in directory…/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: /^Show only Terminal terminals/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByRole("dialog", { name: "Quick Actions" })).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
 test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
@@ -237,7 +335,8 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(codexItem.getByRole("img", { name: "Codex" })).toBeVisible();
   await expect(claudeItem.getByRole("img", { name: "Claude" })).toBeVisible();
   await expect(codexItem).not.toContainText("Codex");
-  await expect(codexItem).toContainText("~/work/euphony");
+  await expect(codexItem).not.toContainText("~/work/euphony");
+  await expect(page.getByRole("heading", { name: "~/work/euphony" }).first()).toBeVisible();
   await page.getByRole("checkbox", { name: "Include Claude in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await page.getByRole("button", { name: "Show only Terminal terminals" }).click();

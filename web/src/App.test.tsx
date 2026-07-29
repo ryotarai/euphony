@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { App, attentionTransitions } from "./App";
 import type { Session, Settings } from "./types";
 
@@ -187,7 +188,9 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
   await screen.findByRole("button", { name: "Select Codex" });
 
   fireEvent.keyDown(window, { key: "k", metaKey: true });
-  await user.click(screen.getByRole("button", { name: "New terminal in directory…" }));
+  await user.click(
+    screen.getByRole("option", { name: /^New terminal in directory…/ }),
+  );
   const cwd = screen.getByLabelText("Working directory");
   expect(cwd).toHaveValue("/workspace/euphony");
   await user.clear(cwd);
@@ -202,6 +205,137 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
       body: JSON.stringify({ name: "Terminal", cwd: "/workspace/other" }),
     }),
   );
+});
+
+test("the new terminal dialog owns focus and closes with Escape", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByRole("button", { name: "Select Codex" });
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(
+    screen.getByRole("option", { name: /^New terminal in directory…/ }),
+  );
+
+  expect(screen.getByRole("dialog", { name: "New terminal" })).toBeVisible();
+  expect(screen.getByLabelText("Working directory")).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog", { name: "New terminal" })).not.toBeInTheDocument();
+});
+
+test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const input = await screen.findByPlaceholderText("Terminal or status");
+  await waitFor(() => expect(input).toHaveFocus());
+
+  fireEvent.keyDown(input, { key: "n", ctrlKey: true });
+  expect(
+    screen.getByRole("option", { name: /^Enable attention alerts/ }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.keyDown(input, { key: "p", ctrlKey: true });
+  expect(
+    screen.getByRole("option", { name: /^New terminal in directory…/ }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  expect(
+    screen.getByRole("option", { name: /^Show only Running terminals/ }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "Quick Actions" })).not.toBeInTheDocument();
+  });
+  expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["running"]);
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+});
+
+test("shows one workspace connection status and retries disconnected panes", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  const renderTerminal = ((
+    session: Session,
+    _api: unknown,
+    _active: boolean,
+    _layoutVersion: number,
+    onConnectionChange:
+      | ((sessionID: string, state: "connected" | "disconnected" | "exited") => void)
+      | undefined,
+    reconnectSignal = 0,
+  ) => (
+    <div>
+      <button
+        onClick={() => onConnectionChange?.(session.id, "disconnected")}
+      >
+        Disconnect {session.name}
+      </button>
+      <button onClick={() => onConnectionChange?.(session.id, "connected")}>
+        Connect {session.name}
+      </button>
+      <button onClick={() => onConnectionChange?.(session.id, "exited")}>
+        Exit {session.name}
+      </button>
+      <span aria-label={`${session.name} reconnect signal`}>
+        {reconnectSignal}
+      </span>
+    </div>
+  )) as unknown as ComponentProps<typeof App>["renderTerminal"];
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={renderTerminal}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Disconnect Codex" }));
+
+  const status = screen.getByRole("status", { name: "Terminal connection" });
+  expect(status).toHaveTextContent("Connection interrupted");
+  expect(screen.getAllByRole("status", { name: "Terminal connection" })).toHaveLength(1);
+  expect(screen.queryByText("connected")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Reconnect" }));
+  expect(screen.getByLabelText("Codex reconnect signal")).toHaveTextContent("1");
+
+  await user.click(screen.getByRole("button", { name: "Connect Codex" }));
+  expect(
+    screen.queryByRole("status", { name: "Terminal connection" }),
+  ).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Exit Codex" }));
+  expect(
+    screen.getByRole("status", { name: "Terminal connection" }),
+  ).toHaveTextContent("Terminal exited");
 });
 
 test("restores the selected session from the URL and follows browser navigation", async () => {
@@ -228,6 +362,29 @@ test("restores the selected session from the URL and follows browser navigation"
   history.pushState(null, "", "/?terminal=session-2");
   fireEvent(window, new PopStateEvent("popstate"));
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
+test("browser navigation clears ownership from previous dynamic filters", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+
+  history.pushState(null, "", "/?terminal=session-1");
+  fireEvent(window, new PopStateEvent("popstate"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Waiting terminals" }));
+
+  expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
 });
 
 test("command-click selects multiple terminal panes and stores them in the URL", async () => {
@@ -347,6 +504,52 @@ test("a checked activity group removes a terminal after its status changes", asy
     expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
   });
   expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  vi.useRealTimers();
+});
+
+test("a checked status and cwd group dynamically follows matching terminals", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const replacement = {
+    ...runningSession,
+    id: "session-replacement",
+    name: "Replacement",
+    agentTitle: "Continue implementation",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession, secondRunningSession]))
+    .mockImplementation(() =>
+      jsonResponse([
+        { ...runningSession, agentStatus: "waiting" },
+        secondRunningSession,
+        replacement,
+      ]),
+    );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  });
+  expect(screen.getByLabelText("session-replacement terminal pane")).toBeVisible();
+  expect(new URLSearchParams(window.location.search).getAll("cwd")).toEqual([
+    "running\u0000/workspace/euphony",
+  ]);
   vi.useRealTimers();
 });
 

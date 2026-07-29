@@ -33,9 +33,13 @@ interface TerminalViewProps {
   api: ApiClient;
   active?: boolean;
   layoutVersion?: number;
+  reconnectSignal?: number;
+  onConnectionChange?(sessionID: string, state: ConnectionState): void;
   createTerminal?: () => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
+
+export type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 
 function defaultTerminal(): TerminalDriver {
   const fitAddon = new FitAddon();
@@ -48,19 +52,19 @@ function defaultTerminal(): TerminalDriver {
     lineHeight: 1.25,
     scrollSensitivity: 3,
     theme: {
-      background: "#18212f",
-      foreground: "#e6edf7",
-      cursor: "#60a5fa",
-      selectionBackground: "#273f65",
-      black: "#111827",
+      background: "#050505",
+      foreground: "#f5f5f5",
+      cursor: "#f5f5f5",
+      selectionBackground: "#333333",
+      black: "#050505",
       red: "#f87171",
-      green: "#4ade80",
-      yellow: "#fbbf24",
-      blue: "#60a5fa",
-      magenta: "#c084fc",
-      cyan: "#5eead4",
-      white: "#e6edf7",
-      brightBlack: "#8fa0b5",
+      green: "#a3e635",
+      yellow: "#facc15",
+      blue: "#93c5fd",
+      magenta: "#d8b4fe",
+      cyan: "#67e8f9",
+      white: "#f5f5f5",
+      brightBlack: "#737373",
     },
   });
   terminal.loadAddon(fitAddon);
@@ -103,11 +107,18 @@ function decodeTerminalData(data: string): Uint8Array {
   return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
 }
 
+function focusTerminal(terminal: TerminalDriver) {
+  const modalOpen = document.querySelector('[role="dialog"]');
+  if (!modalOpen) terminal.focus();
+}
+
 export function TerminalView({
   session,
   api,
   active = true,
   layoutVersion = 1,
+  reconnectSignal = 0,
+  onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
 }: TerminalViewProps) {
@@ -115,11 +126,12 @@ export function TerminalView({
   const terminalRef = useRef<TerminalDriver | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
-  const [connection, setConnection] = useState<"connecting" | "connected" | "disconnected" | "exited">(
-    "connecting",
-  );
+  const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [copied, setCopied] = useState(false);
-  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    onConnectionChange?.(session.id, connection);
+  }, [connection, onConnectionChange, session.id]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -131,7 +143,7 @@ export function TerminalView({
     const terminal = createTerminal();
     terminalRef.current = terminal;
     terminal.open(host);
-    if (activeRef.current) terminal.focus();
+    if (activeRef.current) focusTerminal(terminal);
     setConnection("connecting");
 
     const send = (message: unknown): boolean => {
@@ -202,7 +214,7 @@ export function TerminalView({
           setConnection("connected");
           terminal.fit();
           sendResize(terminal.cols, terminal.rows);
-          if (activeRef.current) terminal.focus();
+          if (activeRef.current) focusTerminal(terminal);
         });
         connectionSocket.addEventListener("message", (event) => {
           if (!active || !(event instanceof MessageEvent) || typeof event.data !== "string") return;
@@ -255,10 +267,11 @@ export function TerminalView({
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
     };
-  }, [api, attempt, createSocket, createTerminal, session.id]);
+  }, [api, createSocket, createTerminal, reconnectSignal, session.id]);
 
   useEffect(() => {
-    if (active) terminalRef.current?.focus();
+    const terminal = terminalRef.current;
+    if (active && terminal) focusTerminal(terminal);
   }, [active]);
 
   useEffect(() => {
@@ -274,12 +287,6 @@ export function TerminalView({
           Copied
         </div>
       )}
-      <div className="signal-status" aria-live="polite">
-        <span>{connection}</span>
-        {connection === "disconnected" && (
-          <button onClick={() => setAttempt((value) => value + 1)}>Reconnect</button>
-        )}
-      </div>
     </div>
   );
 }

@@ -256,7 +256,7 @@ test("fits the terminal when its pane changes size", async () => {
   vi.unstubAllGlobals();
 });
 
-test("shows a reconnect action when the socket closes", async () => {
+test("reports connection changes and retries without rendering pane-local status", async () => {
   const sockets = [new FakeSocket(), new FakeSocket()];
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
   const terminal: TerminalDriver = {
@@ -272,20 +272,39 @@ test("shows a reconnect action when the socket closes", async () => {
     dispose: () => undefined,
   };
   const createSocket = vi.fn((_url: string) => sockets.shift()!);
-  const user = userEvent.setup();
+  const onConnectionChange = vi.fn();
 
-  render(
+  const { rerender } = render(
     <TerminalView
       session={runningSession}
       api={api}
       createTerminal={() => terminal}
       createSocket={createSocket}
+      reconnectSignal={0}
+      onConnectionChange={onConnectionChange}
     />,
   );
   await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(1));
-  act(() => createSocket.mock.results[0].value.dispatchEvent(new CloseEvent("close")));
+  expect(onConnectionChange).toHaveBeenCalledWith("session-1", "connecting");
 
-  await user.click(await screen.findByRole("button", { name: "Reconnect" }));
+  act(() => createSocket.mock.results[0].value.dispatchEvent(new Event("open")));
+  expect(onConnectionChange).toHaveBeenCalledWith("session-1", "connected");
+  expect(screen.queryByText("connected")).not.toBeInTheDocument();
+
+  act(() => createSocket.mock.results[0].value.dispatchEvent(new CloseEvent("close")));
+  expect(onConnectionChange).toHaveBeenCalledWith("session-1", "disconnected");
+  expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
+
+  rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={createSocket}
+      reconnectSignal={1}
+      onConnectionChange={onConnectionChange}
+    />,
+  );
   await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(2));
 });
 
@@ -330,6 +349,46 @@ test("focuses the terminal only when its pane becomes active", async () => {
   );
 
   expect(focus).toHaveBeenCalledTimes(1);
+});
+
+test("does not steal focus from an open modal when the terminal connects", async () => {
+  const socket = new FakeSocket();
+  const focus = vi.fn();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <>
+      <div role="dialog" aria-modal="true">
+        <input aria-label="Quick action input" autoFocus />
+      </div>
+      <TerminalView
+        session={runningSession}
+        api={api}
+        createTerminal={() => terminal}
+        createSocket={() => socket}
+      />
+    </>,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => socket.dispatchEvent(new Event("open")));
+
+  expect(screen.getByLabelText("Quick action input")).toHaveFocus();
+  expect(focus).not.toHaveBeenCalled();
 });
 
 test("does not send terminal query responses generated while replaying history", async () => {

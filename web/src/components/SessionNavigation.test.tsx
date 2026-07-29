@@ -3,6 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { SessionNavigation } from "./SessionNavigation";
 import type { Session, Settings } from "../types";
 
+function useMobileViewport() {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 390,
+  });
+}
+
+afterEach(() => {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 1024,
+  });
+});
+
 const settings: Settings = {
   prefix: "Ctrl+B",
   sidebarWidth: 304,
@@ -38,7 +52,26 @@ const sessions: Session[] = [
   },
 ];
 
+test("composes terminal navigation from the shadcn sidebar without a monogram", () => {
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  const navigation = screen.getByLabelText("Terminal sessions");
+  expect(navigation.closest('[data-slot="sidebar"]')).toBeInTheDocument();
+  expect(screen.queryByText("EU")).not.toBeInTheDocument();
+});
+
 test("opens and closes the mobile drawer with keyboard focus restoration", async () => {
+  useMobileViewport();
   const user = userEvent.setup();
   render(
     <SessionNavigation
@@ -62,6 +95,7 @@ test("opens and closes the mobile drawer with keyboard focus restoration", async
 });
 
 test("selecting a mobile session closes the drawer", async () => {
+  useMobileViewport();
   const onSelect = vi.fn();
   const user = userEvent.setup();
   render(
@@ -84,9 +118,10 @@ test("selecting a mobile session closes the drawer", async () => {
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 
-test("groups terminals by activity and exposes cwd, agent title, and status filters", async () => {
+test("groups terminals by status then cwd and exposes group selection controls", async () => {
   const onStatusFilter = vi.fn();
   const onStatusSelect = vi.fn();
+  const onCwdFilter = vi.fn();
   const onSelect = vi.fn();
   const user = userEvent.setup();
   render(
@@ -97,20 +132,29 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
       onSelect={onSelect}
       onStatusFilter={onStatusFilter}
       onStatusSelect={onStatusSelect}
+      cwdFilters={["running\u0000/Users/ryotarai/work/euphony"]}
+      onCwdFilter={onCwdFilter}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
   );
 
-  expect(screen.getByRole("heading", { name: "Running" })).toBeVisible();
+  const runningHeading = screen.getByRole("heading", { name: "Running" });
+  const cwdHeading = screen.getByRole("heading", { name: "~/work/euphony" });
+  const codexButton = screen.getByRole("button", { name: "Select Codex" });
+  expect(runningHeading).toBeVisible();
   expect(screen.getByRole("heading", { name: "Exited" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Terminal" })).toBeVisible();
-  expect(screen.getByText("~/work/euphony")).toBeVisible();
+  expect(
+    runningHeading.compareDocumentPosition(cwdHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    cwdHeading.compareDocumentPosition(codexButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   expect(screen.getByText("Implement v0.2")).toBeVisible();
-  const codexButton = screen.getByRole("button", { name: "Select Codex" });
   const terminalButton = screen.getByRole("button", { name: "Select Terminal" });
   expect(within(codexButton).queryByText("Codex")).not.toBeInTheDocument();
-  expect(within(terminalButton).queryByText("Terminal")).not.toBeInTheDocument();
+  expect(within(terminalButton).getByText("Terminal")).toBeVisible();
   expect(within(codexButton).getByRole("img", { name: "Codex" })).toBeVisible();
   expect(
     within(screen.getByRole("button", { name: "Select Claude" })).getByRole("img", {
@@ -125,6 +169,17 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
   await user.click(screen.getByRole("button", { name: "Show only Running terminals" }));
   expect(onStatusSelect).toHaveBeenCalledWith("running");
 
+  const cwdCheckbox = screen.getByRole("checkbox", {
+    name: "Include all terminals in ~/work/euphony",
+  });
+  expect(cwdCheckbox).toBeChecked();
+  await user.click(cwdCheckbox);
+  expect(onCwdFilter).toHaveBeenCalledWith(
+    "running",
+    "/Users/ryotarai/work/euphony",
+    false,
+  );
+
   expect(screen.getByRole("checkbox", { name: "Include Codex in split" })).toBeChecked();
   const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal in split" });
   expect(terminalCheckbox).not.toBeChecked();
@@ -132,7 +187,7 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
   expect(onSelect).toHaveBeenCalledWith("three", true);
 });
 
-test("groups a linked worktree under its main repository and orders attention first", () => {
+test("groups terminals by their exact cwd within each ordered status", () => {
   const grouped: Session[] = [
     { ...sessions[0], id: "running", repoRoot: "/workspace/project" },
     {
@@ -163,13 +218,14 @@ test("groups a linked worktree under its main repository and orders attention fi
     />,
   );
 
-  expect(screen.getByRole("heading", { name: "/workspace/project" })).toBeVisible();
-  const statusNames = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+  const statusNames = screen.getAllByRole("heading").map((heading) => heading.textContent);
   expect(statusNames).toEqual([
-    "/workspace/project",
     "Need attention",
+    "/workspace/project/tmp/worktrees/fix",
     "Running",
+    "~/work/euphony",
     "Waiting",
+    "~/work/euphony",
   ]);
 });
 
@@ -211,7 +267,9 @@ test("uses a compact 256px sidebar by default", () => {
     />,
   );
 
-  expect(screen.getByLabelText("Terminal sessions").parentElement).toHaveStyle({ width: "256px" });
+  expect(
+    screen.getByLabelText("Terminal sessions").closest('[data-slot="sidebar-wrapper"]'),
+  ).toHaveStyle({ "--sidebar-width": "256px" });
 });
 
 test("resizes the desktop sidebar by dragging its separator", () => {
