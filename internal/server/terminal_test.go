@@ -189,6 +189,7 @@ func TestTerminalWebSocketUpdatesCurrentWorkingDirectory(t *testing.T) {
 
 func TestTerminalWebSocketTracksPlainShellCD(t *testing.T) {
 	initialCWD := t.TempDir()
+	intermediateCWD := t.TempDir()
 	nextCWD := t.TempDir()
 	resolvedNextCWD, err := filepath.EvalSymlinks(nextCWD)
 	if err != nil {
@@ -211,7 +212,8 @@ func TestTerminalWebSocketTracksPlainShellCD(t *testing.T) {
 
 	payload, _ := json.Marshal(clientMessage{
 		Type: "input",
-		Data: "sleep 0.5; cd " + strconv.Quote(nextCWD) + "\n",
+		Data: "cd " + strconv.Quote(intermediateCWD) +
+			"; sleep 0.5; cd " + strconv.Quote(nextCWD) + "\n",
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

@@ -105,8 +105,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					}
 					refreshContext, cancelRefresh := context.WithCancel(ctx)
 					cancelCWDRefresh = cancelRefresh
-					baseline, _ := s.sessions.CurrentCWD(id)
-					go s.refreshCWDUntilChanged(refreshContext, id, baseline)
+					go s.refreshCWDWhileCommandSettles(refreshContext, id)
 				}
 			case "resize":
 				if err := terminal.Resize(message.Cols, message.Rows); err != nil {
@@ -133,7 +132,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) refreshCWDUntilChanged(ctx context.Context, id, baseline string) {
+func (s *Server) refreshCWDWhileCommandSettles(ctx context.Context, id string) {
 	delays := [...]time.Duration{
 		100 * time.Millisecond,
 		250 * time.Millisecond,
@@ -152,8 +151,7 @@ func (s *Server) refreshCWDUntilChanged(ctx context.Context, id, baseline string
 			timer.Stop()
 			return
 		}
-		metadata, err := s.sessions.RefreshCWD(id)
-		if err != nil || metadata.CWD != baseline {
+		if _, err := s.sessions.RefreshCWD(id); err != nil {
 			return
 		}
 	}
