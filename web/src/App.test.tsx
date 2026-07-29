@@ -262,6 +262,39 @@ test("command-click selects multiple terminal panes and stores them in the URL",
   });
 });
 
+test("passes the pane count to terminals when the topology changes", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session, _api, _active, layoutVersion) => (
+        <div
+          aria-label={`${session.id} terminal layout`}
+          data-layout-version={layoutVersion}
+        />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("session-1 terminal layout")).toHaveAttribute(
+    "data-layout-version",
+    "1",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), { metaKey: true });
+
+  expect(await screen.findByLabelText("session-1 terminal layout")).toHaveAttribute(
+    "data-layout-version",
+    "2",
+  );
+  expect(screen.getByLabelText("session-2 terminal layout")).toHaveAttribute(
+    "data-layout-version",
+    "2",
+  );
+});
+
 test("a checked activity group automatically adds newly matching terminal panes", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const fetchMock = vi.spyOn(globalThis, "fetch");

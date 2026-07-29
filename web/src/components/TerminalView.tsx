@@ -9,7 +9,7 @@ export interface TerminalDriver {
   readonly cols?: number;
   readonly rows?: number;
   open(element: HTMLElement): void;
-  write(data: string, callback?: () => void): void;
+  write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
   fit(): void;
   getSelection(): string;
@@ -32,6 +32,7 @@ interface TerminalViewProps {
   session: Session;
   api: ApiClient;
   active?: boolean;
+  layoutVersion?: number;
   createTerminal?: () => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
@@ -97,10 +98,16 @@ function defaultSocket(url: string): WebSocketLike {
   return new WebSocket(url);
 }
 
+function decodeTerminalData(data: string): Uint8Array {
+  const decoded = atob(data);
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
 export function TerminalView({
   session,
   api,
   active = true,
+  layoutVersion = 1,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
 }: TerminalViewProps) {
@@ -127,18 +134,19 @@ export function TerminalView({
     if (activeRef.current) terminal.focus();
     setConnection("connecting");
 
-    const send = (message: unknown) => {
+    const send = (message: unknown): boolean => {
       const currentSocket = socket;
       if (currentSocket && currentSocket.readyState === currentSocket.OPEN) {
         currentSocket.send(JSON.stringify(message));
+        return true;
       }
+      return false;
     };
     const sendResize = (cols?: number, rows?: number) => {
       if (!cols || !rows) return;
       const size = `${cols}x${rows}`;
       if (size === lastSize) return;
-      lastSize = size;
-      send({ type: "resize", cols, rows });
+      if (send({ type: "resize", cols, rows })) lastSize = size;
     };
     terminal.attachCustomKeyEventHandler?.((event) => {
       if (event.type !== "keydown" || event.isComposing || event.keyCode === 229) return true;
@@ -206,11 +214,19 @@ export function TerminalView({
           };
           if (message.type === "history" && message.data) {
             replayingHistory = true;
-            terminal.write(message.data, () => {
+            try {
+              terminal.write(decodeTerminalData(message.data), () => {
+                replayingHistory = false;
+              });
+            } catch {
               replayingHistory = false;
-            });
+            }
           } else if (message.type === "output" && message.data) {
-            terminal.write(message.data);
+            try {
+              terminal.write(decodeTerminalData(message.data));
+            } catch {
+              // Ignore malformed terminal payloads instead of rendering corrupt bytes.
+            }
           } else if (message.type === "exit") {
             setConnection("exited");
             terminal.write(`\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`);
@@ -244,6 +260,11 @@ export function TerminalView({
   useEffect(() => {
     if (active) terminalRef.current?.focus();
   }, [active]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => terminalRef.current?.fit(), 50);
+    return () => window.clearTimeout(timer);
+  }, [layoutVersion]);
 
   return (
     <div className="terminal-view" data-connection={connection}>

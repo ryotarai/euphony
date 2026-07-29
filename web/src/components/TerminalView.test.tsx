@@ -4,6 +4,19 @@ import { TerminalView, type TerminalDriver, type WebSocketLike } from "./Termina
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+function encodeTerminalData(data: string): string {
+  const bytes = new TextEncoder().encode(data);
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function terminalText(data: string | Uint8Array): string {
+  return typeof data === "string" ? data : new TextDecoder().decode(data);
+}
+
 const runningSession: Session = {
   id: "session-1",
   name: "Codex",
@@ -31,7 +44,7 @@ class FakeSocket extends EventTarget implements WebSocketLike {
 
 test("gets a ticket before connecting and relays terminal traffic", async () => {
   const socket = new FakeSocket();
-  const writes: string[] = [];
+  const writes: Array<string | Uint8Array> = [];
   let onData: ((data: string) => void) | undefined;
   let onResize: ((cols: number, rows: number) => void) | undefined;
   const terminal: TerminalDriver = {
@@ -71,17 +84,129 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
 
   act(() => {
     socket.dispatchEvent(new Event("open"));
-    socket.receive({ type: "output", data: "hello terminal" });
+    socket.receive({ type: "output", data: encodeTerminalData("hello terminal") });
     onData?.("ls\r");
     onResize?.(100, 32);
   });
 
-  expect(writes).toContain("hello terminal");
+  expect(writes.map(terminalText)).toContain("hello terminal");
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "resize", cols: 120, rows: 40 },
     { type: "input", data: "ls\r" },
     { type: "resize", cols: 100, rows: 32 },
   ]);
+});
+
+test("decodes terminal output into the original bytes", async () => {
+  const socket = new FakeSocket();
+  const writes: unknown[] = [];
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: (data) => writes.push(data),
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => socket.receive({ type: "output", data: "44GC" }));
+
+  expect(writes).toEqual([new Uint8Array([0xe3, 0x81, 0x82])]);
+});
+
+test("sends a resize observed before the socket opens", async () => {
+  const socket = new FakeSocket();
+  socket.readyState = 0;
+  let onResize: ((cols: number, rows: number) => void) | undefined;
+  const terminal: TerminalDriver = {
+    cols: 120,
+    rows: 40,
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => onResize?.(120, 40),
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: (callback) => {
+      onResize = callback;
+      return () => undefined;
+    },
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => onResize?.(120, 40));
+  expect(socket.sent).toEqual([]);
+
+  act(() => {
+    socket.readyState = socket.OPEN;
+    socket.dispatchEvent(new Event("open"));
+  });
+
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+});
+
+test("refits after the pane topology changes", async () => {
+  vi.useFakeTimers();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: vi.fn(),
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+  const props = {
+    session: runningSession,
+    api,
+    createTerminal: () => terminal,
+    createSocket: () => new FakeSocket(),
+  };
+  const { rerender } = render(<TerminalView {...props} layoutVersion={1} />);
+  await act(async () => Promise.resolve());
+  act(() => vi.advanceTimersByTime(50));
+  vi.mocked(terminal.fit).mockClear();
+
+  rerender(<TerminalView {...props} layoutVersion={2} />);
+  act(() => vi.advanceTimersByTime(49));
+  expect(terminal.fit).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1));
+  expect(terminal.fit).toHaveBeenCalledTimes(1);
+  vi.useRealTimers();
 });
 
 test("fits the terminal when its pane changes size", async () => {
@@ -214,8 +339,9 @@ test("does not send terminal query responses generated while replaying history",
   const terminal: TerminalDriver = {
     open: () => undefined,
     write: (data, callback) => {
-      writes.push(data);
-      if (data.includes("query")) onData?.("\u001b[1;2R");
+      const text = terminalText(data);
+      writes.push(text);
+      if (text.includes("query")) onData?.("\u001b[1;2R");
       callback?.();
     },
     focus: () => undefined,
@@ -242,11 +368,11 @@ test("does not send terminal query responses generated while replaying history",
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => socket.receive({ type: "history", data: "query" }));
+  act(() => socket.receive({ type: "history", data: encodeTerminalData("query") }));
   expect(writes).toEqual(["query"]);
   expect(socket.sent).toEqual([]);
 
-  act(() => socket.receive({ type: "output", data: "query" }));
+  act(() => socket.receive({ type: "output", data: encodeTerminalData("query") }));
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "input", data: "\u001b[1;2R" },
   ]);
@@ -286,7 +412,7 @@ test("keeps replay-generated terminal replies suppressed until the write complet
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
   act(() => {
-    socket.receive({ type: "history", data: "\u001b[c" });
+    socket.receive({ type: "history", data: encodeTerminalData("\u001b[c") });
     onData?.("\u001b[?1;2c");
   });
   expect(socket.sent).toEqual([]);

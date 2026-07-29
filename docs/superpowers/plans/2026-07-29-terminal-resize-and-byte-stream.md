@@ -125,7 +125,7 @@ Expected: PASS.
 ### Task 3: Verify real Claude resizing and document the transport rule
 
 **Files:**
-- Modify: `web/e2e/terminal-resize-diagnostic.spec.ts`
+- Create: `web/e2e/terminal-reliability.spec.ts`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
@@ -150,7 +150,7 @@ Add this concise rule to `AGENTS.md`:
 Run:
 
 ```bash
-cd web && npx playwright test e2e/terminal-resize-diagnostic.spec.ts --project=chromium --workers=1
+cd web && npx playwright test e2e/terminal-reliability.spec.ts --project=chromium --workers=1
 ```
 
 Expected: PASS with Claude launched and no prompt submitted.
@@ -170,6 +170,6 @@ Expected: all Go packages, all Vitest tests, TypeScript typecheck, and all Playw
 - [ ] **Step 5: Commit the implementation**
 
 ```bash
-git add AGENTS.md internal/server/terminal.go internal/server/terminal_test.go web/src/App.tsx web/src/App.test.tsx web/src/components/TerminalView.tsx web/src/components/TerminalView.test.tsx web/e2e/terminal-resize-diagnostic.spec.ts docs/superpowers/plans/2026-07-29-terminal-resize-and-byte-stream.md
+git add AGENTS.md internal/server/terminal.go internal/server/terminal_test.go web/src/App.tsx web/src/App.test.tsx web/src/components/TerminalView.tsx web/src/components/TerminalView.test.tsx web/e2e/euphony.spec.ts web/e2e/terminal-reliability.spec.ts docs/superpowers/plans/2026-07-29-terminal-resize-and-byte-stream.md
 git commit -m "fix: keep terminal streams aligned with pane layout"
 ```

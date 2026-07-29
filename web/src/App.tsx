@@ -9,7 +9,12 @@ const tokenKey = "euphony.token";
 interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
-  renderTerminal?: (session: Session, api: ApiClient, active: boolean) => ReactNode;
+  renderTerminal?: (
+    session: Session,
+    api: ApiClient,
+    active: boolean,
+    layoutVersion: number,
+  ) => ReactNode;
 }
 
 const defaultSettings: Settings = {
@@ -107,8 +112,14 @@ function writeWorkspaceToURL(
 export function App({
   initialToken,
   initialSettings,
-  renderTerminal = (session, api, active) => (
-    <TerminalView key={session.id} session={session} api={api} active={active} />
+  renderTerminal = (session, api, active, layoutVersion) => (
+    <TerminalView
+      key={session.id}
+      session={session}
+      api={api}
+      active={active}
+      layoutVersion={layoutVersion}
+    />
   ),
 }: AppProps) {
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
@@ -512,7 +523,7 @@ export function App({
                 aria-label={`${pane.name} pane`}
                 onMouseDown={() => focusPane(pane.id)}
               >
-                {renderTerminal(pane, api, focusedID === pane.id)}
+                {renderTerminal(pane, api, focusedID === pane.id, panes.length)}
               </div>
           ))
         ) : (

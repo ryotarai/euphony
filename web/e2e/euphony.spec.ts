@@ -304,15 +304,18 @@ async function readTerminalHistory(
       `${protocol}//${window.location.host}/api/sessions/${encodeURIComponent(id)}/terminal?ticket=${encodeURIComponent(ticket)}`,
     );
     return await new Promise<string>((resolve, reject) => {
-      let output = "";
+      const output: number[] = [];
       const timeout = window.setTimeout(() => {
         socket.close();
-        resolve(output);
+        resolve(new TextDecoder().decode(Uint8Array.from(output)));
       }, 250);
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(String(event.data)) as { type: string; data?: string };
         if ((message.type === "output" || message.type === "history") && message.data) {
-          output += message.data;
+          const decoded = atob(message.data);
+          for (let index = 0; index < decoded.length; index += 1) {
+            output.push(decoded.charCodeAt(index));
+          }
         }
       });
       socket.addEventListener("error", () => {

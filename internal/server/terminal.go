@@ -18,7 +18,7 @@ type clientMessage struct {
 
 type serverMessage struct {
 	Type     string `json:"type"`
-	Data     string `json:"data,omitempty"`
+	Data     []byte `json:"data,omitempty"`
 	ExitCode *int   `json:"exitCode,omitempty"`
 	Message  string `json:"message,omitempty"`
 }
@@ -51,7 +51,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(outputDone)
 		if len(history) > 0 {
-			payload, _ := json.Marshal(serverMessage{Type: "history", Data: string(history)})
+			payload, _ := json.Marshal(serverMessage{Type: "history", Data: history})
 			if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
 				return
 			}
@@ -65,7 +65,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					_ = connection.Write(ctx, websocket.MessageText, payload)
 					return
 				}
-				payload, _ := json.Marshal(serverMessage{Type: "output", Data: string(data)})
+				payload, _ := json.Marshal(serverMessage{Type: "output", Data: data})
 				if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
 					return
 				}

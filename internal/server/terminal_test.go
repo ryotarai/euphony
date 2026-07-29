@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,76 @@ import (
 	"github.com/coder/websocket"
 	"github.com/ryotarai/euphony/internal/session"
 )
+
+func TestTerminalWebSocketPreservesSplitUTF8Bytes(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"UTF-8"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	connection := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer connection.CloseNow()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	configure, _ := json.Marshal(clientMessage{
+		Type: "input",
+		Data: "stty -echo; printf 'echo-disabled\\n'\n",
+	})
+	if err := connection.Write(ctx, websocket.MessageText, configure); err != nil {
+		t.Fatalf("Write(configure) error = %v", err)
+	}
+	for {
+		_, payload, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("Read(configure) error = %v", err)
+		}
+		var message serverMessage
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode configure message: %v", err)
+		}
+		if message.Type == "output" && strings.Contains(string(message.Data), "echo-disabled") {
+			break
+		}
+	}
+
+	fragmented, _ := json.Marshal(clientMessage{
+		Type: "input",
+		Data: "printf '\\343'; sleep 0.05; printf '\\201\\202\\n'\n",
+	})
+	if err := connection.Write(ctx, websocket.MessageText, fragmented); err != nil {
+		t.Fatalf("Write(fragmented UTF-8) error = %v", err)
+	}
+
+	var combined []byte
+	for !bytes.Contains(combined, []byte("あ\r\n")) {
+		_, payload, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("Read(fragmented UTF-8) error = %v; output = %q", err, combined)
+		}
+		var message struct {
+			Type string `json:"type"`
+			Data string `json:"data"`
+		}
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode output message: %v", err)
+		}
+		if message.Type != "output" {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(message.Data)
+		if err != nil {
+			t.Fatalf("output data is not base64: %v; data = %q", err, message.Data)
+		}
+		combined = append(combined, decoded...)
+	}
+}
 
 func TestTerminalWebSocketStreamsPTY(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
@@ -65,7 +137,7 @@ func TestTerminalWebSocketStreamsPTY(t *testing.T) {
 			t.Fatalf("decode message: %v", err)
 		}
 		if message.Type == "output" {
-			combined.WriteString(message.Data)
+			combined.Write(message.Data)
 		}
 	}
 
@@ -136,7 +208,7 @@ func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 			t.Fatalf("decode first message: %v", err)
 		}
 		if message.Type == "output" {
-			configured.WriteString(message.Data)
+			configured.Write(message.Data)
 		}
 	}
 	delayed, _ := json.Marshal(clientMessage{Type: "input", Data: "sleep 0.5; printf 'after-reconnect\\n'\n"})
@@ -163,7 +235,7 @@ func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 	if historyMessage.Type != "history" {
 		t.Fatalf("replayed message type = %q, want history", historyMessage.Type)
 	}
-	output.WriteString(historyMessage.Data)
+	output.Write(historyMessage.Data)
 	for !strings.Contains(output.String(), "after-reconnect\r\n") {
 		_, payload, err := second.Read(ctx)
 		if err != nil {
@@ -174,7 +246,7 @@ func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 			t.Fatalf("decode message: %v", err)
 		}
 		if message.Type == "output" || message.Type == "history" {
-			output.WriteString(message.Data)
+			output.Write(message.Data)
 		}
 	}
 

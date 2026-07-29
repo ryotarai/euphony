@@ -15,3 +15,5 @@
   them back to the base branch automatically unless the user asks otherwise.
 - Run end-to-end servers with an isolated test database so persisted local
   sessions cannot leak into browser tests.
+- Preserve arbitrary terminal byte streams across JSON boundaries with a
+  lossless encoding such as base64; never stringify independent PTY chunks.
