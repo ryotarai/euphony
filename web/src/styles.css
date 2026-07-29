@@ -961,24 +961,37 @@ input {
   }
 }
 
-/* Euphony's light workspace keeps the terminal dense without making the chrome compete for attention. */
+/* Euphony's dark workspace keeps the terminal dense without making the chrome compete for attention. */
 :root {
-  color: #182230;
-  background: #f6f7f9;
-  color-scheme: light;
-  --primary: oklch(0.52 0.17 252);
-  --primary-foreground: oklch(0.99 0 0);
-  --ring: oklch(0.62 0.15 252);
-  --sidebar: oklch(0.995 0.002 250);
-  --sidebar-accent: oklch(0.96 0.016 252);
-  --sidebar-primary: oklch(0.52 0.17 252);
-  --sidebar-ring: oklch(0.62 0.15 252);
+  color: #e6edf7;
+  background: #111827;
+  color-scheme: dark;
+  --background: oklch(0.17 0.015 258);
+  --foreground: oklch(0.94 0.01 258);
+  --card: oklch(0.205 0.015 258);
+  --card-foreground: oklch(0.94 0.01 258);
+  --primary: oklch(0.67 0.16 250);
+  --primary-foreground: oklch(0.16 0.015 258);
+  --secondary: oklch(0.26 0.015 258);
+  --secondary-foreground: oklch(0.9 0.01 258);
+  --muted: oklch(0.26 0.015 258);
+  --muted-foreground: oklch(0.72 0.015 258);
+  --accent: oklch(0.28 0.02 258);
+  --accent-foreground: oklch(0.94 0.01 258);
+  --border: oklch(0.31 0.015 258);
+  --input: oklch(0.31 0.015 258);
+  --ring: oklch(0.67 0.16 250);
+  --sidebar: oklch(0.195 0.015 258);
+  --sidebar-foreground: oklch(0.9 0.01 258);
+  --sidebar-accent: oklch(0.27 0.025 258);
+  --sidebar-primary: oklch(0.67 0.16 250);
+  --sidebar-ring: oklch(0.67 0.16 250);
 }
 
 body,
 .workspace,
 .terminal-stage {
-  background: #f6f7f9;
+  background: #111827;
 }
 
 button:focus-visible,
@@ -989,12 +1002,12 @@ input:focus-visible {
 .desktop-sidebar,
 .session-rail,
 .session-drawer {
-  background: #fff;
-  border-color: #e5e7eb;
+  background: #18212f;
+  border-color: #2b3647;
 }
 
 .desktop-sidebar {
-  border-right: 1px solid #e5e7eb;
+  border-right: 1px solid #2b3647;
 }
 
 .session-rail {
@@ -1008,7 +1021,7 @@ input:focus-visible {
 }
 
 .wordmark {
-  color: #182230;
+  color: #e6edf7;
   font-family: "Geist Variable", "Avenir Next", sans-serif;
   font-size: 0.88rem;
   font-weight: 700;
@@ -1018,18 +1031,18 @@ input:focus-visible {
 .sidebar-collapse,
 .sidebar-settings,
 .sidebar-expand {
-  color: #64748b;
+  color: #8392a7;
 }
 
 .sidebar-collapse:hover,
 .sidebar-settings:hover,
 .sidebar-expand:hover {
-  color: #172033;
-  background: #f1f5f9;
+  color: #f8fafc;
+  background: #263246;
 }
 
 .sidebar-resizer::after {
-  background: #e5e7eb;
+  background: #344257;
 }
 
 .sidebar-resizer:hover::after,
@@ -1050,11 +1063,11 @@ input:focus-visible {
   gap: 0.4rem;
   min-height: 1.65rem;
   padding: 0 0.3rem;
-  color: #64748b;
+  color: #8392a7;
 }
 
 .status-select:hover {
-  color: #172033;
+  color: #f1f5f9;
 }
 
 .status-select h2 {
@@ -1076,7 +1089,7 @@ input:focus-visible {
 }
 
 .channel-signal {
-  background: #d8dee8;
+  background: #344257;
   height: calc(100% - 0.45rem);
 }
 
@@ -1088,15 +1101,15 @@ input:focus-visible {
 
 .session-select {
   gap: 0.5rem;
-  color: #475569;
+  color: #b5c0d0;
   border-radius: 0.4rem;
   padding: 0.35rem 0.5rem;
 }
 
 .session-select:hover,
 .session-select[aria-current="true"] {
-  color: #172033;
-  background: #eef4ff;
+  color: #f8fafc;
+  background: #273854;
 }
 
 .session-agent-icon {
@@ -1114,29 +1127,29 @@ input:focus-visible {
 }
 
 .agent-title {
-  color: #1e293b;
+  color: #e6edf7;
 }
 
 .session-cwd {
-  color: #94a3b8;
+  color: #7f91a8;
 }
 
 .session-delete {
-  color: #94a3b8;
-  background: #fff;
+  color: #7f91a8;
+  background: #18212f;
 }
 
 .create-channel {
   min-height: 2rem;
-  color: #334155;
-  border-color: #d8dee8;
+  color: #cbd5e1;
+  border-color: #3a475b;
   border-radius: 0.45rem;
   font-size: 0.72rem;
 }
 
 .create-channel:hover {
-  color: #1d4ed8;
-  background: #eff6ff;
+  color: #93c5fd;
+  background: #263754;
 }
 
 .terminal-stage {
@@ -1145,18 +1158,18 @@ input:focus-visible {
 }
 
 .terminal-pane {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: #18212f;
+  border: 1px solid #2d3a4e;
   border-radius: 0.55rem;
 }
 
 .terminal-pane + .terminal-pane {
-  border-left: 1px solid #e5e7eb;
+  border-left: 1px solid #2d3a4e;
 }
 
 .terminal-pane[data-active="true"] {
-  border-color: #bfdbfe;
-  box-shadow: 0 0 0 1px #dbeafe;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgb(59 130 246 / 35%);
 }
 
 .terminal-view {
@@ -1170,13 +1183,13 @@ input:focus-visible {
 
 .signal-status,
 .prefix-command-guide {
-  color: #64748b;
+  color: #8fa0b5;
 }
 
 .prefix-command-guide {
-  background: rgb(255 255 255 / 96%);
-  border-top-color: #e5e7eb;
-  box-shadow: 0 -8px 24px rgb(15 23 42 / 8%);
+  background: rgb(24 33 47 / 96%);
+  border-top-color: #2d3a4e;
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 28%);
 }
 
 .prefix-command-guide kbd,
@@ -1186,8 +1199,8 @@ input:focus-visible {
 
 .auth-shell,
 .loading-screen {
-  color: #172033;
-  background: #f6f7f9;
+  color: #e6edf7;
+  background: #111827;
 }
 
 .auth-panel h1 {
@@ -1198,7 +1211,7 @@ input:focus-visible {
 .auth-panel > p:not(.eyebrow, .field-error),
 .auth-panel label,
 .settings-hint {
-  color: #64748b;
+  color: #8fa0b5;
 }
 
 .eyebrow {
@@ -1206,7 +1219,7 @@ input:focus-visible {
 }
 
 input {
-  color: #172033;
-  background: #fff;
-  border-color: #cbd5e1;
+  color: #e6edf7;
+  background: #18212f;
+  border-color: #3a475b;
 }
