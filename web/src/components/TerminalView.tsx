@@ -6,12 +6,15 @@ import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
 export interface TerminalDriver {
+  readonly cols?: number;
+  readonly rows?: number;
   open(element: HTMLElement): void;
-  write(data: string): void;
+  write(data: string, callback?: () => void): void;
   focus(): void;
   fit(): void;
   getSelection(): string;
   clearSelection(): void;
+  attachCustomKeyEventHandler?(handler: (event: KeyboardEvent) => boolean): void;
   onSelectionChange(callback: () => void): () => void;
   onData(callback: (data: string) => void): () => void;
   onResize(callback: (cols: number, rows: number) => void): () => void;
@@ -39,9 +42,10 @@ function defaultTerminal(): TerminalDriver {
     cursorBlink: true,
     cursorStyle: "bar",
     allowTransparency: true,
-    fontFamily: '"SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace',
+    fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
     fontSize: 14,
     lineHeight: 1.25,
+    scrollSensitivity: 3,
     theme: {
       background: "#18212f",
       foreground: "#e6edf7",
@@ -60,12 +64,19 @@ function defaultTerminal(): TerminalDriver {
   });
   terminal.loadAddon(fitAddon);
   return {
+    get cols() {
+      return terminal.cols;
+    },
+    get rows() {
+      return terminal.rows;
+    },
     open: (element) => terminal.open(element),
-    write: (data) => terminal.write(data),
+    write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
     getSelection: () => terminal.getSelection(),
     clearSelection: () => terminal.clearSelection(),
+    attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
     onSelectionChange: (callback) => {
       const disposable = terminal.onSelectionChange(callback);
       return () => disposable.dispose();
@@ -109,6 +120,7 @@ export function TerminalView({
     let active = true;
     let replayingHistory = false;
     let socket: WebSocketLike | undefined;
+    let lastSize = "";
     const terminal = createTerminal();
     terminalRef.current = terminal;
     terminal.open(host);
@@ -121,10 +133,26 @@ export function TerminalView({
         currentSocket.send(JSON.stringify(message));
       }
     };
+    const sendResize = (cols?: number, rows?: number) => {
+      if (!cols || !rows) return;
+      const size = `${cols}x${rows}`;
+      if (size === lastSize) return;
+      lastSize = size;
+      send({ type: "resize", cols, rows });
+    };
+    terminal.attachCustomKeyEventHandler?.((event) => {
+      if (event.type !== "keydown" || event.isComposing || event.keyCode === 229) return true;
+      if (event.key !== "Enter" || !event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+        return true;
+      }
+      event.preventDefault();
+      send({ type: "input", data: "\n" });
+      return false;
+    });
     const removeData = terminal.onData((data) => {
       if (!replayingHistory) send({ type: "input", data });
     });
-    const removeResize = terminal.onResize((cols, rows) => send({ type: "resize", cols, rows }));
+    const removeResize = terminal.onResize(sendResize);
     let selectionTimer: ReturnType<typeof setTimeout> | undefined;
     let copiedTimer: ReturnType<typeof setTimeout> | undefined;
     const removeSelectionChange = terminal.onSelectionChange(() => {
@@ -165,6 +193,7 @@ export function TerminalView({
           if (!active) return;
           setConnection("connected");
           terminal.fit();
+          sendResize(terminal.cols, terminal.rows);
           if (activeRef.current) terminal.focus();
         });
         connectionSocket.addEventListener("message", (event) => {
@@ -177,11 +206,9 @@ export function TerminalView({
           };
           if (message.type === "history" && message.data) {
             replayingHistory = true;
-            try {
-              terminal.write(message.data);
-            } finally {
+            terminal.write(message.data, () => {
               replayingHistory = false;
-            }
+            });
           } else if (message.type === "output" && message.data) {
             terminal.write(message.data);
           } else if (message.type === "exit") {

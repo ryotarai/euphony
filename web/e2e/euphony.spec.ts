@@ -273,7 +273,9 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.keyboard.press("Control+A");
   await page.keyboard.press("v");
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
-  expect(await readTerminalHistory(page, claude.id)).toBe(historyBeforeSplit);
+  const historyAfterSplit = await readTerminalHistory(page, claude.id);
+  expect(historyAfterSplit).toContain(historyBeforeSplit);
+  expect(historyAfterSplit).not.toContain("1;2c");
   await expect(
     page.locator('.terminal-pane[data-active="true"] .xterm-helper-textarea'),
   ).toBeFocused();

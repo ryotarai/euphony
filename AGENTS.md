@@ -13,3 +13,5 @@
   automated safely.
 - After implementing and verifying changes in a task worktree, commit and merge
   them back to the base branch automatically unless the user asks otherwise.
+- Run end-to-end servers with an isolated test database so persisted local
+  sessions cannot leak into browser tests.

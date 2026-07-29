@@ -17,6 +17,7 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name string `json:"name"`
+		CWD  string `json:"cwd"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -32,8 +33,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_name", "Session names must contain 1 to 80 characters.")
 		return
 	}
-	metadata, err := s.sessions.Create(r.Context(), request.Name)
+	metadata, err := s.sessions.Create(r.Context(), request.Name, request.CWD)
 	if err != nil {
+		if strings.Contains(err.Error(), "working directory") {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", "Choose an existing working directory.")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "pty_start_failed", "The terminal process could not start.")
 		return
 	}

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { App } from "./App";
+import { App, attentionTransitions } from "./App";
 import type { Session, Settings } from "./types";
 
 const defaultSettings: Settings = {
@@ -49,6 +49,12 @@ const plainTerminalSession: Session = {
   cwd: "/workspace/shell",
   createdAt: "2026-07-28T00:03:00Z",
 };
+
+test("detects only new transitions into attention", () => {
+  const attention = { ...runningSession, agentStatus: "attention" };
+  expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);
+  expect(attentionTransitions([attention], [attention])).toEqual([]);
+});
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
@@ -164,6 +170,40 @@ test("creates a terminal without asking for a name, selects it, and deletes it",
   });
 });
 
+test("opens Command-K and creates a terminal in the chosen directory", async () => {
+  const created = { ...plainTerminalSession, id: "created", cwd: "/workspace/other" };
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse(created, 201));
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByRole("button", { name: "Select Codex" });
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(screen.getByRole("button", { name: "New terminal in directory…" }));
+  const cwd = screen.getByLabelText("Working directory");
+  expect(cwd).toHaveValue("/workspace/euphony");
+  await user.clear(cwd);
+  await user.type(cwd, "/workspace/other");
+  await user.click(screen.getByRole("button", { name: "Create terminal" }));
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ name: "Terminal", cwd: "/workspace/other" }),
+    }),
+  );
+});
+
 test("restores the selected session from the URL and follows browser navigation", async () => {
   history.replaceState(null, "", "/?session=session-2");
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
@@ -244,6 +284,36 @@ test("a checked activity group automatically adds newly matching terminal panes"
 
   expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
   expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["running"]);
+  vi.useRealTimers();
+});
+
+test("a checked activity group removes a terminal after its status changes", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession, thirdRunningSession]))
+    .mockImplementation(() =>
+      jsonResponse([runningSession, { ...thirdRunningSession, agentStatus: "waiting" }]),
+    );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  });
+  expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
   vi.useRealTimers();
 });
 

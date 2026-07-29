@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type Metadata struct {
 	Name           string     `json:"name"`
 	State          State      `json:"state"`
 	CWD            string     `json:"cwd"`
+	RepoRoot       string     `json:"repoRoot"`
 	Agent          string     `json:"agent,omitempty"`
 	AgentStatus    string     `json:"agentStatus,omitempty"`
 	AgentTitle     string     `json:"agentTitle,omitempty"`
@@ -124,7 +126,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 }
 
-func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
+func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string) (Metadata, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Metadata{}, errors.New("session name is required")
@@ -137,15 +139,31 @@ func (m *Manager) Create(_ context.Context, name string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	cwd, err := os.Getwd()
+	cwd := ""
+	if len(requestedCWD) > 0 {
+		cwd = strings.TrimSpace(requestedCWD[0])
+	}
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return Metadata{}, err
+		}
+	}
+	cwd, err = filepath.Abs(cwd)
 	if err != nil {
 		return Metadata{}, err
+	}
+	info, err := os.Stat(cwd)
+	if err != nil || !info.IsDir() {
+		return Metadata{}, errors.New("working directory must be an existing directory")
 	}
 	metadata := Metadata{
 		ID:        id,
 		Name:      name,
 		State:     StateRunning,
 		CWD:       cwd,
+		RepoRoot:  repositoryRoot(cwd),
 		CreatedAt: time.Now().UTC(),
 	}
 	item, err := m.start(metadata, exec.Command(m.shell))
@@ -172,6 +190,16 @@ func (m *Manager) restore(metadata Metadata) error {
 	metadata.ExitedAt = nil
 	metadata.ExitCode = nil
 	metadata.Message = ""
+	if info, err := os.Stat(metadata.CWD); err != nil || !info.IsDir() {
+		fallback, fallbackErr := os.Getwd()
+		if fallbackErr != nil {
+			return fallbackErr
+		}
+		metadata.CWD = fallback
+	}
+	if metadata.RepoRoot == "" {
+		metadata.RepoRoot = repositoryRoot(metadata.CWD)
+	}
 	command := restoredCommand(m.shell, metadata)
 	item, err := m.start(metadata, command)
 	if err != nil {
@@ -207,6 +235,8 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 	command.Dir = metadata.CWD
 	command.Env = append(os.Environ(),
 		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"LC_CTYPE=en_US.UTF-8",
 		"EUPHONY_TERMINAL_ID="+metadata.ID,
 		"EUPHONY_HOOK_URL="+m.hooks.URL,
 		"EUPHONY_TOKEN="+m.hooks.Token,
@@ -244,10 +274,19 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	if sessionID := strings.TrimSpace(update.AgentSessionID); sessionID != "" {
 		item.metadata.AgentSessionID = sessionID
 	}
-	item.metadata.AgentStatus = strings.TrimSpace(update.Status)
-	item.metadata.AgentTitle = strings.TrimSpace(update.Title)
+	nextStatus := strings.TrimSpace(update.Status)
+	if item.metadata.AgentStatus == "running" && nextStatus == "waiting" {
+		nextStatus = "attention"
+	}
+	item.metadata.AgentStatus = nextStatus
+	if title := strings.TrimSpace(update.Title); title != "" {
+		item.metadata.AgentTitle = title
+	} else if item.metadata.Agent == "" && nextStatus == "" {
+		item.metadata.AgentTitle = ""
+	}
 	if cwd := strings.TrimSpace(update.CWD); cwd != "" {
 		item.metadata.CWD = cwd
+		item.metadata.RepoRoot = repositoryRoot(cwd)
 	}
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), item.metadata); err != nil {
@@ -255,6 +294,27 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		}
 	}
 	return item.metadata, nil
+}
+
+func repositoryRoot(cwd string) string {
+	resolved, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		resolved = cwd
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return cwd
+	}
+	command := exec.Command("git", "-C", resolved, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	output, err := command.Output()
+	if err != nil {
+		return resolved
+	}
+	common := strings.TrimSpace(string(output))
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return resolved
 }
 
 func (m *Manager) watch(item *entry) {

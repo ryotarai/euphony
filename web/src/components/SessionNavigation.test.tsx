@@ -132,6 +132,47 @@ test("groups terminals by activity and exposes cwd, agent title, and status filt
   expect(onSelect).toHaveBeenCalledWith("three", true);
 });
 
+test("groups a linked worktree under its main repository and orders attention first", () => {
+  const grouped: Session[] = [
+    { ...sessions[0], id: "running", repoRoot: "/workspace/project" },
+    {
+      ...sessions[0],
+      id: "attention",
+      name: "Needs review",
+      cwd: "/workspace/project/tmp/worktrees/fix",
+      repoRoot: "/workspace/project",
+      agentStatus: "attention",
+    },
+    {
+      ...sessions[0],
+      id: "waiting",
+      name: "Waiting",
+      repoRoot: "/workspace/project",
+      agentStatus: "waiting",
+    },
+  ];
+  render(
+    <SessionNavigation
+      sessions={grouped}
+      selectedIDs={["running"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: "/workspace/project" })).toBeVisible();
+  const statusNames = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+  expect(statusNames).toEqual([
+    "/workspace/project",
+    "Need attention",
+    "Running",
+    "Waiting",
+  ]);
+});
+
 test("collapses and restores the desktop sidebar", async () => {
   const onSettingsChange = vi.fn();
   const user = userEvent.setup();

@@ -23,6 +23,30 @@ function sessionActivity(session: Session) {
   return session.state === "running" ? "terminal" : session.state;
 }
 
+export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
+  const previousActivity = new Map(previous.map((session) => [session.id, sessionActivity(session)]));
+  return next.filter(
+    (session) =>
+      sessionActivity(session) === "attention" &&
+      previousActivity.get(session.id) !== "attention",
+  );
+}
+
+function playAttentionTone() {
+  if (typeof AudioContext === "undefined") return;
+  const context = new AudioContext();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.frequency.value = 660;
+  gain.gain.setValueAtTime(0.08, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.16);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.16);
+  oscillator.addEventListener("ended", () => void context.close(), { once: true });
+}
+
 function resolveInitialToken(explicitToken?: string): string {
   if (explicitToken) return explicitToken;
 
@@ -100,7 +124,13 @@ export function App({
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [settingsError, setSettingsError] = useState("");
   const [prefixActive, setPrefixActive] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [cwdDraft, setCWDDraft] = useState("");
   const prefixActiveRef = useRef(false);
+  const filterSelectedIDsRef = useRef<Set<string>>(new Set());
+  const previousSessionsRef = useRef<Session[]>([]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
 
   useEffect(() => {
@@ -136,6 +166,7 @@ export function App({
           items = [created];
         }
         setSessions(items);
+        previousSessionsRef.current = items;
         const workspace = workspaceFromURL(items);
         setSelectedIDs(workspace.selectedIDs);
         setFocusedID(workspace.focusedID);
@@ -165,7 +196,20 @@ export function App({
   useEffect(() => {
     if (!api || !sessions) return;
     const timer = window.setInterval(() => {
-      api.listSessions().then(setSessions).catch(() => undefined);
+      api.listSessions().then((items) => {
+        const transitions = attentionTransitions(previousSessionsRef.current, items);
+        previousSessionsRef.current = items;
+        setSessions(items);
+        for (const session of transitions) {
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("Euphony needs attention", {
+              body: session.agentTitle || session.cwd,
+              tag: `euphony-${session.id}`,
+            });
+          }
+          playAttentionTone();
+        }
+      }).catch(() => undefined);
     }, 1500);
     return () => window.clearInterval(timer);
   }, [api, sessions !== null]);
@@ -175,14 +219,30 @@ export function App({
     const matches = sessions
       .filter((session) => statusFilters.includes(sessionActivity(session)))
       .map((session) => session.id);
-    const next = [...new Set([...selectedIDs, ...matches])];
-    if (next.length !== selectedIDs.length) {
+    const previousMatches = filterSelectedIDsRef.current;
+    const next = [
+      ...selectedIDs.filter((id) => !previousMatches.has(id)),
+      ...matches,
+    ].filter((id, index, values) => values.indexOf(id) === index);
+    filterSelectedIDsRef.current = new Set(matches);
+    if (next.join("\0") !== selectedIDs.join("\0")) {
       setSelectedIDs(next);
-      const nextFocus = focusedID ?? next[0] ?? null;
+      const nextFocus = focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
       setFocusedID(nextFocus);
       writeWorkspaceToURL(next, nextFocus, statusFilters, "replace");
     }
   }, [sessions, statusFilters, selectedIDs, focusedID]);
+
+  useEffect(() => {
+    const openCommands = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
+      event.preventDefault();
+      setCommandQuery("");
+      setCommandOpen(true);
+    };
+    window.addEventListener("keydown", openCommands, { capture: true });
+    return () => window.removeEventListener("keydown", openCommands, { capture: true });
+  }, []);
 
   useEffect(() => {
     if (!sessions) return;
@@ -248,6 +308,7 @@ export function App({
     if (!multiple) {
       nextIDs = [id];
       setStatusFilters([]);
+      filterSelectedIDsRef.current.clear();
     } else if (selectedIDs.includes(id)) {
       nextIDs = selectedIDs.length === 1 ? selectedIDs : selectedIDs.filter((item) => item !== id);
     } else {
@@ -264,12 +325,11 @@ export function App({
       ? [...statusFilters, status]
       : statusFilters.filter((item) => item !== status);
     const matching = sessions
-      ?.filter((session) => sessionActivity(session) === status)
+      ?.filter((session) => nextFilters.includes(sessionActivity(session)))
       .map((session) => session.id) ?? [];
-    const matchingIDs = new Set(matching);
-    const nextIDs = checked
-      ? [...new Set([...selectedIDs, ...matching])]
-      : selectedIDs.filter((id) => !matchingIDs.has(id));
+    const base = selectedIDs.filter((id) => !filterSelectedIDsRef.current.has(id));
+    const nextIDs = [...new Set([...base, ...matching])];
+    filterSelectedIDsRef.current = new Set(matching);
     const nextFocus = focusedID && nextIDs.includes(focusedID)
       ? focusedID
       : nextIDs[0] ?? null;
@@ -286,6 +346,7 @@ export function App({
     if (nextIDs.length === 0) return;
     const nextFocus = nextIDs[0];
     setStatusFilters([status]);
+    filterSelectedIDsRef.current = new Set(nextIDs);
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
     writeWorkspaceToURL(nextIDs, nextFocus, [status]);
@@ -305,10 +366,10 @@ export function App({
     setToken(value);
   }
 
-  async function createSession(split = false) {
+  async function createSession(split = false, cwd?: string) {
     if (!api) return;
     try {
-      const created = await api.createSession("Terminal");
+      const created = await api.createSession("Terminal", cwd);
       setSessions((current) => [...(current ?? []), created]);
       const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
       setSelectedIDs(nextIDs);
@@ -319,6 +380,26 @@ export function App({
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
     }
+  }
+
+  function openCreateDialog() {
+    const focused = sessions?.find((session) => session.id === focusedID);
+    setCWDDraft(focused?.cwd ?? "");
+    setCommandOpen(false);
+    setCreateOpen(true);
+  }
+
+  async function enableAttentionAlerts() {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+    playAttentionTone();
+  }
+
+  async function submitCreate(event: FormEvent) {
+    event.preventDefault();
+    await createSession(false, cwdDraft.trim());
+    setCreateOpen(false);
   }
 
   async function deleteSession(item: Session) {
@@ -452,6 +533,68 @@ export function App({
           <span><kbd>n/p</kbd>: Switch terminal</span>
           <i aria-hidden="true">|</i>
           <span><kbd>Esc</kbd>: Cancel</span>
+        </div>
+      )}
+      {commandOpen && (
+        <div className="command-layer" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setCommandOpen(false);
+        }}>
+          <div className="command-dialog" role="dialog" aria-modal="true" aria-label="Commands">
+            <label htmlFor="command-search">Jump to</label>
+            <input
+              id="command-search"
+              value={commandQuery}
+              onChange={(event) => setCommandQuery(event.target.value)}
+              placeholder="Terminal or status"
+              autoFocus
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setCommandOpen(false);
+              }}
+            />
+            <div className="command-results">
+              <button onClick={openCreateDialog}>New terminal in directory…</button>
+              <button onClick={() => void enableAttentionAlerts()}>Enable attention alerts</button>
+              {["attention", "running", "waiting", "terminal"]
+                .filter((status) => sessions.some((session) => sessionActivity(session) === status))
+                .filter((status) => status.includes(commandQuery.toLowerCase()))
+                .map((status) => (
+                  <button key={status} onClick={() => {
+                    selectStatus(status);
+                    setCommandOpen(false);
+                  }}>
+                    Show only {status === "attention" ? "Need attention" : status}
+                  </button>
+                ))}
+              {sessions
+                .filter((session) =>
+                  `${session.agentTitle ?? ""} ${session.cwd}`.toLowerCase()
+                    .includes(commandQuery.toLowerCase()),
+                )
+                .map((session) => (
+                  <button key={session.id} onClick={() => {
+                    selectSession(session.id, false);
+                    setCommandOpen(false);
+                  }}>
+                    <span>{session.agentTitle || session.name}</span>
+                    <small>{session.cwd}</small>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {createOpen && (
+        <div className="command-layer" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setCreateOpen(false);
+        }}>
+          <form className="command-dialog" role="dialog" aria-modal="true" aria-label="New terminal" onSubmit={(event) => void submitCreate(event)}>
+            <label htmlFor="terminal-cwd">Working directory</label>
+            <input id="terminal-cwd" value={cwdDraft} onChange={(event) => setCWDDraft(event.target.value)} autoFocus />
+            <div className="settings-controls">
+              <button type="button" onClick={() => setCreateOpen(false)}>Cancel</button>
+              <button type="submit">Create terminal</button>
+            </div>
+          </form>
         </div>
       )}
       {settingsOpen && (
