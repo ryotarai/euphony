@@ -22,14 +22,16 @@ frontend; Node.js is not needed at runtime.
 
 ## Run
 
-Choose a strong access token and start the server:
+Start the server:
 
 ```sh
-EUPHONY_TOKEN='replace-with-a-long-random-token' bin/euphony
+bin/euphony
 ```
 
-Open <http://127.0.0.1:8080> and enter the same token. The default listen
-address can be changed:
+When `EUPHONY_TOKEN` is unset, Euphony generates a secure token and opens the
+authenticated local URL in your default browser. The token is removed from the
+address bar as soon as the page loads. To provide your own token or change the
+listen address:
 
 ```sh
 EUPHONY_TOKEN='replace-with-a-long-random-token' \
