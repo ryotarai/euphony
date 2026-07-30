@@ -309,6 +309,7 @@ test("groups terminals by their exact cwd within each ordered status", () => {
     "~/work/euphony",
     "Waiting",
     "~/work/euphony",
+    "Terminal",
   ]);
 });
 
