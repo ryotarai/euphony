@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/server"
 )
@@ -30,6 +31,76 @@ func TestClientSendsBearerTokenAndDecodesEnvelope(t *testing.T) {
 	status, err := client.Status(context.Background())
 	if err != nil || status.APIVersion != "v1" || status.Status != "ok" {
 		t.Fatalf("Status() = %#v, %v", status, err)
+	}
+}
+
+func TestClientRunsAnnotationLifecycle(t *testing.T) {
+	var completed []annotation.Comment
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/annotations":
+			var request CreateAnnotationRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			if request.TerminalID != "terminal-1" || request.Filename != "review.md" ||
+				request.Format != annotation.FormatMarkdown || request.Content != "# Review" {
+				t.Fatalf("create request = %#v", request)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"annotation":{"id":"annotation-1","terminalId":"terminal-1","filename":"review.md","format":"markdown","content":"# Review","createdAt":"2026-07-30T00:00:00Z"}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/terminals/terminal-1/annotation":
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"annotation":{"id":"annotation-1","terminalId":"terminal-1","filename":"review.md","format":"markdown","content":"# Review","createdAt":"2026-07-30T00:00:00Z"}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/annotations/annotation-1/complete":
+			var request struct {
+				Comments []annotation.Comment `json:"comments"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode complete request: %v", err)
+			}
+			completed = request.Comments
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"annotationId":"annotation-1","comments":[{"kind":"global","body":"Approved."}]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/annotations/annotation-1/wait":
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"annotationId":"annotation-1","comments":[{"kind":"global","body":"Approved."}]}}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/annotations/annotation-1":
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":"annotation-1"}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(testServer.Close)
+	client, err := New(Config{BaseURL: testServer.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	created, err := client.CreateAnnotation(ctx, CreateAnnotationRequest{
+		TerminalID: "terminal-1",
+		Filename:   "review.md",
+		Format:     annotation.FormatMarkdown,
+		Content:    "# Review",
+	})
+	if err != nil || created.ID != "annotation-1" {
+		t.Fatalf("CreateAnnotation() = %#v, %v", created, err)
+	}
+	current, err := client.CurrentAnnotation(ctx, "terminal-1")
+	if err != nil || current == nil || current.ID != created.ID {
+		t.Fatalf("CurrentAnnotation() = %#v, %v", current, err)
+	}
+	result, err := client.CompleteAnnotation(ctx, created.ID, []annotation.Comment{
+		{Kind: annotation.CommentGlobal, Body: "Approved."},
+	})
+	if err != nil || result.AnnotationID != created.ID ||
+		len(completed) != 1 || completed[0].Body != "Approved." {
+		t.Fatalf("CompleteAnnotation() = %#v, %v; request = %#v", result, err, completed)
+	}
+	result, err = client.WaitAnnotation(ctx, created.ID)
+	if err != nil || len(result.Comments) != 1 || result.Comments[0].Body != "Approved." {
+		t.Fatalf("WaitAnnotation() = %#v, %v", result, err)
+	}
+	if err := client.CancelAnnotation(ctx, created.ID); err != nil {
+		t.Fatalf("CancelAnnotation() error = %v", err)
 	}
 }
 

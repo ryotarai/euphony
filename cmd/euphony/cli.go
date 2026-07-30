@@ -9,11 +9,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
+	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/apiclient"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/localapi"
@@ -30,6 +34,14 @@ func (e *exitError) Error() string {
 
 type usageError struct {
 	message string
+}
+
+type requestError struct {
+	message string
+}
+
+func (e *requestError) Error() string {
+	return e.message
 }
 
 func (e *usageError) Error() string {
@@ -54,6 +66,17 @@ type cliOptions struct {
 }
 
 func runAutomation(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	return runAutomationContext(ctx, args, stdin, stdout, stderr)
+}
+
+func runAutomationContext(
+	ctx context.Context,
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) error {
 	options, remaining, err := parseGlobalOptions(args)
 	if err != nil {
 		return writeCLIError(stderr, err)
@@ -65,7 +88,6 @@ func runAutomation(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if err != nil {
 		return writeCLIError(stderr, err)
 	}
-	ctx := context.Background()
 	var result any
 	switch remaining[0] {
 	case "status":
@@ -108,13 +130,104 @@ func runAutomation(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		result, err = runAgentCommand(ctx, client, remaining[1:], stdin)
 	case "selection":
 		result, err = runSelectionCommand(ctx, client, remaining[1:], stdin)
+	case "annotate":
+		result, err = runAnnotate(ctx, client, remaining[1:])
 	default:
-		err = &usageError{message: "command must be status, api, events, terminal, agent, or selection"}
+		err = &usageError{message: "command must be status, api, events, terminal, agent, selection, or annotate"}
 	}
 	if err != nil {
 		return writeCLIError(stderr, err)
 	}
 	return writeCLISuccess(stdout, result)
+}
+
+func runAnnotate(
+	ctx context.Context,
+	client *apiclient.Client,
+	args []string,
+) (any, error) {
+	path, err := exactlyOne(args, "usage: euphony annotate FILE")
+	if err != nil {
+		return nil, err
+	}
+	terminalID := strings.TrimSpace(os.Getenv("EUPHONY_TERMINAL_ID"))
+	if terminalID == "" {
+		return nil, &requestError{message: "EUPHONY_TERMINAL_ID is required"}
+	}
+	format, err := inferAnnotationFormat(path)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	content, readErr := io.ReadAll(io.LimitReader(file, maxAnnotationFileBytes+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(content) == 0 {
+		return nil, &requestError{message: "annotation file must not be empty"}
+	}
+	if len(content) > maxAnnotationFileBytes {
+		return nil, &requestError{message: "annotation file exceeds 1048576 bytes"}
+	}
+	if !utf8.Valid(content) {
+		return nil, &requestError{message: "annotation file must contain valid UTF-8"}
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	session, err := client.CreateAnnotation(ctx, apiclient.CreateAnnotationRequest{
+		TerminalID: terminalID,
+		Filename:   filepath.Base(path),
+		Format:     format,
+		Content:    string(content),
+	})
+	if err != nil {
+		return nil, err
+	}
+	consumed := false
+	defer func() {
+		if consumed {
+			return
+		}
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = client.CancelAnnotation(cleanupContext, session.ID)
+	}()
+	result, err := client.WaitAnnotation(ctx, session.ID)
+	if err != nil {
+		return nil, err
+	}
+	consumed = true
+	return struct {
+		AnnotationID string               `json:"annotationId"`
+		Path         string               `json:"path"`
+		Comments     []annotation.Comment `json:"comments"`
+	}{
+		AnnotationID: result.AnnotationID,
+		Path:         absolutePath,
+		Comments:     result.Comments,
+	}, nil
+}
+
+const maxAnnotationFileBytes = 1024 * 1024
+
+func inferAnnotationFormat(path string) (annotation.Format, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return annotation.FormatMarkdown, nil
+	case ".html", ".htm":
+		return annotation.FormatHTML, nil
+	default:
+		return "", &requestError{message: "annotation file must be Markdown or HTML"}
+	}
 }
 
 func parseGlobalOptions(args []string) (cliOptions, []string, error) {
@@ -652,11 +765,14 @@ func writeCLIError(writer io.Writer, err error) error {
 	message := err.Error()
 	details := any(map[string]any{})
 	var usage *usageError
+	var request *requestError
 	var apiError *apiclient.APIError
 	switch {
 	case errors.As(err, &usage):
 		status = 2
 		code = "cli_usage"
+	case errors.As(err, &request):
+		code = "invalid_request"
 	case errors.As(err, &apiError):
 		code = apiError.Code
 		message = apiError.Message
