@@ -58,6 +58,8 @@ retries affected terminals.
 ## Quick Actions
 
 The `Cmd/Ctrl+K` quick action surface uses the shadcn/ui Command composition.
+The shortcut description is superseded by the Command+K-only behavior in
+`2026-07-31-command-k-only-design.md`.
 The filtered result list has one controlled active item. Arrow Up/Down and
 `Ctrl+P/N` move the active item with wraparound; Enter invokes it. Escape
 closes the surface. The active option remains visible and is exposed through
