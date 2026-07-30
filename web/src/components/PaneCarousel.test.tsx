@@ -113,3 +113,31 @@ test("keeps a manually shifted window across equivalent parent renders", async (
   expect(pane("One pane")).toHaveAttribute("data-visible", "false");
   expect(pane("Three pane")).toHaveAttribute("data-visible", "true");
 });
+
+test("clamps a manually shifted window on resize without revealing stale focus", async () => {
+  vi.stubGlobal("ResizeObserver", ControlledResizeObserver);
+  const user = userEvent.setup();
+  render(
+    <PaneCarousel
+      panes={panes}
+      focusedID="one"
+      onFocus={vi.fn()}
+    />,
+  );
+  act(() => reportWidth(720));
+  await user.click(screen.getByRole("button", { name: "Show next pane" }));
+
+  act(() => reportWidth(360));
+
+  expect(pane("One pane")).toHaveAttribute("data-visible", "false");
+  expect(pane("Two pane")).toHaveAttribute("data-visible", "true");
+  expect(pane("Three pane")).toHaveAttribute("data-visible", "false");
+
+  act(() => reportWidth(1080));
+
+  expect(pane("One pane")).toHaveAttribute("data-visible", "true");
+  expect(pane("Two pane")).toHaveAttribute("data-visible", "true");
+  expect(pane("Three pane")).toHaveAttribute("data-visible", "true");
+  expect(screen.queryByRole("button", { name: "Show previous pane" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Show next pane" })).not.toBeInTheDocument();
+});

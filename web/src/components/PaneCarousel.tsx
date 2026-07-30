@@ -37,6 +37,10 @@ export function PaneCarousel({
   onFocus,
 }: PaneCarouselProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const manualNavigationRef = useRef(false);
+  const previousFocusedIDRef = useRef<string | null | undefined>(undefined);
+  const previousPaneKeyRef = useRef<string | undefined>(undefined);
+  const previousVisibleCountRef = useRef<number | undefined>(undefined);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [offset, setOffset] = useState(0);
   const visibleCount = visiblePaneCount(viewportWidth, panes.length);
@@ -60,10 +64,26 @@ export function PaneCarousel({
   }, []);
 
   useLayoutEffect(() => {
+    if (maxOffset === 0) manualNavigationRef.current = false;
     setOffset((current) => Math.min(current, maxOffset));
   }, [maxOffset]);
 
   useLayoutEffect(() => {
+    const focusOrPanesChanged =
+      previousFocusedIDRef.current !== focusedID ||
+      previousPaneKeyRef.current !== paneKey;
+    const capacityChanged =
+      previousVisibleCountRef.current !== visibleCount;
+    previousFocusedIDRef.current = focusedID;
+    previousPaneKeyRef.current = paneKey;
+    previousVisibleCountRef.current = visibleCount;
+    if (
+      !focusOrPanesChanged &&
+      (!capacityChanged || manualNavigationRef.current)
+    ) {
+      return;
+    }
+    if (focusOrPanesChanged) manualNavigationRef.current = false;
     if (focusedIndex < 0 || visibleCount === 0) return;
     setOffset((current) => {
       if (focusedIndex < current) return focusedIndex;
@@ -117,7 +137,10 @@ export function PaneCarousel({
           variant="outline"
           size="icon"
           aria-label="Show previous pane"
-          onClick={() => setOffset((current) => Math.max(0, current - 1))}
+          onClick={() => {
+            manualNavigationRef.current = true;
+            setOffset((current) => Math.max(0, current - 1));
+          }}
         >
           <ChevronLeft aria-hidden="true" />
         </Button>
@@ -129,9 +152,10 @@ export function PaneCarousel({
           variant="outline"
           size="icon"
           aria-label="Show next pane"
-          onClick={() =>
-            setOffset((current) => Math.min(maxOffset, current + 1))
-          }
+          onClick={() => {
+            manualNavigationRef.current = true;
+            setOffset((current) => Math.min(maxOffset, current + 1));
+          }}
         >
           <ChevronRight aria-hidden="true" />
         </Button>

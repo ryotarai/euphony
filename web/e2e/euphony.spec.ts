@@ -557,6 +557,25 @@ test("navigates overflowing terminal panes one pane at a time", async ({ page })
   await expect(page.getByRole("button", { name: "Show next pane" })).toBeVisible();
 });
 
+test("shows the next terminal pane on mobile", async ({ page }) => {
+  await clearSessions(page);
+  const one = await createSession(page, "One");
+  const two = await createSession(page, "Two");
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  const parameters = new URLSearchParams({ token: "test-token", focus: one.id });
+  [one, two].forEach((session) => parameters.append("terminal", session.id));
+  await page.goto(`/?${parameters.toString()}`);
+
+  await expect(page.getByLabel("One terminal", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Show next pane" }).click();
+
+  await expect(page.getByLabel("One pane")).toHaveAttribute("data-visible", "false");
+  await expect(page.getByLabel("Two pane")).toHaveAttribute("data-visible", "true");
+  await expect(page.getByLabel("Two terminal", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show previous pane" })).toBeVisible();
+});
+
 test("persists sidebar controls, settings, and tmux-style commands", async ({ page }, testInfo) => {
   await clearSessions(page);
   const codex = await createSession(page, "Codex");

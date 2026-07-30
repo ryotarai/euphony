@@ -799,10 +799,6 @@ input {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .terminal-stage[data-multiple="true"] .terminal-pane:not([data-active="true"]) {
-    display: none;
-  }
-
   .terminal-pane + .terminal-pane {
     border-left: 0;
   }
@@ -2076,10 +2072,6 @@ input {
 
   .terminal-pane + .terminal-pane {
     border-left: 0;
-  }
-
-  .terminal-stage[data-multiple="true"] .terminal-pane {
-    display: block;
   }
 
   .connection-status {
