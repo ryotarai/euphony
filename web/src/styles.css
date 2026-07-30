@@ -1815,6 +1815,23 @@ input {
   white-space: nowrap;
 }
 
+.terminal-tab-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-tab-selection {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 3px;
+}
+
+.terminal-tab-selection::after {
+  inset: -0.3rem;
+}
+
 .terminal-tab-content {
   position: relative;
   min-width: 0;

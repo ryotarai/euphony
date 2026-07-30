@@ -286,6 +286,40 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
 });
 
+test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
+  await clearSessions(page);
+  const left = await createSession(page, "Left", "/private/tmp");
+  const right = await createSession(page, "Right", "/private/var");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("checkbox", { name: "Show all Terminal terminals" }).click();
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+
+  const leftSelection = page.getByRole("checkbox", { name: "Deselect Left" });
+  await expect(leftSelection).toBeChecked();
+  await expect(leftSelection).toHaveCSS("width", "14px");
+  await expect(leftSelection).toHaveCSS("height", "14px");
+  await page.screenshot({
+    path: testInfo.outputPath("pane-selection-checkbox.png"),
+  });
+  await leftSelection.click();
+
+  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  await page.waitForTimeout(1_800);
+  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.getAll("terminal")).toEqual([right.id]);
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual([]);
+
+  await page.getByRole("checkbox", { name: "Deselect Right" }).click();
+
+  await expect(page.getByText("No signal yet.")).toBeVisible();
+  const parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([]);
+  expect(parameters.has("focus")).toBe(false);
+  expect(parameters.getAll("terminal")).not.toContain(left.id);
+});
+
 test("follows a focused terminal when polling identifies it as a Claude agent", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First", "/tmp");

@@ -23,6 +23,7 @@ test("switches pane sources while keeping the terminal mounted", async () => {
       api={{ getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }) } as unknown as ApiClient}
       active
       layoutVersion={2}
+      onDeselect={() => undefined}
       renderTerminal={(layoutVersion) => {
         layoutVersions.push(layoutVersion);
         return <div aria-label="live terminal">terminal</div>;
@@ -53,6 +54,7 @@ test("keeps an independent selected source for each pane instance", async () => 
         api={api}
         active
         layoutVersion={1}
+        onDeselect={() => undefined}
         renderTerminal={() => <div>first terminal</div>}
       />
       <TerminalPane
@@ -60,6 +62,7 @@ test("keeps an independent selected source for each pane instance", async () => 
         api={api}
         active={false}
         layoutVersion={1}
+        onDeselect={() => undefined}
         renderTerminal={() => <div>second terminal</div>}
       />
     </>,
@@ -80,10 +83,35 @@ test("refreshes a visible log even when its pane is not focused", async () => {
       api={{ getAgentLog } as unknown as ApiClient}
       active={false}
       layoutVersion={1}
+      onDeselect={() => undefined}
       renderTerminal={() => <div>terminal</div>}
     />,
   );
 
   await user.click(screen.getByRole("tab", { name: "Agent log" }));
   expect(getAgentLog).toHaveBeenCalledWith("terminal-1", undefined);
+});
+
+test("deselects the terminal from the pane rail", async () => {
+  const user = userEvent.setup();
+  const onDeselect = vi.fn();
+  render(
+    <TerminalPane
+      session={session}
+      api={{ getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }) } as unknown as ApiClient}
+      active
+      layoutVersion={1}
+      onDeselect={onDeselect}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Deselect Terminal one",
+  });
+  expect(checkbox).toBeChecked();
+
+  await user.click(checkbox);
+
+  expect(onDeselect).toHaveBeenCalledOnce();
 });
