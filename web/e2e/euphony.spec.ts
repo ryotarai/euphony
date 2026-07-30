@@ -538,8 +538,11 @@ test("navigates overflowing terminal panes one pane at a time", async ({ page })
   await page.goto(`/?${parameters.toString()}`);
 
   const panes = page.locator(".terminal-pane");
+  const nextControl = page.getByRole("button", { name: "Show next pane" });
   await expect(panes).toHaveCount(4);
-  await expect(page.getByRole("button", { name: "Show next pane" })).toBeVisible();
+  await expect(nextControl).toBeVisible();
+  await expect(nextControl).toHaveCSS("background-color", "rgb(245, 245, 245)");
+  await expect(nextControl.locator("svg")).toHaveCSS("color", "rgb(5, 5, 5)");
   const visibleWidths = await panes.evaluateAll((items) =>
     items
       .filter((item) => item.getAttribute("data-visible") === "true")
@@ -548,7 +551,7 @@ test("navigates overflowing terminal panes one pane at a time", async ({ page })
   expect(visibleWidths).toHaveLength(2);
   expect(visibleWidths.every((width) => width >= 360)).toBe(true);
 
-  await page.getByRole("button", { name: "Show next pane" }).click();
+  await nextControl.click();
 
   await expect(page.getByLabel("One pane")).toHaveAttribute("data-visible", "false");
   await expect(page.getByLabel("Two pane")).toHaveAttribute("data-visible", "true");
