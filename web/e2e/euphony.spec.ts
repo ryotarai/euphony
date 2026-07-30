@@ -523,6 +523,40 @@ test("command-selects terminal panes and keeps one active pane on mobile", async
   await expect(page.locator('.terminal-pane[data-active="false"]')).toBeHidden();
 });
 
+test("navigates overflowing terminal panes one pane at a time", async ({ page }) => {
+  await clearSessions(page);
+  const one = await createSession(page, "One");
+  const two = await createSession(page, "Two");
+  const three = await createSession(page, "Three");
+  const four = await createSession(page, "Four");
+  await page.setViewportSize({ width: 1100, height: 800 });
+
+  const parameters = new URLSearchParams({ token: "test-token", focus: one.id });
+  [one, two, three, four].forEach((session) =>
+    parameters.append("terminal", session.id),
+  );
+  await page.goto(`/?${parameters.toString()}`);
+
+  const panes = page.locator(".terminal-pane");
+  await expect(panes).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "Show next pane" })).toBeVisible();
+  const visibleWidths = await panes.evaluateAll((items) =>
+    items
+      .filter((item) => item.getAttribute("data-visible") === "true")
+      .map((item) => item.getBoundingClientRect().width),
+  );
+  expect(visibleWidths).toHaveLength(2);
+  expect(visibleWidths.every((width) => width >= 360)).toBe(true);
+
+  await page.getByRole("button", { name: "Show next pane" }).click();
+
+  await expect(page.getByLabel("One pane")).toHaveAttribute("data-visible", "false");
+  await expect(page.getByLabel("Two pane")).toHaveAttribute("data-visible", "true");
+  await expect(page.getByLabel("Three pane")).toHaveAttribute("data-visible", "true");
+  await expect(page.getByRole("button", { name: "Show previous pane" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show next pane" })).toBeVisible();
+});
+
 test("persists sidebar controls, settings, and tmux-style commands", async ({ page }, testInfo) => {
   await clearSessions(page);
   const codex = await createSession(page, "Codex");
