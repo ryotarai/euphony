@@ -1461,23 +1461,6 @@ input:focus-visible,
   transform: translateY(-50%);
 }
 
-.pane-checkbox[data-pinned="true"] {
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 1px rgb(245 158 11 / 28%);
-}
-
-.pane-checkbox-pin {
-  position: absolute;
-  z-index: 2;
-  top: calc(50% - 0.7rem);
-  left: 1.45rem;
-  width: 0.58rem;
-  height: 0.58rem;
-  color: #f59e0b;
-  pointer-events: none;
-  transform: rotate(18deg);
-}
-
 .session-select {
   display: flex;
   min-width: 0;
@@ -1826,6 +1809,14 @@ input {
   color: #050505;
   background: #f5f5f5;
   border-color: #f5f5f5;
+  box-shadow: none;
+}
+
+[data-slot="checkbox"][data-pinned="true"],
+[data-slot="checkbox"][data-pinned="true"]:hover {
+  color: #050505;
+  background: #f59e0b;
+  border-color: #f59e0b;
   box-shadow: none;
 }
 
