@@ -518,6 +518,18 @@ test("splits pane sources with Command-click and drags the divider", async ({
     const pane = page.getByLabel("Split source pane", { exact: true });
     const terminalTab = pane.getByRole("tab", { name: "Terminal" });
     const filesTab = pane.getByRole("tab", { name: "Files" });
+    const terminalView = pane.locator(".terminal-view");
+    const terminalHost = pane.getByLabel("Split source terminal", {
+      exact: true,
+    });
+    await expect(terminalView).toHaveAttribute("data-connection", "connected");
+    await expect.poll(async () => {
+      return Number(await terminalView.getAttribute("data-local-cols"));
+    }).toBeGreaterThan(0);
+    const fullCols = Number(
+      await terminalView.getAttribute("data-local-cols"),
+    );
+
     await filesTab.click({ modifiers: ["Meta"] });
 
     await expect(terminalTab).toHaveAttribute("data-active");
@@ -528,11 +540,17 @@ test("splits pane sources with Command-click and drags the divider", async ({
       "Visible in split",
     );
     await expect(
-      pane.getByLabel("Split source terminal", { exact: true }),
+      terminalHost,
     ).toBeVisible();
     await expect(
       pane.getByRole("navigation", { name: "Workspace files" }),
     ).toBeVisible();
+    await expect.poll(async () => {
+      return Number(await terminalView.getAttribute("data-local-cols"));
+    }).toBeLessThan(fullCols);
+    const splitCols = Number(
+      await terminalView.getAttribute("data-local-cols"),
+    );
 
     const stage = pane.locator(".terminal-source-stage");
     const separator = pane.getByRole("separator", {
@@ -559,13 +577,32 @@ test("splits pane sources with Command-click and drags the divider", async ({
     }).boundingBox();
     expect(terminalPanelBounds).not.toBeNull();
     expect(terminalPanelBounds!.width / stageBounds!.width).toBeCloseTo(0.65, 1);
+    await expect.poll(async () => {
+      return Number(await terminalView.getAttribute("data-local-cols"));
+    }).toBeGreaterThan(splitCols);
+    const draggedCols = Number(
+      await terminalView.getAttribute("data-local-cols"),
+    );
+    expect(draggedCols).toBeLessThan(fullCols);
+    await expect.poll(async () => terminalHost.evaluate((host) => {
+      const screen = host.querySelector(".xterm-screen");
+      if (!screen) return false;
+      return screen.getBoundingClientRect().width <=
+        host.getBoundingClientRect().width + 1;
+    })).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("pane-source-split.png") });
 
-    await filesTab.click();
+    await filesTab.click({ modifiers: ["Meta"] });
     await expect(separator).toHaveCount(0);
+    await expect(terminalTab).toHaveAttribute("data-active");
+    await expect.poll(async () => {
+      return Number(await terminalView.getAttribute("data-local-cols"));
+    }).toBe(fullCols);
+
+    await filesTab.click();
     await expect(filesTab).toHaveAttribute("data-active");
     await expect(
-      pane.getByLabel("Split source terminal", { exact: true }),
+      terminalHost,
     ).not.toBeVisible();
   } finally {
     await clearSessions(page);

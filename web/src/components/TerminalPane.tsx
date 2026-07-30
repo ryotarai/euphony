@@ -378,7 +378,7 @@ export function TerminalPane({
           {renderTerminal(
             layoutVersion + fitVersion,
             active && source === "terminal" && secondarySource === null,
-            source === "terminal" && secondarySource === null,
+            sourceIsVisible("terminal"),
           )}
         </TabsContent>
         <TabsContent
