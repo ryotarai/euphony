@@ -168,7 +168,7 @@ test("returns to token entry after an invalid token", async () => {
   expect(sessionStorage.getItem("euphony.token")).toBeNull();
 });
 
-test("creates a terminal in the focused terminal cwd, selects it, and deletes it", async () => {
+test("creates a terminal in the focused terminal cwd, selects it, and confirms deletion", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
@@ -199,11 +199,31 @@ test("creates a terminal in the focused terminal cwd, selects it, and deletes it
     }),
   );
   expect(await screen.findByRole("button", { name: "Select Claude" })).toHaveAttribute("aria-current", "true");
-  fireEvent.click(screen.getByRole("button", { name: "Delete Claude" }));
+  await user.click(screen.getByRole("button", { name: "Delete Claude" }));
+
+  expect(screen.getByRole("dialog", { name: "Delete terminal?" })).toBeVisible();
+  expect(screen.getByText(/“Claude” will be stopped/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByRole("dialog", { name: "Delete terminal?" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete Claude" })).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+
+  await user.click(screen.getByRole("button", { name: "Delete Claude" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
 
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Delete Claude" })).not.toBeInTheDocument();
   });
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/sessions/session-2",
+    expect.objectContaining({ method: "DELETE" }),
+  );
 });
 
 test("opens Command-K and creates a terminal in the chosen directory", async () => {
