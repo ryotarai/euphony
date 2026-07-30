@@ -135,6 +135,10 @@ func (s *Server) Handler() http.Handler {
 	return s.handler
 }
 
+func (s *Server) LocalHandler() http.Handler {
+	return localTransportHandler(s.handler)
+}
+
 func (s *Server) Close(ctx context.Context) error {
 	return s.sessions.Close(ctx)
 }

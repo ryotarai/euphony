@@ -43,9 +43,9 @@ type TerminalRead struct {
 }
 
 type TerminalInput struct {
-	Text       *string
-	DataBase64 string
-	Keys       []string
+	Text       *string  `json:"text,omitempty"`
+	DataBase64 string   `json:"dataBase64,omitempty"`
+	Keys       []string `json:"keys,omitempty"`
 }
 
 type OutputMatch struct {

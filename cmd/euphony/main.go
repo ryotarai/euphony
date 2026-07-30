@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/ryotarai/euphony/internal/agenthook"
+	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/server"
 	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
@@ -131,16 +132,32 @@ func runServer() error {
 	if err != nil {
 		log.Fatal(err)
 	}
+	socketPath, err := localapi.DefaultSocketPath()
+	if err != nil {
+		return err
+	}
+	unixListener, cleanupSocket, err := localapi.Listen(socketPath)
+	if err != nil {
+		return err
+	}
+	defer cleanupSocket()
 
-	log.Printf("Euphony listening on http://%s", address)
+	log.Printf("Euphony listening on http://%s and unix://%s", address, socketPath)
 	httpServer := &http.Server{
 		Addr:              address,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	result := make(chan error, 1)
+	unixServer := &http.Server{
+		Handler:           srv.LocalHandler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	result := make(chan error, 2)
 	go func() {
 		result <- httpServer.ListenAndServe()
+	}()
+	go func() {
+		result <- unixServer.Serve(unixListener)
 	}()
 	if generatedToken {
 		url := browserURL(address, token)
@@ -166,9 +183,13 @@ func runServer() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	shutdownErr := httpServer.Shutdown(ctx)
+	unixShutdownErr := unixServer.Shutdown(ctx)
 	sessionErr := srv.Close(ctx)
 	if shutdownErr != nil {
 		return shutdownErr
+	}
+	if unixShutdownErr != nil {
+		return unixShutdownErr
 	}
 	return sessionErr
 }
