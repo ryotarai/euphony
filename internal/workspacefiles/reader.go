@@ -76,7 +76,7 @@ func (r *Reader) Directory(path string) (Directory, error) {
 	if err != nil {
 		return Directory{}, err
 	}
-	handle, err := r.rootHandle.Open(rootPath(clean))
+	handle, err := r.rootHandle.OpenFile(rootPath(clean), secureReadOnlyFlags, 0)
 	if err != nil {
 		return Directory{}, classifyPathError(err)
 	}
@@ -140,7 +140,7 @@ func (r *Reader) File(path string) (File, error) {
 	if truncated {
 		data = data[:maxFileBytes]
 	}
-	utf8Data, valid := completeUTF8Prefix(data)
+	utf8Data, valid := completeUTF8Prefix(data, truncated)
 	binary := bytes.IndexByte(data, 0) >= 0 || !valid
 	content := ""
 	if !binary {
@@ -297,10 +297,13 @@ func classifyPathError(err error) error {
 	}
 }
 
-func completeUTF8Prefix(data []byte) ([]byte, bool) {
+func completeUTF8Prefix(data []byte, allowIncompleteSuffix bool) ([]byte, bool) {
 	for offset := 0; offset < len(data); {
 		if !utf8.FullRune(data[offset:]) {
-			return data[:offset], true
+			if allowIncompleteSuffix {
+				return data[:offset], true
+			}
+			return nil, false
 		}
 		runeValue, size := utf8.DecodeRune(data[offset:])
 		if runeValue == utf8.RuneError && size == 1 {

@@ -149,6 +149,13 @@ func TestFileReportsTextBinaryAndTruncation(t *testing.T) {
 	); err != nil {
 		t.Fatalf("WriteFile(binary) error = %v", err)
 	}
+	if err := os.WriteFile(
+		filepath.Join(root, "incomplete.dat"),
+		[]byte{0xe2},
+		0o600,
+	); err != nil {
+		t.Fatalf("WriteFile(incomplete) error = %v", err)
+	}
 	mustWriteFile(
 		t,
 		filepath.Join(root, "large.txt"),
@@ -170,6 +177,13 @@ func TestFileReportsTextBinaryAndTruncation(t *testing.T) {
 	}
 	if !binary.Binary || binary.Content != "" {
 		t.Fatalf("binary = %#v", binary)
+	}
+	incomplete, err := reader.File("incomplete.dat")
+	if err != nil {
+		t.Fatalf("File(incomplete) error = %v", err)
+	}
+	if !incomplete.Binary || incomplete.Content != "" {
+		t.Fatalf("incomplete = %#v", incomplete)
 	}
 
 	large, err := reader.File("large.txt")
