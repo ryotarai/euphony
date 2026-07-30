@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import {
   FileClockIcon,
   FolderTreeIcon,
@@ -31,6 +39,13 @@ interface TerminalPaneProps {
 
 type PaneSource = "terminal" | "agent-log" | "changes" | "files" | "annotation";
 
+const minimumPrimarySize = 20;
+const maximumPrimarySize = 80;
+
+function normalizePrimarySize(size: number) {
+  return Math.min(maximumPrimarySize, Math.max(minimumPrimarySize, Math.round(size)));
+}
+
 export function TerminalPane({
   session,
   api,
@@ -43,10 +58,16 @@ export function TerminalPane({
   renderTerminal,
 }: TerminalPaneProps) {
   const [source, setSource] = useState<PaneSource>("terminal");
+  const [secondarySource, setSecondarySource] = useState<PaneSource | null>(null);
+  const [primarySize, setPrimarySize] = useState(50);
+  const [resizingSplit, setResizingSplit] = useState(false);
   const [annotation, setAnnotation] = useState<AnnotationSession | null>(null);
   const [annotationRetry, setAnnotationRetry] = useState(0);
   const [annotationSyncFailed, setAnnotationSyncFailed] = useState(false);
   const annotationIDRef = useRef<string | null>(null);
+  const commandClickSourceRef = useRef<PaneSource | null>(null);
+  const resizingPointerRef = useRef<number | null>(null);
+  const sourceStageRef = useRef<HTMLDivElement | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const changeSource = (next: string | null) => {
     if (
@@ -60,6 +81,7 @@ export function TerminalPane({
     if (source !== "terminal" && next === "terminal") {
       setFitVersion((current) => current + 1);
     }
+    setSecondarySource(null);
     setSource(next);
   };
   const agentLabel = session.agent === "claude"
@@ -76,10 +98,18 @@ export function TerminalPane({
       const previousID = annotationIDRef.current;
       annotationIDRef.current = next?.id ?? null;
       setAnnotationSyncFailed(false);
-      if (next && next.id !== previousID) setSource("annotation");
+      if (next && next.id !== previousID) {
+        setSecondarySource(null);
+        setSource("annotation");
+      }
       if (!next && previousID) {
         setFitVersion((current) => current + 1);
-        setSource("terminal");
+        setSecondarySource((current) => (
+          current === "annotation" ? null : current
+        ));
+        setSource((current) => (
+          current === "annotation" ? "terminal" : current
+        ));
       }
       setAnnotation(next);
     }).catch(() => {
@@ -106,11 +136,160 @@ export function TerminalPane({
     return () => window.removeEventListener("keydown", toggleSource, { capture: true });
   }, [active, annotation, source, tabShortcut]);
 
+  useEffect(() => {
+    if (!resizingSplit) return;
+    const matchesPointer = (event: PointerEvent) => (
+      resizingPointerRef.current === event.pointerId
+    );
+    const resize = (event: PointerEvent) => {
+      if (!matchesPointer(event)) return;
+      const bounds = sourceStageRef.current?.getBoundingClientRect();
+      if (!bounds || bounds.width <= 0) return;
+      setPrimarySize(normalizePrimarySize(
+        ((event.clientX - bounds.left) / bounds.width) * 100,
+      ));
+    };
+    const finish = (event: PointerEvent) => {
+      if (!matchesPointer(event)) return;
+      resize(event);
+      resizingPointerRef.current = null;
+      setResizingSplit(false);
+    };
+    const cancel = () => {
+      resizingPointerRef.current = null;
+      setResizingSplit(false);
+    };
+    const cancelPointer = (event: PointerEvent) => {
+      if (!matchesPointer(event)) return;
+      cancel();
+    };
+    document.addEventListener("pointermove", resize);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", cancelPointer);
+    window.addEventListener("blur", cancel);
+    return () => {
+      document.removeEventListener("pointermove", resize);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", cancelPointer);
+      window.removeEventListener("blur", cancel);
+    };
+  }, [resizingSplit]);
+
+  useEffect(() => {
+    if (secondarySource !== null) return;
+    resizingPointerRef.current = null;
+    setResizingSplit(false);
+  }, [secondarySource]);
+
+  const sourceLabel = (paneSource: PaneSource) => (
+    paneSource === "terminal"
+      ? "Terminal"
+      : paneSource === "agent-log"
+        ? `${agentLabel} log`
+        : paneSource === "changes"
+          ? "Git changes"
+          : paneSource === "files"
+            ? "Workspace files"
+            : annotation?.filename ?? "Annotation"
+  );
+  const sourceIsVisible = (paneSource: PaneSource) => (
+    paneSource === source || paneSource === secondarySource
+  );
+  const sourcePosition = (paneSource: PaneSource) => (
+    paneSource === source
+      ? "primary"
+      : paneSource === secondarySource
+        ? "secondary"
+        : undefined
+  );
+  const sourcePanelProps = (paneSource: PaneSource) => {
+    const visible = sourceIsVisible(paneSource);
+    const position = sourcePosition(paneSource);
+    const secondary = position === "secondary";
+    return {
+      ...(secondary ? {
+        "aria-label": `${sourceLabel(paneSource)} split view`,
+        "aria-labelledby": undefined,
+      } : {}),
+      "data-pane-position": position,
+      hidden: !visible,
+      inert: !visible,
+      role: secondary ? "region" : "tabpanel",
+      tabIndex: visible ? 0 : -1,
+    };
+  };
+  const toggleSecondarySource = (next: PaneSource) => {
+    if (next === source) {
+      setSecondarySource(null);
+      return;
+    }
+    setSecondarySource((current) => current === next ? null : next);
+  };
+  const handleTabClickCapture = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    paneSource: PaneSource,
+  ) => {
+    commandClickSourceRef.current = event.metaKey ? paneSource : null;
+  };
+  const handleTabClick = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    paneSource: PaneSource,
+  ) => {
+    if (event.metaKey) {
+      event.preventDefault();
+      toggleSecondarySource(paneSource);
+      queueMicrotask(() => {
+        if (commandClickSourceRef.current === paneSource) {
+          commandClickSourceRef.current = null;
+        }
+      });
+      return;
+    }
+    if (paneSource === source) setSecondarySource(null);
+  };
+  const resizeSplitWithKeyboard = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    let next = primarySize;
+    if (event.key === "ArrowLeft") next -= 5;
+    else if (event.key === "ArrowRight") next += 5;
+    else if (event.key === "Home") next = minimumPrimarySize;
+    else if (event.key === "End") next = maximumPrimarySize;
+    else return;
+    event.preventDefault();
+    setPrimarySize(normalizePrimarySize(next));
+  };
+  const splitStyle = {
+    "--pane-primary-size": `${primarySize}%`,
+  } as CSSProperties;
+  const tabInteractionProps = (paneSource: PaneSource) => ({
+    "aria-description": secondarySource === paneSource
+      ? "Visible in split"
+      : undefined,
+    "aria-keyshortcuts": "Meta+Enter",
+    "data-split-active": secondarySource === paneSource ? "true" : undefined,
+    onClickCapture: (event: ReactMouseEvent<HTMLButtonElement>) => {
+      handleTabClickCapture(event, paneSource);
+    },
+    onClick: (event: ReactMouseEvent<HTMLButtonElement>) => {
+      handleTabClick(event, paneSource);
+    },
+    onKeyDownCapture: (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (!event.metaKey || event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleSecondarySource(paneSource);
+    },
+  });
+
   return (
     <Tabs
       className="terminal-pane-tabs"
       value={source}
-      onValueChange={changeSource}
+      onValueChange={(next) => {
+        if (commandClickSourceRef.current === next) return;
+        changeSource(next);
+      }}
       data-agent={session.agent || "none"}
     >
       <div className="terminal-tab-rail">
@@ -119,6 +298,7 @@ export function TerminalPane({
             value="terminal"
             aria-label="Terminal"
             title={`Terminal (${tabShortcut})`}
+            {...tabInteractionProps("terminal")}
           >
             <TerminalSquareIcon aria-hidden="true" />
           </TabsTrigger>
@@ -126,6 +306,7 @@ export function TerminalPane({
             value="agent-log"
             aria-label="Agent log"
             title={`Agent log (${tabShortcut})`}
+            {...tabInteractionProps("agent-log")}
           >
             <FileClockIcon aria-hidden="true" />
           </TabsTrigger>
@@ -133,6 +314,7 @@ export function TerminalPane({
             value="changes"
             aria-label="Changes"
             title={`Changes (${tabShortcut})`}
+            {...tabInteractionProps("changes")}
           >
             <GitCompareArrowsIcon aria-hidden="true" />
           </TabsTrigger>
@@ -140,6 +322,7 @@ export function TerminalPane({
             value="files"
             aria-label="Files"
             title={`Files (${tabShortcut})`}
+            {...tabInteractionProps("files")}
           >
             <FolderTreeIcon aria-hidden="true" />
           </TabsTrigger>
@@ -148,6 +331,7 @@ export function TerminalPane({
               value="annotation"
               aria-label="Annotation"
               title={`Annotation (${tabShortcut})`}
+              {...tabInteractionProps("annotation")}
             >
               <MessageSquareTextIcon aria-hidden="true" />
             </TabsTrigger>
@@ -164,15 +348,8 @@ export function TerminalPane({
             </span>
           )}
           <span className="terminal-tab-source" aria-hidden="true">
-            {source === "terminal"
-              ? "Terminal"
-              : source === "agent-log"
-                ? `${agentLabel} log`
-                : source === "changes"
-                  ? "Git changes"
-                  : source === "files"
-                    ? "Workspace files"
-                    : annotation?.filename ?? "Annotation"}
+            {sourceLabel(source)}
+            {secondarySource && ` + ${sourceLabel(secondarySource)}`}
           </span>
           <Checkbox
             className="terminal-tab-selection"
@@ -185,82 +362,130 @@ export function TerminalPane({
           />
         </div>
       </div>
-      <TabsContent
-        className="terminal-tab-content"
-        value="terminal"
-        keepMounted
+      <div
+        className="terminal-source-stage"
+        ref={sourceStageRef}
+        data-split={secondarySource ? "true" : undefined}
+        data-resizing={resizingSplit ? "true" : undefined}
+        style={splitStyle}
       >
-        {renderTerminal(
-          layoutVersion + fitVersion,
-          active && source === "terminal",
-          source === "terminal",
-        )}
-      </TabsContent>
-      <TabsContent
-        className="terminal-tab-content"
-        value="agent-log"
-        keepMounted
-      >
-        <AgentLogView
-          session={session}
-          api={api}
-          active={source === "agent-log"}
-          fontSize={agentLogFontSize}
-        />
-      </TabsContent>
-      <TabsContent
-        className="terminal-tab-content"
-        value="changes"
-        keepMounted
-      >
-        <GitChangesView
-          session={session}
-          api={api}
-          active={source === "changes"}
-        />
-      </TabsContent>
-      <TabsContent
-        className="terminal-tab-content"
-        value="files"
-        keepMounted
-      >
-        <WorkspaceFilesView
-          session={session}
-          api={api}
-          active={source === "files"}
-        />
-      </TabsContent>
-      {annotation && (
         <TabsContent
           className="terminal-tab-content"
-          value="annotation"
+          value="terminal"
           keepMounted
+          {...sourcePanelProps("terminal")}
         >
-          {annotationSyncFailed && (
-            <div className="annotation-sync-warning" role="status">
-              <span>Review status could not be refreshed.</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => setAnnotationRetry((current) => current + 1)}
-              >
-                Retry
-              </Button>
-            </div>
+          {renderTerminal(
+            layoutVersion + fitVersion,
+            active && source === "terminal" && secondarySource === null,
+            source === "terminal" && secondarySource === null,
           )}
-          <AnnotationView
-            annotation={annotation}
+        </TabsContent>
+        <TabsContent
+          className="terminal-tab-content"
+          value="agent-log"
+          keepMounted
+          {...sourcePanelProps("agent-log")}
+        >
+          <AgentLogView
+            session={session}
             api={api}
-            onCompleted={() => {
-              annotationIDRef.current = null;
-              setAnnotation(null);
-              setFitVersion((current) => current + 1);
-              setSource("terminal");
-            }}
+            active={sourceIsVisible("agent-log")}
+            fontSize={agentLogFontSize}
           />
         </TabsContent>
-      )}
+        <TabsContent
+          className="terminal-tab-content"
+          value="changes"
+          keepMounted
+          {...sourcePanelProps("changes")}
+        >
+          <GitChangesView
+            session={session}
+            api={api}
+            active={sourceIsVisible("changes")}
+          />
+        </TabsContent>
+        <TabsContent
+          className="terminal-tab-content"
+          value="files"
+          keepMounted
+          {...sourcePanelProps("files")}
+        >
+          <WorkspaceFilesView
+            session={session}
+            api={api}
+            active={sourceIsVisible("files")}
+          />
+        </TabsContent>
+        {annotation && (
+          <TabsContent
+            className="terminal-tab-content"
+            value="annotation"
+            keepMounted
+            {...sourcePanelProps("annotation")}
+          >
+            {annotationSyncFailed && (
+              <div className="annotation-sync-warning" role="status">
+                <span>Review status could not be refreshed.</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() => setAnnotationRetry((current) => current + 1)}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+            <AnnotationView
+              annotation={annotation}
+              api={api}
+              onCompleted={() => {
+                annotationIDRef.current = null;
+                setAnnotation(null);
+                setFitVersion((current) => current + 1);
+                setSecondarySource((current) => (
+                  current === "annotation" ? null : current
+                ));
+                setSource((current) => (
+                  current === "annotation" ? "terminal" : current
+                ));
+              }}
+            />
+          </TabsContent>
+        )}
+        {secondarySource && (
+          <button
+            type="button"
+            className="terminal-source-divider"
+            role="separator"
+            aria-label="Resize source split"
+            aria-orientation="vertical"
+            aria-valuemin={minimumPrimarySize}
+            aria-valuemax={maximumPrimarySize}
+            aria-valuenow={primarySize}
+            aria-valuetext={`${primarySize}% primary, ${100 - primarySize}% secondary`}
+            title="Drag to resize split"
+            onDoubleClick={() => setPrimarySize(50)}
+            onKeyDown={resizeSplitWithKeyboard}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              resizingPointerRef.current = event.pointerId;
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+              setResizingSplit(true);
+            }}
+            onLostPointerCapture={(event) => {
+              if (resizingPointerRef.current !== event.pointerId) return;
+              resizingPointerRef.current = null;
+              setResizingSplit(false);
+            }}
+          >
+            <span aria-hidden="true" />
+          </button>
+        )}
+      </div>
     </Tabs>
   );
 }
