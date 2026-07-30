@@ -633,6 +633,49 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
+test("keeps the Quick Actions keyboard selection in the scroll viewport", async ({ page }) => {
+  await clearSessions(page);
+  for (let index = 1; index <= 6; index += 1) {
+    await createSession(page, `Terminal ${index}`);
+  }
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const commandList = page.locator('[data-slot="command-list"]');
+  await expect.poll(() =>
+    commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
+  ).toBe(true);
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
+
+  const lastTerminal = page.getByRole("option", { name: /^Terminal 6/ });
+  await expect(lastTerminal).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() =>
+    lastTerminal.evaluate((element) => {
+      const list = element.closest('[data-slot="command-list"]');
+      if (!list) return false;
+      const itemBounds = element.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return itemBounds.top >= listBounds.top && itemBounds.bottom <= listBounds.bottom;
+    }),
+  ).toBe(true);
+  const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
+  expect(scrolledDown).toBeGreaterThan(0);
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("ArrowUp");
+  }
+
+  const firstAction = page.getByRole("option", {
+    name: /^New terminal in directory…/,
+  });
+  await expect(firstAction).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => commandList.evaluate((element) => element.scrollTop))
+    .toBeLessThan(scrolledDown);
+});
+
 test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "Left");
