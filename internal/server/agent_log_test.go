@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,146 @@ import (
 	"github.com/ryotarai/euphony/internal/agentlog"
 	"github.com/ryotarai/euphony/internal/session"
 )
+
+func TestAgentLogEndpointPagesNewestOlderAndAppendedRecords(t *testing.T) {
+	claudeRoot := filepath.Join(t.TempDir(), "claude-projects")
+	transcriptPath := filepath.Join(claudeRoot, "repo", "session-page.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	var content string
+	for index := 1; index <= 105; index++ {
+		content += fmt.Sprintf(
+			"{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Message %03d\"}}\n",
+			index,
+		)
+	}
+	if err := os.WriteFile(transcriptPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", ClaudeProjectsRoot: claudeRoot,
+		CodexSessionsRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	terminal, err := srv.sessions.Create(t.Context(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "claude", AgentSessionID: "session-page", TranscriptPath: transcriptPath,
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	newest := performAgentLogRequestPath(t, srv, terminal.ID, "", "")
+	if newest.Code != http.StatusOK {
+		t.Fatalf("newest status = %d, body = %s", newest.Code, newest.Body.String())
+	}
+	var newestLog agentlog.Transcript
+	if err := json.NewDecoder(newest.Body).Decode(&newestLog); err != nil {
+		t.Fatalf("decode newest transcript: %v", err)
+	}
+	if len(newestLog.Entries) != 100 ||
+		newestLog.Entries[0].Content != "Message 006" ||
+		newestLog.Entries[99].Content != "Message 105" {
+		t.Fatalf("newest entries = %#v", newestLog.Entries)
+	}
+	if newestLog.StartCursor == "" ||
+		newestLog.EndCursor == "" ||
+		newestLog.NextCursor != newestLog.StartCursor {
+		t.Fatalf("newest cursors = %#v", newestLog)
+	}
+
+	older := performAgentLogRequestPath(
+		t,
+		srv,
+		terminal.ID,
+		"?before="+newestLog.NextCursor,
+		"",
+	)
+	if older.Code != http.StatusOK {
+		t.Fatalf("older status = %d, body = %s", older.Code, older.Body.String())
+	}
+	var olderLog agentlog.Transcript
+	if err := json.NewDecoder(older.Body).Decode(&olderLog); err != nil {
+		t.Fatalf("decode older transcript: %v", err)
+	}
+	if len(olderLog.Entries) != 5 ||
+		olderLog.Entries[0].Content != "Message 001" ||
+		olderLog.Entries[4].Content != "Message 005" ||
+		olderLog.NextCursor != "" {
+		t.Fatalf("older transcript = %#v", olderLog)
+	}
+
+	appended := `{"type":"assistant","message":{"role":"assistant","content":"Message 106"}}` + "\n"
+	file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	_, writeErr := file.WriteString(appended)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("append errors = %v, %v", writeErr, closeErr)
+	}
+	addition := performAgentLogRequestPath(
+		t,
+		srv,
+		terminal.ID,
+		"?after="+newestLog.EndCursor,
+		newest.Header().Get("ETag"),
+	)
+	if addition.Code != http.StatusOK {
+		t.Fatalf("after status = %d, body = %s", addition.Code, addition.Body.String())
+	}
+	var additionLog agentlog.Transcript
+	if err := json.NewDecoder(addition.Body).Decode(&additionLog); err != nil {
+		t.Fatalf("decode appended transcript: %v", err)
+	}
+	if len(additionLog.Entries) != 1 ||
+		additionLog.Entries[0].Content != "Message 106" ||
+		additionLog.StartCursor != newestLog.EndCursor {
+		t.Fatalf("appended transcript = %#v", additionLog)
+	}
+}
+
+func TestAgentLogEndpointRejectsInvalidCursors(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		ClaudeProjectsRoot: t.TempDir(), CodexSessionsRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	terminal, err := srv.sessions.Create(t.Context(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	for _, query := range []string{
+		"?before=not-a-number",
+		"?after=-1",
+		"?before=1&after=2",
+	} {
+		response := performAgentLogRequestPath(t, srv, terminal.ID, query, "")
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, want 400", query, response.Code)
+		}
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatalf("%s decode error = %v", query, err)
+		}
+		if body.Code != "invalid_agent_log_cursor" {
+			t.Fatalf("%s code = %q", query, body.Code)
+		}
+	}
+}
 
 func TestAgentLogEndpointReturnsLinkedTranscriptAndSupportsETag(t *testing.T) {
 	claudeRoot := filepath.Join(t.TempDir(), "claude-projects")
@@ -208,7 +349,22 @@ func TestAgentLogETagChangesWhenLinkedAgentSessionChanges(t *testing.T) {
 
 func performAgentLogRequest(t *testing.T, srv *Server, terminalID, etag string) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "/api/sessions/"+terminalID+"/agent-log", nil)
+	return performAgentLogRequestPath(t, srv, terminalID, "", etag)
+}
+
+func performAgentLogRequestPath(
+	t *testing.T,
+	srv *Server,
+	terminalID string,
+	query string,
+	etag string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/sessions/"+terminalID+"/agent-log"+query,
+		nil,
+	)
 	request.Header.Set("Authorization", "Bearer token")
 	if etag != "" {
 		request.Header.Set("If-None-Match", etag)

@@ -11,7 +11,10 @@ type Entry struct {
 }
 
 type Transcript struct {
-	Agent     string  `json:"agent"`
-	SessionID string  `json:"sessionId"`
-	Entries   []Entry `json:"entries"`
+	Agent       string  `json:"agent"`
+	SessionID   string  `json:"sessionId"`
+	Entries     []Entry `json:"entries"`
+	StartCursor string  `json:"startCursor,omitempty"`
+	EndCursor   string  `json:"endCursor,omitempty"`
+	NextCursor  string  `json:"nextCursor,omitempty"`
 }
