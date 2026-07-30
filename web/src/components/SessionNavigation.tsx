@@ -357,6 +357,9 @@ export function SessionNavigation(props: SessionNavigationProps) {
     paneTabShortcut: "Meta+L",
     sidebarWidth: defaultSidebarWidth,
     sidebarCollapsed: false,
+    interfaceFontSize: 16,
+    terminalFontSize: 14,
+    agentLogFontSize: 14,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

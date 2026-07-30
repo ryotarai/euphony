@@ -33,6 +33,18 @@ const initialLog: AgentTranscript = {
   ],
 };
 
+test("applies the configured agent log font size", () => {
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: initialLog, etag: 'W/"first"' }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active={false} fontSize={17} />);
+
+  expect(screen.getByRole("region", { name: "Agent log" })).toHaveStyle({
+    "--agent-log-font-size": "17px",
+  });
+});
+
 test("renders normalized transcript as safe semantic HTML", async () => {
   const api = {
     getAgentLog: vi.fn().mockResolvedValue({ log: initialLog, etag: 'W/"first"' }),

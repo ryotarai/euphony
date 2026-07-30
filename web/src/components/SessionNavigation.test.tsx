@@ -22,6 +22,9 @@ const settings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
 };
 
 const sessions: Session[] = [

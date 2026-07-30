@@ -13,6 +13,7 @@ interface TerminalPaneProps {
   active: boolean;
   layoutVersion: number;
   tabShortcut: string;
+  agentLogFontSize?: number;
   onDeselect: () => void;
   renderTerminal(layoutVersion: number, active: boolean): ReactNode;
 }
@@ -25,6 +26,7 @@ export function TerminalPane({
   active,
   layoutVersion,
   tabShortcut,
+  agentLogFontSize = 14,
   onDeselect,
   renderTerminal,
 }: TerminalPaneProps) {
@@ -106,7 +108,12 @@ export function TerminalPane({
         value="agent-log"
         keepMounted
       >
-        <AgentLogView session={session} api={api} active={source === "agent-log"} />
+        <AgentLogView
+          session={session}
+          api={api}
+          active={source === "agent-log"}
+          fontSize={agentLogFontSize}
+        />
       </TabsContent>
     </Tabs>
   );
