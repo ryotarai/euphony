@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  isValidElement,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ApiClient } from "../api";
@@ -20,6 +27,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BotIcon, FileWarningIcon } from "lucide-react";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface AgentLogViewProps {
   session: Session;
@@ -38,6 +46,20 @@ function errorMessage(error: unknown): string {
 }
 
 const markdownComponents: Components = {
+  pre: ({ node: _node, children, ...props }) => {
+    const code = Array.isArray(children) ? children[0] : children;
+    if (
+      isValidElement<{ className?: string; children?: ReactNode }>(code) &&
+      code.props.className === "language-mermaid"
+    ) {
+      return <MermaidDiagram source={String(code.props.children).replace(/\n$/, "")} />;
+    }
+    return (
+      <pre {...props}>
+        {children}
+      </pre>
+    );
+  },
   table: ({ node: _node, ...props }) => (
     <div
       className="agent-log-table-scroll"
