@@ -137,10 +137,27 @@ func TestResolverRejectsSymlinkEscapingAgentRoot(t *testing.T) {
 	}
 }
 
+func TestResolverRejectsSymlinkToAnotherSessionInsideAgentRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "claude-projects")
+	target := filepath.Join(root, "repo", "session-1.jsonl")
+	writeTranscriptFixture(t, target)
+	link := filepath.Join(root, "repo", "session-2.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	resolver := NewResolver("", root)
+
+	if _, err := resolver.Resolve("claude", "session-2", link); !errors.Is(err, ErrTranscriptNotFound) {
+		t.Fatalf("Resolve() error = %v, want ErrTranscriptNotFound", err)
+	}
+}
+
 func TestResolverBrieflyCachesFallbackMisses(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "claude-projects")
 	path := filepath.Join(root, "repo", "session-1.jsonl")
 	resolver := NewResolver("", root)
+	now := time.Date(2026, 7, 30, 1, 2, 3, 0, time.UTC)
+	resolver.now = func() time.Time { return now }
 
 	if _, err := resolver.Resolve("claude", "session-1", ""); !errors.Is(err, ErrTranscriptNotFound) {
 		t.Fatalf("first Resolve() error = %v, want ErrTranscriptNotFound", err)
@@ -149,7 +166,7 @@ func TestResolverBrieflyCachesFallbackMisses(t *testing.T) {
 	if _, err := resolver.Resolve("claude", "session-1", ""); !errors.Is(err, ErrTranscriptNotFound) {
 		t.Fatalf("immediate Resolve() error = %v, want cached ErrTranscriptNotFound", err)
 	}
-	time.Sleep(1100 * time.Millisecond)
+	now = now.Add(fallbackMissCacheTTL)
 	if _, err := resolver.Resolve("claude", "session-1", ""); err != nil {
 		t.Fatalf("Resolve() after cache expiry error = %v", err)
 	}

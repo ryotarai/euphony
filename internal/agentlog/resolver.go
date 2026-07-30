@@ -12,7 +12,7 @@ import (
 
 var ErrTranscriptNotFound = errors.New("agent transcript not found")
 
-const fallbackMissCacheTTL = time.Second
+const fallbackMissCacheTTL = 5 * time.Second
 
 type Resolver struct {
 	codexRoot  string
@@ -20,12 +20,14 @@ type Resolver struct {
 	mu         sync.Mutex
 	cache      map[string]string
 	misses     map[string]time.Time
+	now        func() time.Time
 }
 
 func NewResolver(codexRoot, claudeRoot string) *Resolver {
 	return &Resolver{
 		codexRoot: cleanRoot(codexRoot), claudeRoot: cleanRoot(claudeRoot),
 		cache: make(map[string]string), misses: make(map[string]time.Time),
+		now: time.Now,
 	}
 }
 
@@ -42,7 +44,7 @@ func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error
 		return "", ErrTranscriptNotFound
 	}
 	if recordedPath != "" && matchesSessionFilename(agent, filepath.Base(recordedPath), sessionID) {
-		if path, ok := confinedRegularFile(root, recordedPath); ok {
+		if path, ok := r.resolveMatchingFile(root, agent, sessionID, recordedPath); ok {
 			return path, nil
 		}
 	}
@@ -52,17 +54,17 @@ func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error
 	missUntil := r.misses[key]
 	r.mu.Unlock()
 	if cached != "" {
-		if path, ok := confinedRegularFile(root, cached); ok {
+		if path, ok := r.resolveMatchingFile(root, agent, sessionID, cached); ok {
 			return path, nil
 		}
 	}
-	if time.Now().Before(missUntil) {
+	if r.now().Before(missUntil) {
 		return "", ErrTranscriptNotFound
 	}
 	path := r.find(root, agent, sessionID)
 	if path == "" {
 		r.mu.Lock()
-		r.misses[key] = time.Now().Add(fallbackMissCacheTTL)
+		r.misses[key] = r.now().Add(fallbackMissCacheTTL)
 		r.mu.Unlock()
 		return "", ErrTranscriptNotFound
 	}
@@ -99,13 +101,21 @@ func (r *Resolver) find(root, agent, sessionID string) string {
 		if !matchesSessionFilename(agent, entry.Name(), sessionID) {
 			return nil
 		}
-		if confined, ok := confinedRegularFile(root, path); ok {
+		if confined, ok := r.resolveMatchingFile(root, agent, sessionID, path); ok {
 			result = confined
 			return fs.SkipAll
 		}
 		return nil
 	})
 	return result
+}
+
+func (r *Resolver) resolveMatchingFile(root, agent, sessionID, path string) (string, bool) {
+	resolved, ok := confinedRegularFile(root, path)
+	if !ok || !matchesSessionFilename(agent, filepath.Base(resolved), sessionID) {
+		return "", false
+	}
+	return resolved, true
 }
 
 func matchesSessionFilename(agent, name, sessionID string) bool {
