@@ -17,6 +17,9 @@ type Service struct {
 	sessions *session.Manager
 	events   *eventHub
 
+	runCommand func(string, string) error
+	sendInput  func(string, TerminalInput) error
+
 	mu        sync.RWMutex
 	selection selection.State
 	snapshot  selection.Snapshot
@@ -48,6 +51,8 @@ func New(manager *session.Manager) (*Service, error) {
 		selection: state,
 		snapshot:  selection.Resolve(state, terminals),
 	}
+	service.runCommand = service.RunTerminal
+	service.sendInput = service.SendTerminalInput
 	manager.SetChangeHandler(service.handleSessionChange)
 	service.reconcileFromSessions(nil)
 	return service, nil

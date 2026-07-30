@@ -97,6 +97,13 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 		"/api/v1/terminals/{id}/wait-output": "post",
 		"/api/v1/terminals/{id}/tickets":     "post",
 		"/api/v1/terminals/{id}/stream":      "get",
+		"/api/v1/agents":                     "get",
+		"/api/v1/agents/{id}":                "get",
+		"/api/v1/agents/{id}/start":          "post",
+		"/api/v1/agents/{id}/output":         "get",
+		"/api/v1/agents/{id}/input":          "post",
+		"/api/v1/agents/{id}/prompt":         "post",
+		"/api/v1/agents/{id}/wait":           "post",
 		"/api/v1/selection":                  "put",
 		"/api/v1/selection/actions":          "post",
 	} {
