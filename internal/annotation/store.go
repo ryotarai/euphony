@@ -46,10 +46,12 @@ type Result struct {
 }
 
 type entry struct {
-	session  Session
-	done     chan struct{}
-	result   *Result
-	canceled bool
+	session     Session
+	done        chan struct{}
+	result      *Result
+	canceled    bool
+	waitStarted bool
+	waiting     int
 }
 
 type Store struct {
@@ -116,11 +118,19 @@ func (s *Store) Wait(ctx context.Context, id string) (Result, error) {
 		s.mu.Unlock()
 		return Result{}, ErrNotFound
 	}
+	item.waitStarted = true
+	item.waiting++
 	done := item.done
 	s.mu.Unlock()
 
 	select {
 	case <-ctx.Done():
+		s.mu.Lock()
+		item.waiting--
+		if item.canceled && item.waiting == 0 {
+			delete(s.entries, id)
+		}
+		s.mu.Unlock()
 		return Result{}, ctx.Err()
 	case <-done:
 	}
@@ -131,6 +141,7 @@ func (s *Store) Wait(ctx context.Context, id string) (Result, error) {
 	if !found {
 		return Result{}, ErrNotFound
 	}
+	item.waiting--
 	delete(s.entries, id)
 	if item.canceled {
 		return Result{}, ErrCanceled
@@ -171,6 +182,9 @@ func (s *Store) Cancel(id string) (Session, error) {
 	item.canceled = true
 	delete(s.byTerminal, item.session.TerminalID)
 	close(item.done)
+	if item.waitStarted && item.waiting == 0 {
+		delete(s.entries, id)
+	}
 	return item.session, nil
 }
 

@@ -164,3 +164,23 @@ func TestStoreWaitHonorsContextCancellation(t *testing.T) {
 		t.Fatalf("Current() = %#v, %v, want active session", current, found)
 	}
 }
+
+func TestStoreCancelRemovesEntryAfterWaitContextIsCanceled(t *testing.T) {
+	store := NewStore(time.Now, func() string { return "annotation-1" })
+	session, err := store.Create("terminal-1", "review.md", FormatMarkdown, "Review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.Wait(ctx, session.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait() error = %v, want context.Canceled", err)
+	}
+
+	if _, err := store.Cancel(session.ID); err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if _, found := store.entries[session.ID]; found {
+		t.Fatal("canceled entry remains after its waiter exited")
+	}
+}
