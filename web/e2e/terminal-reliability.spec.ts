@@ -91,6 +91,23 @@ function visibleTerminalText(history: string): string {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 }
 
+test("renders a visible terminal cursor without an idle animation", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Static cursor");
+  await page.goto("/?token=test-token");
+
+  const terminal = page.getByLabel("Static cursor terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await terminal.click();
+
+  const cursor = page.locator(".xterm-cursor");
+  await expect(cursor).toHaveCount(1);
+  await expect(cursor).toBeVisible();
+  await expect(cursor).toHaveClass(/xterm-cursor-bar/);
+  await expect(cursor).not.toHaveClass(/xterm-cursor-blink/);
+});
+
 test("keeps a running Claude terminal fitted across repeated pane changes", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
