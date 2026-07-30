@@ -600,6 +600,10 @@ input {
   height: 100%;
 }
 
+.terminal-host .xterm {
+  text-spacing-trim: space-all;
+}
+
 .terminal-host .xterm-viewport {
   scrollbar-color: #394149 transparent;
   scrollbar-width: thin;
