@@ -90,6 +90,21 @@ export function attentionTransitions(previous: Session[], next: Session[]): Sess
   );
 }
 
+export function agentLaunchTransitions(
+  previous: Session[],
+  next: Session[],
+): Session[] {
+  const previousActivity = new Map(
+    previous.map((session) => [session.id, sessionActivity(session)]),
+  );
+  return next.filter(
+    (session) =>
+      Boolean(session.agent) &&
+      previousActivity.get(session.id) === "terminal" &&
+      sessionActivity(session) !== "terminal",
+  );
+}
+
 function playAttentionTone() {
   if (typeof AudioContext === "undefined") return;
   const context = new AudioContext();
@@ -215,6 +230,7 @@ export function App({
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
+  const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
@@ -289,6 +305,9 @@ export function App({
     const timer = window.setInterval(() => {
       api.listSessions().then((items) => {
         const transitions = attentionTransitions(previousSessionsRef.current, items);
+        pendingAgentLaunchIDsRef.current = new Set(
+          agentLaunchTransitions(previousSessionsRef.current, items).map((session) => session.id),
+        );
         previousSessionsRef.current = items;
         setSessions(items);
         for (const session of transitions) {
@@ -306,6 +325,25 @@ export function App({
   }, [api, sessions !== null]);
 
   useEffect(() => {
+    const promotedID =
+      focusedID &&
+      selectedIDs.includes(focusedID) &&
+      pendingAgentLaunchIDsRef.current.has(focusedID)
+        ? focusedID
+        : null;
+    pendingAgentLaunchIDsRef.current.clear();
+
+    if (promotedID) {
+      filterSelectedIDsRef.current.clear();
+      decomposedStatusFiltersRef.current.clear();
+      setSelectedIDs([promotedID]);
+      setFocusedID(promotedID);
+      setStatusFilters([]);
+      setCwdFilters([]);
+      writeWorkspaceToURL([promotedID], promotedID, [], [], "replace");
+      return;
+    }
+
     if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) return;
     const matches = sessions
       .filter((session) => matchesWorkspaceFilter(session, statusFilters, cwdFilters))
