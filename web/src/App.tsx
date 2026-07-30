@@ -1234,7 +1234,7 @@ export function App({
 
   useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
+      if (event.key.toLowerCase() !== "k" || !event.metaKey) return;
       event.preventDefault();
       const availableValues = availableQuickActionValues(sessions ?? []);
       setCommandQuery("");

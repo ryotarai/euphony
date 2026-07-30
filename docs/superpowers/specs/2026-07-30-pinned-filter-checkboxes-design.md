@@ -2,10 +2,10 @@
 
 ## Goal
 
-Extend Shift-click pinning from terminal checkboxes to status and cwd
-checkboxes. A pinned status or cwd remains an active dynamic filter when
-ordinary workspace replacement actions occur. Show every pinned checkbox with
-an amber fill and no separate pin icon.
+Extend Alt-click (Option-click on macOS) pinning from terminal checkboxes to
+status and cwd checkboxes. A pinned status or cwd remains an active dynamic
+filter when ordinary workspace replacement actions occur. Show every pinned
+checkbox with an amber fill and no separate pin icon.
 
 ## Chosen Approach
 
@@ -18,9 +18,9 @@ break the server-wide selection contract.
 
 ## Interaction
 
-- Shift-clicking an unchecked terminal, status, or cwd checkbox selects and
+- Alt-clicking an unchecked terminal, status, or cwd checkbox selects and
   pins it.
-- Shift-clicking a checked but unpinned checkbox pins it without deselecting
+- Alt-clicking a checked but unpinned checkbox pins it without deselecting
   it.
 - Clicking a pinned checkbox directly removes both its pin and its selection
   source.
@@ -56,7 +56,7 @@ and CLI/server mutations converge on the same state.
 ## Frontend Structure
 
 `SessionNavigation` receives pinned status and cwd filter arrays. It forwards
-the Shift modifier from all three checkbox levels and derives inherited cwd
+the Alt modifier from all three checkbox levels and derives inherited cwd
 pin state from a pinned parent status.
 
 `App` owns the two pinned-filter arrays alongside existing active filters.
@@ -87,11 +87,11 @@ layout styles. Keyboard focus remains visible around the amber control.
   decomposition, and round-trip storage.
 - API and CLI transport tests cover `pinnedFilters` in complete selection
   replacement.
-- Component tests cover Shift forwarding, inherited pin state, amber data
+- Component tests cover Alt forwarding, inherited pin state, amber data
   attributes, and removal of the icon.
 - App tests cover status/cwd pinning, replacement preservation, URL state, and
   parent/child decomposition.
-- Playwright verifies real Shift-click behavior and computed amber checkbox
+- Playwright verifies real Alt-click behavior and computed amber checkbox
   styling.
 - Full Go tests, web tests, typecheck, build, and one-worker end-to-end tests
   must pass.

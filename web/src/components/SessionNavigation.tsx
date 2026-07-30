@@ -128,10 +128,10 @@ function SessionList(props: SessionNavigationProps) {
                 title={
                   statusPinned
                     ? "Pinned — click to remove"
-                    : "Shift-click to pin"
+                    : "Option-click to pin"
                 }
                 onClick={(event) => {
-                  if (event.shiftKey) {
+                  if (event.altKey) {
                     props.onStatusFilter(status, true, true);
                   } else {
                     props.onStatusFilter(status, !statusSelected);
@@ -172,10 +172,10 @@ function SessionList(props: SessionNavigationProps) {
                         title={
                           cwdPinned
                             ? "Pinned — click to remove"
-                            : "Shift-click to pin"
+                            : "Option-click to pin"
                         }
                         onClick={(event) => {
-                          if (event.shiftKey) {
+                          if (event.altKey) {
                             props.onCwdFilter?.(status, cwd, true, true);
                           } else {
                             props.onCwdFilter?.(status, cwd, !cwdSelected);
@@ -213,10 +213,10 @@ function SessionList(props: SessionNavigationProps) {
                                 title={
                                   pinned
                                     ? "Pinned — click to remove"
-                                    : "Shift-click to pin"
+                                    : "Option-click to pin"
                                 }
                                 onClick={(event) =>
-                                  selectSession(session.id, true, event.shiftKey)
+                                  selectSession(session.id, true, event.altKey)
                                 }
                               />
                               <SidebarMenuButton

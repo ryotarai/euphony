@@ -49,11 +49,17 @@ test("renders GFM and turns a text selection into a removable comment", async ()
   selection.addRange(range);
   fireEvent.mouseUp(sentence);
 
+  expect(screen.getByRole("button", { name: "Comment" })).toBeVisible();
+  expect(
+    screen.queryByRole("textbox", { name: "Comment on selection" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Comment" }));
   expect(screen.getByText("Select this", { selector: "blockquote" })).toBeVisible();
-  await user.type(
-    screen.getByRole("textbox", { name: "Comment on selection" }),
-    "Make this concrete.",
-  );
+  const selectionEditor = screen.getByRole("textbox", {
+    name: "Comment on selection",
+  });
+  expect(selectionEditor).toHaveFocus();
+  await user.type(selectionEditor, "Make this concrete.");
   await user.click(screen.getByRole("button", { name: "Add selection comment" }));
   const saved = screen.getByRole("listitem", { name: "Selection comment 1" });
   expect(within(saved).getByText("Make this concrete.")).toBeVisible();
@@ -76,7 +82,9 @@ test("submits a global comment and closes the annotation", async () => {
     screen.getByRole("textbox", { name: "Global comment" }),
     "The overall structure works.",
   );
-  await user.click(screen.getByRole("button", { name: "Add global comment" }));
+  expect(
+    screen.queryByRole("button", { name: "Add global comment" }),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Send comments" }));
 
   expect(completeAnnotation).toHaveBeenCalledWith("annotation-1", [

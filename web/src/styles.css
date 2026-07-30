@@ -2327,6 +2327,45 @@ input {
   grid-template-rows: 2.35rem minmax(0, 1fr);
 }
 
+.annotation-reader {
+  position: relative;
+}
+
+.annotation-selection-action {
+  position: absolute;
+  z-index: 3;
+  color: #050505;
+  background: #f59e0b;
+  border-color: #f59e0b;
+  border-radius: 0;
+  box-shadow:
+    0 0 0 1px rgb(5 5 5 / 75%),
+    0 0.55rem 1.35rem rgb(0 0 0 / 55%);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  transition:
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+
+.annotation-selection-action::before {
+  content: "";
+  position: absolute;
+  top: -0.3rem;
+  left: 0.65rem;
+  border-right: 0.3rem solid transparent;
+  border-bottom: 0.3rem solid #f59e0b;
+  border-left: 0.3rem solid transparent;
+}
+
+.annotation-selection-action:hover {
+  color: #050505;
+  background: #fbbf24;
+  border-color: #fbbf24;
+  transform: translateY(-1px);
+}
+
 .annotation-comments {
   grid-template-rows: 2.35rem minmax(0, 1fr) auto;
   background: #0b0d0f;
@@ -2636,6 +2675,10 @@ input {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .annotation-selection-action {
+    transition: none;
+  }
+
   .agent-log-detail > summary::before {
     transition: none;
   }

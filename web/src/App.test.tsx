@@ -945,6 +945,31 @@ test("the new terminal dialog owns focus and closes with Escape", async () => {
   expect(screen.queryByRole("dialog", { name: "New terminal" })).not.toBeInTheDocument();
 });
 
+test("opens Quick Actions with Command-K but not Control-K", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByRole("button", { name: "Select Codex" });
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  expect(
+    screen.queryByRole("dialog", { name: "Quick Actions" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  expect(
+    await screen.findByRole("dialog", { name: "Quick Actions" }),
+  ).toBeVisible();
+});
+
 test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
@@ -1284,7 +1309,7 @@ test("command-click selects multiple terminal panes and stores them in the URL",
   });
 });
 
-test("keeps a Shift-pinned terminal selected until its checkbox is clicked", async () => {
+test("keeps an Alt-pinned terminal selected until its checkbox is clicked", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
   );
@@ -1299,7 +1324,7 @@ test("keeps a Shift-pinned terminal selected until its checkbox is clicked", asy
   await screen.findByLabelText("Codex terminal pane");
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Include Codex in split" }),
-    { shiftKey: true },
+    { altKey: true },
   );
   fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
 
@@ -1335,7 +1360,7 @@ test("does not toggle a pinned terminal off from its row", async () => {
   await screen.findByLabelText("Codex terminal pane");
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Include Codex in split" }),
-    { shiftKey: true },
+    { altKey: true },
   );
   fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
   fireEvent.click(screen.getByRole("button", { name: "Select Codex" }), {
@@ -1364,7 +1389,7 @@ test("prefix navigation reads a pin added to the current terminal", async () => 
   await screen.findByLabelText("Codex terminal pane");
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Include Codex in split" }),
-    { shiftKey: true },
+    { altKey: true },
   );
   fireEvent.keyDown(window, { key: "b", ctrlKey: true });
   fireEvent.keyDown(window, { key: "n" });
@@ -1404,7 +1429,7 @@ test("restores URL pins into terminal selection", async () => {
   ]);
 });
 
-test("keeps a Shift-pinned status filter across terminal row replacement", async () => {
+test("keeps an Alt-pinned status filter across terminal row replacement", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
   );
@@ -1419,7 +1444,7 @@ test("keeps a Shift-pinned status filter across terminal row replacement", async
 
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Show all Running terminals" }),
-    { shiftKey: true },
+    { altKey: true },
   );
   fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
 
@@ -1434,7 +1459,7 @@ test("keeps a Shift-pinned status filter across terminal row replacement", async
   expect(parameters.getAll("status")).toContain("running");
 });
 
-test("keeps a Shift-pinned cwd filter across status label replacement", async () => {
+test("keeps an Alt-pinned cwd filter across status label replacement", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
   );
@@ -1451,7 +1476,7 @@ test("keeps a Shift-pinned cwd filter across status label replacement", async ()
     screen.getByRole("checkbox", {
       name: "Include all terminals in /workspace/euphony",
     }),
-    { shiftKey: true },
+    { altKey: true },
   );
   fireEvent.click(
     screen.getByRole("button", { name: "Show only Waiting terminals" }),
@@ -1486,7 +1511,7 @@ test("decomposes and reconsolidates a pinned status through cwd checks", async (
 
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Show all Running terminals" }),
-    { shiftKey: true },
+    { altKey: true },
   );
   const apiCwd = screen.getByRole("checkbox", {
     name: "Include all terminals in /workspace/api",
@@ -1811,7 +1836,7 @@ test("removes a pin when polling removes its terminal", async () => {
     await screen.findByLabelText("session-1 terminal pane");
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Include Codex in split" }),
-      { shiftKey: true },
+      { altKey: true },
     );
     expect(new URLSearchParams(window.location.search).getAll("pin")).toEqual([
       "session-1",
