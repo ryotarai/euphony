@@ -8,6 +8,12 @@ type ResizeRecord = {
   screenWidth: number;
 };
 
+type ClientSizeMessage = {
+  type: "resize" | "resize_release";
+  cols?: number;
+  rows?: number;
+};
+
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
     headers: {
@@ -247,6 +253,111 @@ test("shares the smallest terminal size across differently sized browsers", asyn
   }
 });
 
+test("keeps the shared terminal size stable while a browser views agent logs", async ({
+  browser,
+  page,
+}) => {
+  await clearSessions(page);
+  const sharedTerminal = await createSession(page, "Shared source");
+  await replaceSharedSelection(page, sharedTerminal.id);
+
+  const narrowContext = await browser.newContext({
+    viewport: { width: 900, height: 900 },
+  });
+  const shortContext = await browser.newContext({
+    viewport: { width: 1400, height: 600 },
+  });
+  const narrowPage = await narrowContext.newPage();
+  const shortPage = await shortContext.newPage();
+  await shortPage.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    const messages: ClientSizeMessage[] = [];
+    Object.defineProperty(window, "__euphonyClientSizeMessages", {
+      value: messages,
+    });
+
+    class RecordingWebSocket extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        const nativeSend = this.send.bind(this);
+        this.send = (data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+          if (typeof data === "string") {
+            const message = JSON.parse(data) as ClientSizeMessage;
+            if (message.type === "resize" || message.type === "resize_release") {
+              messages.push(message);
+            }
+          }
+          nativeSend(data);
+        };
+      }
+    }
+
+    Object.defineProperty(window, "WebSocket", { value: RecordingWebSocket });
+  });
+  try {
+    await Promise.all([
+      narrowPage.goto("/?token=test-token"),
+      shortPage.goto("/?token=test-token"),
+    ]);
+    for (const attachedPage of [narrowPage, shortPage]) {
+      await expect(attachedPage.locator(".terminal-view")).toHaveAttribute(
+        "data-connection",
+        "connected",
+      );
+    }
+
+    await expect.poll(async () => {
+      const [narrow, short] = await Promise.all([
+        terminalGrid(narrowPage),
+        terminalGrid(shortPage),
+      ]);
+      const expectedCols = Math.min(narrow.localCols, short.localCols);
+      const expectedRows = Math.min(narrow.localRows, short.localRows);
+      return (
+        expectedCols > 0 &&
+        expectedRows > 0 &&
+        narrow.sharedCols === expectedCols &&
+        short.sharedCols === expectedCols &&
+        narrow.sharedRows === expectedRows &&
+        short.sharedRows === expectedRows
+      );
+    }).toBe(true);
+
+    const [narrowBefore, shortBefore] = await Promise.all([
+      terminalGrid(narrowPage),
+      terminalGrid(shortPage),
+    ]);
+    expect(narrowBefore.localCols).toBeLessThan(shortBefore.localCols);
+    expect(narrowBefore.localRows).toBeGreaterThan(shortBefore.localRows);
+    expect(narrowBefore.sharedCols).toBe(narrowBefore.localCols);
+    expect(narrowBefore.sharedRows).toBe(shortBefore.localRows);
+    await shortPage.evaluate(() => {
+      window.__euphonyClientSizeMessages.length = 0;
+    });
+
+    await shortPage.getByRole("tab", { name: "Agent log" }).click();
+    await expect(shortPage.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
+      "data-active",
+    );
+    await expect.poll(() => terminalGrid(narrowPage)).toEqual(narrowBefore);
+
+    await shortPage.getByRole("tab", { name: "Terminal" }).click();
+    await expect(shortPage.getByRole("tab", { name: "Terminal" })).toHaveAttribute(
+      "data-active",
+    );
+    await expect.poll(() => terminalGrid(shortPage)).toEqual(shortBefore);
+    // TerminalView remeasures 50ms after the source layout changes. Wait past
+    // that boundary so a delayed resize cannot escape the message assertion.
+    await shortPage.waitForTimeout(100);
+    expect(
+      await shortPage.evaluate(() => window.__euphonyClientSizeMessages),
+    ).toEqual([]);
+  } finally {
+    await narrowContext.close();
+    await shortContext.close();
+  }
+});
+
 test("keeps a running Claude terminal fitted across repeated pane changes", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
@@ -371,5 +482,6 @@ test("keeps table columns aligned for full-width Japanese punctuation", async ({
 declare global {
   interface Window {
     __euphonyResizeRecords: ResizeRecord[];
+    __euphonyClientSizeMessages: ClientSizeMessage[];
   }
 }

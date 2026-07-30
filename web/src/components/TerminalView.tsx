@@ -37,6 +37,7 @@ interface TerminalViewProps {
   session: Session;
   api: ApiClient;
   active?: boolean;
+  sourceVisible?: boolean;
   layoutVersion?: number;
   reconnectSignal?: number;
   terminalHistoryLimit?: number;
@@ -163,6 +164,7 @@ export function TerminalView({
   session,
   api,
   active = true,
+  sourceVisible = true,
   layoutVersion = 1,
   reconnectSignal = 0,
   terminalHistoryLimit = 1024 * 1024,
@@ -176,6 +178,9 @@ export function TerminalView({
   const capacityReporterRef = useRef<() => void>(() => undefined);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const sourceVisibleRef = useRef(sourceVisible);
+  sourceVisibleRef.current = sourceVisible;
+  const previousSourceVisibleRef = useRef(sourceVisible);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [copied, setCopied] = useState(false);
   const [localSize, setLocalSize] = useState<{ cols: number; rows: number }>();
@@ -250,6 +255,7 @@ export function TerminalView({
       queuedInitialBytes += data.byteLength;
     };
     const reportCapacity = () => {
+      if (!sourceVisibleRef.current) return;
       if (host.hidden || host.closest("[hidden]")) {
         if (claimActive && send({ type: "resize_release" })) {
           claimActive = false;
@@ -477,8 +483,11 @@ export function TerminalView({
   useEffect(() => {
     const terminal = terminalRef.current;
     if (active && terminal) focusTerminal(terminal);
-    capacityReporterRef.current();
-  }, [active]);
+    const sourceVisibilityChanged =
+      previousSourceVisibleRef.current !== sourceVisible;
+    previousSourceVisibleRef.current = sourceVisible;
+    if (!sourceVisibilityChanged) capacityReporterRef.current();
+  }, [active, sourceVisible]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

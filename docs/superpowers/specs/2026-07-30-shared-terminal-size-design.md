@@ -23,8 +23,8 @@ viewports center the shared terminal grid in quiet, unmarked letterbox space.
 - Exclude read-only automation streams and connections that have not reported a
   size.
 - Center the shared grid at its native scale in larger browser viewports.
-- Release the capacity claim while a terminal tab is hidden and report it again
-  when the tab becomes visible.
+- Retain the capacity claim while switching an in-pane Terminal, Agent Log, or
+  Annotation source so source navigation cannot resize the PTY.
 - Preserve the existing terminal palette, typography, input, history, and
   reconnect behavior.
 
@@ -54,9 +54,10 @@ shape:
 Invalid claims continue to count toward the existing invalid-message policy.
 If applying a new minimum fails, the failed claim and accepted size are rolled
 back without publishing the tentative size. A `resize_release` message
-temporarily removes a hidden browser's claim from minimum calculation without
-disconnecting it. Released browsers continue receiving accepted resize events,
-so their buffers remain valid while hidden.
+temporarily removes a browser's claim from minimum calculation without
+disconnecting it when its terminal capacity is no longer available. Switching
+an in-pane source does not release the claim. Released browsers continue
+receiving accepted resize events, so their buffers remain valid while hidden.
 
 ### Browser capacity and accepted size
 
@@ -89,8 +90,9 @@ When the accepted size equals local capacity, xterm fills the host normally.
 
 - Capacities outside 1 through 1000 columns or rows are rejected before they
   enter coordination.
-- A hidden terminal releases its previous claim instead of reporting zero or
-  retaining stale capacity.
+- A terminal whose capacity is unavailable releases its previous claim instead
+  of reporting zero or retaining stale capacity; hiding only its in-pane source
+  retains the last measured claim.
 - A malformed or unknown server resize is ignored.
 - Disconnect cleanup is idempotent.
 - If the PTY cannot be resized after a disconnect, the previous accepted size
@@ -103,8 +105,8 @@ When the accepted size equals local capacity, xterm fills the host normally.
 - Server WebSocket tests cover two browser connections receiving the same
   accepted minimum.
 - Vitest covers capacity reporting, accepted resize application, prevention of
-  resize feedback, history-before-resize buffering, hidden claim release, and
-  centered letterbox geometry.
+  resize feedback, history-before-resize buffering, unavailable-capacity
+  release, in-pane source retention, and centered letterbox geometry.
 - Playwright opens the same terminal in differently sized browser pages,
   verifies a common accepted grid centered in the larger page, then closes the
   smaller page and verifies expansion to the full viewport.

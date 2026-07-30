@@ -46,5 +46,7 @@
   full-width glyph occupies the same cell geometry.
 - Center a negotiated shared terminal grid in quiet, unmarked letterbox space;
   do not imitate tmux's dotted filler or scale terminal cells.
+- Keep a terminal's negotiated size claim while switching its in-pane source;
+  Terminal, Agent Log, and Annotation tabs must not resize the PTY.
 - Exercise public automation features through the built CLI against both the
   Unix socket and TCP API; do not treat handler-only tests as transport proof.

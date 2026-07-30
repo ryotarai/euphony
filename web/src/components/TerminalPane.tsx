@@ -18,7 +18,7 @@ interface TerminalPaneProps {
   agentLogFontSize?: number;
   annotationRevision?: number | null;
   onDeselect: () => void;
-  renderTerminal(layoutVersion: number, active: boolean): ReactNode;
+  renderTerminal(layoutVersion: number, active: boolean, sourceVisible: boolean): ReactNode;
 }
 
 type PaneSource = "terminal" | "agent-log" | "annotation";
@@ -43,7 +43,7 @@ export function TerminalPane({
   const changeSource = (next: string | null) => {
     if (next !== "terminal" && next !== "agent-log" && next !== "annotation") return;
     if (next === "annotation" && !annotation) return;
-    if (source === "agent-log" && next === "terminal") {
+    if (source !== "terminal" && next === "terminal") {
       setFitVersion((current) => current + 1);
     }
     setSource(next);
@@ -63,7 +63,10 @@ export function TerminalPane({
       annotationIDRef.current = next?.id ?? null;
       setAnnotationSyncFailed(false);
       if (next && next.id !== previousID) setSource("annotation");
-      if (!next && previousID) setSource("terminal");
+      if (!next && previousID) {
+        setFitVersion((current) => current + 1);
+        setSource("terminal");
+      }
       setAnnotation(next);
     }).catch(() => {
       if (annotationIDRef.current) setAnnotationSyncFailed(true);
@@ -155,7 +158,11 @@ export function TerminalPane({
         value="terminal"
         keepMounted
       >
-        {renderTerminal(layoutVersion + fitVersion, active && source === "terminal")}
+        {renderTerminal(
+          layoutVersion + fitVersion,
+          active && source === "terminal",
+          source === "terminal",
+        )}
       </TabsContent>
       <TabsContent
         className="terminal-tab-content"
@@ -194,6 +201,7 @@ export function TerminalPane({
             onCompleted={() => {
               annotationIDRef.current = null;
               setAnnotation(null);
+              setFitVersion((current) => current + 1);
               setSource("terminal");
             }}
           />

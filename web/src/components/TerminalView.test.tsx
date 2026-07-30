@@ -767,6 +767,54 @@ test("focuses the terminal only when its pane becomes active", async () => {
   expect(focus).toHaveBeenCalledTimes(1);
 });
 
+test("reports capacity while its visible source is in an inactive pane", async () => {
+  const socket = new FakeSocket();
+  let capacity = { cols: 100, rows: 30 };
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => capacity,
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active={false}
+      sourceVisible
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  act(() => socket.dispatchEvent(new Event("open")));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 100, rows: 30 },
+  ]);
+
+  capacity = { cols: 90, rows: 25 };
+  act(() => window.dispatchEvent(new Event("resize")));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 100, rows: 30 },
+    { type: "resize", cols: 90, rows: 25 },
+  ]);
+});
+
 test("releases a hidden terminal capacity and reports it again when visible", async () => {
   const socket = new FakeSocket();
   const terminal = {
@@ -820,6 +868,70 @@ test("releases a hidden terminal capacity and reports it again when visible", as
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "resize", cols: 120, rows: 40 },
     { type: "resize_release" },
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+});
+
+test("retains terminal capacity while its source tab is hidden", async () => {
+  const socket = new FakeSocket();
+  let capacity = { cols: 120, rows: 40 };
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => capacity,
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const createTerminal = () => terminal;
+  const createSocket = () => socket;
+  const view = (sourceActive: boolean, hidden = !sourceActive) => (
+    <div hidden={hidden}>
+      <TerminalView
+        session={runningSession}
+        api={api}
+        active={sourceActive}
+        sourceVisible={sourceActive}
+        createTerminal={createTerminal}
+        createSocket={createSocket}
+      />
+    </div>
+  );
+
+  const { rerender } = render(view(true));
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  act(() => socket.dispatchEvent(new Event("open")));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+
+  capacity = { cols: 60, rows: 10 };
+  rerender(view(false, false));
+  act(() => window.dispatchEvent(new Event("resize")));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+
+  rerender(view(false));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+
+  capacity = { cols: 120, rows: 40 };
+  rerender(view(true));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "resize", cols: 120, rows: 40 },
   ]);
 });

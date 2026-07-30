@@ -89,6 +89,7 @@ interface AppProps {
     reconnectSignal: number,
     fontSize: number,
     terminalHistoryLimit: number,
+    sourceVisible: boolean,
   ) => ReactNode;
 }
 
@@ -355,12 +356,14 @@ export function App({
     reconnectSignal,
     fontSize,
     terminalHistoryLimit,
+    sourceVisible,
   ) => (
     <TerminalView
       key={session.id}
       session={session}
       api={api}
       active={active}
+      sourceVisible={sourceVisible}
       layoutVersion={layoutVersion}
       onConnectionChange={onConnectionChange}
       reconnectSignal={reconnectSignal}
@@ -2303,7 +2306,7 @@ export function App({
                     syncSelection && syncEvents ? annotationRevision : null
                   }
                   onDeselect={() => selectSession(pane.id, true, true, false)}
-                  renderTerminal={(paneLayoutVersion, terminalActive) =>
+                  renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
                     renderTerminal(
                       pane,
                       api,
@@ -2313,6 +2316,7 @@ export function App({
                       reconnectSignals[pane.id] ?? 0,
                       previewSettings.terminalFontSize,
                       settings.terminalHistoryLimit,
+                      sourceVisible,
                     )
                   }
                 />

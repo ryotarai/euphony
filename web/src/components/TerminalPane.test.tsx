@@ -29,6 +29,7 @@ function paneAPI(overrides: Partial<ApiClient> = {}): ApiClient {
 test("switches pane sources while keeping the terminal mounted", async () => {
   const user = userEvent.setup();
   const layoutVersions: number[] = [];
+  const sourceVisibilities: boolean[] = [];
   render(
     <TerminalPane
       session={session}
@@ -38,8 +39,9 @@ test("switches pane sources while keeping the terminal mounted", async () => {
       tabShortcut="Meta+L"
       agentLogFontSize={17}
       onDeselect={() => undefined}
-      renderTerminal={(layoutVersion) => {
+      renderTerminal={(layoutVersion, _active, sourceVisible) => {
         layoutVersions.push(layoutVersion);
+        sourceVisibilities.push(sourceVisible);
         return <div aria-label="live terminal">terminal</div>;
       }}
     />,
@@ -51,6 +53,7 @@ test("switches pane sources while keeping the terminal mounted", async () => {
   await user.click(screen.getByRole("tab", { name: "Agent log" }));
   expect(screen.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   expect(screen.getByLabelText("live terminal")).not.toBeVisible();
+  expect(sourceVisibilities.at(-1)).toBe(false);
   expect(screen.getByRole("region", { name: "Agent log" })).toHaveStyle({
     "--agent-log-font-size": "17px",
   });
@@ -58,6 +61,7 @@ test("switches pane sources while keeping the terminal mounted", async () => {
   await user.click(screen.getByRole("tab", { name: "Terminal" }));
   expect(screen.getByLabelText("live terminal")).toBeVisible();
   expect(layoutVersions.at(-1)).toBe(3);
+  expect(sourceVisibilities.at(-1)).toBe(true);
 });
 
 test("keeps an independent selected source for each pane instance", async () => {
@@ -251,6 +255,9 @@ test("deselects the terminal from the pane rail", async () => {
 });
 
 test("discovers a new annotation as a third tab and selects it", async () => {
+  const user = userEvent.setup();
+  const layoutVersions: number[] = [];
+  const sourceVisibilities: boolean[] = [];
   const getCurrentAnnotation = vi.fn()
     .mockResolvedValueOnce(null)
     .mockResolvedValueOnce({
@@ -262,6 +269,15 @@ test("discovers a new annotation as a third tab and selects it", async () => {
       createdAt: "2026-07-30T00:00:00Z",
     });
   const api = paneAPI({ getCurrentAnnotation });
+  const renderTerminal = (
+    layoutVersion: number,
+    _active: boolean,
+    sourceVisible: boolean,
+  ) => {
+    layoutVersions.push(layoutVersion);
+    sourceVisibilities.push(sourceVisible);
+    return <div aria-label="live terminal">terminal</div>;
+  };
   const { rerender } = render(
     <TerminalPane
       session={session}
@@ -271,7 +287,7 @@ test("discovers a new annotation as a third tab and selects it", async () => {
       annotationRevision={0}
       tabShortcut="Meta+L"
       onDeselect={() => undefined}
-      renderTerminal={() => <div aria-label="live terminal">terminal</div>}
+      renderTerminal={renderTerminal}
     />,
   );
   expect(await screen.findByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
@@ -286,14 +302,20 @@ test("discovers a new annotation as a third tab and selects it", async () => {
       annotationRevision={1}
       tabShortcut="Meta+L"
       onDeselect={() => undefined}
-      renderTerminal={() => <div aria-label="live terminal">terminal</div>}
+      renderTerminal={renderTerminal}
     />,
   );
 
   expect(await screen.findByRole("tab", { name: "Annotation" })).toHaveAttribute("data-active");
   expect(screen.getByRole("heading", { name: "Review" })).toBeVisible();
   expect(screen.getByLabelText("live terminal")).not.toBeVisible();
+  expect(sourceVisibilities.at(-1)).toBe(false);
   expect(document.querySelector(".agent-log-view")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("tab", { name: "Terminal" }));
+  expect(screen.getByLabelText("live terminal")).toBeVisible();
+  expect(layoutVersions.at(-1)).toBe(2);
+  expect(sourceVisibilities.at(-1)).toBe(true);
 });
 
 test("keeps a displayed annotation and offers retry after refresh failure", async () => {
