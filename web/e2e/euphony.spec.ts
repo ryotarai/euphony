@@ -672,6 +672,15 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
     name: /^New terminal in directory…/,
   });
   await expect(firstAction).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() =>
+    firstAction.evaluate((element) => {
+      const list = element.closest('[data-slot="command-list"]');
+      if (!list) return false;
+      const itemBounds = element.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return itemBounds.top >= listBounds.top && itemBounds.bottom <= listBounds.bottom;
+    }),
+  ).toBe(true);
   await expect.poll(() => commandList.evaluate((element) => element.scrollTop))
     .toBeLessThan(scrolledDown);
 });
