@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { App, attentionTransitions } from "./App";
+import { App, agentLaunchTransitions, attentionTransitions } from "./App";
 import type { Session, Settings } from "./types";
 
 const defaultSettings: Settings = {
@@ -56,6 +56,22 @@ test("detects only new transitions into attention", () => {
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);
   expect(attentionTransitions([attention], [attention])).toEqual([]);
 });
+
+test.each(["claude", "codex"] as const)(
+  "detects a plain terminal launch for the %s agent",
+  (agent) => {
+    const launched = {
+      ...plainTerminalSession,
+      agent,
+      agentStatus: "waiting",
+      agentTitle: `${agent} task`,
+    };
+
+    expect(
+      agentLaunchTransitions([plainTerminalSession], [launched]).map((session) => session.id),
+    ).toEqual(["session-plain"]);
+  },
+);
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
