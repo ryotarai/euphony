@@ -178,4 +178,3 @@ and inspect `git diff --stat` for unrelated changes.
 Commit the verified work on `codex/pane-changes-tab`, merge it into the current
 base branch, and confirm the base worktree's pre-existing uncommitted changes
 remain untouched.
-
