@@ -30,12 +30,122 @@ type Session struct {
 	history        [][]byte
 	historySize    int
 	historyLimit   int
-	subscribers    map[uint64]chan []byte
+	subscribers    map[uint64]*outputSubscriber
 	nextSubscriber uint64
 	outputClosed   bool
 }
 
 const historyChunkSize = 32 * 1024
+
+type outputSubscriber struct {
+	mu        sync.Mutex
+	queue     [][]byte
+	head      int
+	closed    bool
+	aborted   bool
+	notify    chan struct{}
+	abort     chan struct{}
+	output    chan []byte
+	abortOnce sync.Once
+}
+
+// outputSubscriber keeps the replay-to-live handoff lossless without blocking
+// the PTY reader while a client is still receiving its history snapshot.
+func newOutputSubscriber() *outputSubscriber {
+	subscriber := &outputSubscriber{
+		notify: make(chan struct{}, 1),
+		abort:  make(chan struct{}),
+		output: make(chan []byte, 64),
+	}
+	go subscriber.run()
+	return subscriber
+}
+
+func (s *outputSubscriber) enqueue(data []byte) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.queue = append(s.queue, data)
+	s.mu.Unlock()
+	s.signal()
+}
+
+func (s *outputSubscriber) finish() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	s.signal()
+}
+
+func (s *outputSubscriber) abortOutput() {
+	s.mu.Lock()
+	s.closed = true
+	s.aborted = true
+	s.queue = nil
+	s.head = 0
+	s.mu.Unlock()
+	s.abortOnce.Do(func() {
+		close(s.abort)
+	})
+	s.signal()
+}
+
+func (s *outputSubscriber) signal() {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (s *outputSubscriber) run() {
+	defer close(s.output)
+	for {
+		data, ready, open := s.next()
+		if !open {
+			return
+		}
+		if !ready {
+			select {
+			case <-s.notify:
+			case <-s.abort:
+				return
+			}
+			continue
+		}
+		select {
+		case s.output <- data:
+		case <-s.abort:
+			return
+		}
+	}
+}
+
+func (s *outputSubscriber) next() ([]byte, bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.aborted {
+		return nil, false, false
+	}
+	if s.head < len(s.queue) {
+		data := s.queue[s.head]
+		s.queue[s.head] = nil
+		s.head++
+		if s.head == len(s.queue) {
+			s.queue = nil
+			s.head = 0
+		} else if s.head >= 1024 && s.head*2 >= len(s.queue) {
+			s.queue = append([][]byte(nil), s.queue[s.head:]...)
+			s.head = 0
+		}
+		return data, true, true
+	}
+	if s.closed {
+		return nil, false, false
+	}
+	return nil, false, true
+}
 
 func (s *Session) Write(data []byte) (int, error) {
 	s.fileMu.Lock()
@@ -64,11 +174,11 @@ func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {
 	history := append([][]byte(nil), s.history...)
 	id := s.nextSubscriber
 	s.nextSubscriber++
-	output := make(chan []byte, 64)
+	subscriber := newOutputSubscriber()
 	if s.outputClosed {
-		close(output)
+		subscriber.finish()
 	} else {
-		s.subscribers[id] = output
+		s.subscribers[id] = subscriber
 	}
 	s.outputMu.Unlock()
 
@@ -78,12 +188,12 @@ func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {
 			s.outputMu.Lock()
 			if current, ok := s.subscribers[id]; ok {
 				delete(s.subscribers, id)
-				close(current)
+				current.abortOutput()
 			}
 			s.outputMu.Unlock()
 		})
 	}
-	return history, output, unsubscribe
+	return history, subscriber.output, unsubscribe
 }
 
 func (s *Session) pump() {
@@ -97,9 +207,9 @@ func (s *Session) pump() {
 		if err != nil {
 			s.outputMu.Lock()
 			s.outputClosed = true
-			for id, output := range s.subscribers {
+			for id, subscriber := range s.subscribers {
 				delete(s.subscribers, id)
-				close(output)
+				subscriber.finish()
 			}
 			s.outputMu.Unlock()
 			return
@@ -117,13 +227,8 @@ func (s *Session) publish(data []byte) {
 		data = data[size:]
 	}
 	s.trimHistoryLocked()
-	for id, output := range s.subscribers {
-		select {
-		case output <- chunk:
-		default:
-			delete(s.subscribers, id)
-			close(output)
-		}
+	for _, subscriber := range s.subscribers {
+		subscriber.enqueue(chunk)
 	}
 	s.outputMu.Unlock()
 }

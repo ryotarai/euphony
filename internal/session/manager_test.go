@@ -710,7 +710,7 @@ func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
 func TestSessionHistoryLimitRetainsNewestBytes(t *testing.T) {
 	running := &Session{
 		historyLimit: 5,
-		subscribers:  make(map[uint64]chan []byte),
+		subscribers:  make(map[uint64]*outputSubscriber),
 	}
 
 	running.publish([]byte("abc"))
@@ -726,7 +726,7 @@ func TestSessionHistoryLimitRetainsNewestBytes(t *testing.T) {
 func TestSessionHistorySnapshotUsesBoundedChunks(t *testing.T) {
 	running := &Session{
 		historyLimit: 128 * 1024,
-		subscribers:  make(map[uint64]chan []byte),
+		subscribers:  make(map[uint64]*outputSubscriber),
 	}
 
 	running.publish(make([]byte, 70*1024))
@@ -746,7 +746,7 @@ func TestSessionHistorySnapshotUsesBoundedChunks(t *testing.T) {
 func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
 	running := &Session{
 		historyLimit: 0,
-		subscribers:  make(map[uint64]chan []byte),
+		subscribers:  make(map[uint64]*outputSubscriber),
 	}
 
 	running.publish([]byte("abc"))
@@ -759,6 +759,31 @@ func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
 	}
 }
 
+func TestSubscriberBuffersLiveOutputWhileHistoryReplays(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+
+	const chunkCount = 80
+	for index := range chunkCount {
+		running.publish([]byte{byte(index)})
+	}
+
+	for index := range chunkCount {
+		select {
+		case chunk, ok := <-output:
+			if !ok {
+				t.Fatalf("output closed after %d chunks, want %d", index, chunkCount)
+			}
+			if len(chunk) != 1 || chunk[0] != byte(index) {
+				t.Fatalf("chunk %d = %v, want [%d]", index, chunk, index)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out after %d chunks, want %d", index, chunkCount)
+		}
+	}
+}
+
 func TestRegisterSessionAppliesLatestHistoryLimit(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	settings := DefaultSettings()
@@ -766,7 +791,7 @@ func TestRegisterSessionAppliesLatestHistoryLimit(t *testing.T) {
 	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
 		t.Fatalf("UpdateSettings() error = %v", err)
 	}
-	running := &Session{subscribers: make(map[uint64]chan []byte)}
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
 
 	manager.registerSession("one", &entry{session: running})
 
@@ -785,7 +810,7 @@ func TestUpdateSettingsTrimsHistoryForRunningSessions(t *testing.T) {
 		historyLimit: 10,
 		history:      [][]byte{[]byte("0123456789")},
 		historySize:  10,
-		subscribers:  make(map[uint64]chan []byte),
+		subscribers:  make(map[uint64]*outputSubscriber),
 	}
 	manager.sessions["one"] = &entry{session: running}
 	settings := DefaultSettings()

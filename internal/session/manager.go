@@ -267,7 +267,7 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 			terminal:    terminal,
 			waitDone:    make(chan struct{}),
 			pumpDone:    make(chan struct{}),
-			subscribers: make(map[uint64]chan []byte),
+			subscribers: make(map[uint64]*outputSubscriber),
 		},
 	}, nil
 }
