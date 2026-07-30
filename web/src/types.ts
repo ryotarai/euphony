@@ -69,7 +69,12 @@ export interface APIEvent<T = unknown> {
   data: T;
 }
 
-export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";
+export type AgentLogEntryKind =
+  | "message"
+  | "thinking"
+  | "tool"
+  | "tool_result"
+  | "tool_group";
 
 export interface AgentLogEntry {
   id: string;
@@ -77,6 +82,7 @@ export interface AgentLogEntry {
   role?: "user" | "assistant";
   title?: string;
   content?: string;
+  toolCalls?: number;
   timestamp?: string;
 }
 
@@ -84,6 +90,15 @@ export interface AgentTranscript {
   agent: "claude" | "codex";
   sessionId: string;
   entries: AgentLogEntry[];
+  startCursor?: string;
+  endCursor?: string;
+  nextCursor?: string;
+}
+
+export interface AgentLogRequest {
+  etag?: string;
+  before?: string;
+  after?: string;
 }
 
 export interface AgentLogResult {
