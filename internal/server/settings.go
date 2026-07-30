@@ -27,6 +27,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalFontSize     float64  `json:"terminalFontSize"`
 		AgentLogFontSize     float64  `json:"agentLogFontSize"`
 		TerminalHistoryLimit *float64 `json:"terminalHistoryLimit"`
+		AutoSelectAttention  *bool    `json:"autoSelectAttention"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -39,7 +40,8 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validFontSize(input.InterfaceFontSize) ||
 		!validFontSize(input.TerminalFontSize) ||
 		!validFontSize(input.AgentLogFontSize) ||
-		!validTerminalHistoryLimit(input.TerminalHistoryLimit) {
+		!validTerminalHistoryLimit(input.TerminalHistoryLimit) ||
+		input.AutoSelectAttention == nil {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
 	}
@@ -52,6 +54,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalFontSize:     int(input.TerminalFontSize),
 		AgentLogFontSize:     int(input.AgentLogFontSize),
 		TerminalHistoryLimit: int(*input.TerminalHistoryLimit),
+		AutoSelectAttention:  *input.AutoSelectAttention,
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")

@@ -77,7 +77,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			interface_font_size INTEGER NOT NULL DEFAULT 16,
 			terminal_font_size INTEGER NOT NULL DEFAULT 14,
 			agent_log_font_size INTEGER NOT NULL DEFAULT 14,
-			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576
+			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576,
+			auto_select_attention INTEGER NOT NULL DEFAULT 1
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -131,6 +132,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add terminal history limit: %w", err)
 		}
 	}
+	hasAutoSelectAttention, err := s.hasColumn(ctx, "settings", "auto_select_attention")
+	if err != nil {
+		return err
+	}
+	if !hasAutoSelectAttention {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN auto_select_attention INTEGER NOT NULL DEFAULT 1",
+		); err != nil {
+			return fmt.Errorf("add auto-select attention setting: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name         string
 		defaultValue int
@@ -160,7 +172,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 6"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 7"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -193,11 +205,11 @@ func (s *SQLiteStore) hasColumn(ctx context.Context, table, column string) (bool
 
 func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
-	var collapsed int
+	var collapsed, autoSelectAttention int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
 			interface_font_size, terminal_font_size, agent_log_font_size,
-			terminal_history_limit
+			terminal_history_limit, auto_select_attention
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -208,11 +220,13 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&result.TerminalFontSize,
 		&result.AgentLogFontSize,
 		&result.TerminalHistoryLimit,
+		&autoSelectAttention,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
 	}
 	result.SidebarCollapsed = collapsed != 0
+	result.AutoSelectAttention = autoSelectAttention != 0
 	return result, nil
 }
 
@@ -221,14 +235,18 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	if settings.SidebarCollapsed {
 		collapsed = 1
 	}
+	autoSelectAttention := 0
+	if settings.AutoSelectAttention {
+		autoSelectAttention = 1
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
 			interface_font_size = ?, terminal_font_size = ?, agent_log_font_size = ?,
-			terminal_history_limit = ?
+			terminal_history_limit = ?, auto_select_attention = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.AgentLogFontSize,
-		settings.TerminalHistoryLimit)
+		settings.TerminalHistoryLimit, autoSelectAttention)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}

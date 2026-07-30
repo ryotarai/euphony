@@ -63,6 +63,7 @@ type Settings struct {
 	TerminalFontSize     int    `json:"terminalFontSize"`
 	AgentLogFontSize     int    `json:"agentLogFontSize"`
 	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
+	AutoSelectAttention  bool   `json:"autoSelectAttention"`
 }
 
 const (
@@ -80,6 +81,7 @@ func DefaultSettings() Settings {
 		TerminalFontSize:     14,
 		AgentLogFontSize:     14,
 		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
+		AutoSelectAttention:  true,
 	}
 }
 

@@ -13,6 +13,7 @@ const defaultSettings: Settings = {
   terminalFontSize: 14,
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
+  autoSelectAttention: true,
 };
 
 const runningSession: Session = {
@@ -91,6 +92,111 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
     );
   });
   expect(await screen.findByLabelText("Claude waiting")).toBeVisible();
+});
+
+test("selects attention transitions without moving focus or acknowledging them", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+      )
+      .mockImplementation(() =>
+        jsonResponse([
+          runningSession,
+          { ...secondRunningSession, needsAttention: true },
+          { ...thirdRunningSession, needsAttention: true },
+        ]),
+      );
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session, _api, active) => (
+          <div
+            aria-label={`${session.id} terminal pane`}
+            data-active={String(active)}
+          />
+        )}
+      />,
+    );
+
+    expect(await screen.findByLabelText("session-1 terminal pane")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(await screen.findByLabelText("session-2 terminal pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    expect(screen.getByLabelText("session-3 terminal pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Select Codex" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Select Claude" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith("/acknowledge-attention") &&
+          init?.method === "POST",
+      ),
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("does not select attention transitions when auto-selection is disabled", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, secondRunningSession]),
+      )
+      .mockImplementation(() =>
+        jsonResponse([
+          runningSession,
+          { ...secondRunningSession, needsAttention: true },
+        ]),
+      );
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={{
+          ...defaultSettings,
+          autoSelectAttention: false,
+        }}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.id} terminal pane`} />
+        )}
+      />,
+    );
+
+    await screen.findByLabelText("session-1 terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Claude" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 function jsonResponse(body: unknown, status = 200) {
@@ -1700,6 +1806,53 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         terminalFontSize: 17,
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
+      }),
+    }),
+  );
+});
+
+test("saves attention auto-selection and discards canceled draft changes", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.id} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const autoSelect = screen.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  });
+  expect(autoSelect).toBeChecked();
+  await user.click(autoSelect);
+  await user.keyboard("{Escape}");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const reopenedAutoSelect = screen.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  });
+  expect(reopenedAutoSelect).toBeChecked();
+  await user.click(reopenedAutoSelect);
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({
+        ...defaultSettings,
+        autoSelectAttention: false,
       }),
     }),
   );

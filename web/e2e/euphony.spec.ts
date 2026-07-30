@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 
+const requestedPort = process.env.EUPHONY_E2E_PORT;
+const e2ePort = requestedPort && /^\d+$/.test(requestedPort)
+  ? requestedPort
+  : "18080";
+const claudeProjectsRoot = `/tmp/euphony-e2e-${e2ePort}-claude/projects`;
+
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
     headers: {
@@ -16,6 +22,7 @@ async function clearSessions(page: Page) {
       terminalFontSize: 14,
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
+      autoSelectAttention: true,
     },
   });
   const existing = await page.request.get("/api/sessions", {
@@ -168,8 +175,9 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await clearSessions(page);
   const terminal = await createSession(page, "Log stream", "/tmp");
   const sessionID = `e2e-${terminal.id}`;
-  const transcriptPath = `/tmp/euphony-e2e-claude/projects/euphony/${sessionID}.jsonl`;
-  await mkdir("/tmp/euphony-e2e-claude/projects/euphony", { recursive: true });
+  const transcriptDirectory = `${claudeProjectsRoot}/euphony`;
+  const transcriptPath = `${transcriptDirectory}/${sessionID}.jsonl`;
+  await mkdir(transcriptDirectory, { recursive: true });
   await writeFile(
     transcriptPath,
     Array.from({ length: 40 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
@@ -275,6 +283,43 @@ test("keeps the agent log open when a filtered running agent starts waiting", as
   await expect(firstPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
     "data-active",
   );
+});
+
+test("auto-selects an attention terminal without moving focus", async ({ page }) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  const second = await createSession(page, "Second", "/tmp");
+
+  await page.goto("/?token=test-token");
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("First pane", { exact: true })).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+
+  await reportAgent(page, second.id, "claude", "Reviewing changes", "running");
+  await reportAgent(page, second.id, "claude", "Waiting for review");
+
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("First pane", { exact: true })).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  await expect(page.getByLabel("Second pane", { exact: true })).toHaveAttribute(
+    "data-active",
+    "false",
+  );
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{
+      id: string;
+      needsAttention?: boolean;
+    }>;
+    return sessions.find((session) => session.id === second.id)?.needsAttention;
+  }).toBe(true);
+  expect(new URL(page.url()).searchParams.get("focus")).toBe(first.id);
 });
 
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {
@@ -912,8 +957,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("Pane tab toggle").fill("Ctrl+J");
   await settingsDialog.getByLabel("History buffer").fill("8");
   await settingsDialog.getByLabel("Interface").fill("18");
-  await settingsDialog.getByLabel("Terminal").fill("17");
+  await settingsDialog.getByLabel("Terminal", { exact: true }).fill("17");
   await settingsDialog.getByLabel("Agent log").fill("16");
+  const autoSelectAttention = settingsDialog.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  });
+  await expect(autoSelectAttention).toBeChecked();
+  await autoSelectAttention.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
   await expect(page.locator(".agent-log-view").first()).toHaveCSS(
@@ -927,8 +977,11 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const savedSettingsDialog = page.getByRole("dialog", { name: "Settings" });
   await expect(savedSettingsDialog.getByLabel("History buffer")).toHaveValue("8");
   await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
-  await expect(savedSettingsDialog.getByLabel("Terminal")).toHaveValue("17");
+  await expect(savedSettingsDialog.getByLabel("Terminal", { exact: true })).toHaveValue("17");
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
+  await expect(savedSettingsDialog.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  })).not.toBeChecked();
   await savedSettingsDialog.getByRole("checkbox", { name: "Unlimited history" }).check();
   await expect(savedSettingsDialog.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Save settings" }).click();

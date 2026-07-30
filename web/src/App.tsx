@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
@@ -84,6 +85,7 @@ const defaultSettings: Settings = {
   terminalFontSize: 14,
   agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
+  autoSelectAttention: true,
 };
 
 function historyLimitDraft(limit: number): string {
@@ -308,6 +310,9 @@ export function App({
   const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
     settings.terminalHistoryLimit === 0,
   );
+  const [autoSelectAttentionDraft, setAutoSelectAttentionDraft] = useState(
+    settings.autoSelectAttention,
+  );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
     terminalFontSize: String(settings.terminalFontSize),
@@ -334,6 +339,7 @@ export function App({
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
+  const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const previewSettings = useMemo(() => {
@@ -372,6 +378,7 @@ export function App({
       setPaneTabShortcutDraft(loaded.paneTabShortcut);
       setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
       setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
+      setAutoSelectAttentionDraft(loaded.autoSelectAttention);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -437,6 +444,9 @@ export function App({
         pendingAgentLaunchIDsRef.current = new Set(
           agentLaunchTransitions(previousSessionsRef.current, items).map((session) => session.id),
         );
+        pendingAttentionSelectionIDsRef.current = new Set(
+          transitions.map((session) => session.id),
+        );
         previousSessionsRef.current = items;
         setSessions((current) =>
           current && sessionsEqual(current, items) ? current : items,
@@ -491,6 +501,13 @@ export function App({
   ]);
 
   useEffect(() => {
+    const available = new Set(sessions?.map((session) => session.id) ?? []);
+    const attentionIDs = settings.autoSelectAttention
+      ? [...pendingAttentionSelectionIDsRef.current].filter((id) => available.has(id))
+      : [];
+    pendingAttentionSelectionIDsRef.current.clear();
+    attentionIDs.forEach((id) => filterSelectedIDsRef.current.delete(id));
+
     const promotedID =
       focusedID &&
       selectedIDs.includes(focusedID) &&
@@ -506,6 +523,7 @@ export function App({
         ...new Set([
           ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
           promotedID,
+          ...attentionIDs,
         ]),
       ];
       setSelectedIDs(next);
@@ -516,7 +534,20 @@ export function App({
       return;
     }
 
-    if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) return;
+    if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) {
+      if (attentionIDs.length === 0) return;
+      const next = [...new Set([...selectedIDs, ...attentionIDs])];
+      setSelectedIDs(next);
+      writeWorkspaceToURL(
+        next,
+        pinnedIDs,
+        focusedID,
+        statusFilters,
+        cwdFilters,
+        "replace",
+      );
+      return;
+    }
     const matches = sessions
       .filter((session) => matchesWorkspaceFilter(session, statusFilters, cwdFilters))
       .map((session) => session.id);
@@ -524,6 +555,7 @@ export function App({
     const next = [
       ...selectedIDs.filter((id) => !previousMatches.has(id)),
       ...matches,
+      ...attentionIDs,
     ].filter((id, index, values) => values.indexOf(id) === index);
     filterSelectedIDsRef.current = new Set(
       matches.filter((id) => !pinnedIDs.includes(id)),
@@ -541,7 +573,15 @@ export function App({
         "replace",
       );
     }
-  }, [sessions, statusFilters, cwdFilters, selectedIDs, pinnedIDs, focusedID]);
+  }, [
+    sessions,
+    statusFilters,
+    cwdFilters,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+    settings.autoSelectAttention,
+  ]);
 
   useEffect(() => {
     if (!api || !sessions || !focusedID) return;
@@ -1093,6 +1133,7 @@ export function App({
     setPaneTabShortcutDraft(settings.paneTabShortcut);
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
+    setAutoSelectAttentionDraft(settings.autoSelectAttention);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -1166,6 +1207,7 @@ export function App({
       terminalFontSize: fontSizes.terminalFontSize!,
       agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
+      autoSelectAttention: autoSelectAttentionDraft,
     });
     setSettingsOpen(false);
   }
@@ -1536,11 +1578,11 @@ export function App({
         </DialogContent>
       </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure workspace shortcuts, text sizing, and terminal history.
+              Configure workspace shortcuts, selection, text sizing, and terminal history.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1616,6 +1658,22 @@ export function App({
                 {settingsError?.field === "terminalHistoryLimit" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="auto-select-attention"
+                  checked={autoSelectAttentionDraft}
+                  onCheckedChange={(checked) =>
+                    setAutoSelectAttentionDraft(Boolean(checked))}
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="auto-select-attention">
+                    Auto-select attention terminals
+                  </FieldLabel>
+                  <FieldDescription>
+                    Add them to the workspace without moving focus.
+                  </FieldDescription>
+                </FieldContent>
               </Field>
               <section className="font-size-section" aria-labelledby="font-size-heading">
                 <div className="settings-section-heading">
