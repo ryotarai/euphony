@@ -231,6 +231,7 @@ export function App({
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
+  const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
@@ -361,6 +362,43 @@ export function App({
       writeWorkspaceToURL(next, nextFocus, statusFilters, cwdFilters, "replace");
     }
   }, [sessions, statusFilters, cwdFilters, selectedIDs, focusedID]);
+
+  useEffect(() => {
+    if (!api || !sessions || !focusedID) return;
+    const focused = sessions.find((session) => session.id === focusedID);
+    if (
+      !focused ||
+      sessionActivity(focused) !== "attention" ||
+      pendingAttentionAcknowledgementsRef.current.has(focusedID)
+    ) {
+      return;
+    }
+    pendingAttentionAcknowledgementsRef.current.add(focusedID);
+    api.acknowledgeAttention(focusedID).then((acknowledged) => {
+      setSessions((current) =>
+        current?.map((session) =>
+          session.id === acknowledged.id &&
+          sessionActivity(session) === "attention"
+            ? acknowledged
+            : session
+        ) ?? current
+      );
+      previousSessionsRef.current = previousSessionsRef.current.map((session) =>
+        session.id === acknowledged.id &&
+        sessionActivity(session) === "attention"
+          ? acknowledged
+          : session
+      );
+    }).catch((error: unknown) => {
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The terminal attention state could not be acknowledged.",
+      );
+    }).finally(() => {
+      pendingAttentionAcknowledgementsRef.current.delete(focusedID);
+    });
+  }, [api, sessions, focusedID]);
 
   useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {

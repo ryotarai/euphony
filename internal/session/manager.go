@@ -296,6 +296,25 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	return item.metadata, nil
 }
 
+func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.sessions[id]
+	if !ok {
+		return Metadata{}, ErrNotFound
+	}
+	if item.metadata.AgentStatus != "attention" {
+		return item.metadata, nil
+	}
+	item.metadata.AgentStatus = "waiting"
+	if m.store != nil {
+		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+			return Metadata{}, err
+		}
+	}
+	return item.metadata, nil
+}
+
 func (m *Manager) UpdateCWD(id, cwd string) (Metadata, error) {
 	cwd, err := normalizeReportedCWD(cwd)
 	if err != nil {

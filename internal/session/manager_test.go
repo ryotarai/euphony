@@ -224,6 +224,46 @@ func TestUpdateAgentPromotesRunningToAttentionAndPreservesTitle(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeAttentionRestoresWaitingAndPreservesCurrentStatus(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running) error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(waiting) error = %v", err)
+	}
+
+	acknowledged, err := manager.AcknowledgeAttention(metadata.ID)
+	if err != nil {
+		t.Fatalf("AcknowledgeAttention() error = %v", err)
+	}
+	if acknowledged.AgentStatus != "waiting" {
+		t.Fatalf("AgentStatus = %q, want waiting", acknowledged.AgentStatus)
+	}
+
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running again) error = %v", err)
+	}
+	acknowledged, err = manager.AcknowledgeAttention(metadata.ID)
+	if err != nil {
+		t.Fatalf("AcknowledgeAttention(running) error = %v", err)
+	}
+	if acknowledged.AgentStatus != "running" {
+		t.Fatalf("AgentStatus = %q, want running", acknowledged.AgentStatus)
+	}
+}
+
 func TestCreateUsesRequestedWorkingDirectoryAndUTF8Locale(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

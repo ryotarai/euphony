@@ -117,6 +117,34 @@ func TestTerminalHookUpdatesSessionMetadata(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeAttention(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":"`+metadata.ID+`","agent":"claude","status":"running"}`)
+	performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":"`+metadata.ID+`","agent":"claude","status":"waiting"}`)
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/sessions/"+metadata.ID+"/acknowledge-attention", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST acknowledge attention status = %d, body = %s",
+			response.Code, response.Body.String())
+	}
+	var acknowledged session.Metadata
+	decodeResponse(t, response, &acknowledged)
+	if acknowledged.AgentStatus != "waiting" {
+		t.Fatalf("AgentStatus = %q, want waiting", acknowledged.AgentStatus)
+	}
+}
+
 func performRequest(t *testing.T, srv *Server, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
