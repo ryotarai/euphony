@@ -1,4 +1,4 @@
-.PHONY: build dev test test-cli
+.PHONY: build dev test test-cli test-e2e
 
 dev:
 	./scripts/dev.sh
@@ -12,7 +12,10 @@ test:
 	bash scripts/dev_test.sh
 	go test ./...
 	cd web && npm test -- --run && npm run typecheck
-	$(MAKE) test-cli
+	$(MAKE) test-e2e
 
 test-cli:
 	cd web && npx playwright test e2e/automation.spec.ts --workers=1
+
+test-e2e:
+	cd web && npx playwright test --workers=1

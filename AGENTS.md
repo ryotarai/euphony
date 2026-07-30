@@ -31,6 +31,8 @@
   clear group filters and other pane selections, then follow that session.
 - Model unread attention independently from the agent's current status; never
   replace statuses such as `waiting` or `running` with an attention status.
+- Automatically selecting an attention-needing terminal must not move focus;
+  acknowledge attention only after the user explicitly focuses that terminal.
 - Give rendered Markdown tables explicit cell padding and borders so dense
   transcript data remains legible.
 - Do not let agent lifecycle transitions reset a pane's user-selected Terminal

@@ -30,6 +30,7 @@ export interface Settings {
   terminalFontSize: number;
   agentLogFontSize: number;
   terminalHistoryLimit: number;
+  autoSelectAttention: boolean;
 }
 
 export interface CwdSelectionFilter {

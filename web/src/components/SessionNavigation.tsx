@@ -406,6 +406,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalFontSize: 14,
     agentLogFontSize: 14,
     terminalHistoryLimit: 1024 * 1024,
+    autoSelectAttention: true,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

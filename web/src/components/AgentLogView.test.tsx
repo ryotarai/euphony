@@ -1,8 +1,24 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 import type { ApiClient } from "../api";
 import type { AgentTranscript, Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
+
+const mermaidMocks = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(),
+}));
+
+vi.mock("mermaid", () => ({
+  default: mermaidMocks,
+}));
+
+beforeEach(() => {
+  mermaidMocks.initialize.mockClear();
+  mermaidMocks.render.mockReset().mockResolvedValue({
+    svg: '<svg role="img" aria-label="Plan to build diagram"></svg>',
+  });
+});
 
 const session: Session = {
   id: "terminal-1",
@@ -22,7 +38,7 @@ const initialLog: AgentTranscript = {
       kind: "message",
       role: "assistant",
       timestamp: "2026-07-30T01:02:03Z",
-      content: "# Result\n\n- one\n- two\n\n| Check | Result |\n| --- | --- |\n| Tests | Pass |\n\n`go test ./...`\n\n<script>alert('no')</script>",
+      content: "# Result\n\n- one\n- two\n\n| Check | Result |\n| --- | --- |\n| Tests | Pass |\n\n`go test ./...`\n\n```typescript\nconst answer = 42;\n```\n\n<script>alert('no')</script>",
     },
     {
       id: "2-0",
@@ -59,9 +75,69 @@ test("renders normalized transcript as safe semantic HTML", async () => {
   expect(within(table).getByRole("cell", { name: "Tests" })).toBeVisible();
   expect(within(table).getByRole("cell", { name: "Pass" })).toBeVisible();
   expect(screen.getByText("go test ./...")).toBeInstanceOf(HTMLElement);
+  expect(screen.getByText("const answer = 42;")).toHaveClass("language-typescript");
   expect(screen.getByText("<script>alert('no')</script>")).toBeInTheDocument();
   expect(document.querySelector("script")).toBeNull();
   expect(screen.getByText("exec_command")).toBeInTheDocument();
+});
+
+test("renders Mermaid fenced code as a diagram", async () => {
+  const mermaidLog: AgentTranscript = {
+    ...initialLog,
+    entries: [
+      {
+        id: "mermaid-1",
+        kind: "message",
+        role: "assistant",
+        content: [
+          "```mermaid",
+          "flowchart LR",
+          "  Plan --> Build",
+          "```",
+        ].join("\n"),
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: mermaidLog, etag: 'W/"mermaid"' }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  const diagram = await screen.findByRole("figure", { name: "Mermaid diagram" });
+  await waitFor(() => {
+    expect(diagram.querySelector("svg")).toBeInTheDocument();
+  });
+  expect(diagram.querySelector("code.language-mermaid")).toBeNull();
+});
+
+test("preserves Mermaid source when the diagram cannot be rendered", async () => {
+  mermaidMocks.render.mockRejectedValueOnce(new Error("Invalid diagram"));
+  const invalidMermaidLog: AgentTranscript = {
+    ...initialLog,
+    entries: [
+      {
+        id: "mermaid-invalid",
+        kind: "message",
+        role: "assistant",
+        content: "```mermaid\nflowchart definitely-invalid\n```",
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({
+      log: invalidMermaidLog,
+      etag: 'W/"invalid-mermaid"',
+    }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  const diagram = await screen.findByRole("figure", { name: "Mermaid diagram" });
+  expect(within(diagram).getByText(/flowchart definitely-invalid/)).toBeVisible();
+  expect(
+    await within(diagram).findByText("Diagram could not be rendered."),
+  ).toBeVisible();
 });
 
 test("polls with the previous etag only while active", async () => {

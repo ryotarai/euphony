@@ -4,14 +4,14 @@
 
 **Goal:** Replace the Need attention pseudo-status with a blue unread marker and mark blocked agent sessions as needing attention.
 
-**Architecture:** Keep `agentStatus` as the only source of lifecycle grouping and use `needsAttention` solely as an overlay rendered by `SessionNavigation`. Extend the manager's existing running-transition rule so both waiting and blocked destinations raise attention.
+**Architecture:** Keep `agentStatus` as the only source of lifecycle grouping and use `needsAttention` solely as an overlay rendered by `SessionNavigation` and `TerminalPane`. Extend the manager's existing running-transition rule so both waiting and blocked destinations raise attention.
 
 **Tech Stack:** Go, React 19, TypeScript, Vitest, Testing Library, Playwright, CSS
 
 ## Global Constraints
 
 - Sidebar groups are Blocked, Running, Waiting, and Terminal.
-- The attention marker is a 6px `#38bdf8` circle with an accessible `Needs attention` label.
+- The attention marker is a 6px `#38bdf8` circle with an accessible `Needs attention` description or status.
 - Existing attention acknowledgement continues to clear only `needsAttention`.
 - Legacy attention URL filters may still be parsed, but no new UI control creates them.
 
@@ -273,3 +273,80 @@ git add docs/superpowers/specs/2026-07-30-attention-dot-design.md \
   web/src/App.tsx web/src/App.test.tsx web/e2e/euphony.spec.ts
 git commit -m "fix: show unread attention as a dot"
 ```
+
+### Task 5: Pane Rail Attention Marker
+
+**Files:**
+- Modify: `web/src/components/TerminalPane.tsx`
+- Modify: `web/src/components/TerminalPane.test.tsx`
+- Modify: `web/src/styles.css`
+- Modify: `web/e2e/euphony.spec.ts`
+
+**Interfaces:**
+- Consumes: `TerminalPaneProps.session.needsAttention?: boolean`
+- Produces: `.pane-attention-indicator` in `.terminal-tab-meta`
+
+- [ ] **Step 1: Write the failing component test**
+
+Render an attention session and a regular session. Assert that the attention
+pane rail contains one visible `.attention-dot` inside a status named
+`Needs attention`, while the regular pane has no such status:
+
+```tsx
+expect(screen.getByRole("status", { name: "Needs attention" }))
+  .toContainElement(document.querySelector(".attention-dot"));
+expect(screen.getAllByRole("status", { name: "Needs attention" }))
+  .toHaveLength(1);
+```
+
+- [ ] **Step 2: Run the focused test and verify RED**
+
+Run:
+
+```bash
+npm test -- --run src/components/TerminalPane.test.tsx
+```
+
+Expected: FAIL because `TerminalPane` does not render an attention status.
+
+- [ ] **Step 3: Render the marker in the pane rail**
+
+Insert this before `.terminal-tab-source`:
+
+```tsx
+{session.needsAttention && (
+  <span
+    className="pane-attention-indicator"
+    role="status"
+    aria-label="Needs attention"
+  >
+    <span className="attention-dot" aria-hidden="true" />
+  </span>
+)}
+```
+
+- [ ] **Step 4: Align the rail marker**
+
+Add:
+
+```css
+.pane-attention-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+```
+
+Keep the shared `.attention-dot` geometry and color unchanged.
+
+- [ ] **Step 5: Verify component and browser behavior**
+
+Run:
+
+```bash
+npm test -- --run src/components/TerminalPane.test.tsx
+npx playwright test euphony.spec.ts --grep "blocked terminal with a blue attention dot" --workers=1
+```
+
+Expected: both commands pass, and Playwright observes matching 6px blue dots
+in the sidebar and pane rail.

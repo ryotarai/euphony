@@ -1910,6 +1910,12 @@ input {
   gap: 0.5rem;
 }
 
+.pane-attention-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .terminal-tab-selection {
   width: 0.875rem;
   height: 0.875rem;
@@ -2055,6 +2061,38 @@ input {
   border-radius: 0.25rem;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.agent-log-mermaid {
+  width: 100%;
+  max-width: 100%;
+  margin: 0.9em 0;
+  overflow-x: auto;
+  padding: 1rem;
+  background: #0b0d0f;
+  border: 1px solid #262626;
+  border-radius: 0.25rem;
+}
+
+.agent-log-mermaid svg {
+  display: block;
+  min-width: min(34rem, 100%);
+  height: auto;
+  margin: 0 auto;
+}
+
+.agent-log-mermaid .agent-log-mermaid-source {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.agent-log-mermaid-error {
+  margin-top: 0.65rem;
+  color: var(--muted-foreground);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: calc(var(--agent-log-font-size) * 0.786);
 }
 
 .agent-log-markdown blockquote {

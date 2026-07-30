@@ -79,6 +79,7 @@ type Settings struct {
 	TerminalFontSize     int    `json:"terminalFontSize"`
 	AgentLogFontSize     int    `json:"agentLogFontSize"`
 	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
+	AutoSelectAttention  bool   `json:"autoSelectAttention"`
 }
 
 const (
@@ -96,6 +97,7 @@ func DefaultSettings() Settings {
 		TerminalFontSize:     14,
 		AgentLogFontSize:     14,
 		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
+		AutoSelectAttention:  true,
 	}
 }
 
@@ -404,7 +406,7 @@ func (m *Manager) UpdateCWD(id, cwd string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	return m.updateCWD(id, cwd, false)
+	return m.updateCWD(id, cwd, true)
 }
 
 func normalizeReportedCWD(cwd string) (string, error) {

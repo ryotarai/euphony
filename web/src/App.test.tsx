@@ -13,6 +13,7 @@ const defaultSettings: Settings = {
   terminalFontSize: 14,
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
+  autoSelectAttention: true,
 };
 
 const runningSession: Session = {
@@ -397,6 +398,204 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
   expect(await screen.findByLabelText("Claude waiting")).toBeVisible();
 });
 
+test("selects attention transitions without moving focus or acknowledging them", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+      )
+      .mockImplementation(() =>
+        jsonResponse([
+          runningSession,
+          { ...secondRunningSession, needsAttention: true },
+          { ...thirdRunningSession, needsAttention: true },
+        ]),
+      );
+    render(
+      <App
+        syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session, _api, active) => (
+          <div
+            aria-label={`${session.id} terminal pane`}
+            data-active={String(active)}
+          />
+        )}
+      />,
+    );
+
+    expect(await screen.findByLabelText("session-1 terminal pane")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(await screen.findByLabelText("session-2 terminal pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    expect(screen.getByLabelText("session-3 terminal pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Select Codex" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Select Claude" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith("/acknowledge-attention") &&
+          init?.method === "POST",
+      ),
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("persists auto-selected attention terminals in the shared selection", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    let sessionReads = 0;
+    const writes: Array<{
+      manualTerminalIds: string[];
+      focusedTerminalId: string;
+      expectedRevision: number;
+    }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/api/sessions") {
+        sessionReads++;
+        return jsonResponse(
+          sessionReads === 1
+            ? [runningSession, secondRunningSession]
+            : [
+                runningSession,
+                { ...secondRunningSession, needsAttention: true },
+              ],
+        );
+      }
+      if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            terminalIds: ["session-1"],
+            manualTerminalIds: ["session-1"],
+            pinnedTerminalIds: [],
+            focusedTerminalId: "session-1",
+            filters: { statuses: [], cwds: [] },
+            revision: 7,
+          },
+        });
+      }
+      if (input === "/api/v1/selection" && init?.method === "PUT") {
+        const request = JSON.parse(String(init.body)) as {
+          manualTerminalIds: string[];
+          focusedTerminalId: string;
+          expectedRevision: number;
+          pinnedTerminalIds: string[];
+          filters: { statuses: string[]; cwds: unknown[] };
+        };
+        writes.push(request);
+        return jsonResponse({
+          ok: true,
+          result: {
+            terminalIds: request.manualTerminalIds,
+            manualTerminalIds: request.manualTerminalIds,
+            pinnedTerminalIds: request.pinnedTerminalIds,
+            focusedTerminalId: request.focusedTerminalId,
+            filters: request.filters,
+            revision: 8,
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        syncEvents={false}
+        renderTerminal={(session, _api, active) => (
+          <div
+            aria-label={`${session.id} terminal pane`}
+            data-active={String(active)}
+          />
+        )}
+      />,
+    );
+    await screen.findByLabelText("session-1 terminal pane");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual(expect.objectContaining({
+      manualTerminalIds: ["session-1", "session-2"],
+      focusedTerminalId: "session-1",
+      expectedRevision: 7,
+    }));
+    expect(screen.getByLabelText("session-2 terminal pane")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("does not select attention transitions when auto-selection is disabled", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, secondRunningSession]),
+      )
+      .mockImplementation(() =>
+        jsonResponse([
+          runningSession,
+          { ...secondRunningSession, needsAttention: true },
+        ]),
+      );
+    render(
+      <App
+        syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={{
+          ...defaultSettings,
+          autoSelectAttention: false,
+        }}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.id} terminal pane`} />
+        )}
+      />,
+    );
+
+    await screen.findByLabelText("session-1 terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Claude" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -726,6 +925,123 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", as
   expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["running"]);
   expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+});
+
+test("shows the five most recently executed Quick Actions first without duplicates", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  const runQuickAction = async (name: RegExp) => {
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await user.click(await screen.findByRole("option", { name }));
+  };
+
+  await runQuickAction(/^New terminal in directory…/);
+  await user.keyboard("{Escape}");
+  await runQuickAction(/^Show only Running terminals/);
+  await runQuickAction(/^Show only Waiting terminals/);
+  await runQuickAction(/^Implement v0\.2/);
+  await runQuickAction(/^Needs approval/);
+  await runQuickAction(/^Fix API/);
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const recentHeading = await screen.findByText("Recent");
+  const recentGroup = recentHeading.closest("[cmdk-group]");
+  expect(recentGroup).not.toBeNull();
+  expect(
+    within(recentGroup as HTMLElement)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual([
+    expect.stringMatching(/^Fix API/),
+    expect.stringMatching(/^Needs approval/),
+    expect.stringMatching(/^Implement v0\.2/),
+    expect.stringMatching(/^Show only Waiting terminals/),
+    expect.stringMatching(/^Show only Running terminals/),
+  ]);
+  expect(
+    within(recentGroup as HTMLElement).queryByRole("option", {
+      name: /^New terminal in directory…/,
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getAllByRole("option", { name: /^New terminal in directory…/ }),
+  ).toHaveLength(1);
+  expect(screen.getAllByRole("option", { name: /^Fix API/ })).toHaveLength(1);
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null")).toEqual([
+    "session:session-3",
+    "session:session-2",
+    "session:session-1",
+    "status:waiting",
+    "status:running",
+  ]);
+});
+
+test("discards unavailable recent Quick Actions and searches the full catalog", async () => {
+  localStorage.setItem(
+    "euphony.recentQuickActions",
+    JSON.stringify([
+      "status:exited",
+      "session:missing",
+      "session:session-2",
+      "session:session-2",
+      42,
+    ]),
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([
+      runningSession,
+      secondRunningSession,
+      {
+        ...plainTerminalSession,
+        id: "session-exited",
+        state: "exited",
+      },
+    ]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const recentHeading = await screen.findByText("Recent");
+  const recentGroup = recentHeading.closest("[cmdk-group]");
+  expect(recentGroup).not.toBeNull();
+  expect(within(recentGroup as HTMLElement).getAllByRole("option")).toHaveLength(1);
+  expect(
+    within(recentGroup as HTMLElement).getByRole("option", { name: /^Needs approval/ }),
+  ).toBeVisible();
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null")).toEqual([
+    "session:session-2",
+  ]);
+
+  await user.type(screen.getByPlaceholderText("Terminal or status"), "new terminal");
+  expect(screen.queryByText("Recent")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("option", { name: /^New terminal in directory…/ }),
+  ).toBeVisible();
 });
 
 test("scrolls the Quick Actions keyboard selection into view", async () => {
@@ -2006,6 +2322,54 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         terminalFontSize: 17,
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
+      }),
+    }),
+  );
+});
+
+test("saves attention auto-selection and discards canceled draft changes", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.id} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const autoSelect = screen.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  });
+  expect(autoSelect).toBeChecked();
+  await user.click(autoSelect);
+  await user.keyboard("{Escape}");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const reopenedAutoSelect = screen.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  });
+  expect(reopenedAutoSelect).toBeChecked();
+  await user.click(reopenedAutoSelect);
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({
+        ...defaultSettings,
+        autoSelectAttention: false,
       }),
     }),
   );

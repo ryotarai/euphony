@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
@@ -64,6 +65,14 @@ import type {
 } from "./types";
 
 const tokenKey = "euphony.token";
+const recentQuickActionsKey = "euphony.recentQuickActions";
+const recentQuickActionsLimit = 5;
+const quickActionStatuses = [
+  "blocked",
+  "running",
+  "waiting",
+  "terminal",
+] as const;
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 interface AppProps {
@@ -92,10 +101,22 @@ const defaultSettings: Settings = {
   terminalFontSize: 14,
   agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
+  autoSelectAttention: true,
 };
 
 function historyLimitDraft(limit: number): string {
   return String(limit === 0 ? 1 : limit / bytesPerMiB);
+}
+
+function resolveRecentQuickActionValues(): string[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(recentQuickActionsKey) ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return [...new Set(stored.filter((value): value is string => typeof value === "string"))]
+      .slice(0, recentQuickActionsLimit);
+  } catch {
+    return [];
+  }
 }
 
 type FontSizeSetting = "interfaceFontSize" | "terminalFontSize" | "agentLogFontSize";
@@ -108,6 +129,19 @@ function parseFontSize(value: string): number | null {
 function sessionActivity(session: Session) {
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
+}
+
+function availableQuickActionValues(sessions: Session[]): Set<string> {
+  return new Set([
+    "new-terminal",
+    "attention-alerts",
+    ...sessions.map((session) => `session:${session.id}`),
+    ...quickActionStatuses
+      .filter((status) =>
+        sessions.some((session) => sessionActivity(session) === status),
+      )
+      .map((status) => `status:${status}`),
+  ]);
 }
 
 function activityLabel(status: string) {
@@ -337,6 +371,9 @@ export function App({
   const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
     settings.terminalHistoryLimit === 0,
   );
+  const [autoSelectAttentionDraft, setAutoSelectAttentionDraft] = useState(
+    settings.autoSelectAttention,
+  );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
     terminalFontSize: String(settings.terminalFontSize),
@@ -350,6 +387,9 @@ export function App({
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandValue, setCommandValue] = useState("new-terminal");
+  const [recentQuickActionValues, setRecentQuickActionValues] = useState(
+    resolveRecentQuickActionValues,
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
@@ -364,12 +404,19 @@ export function App({
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
+  const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const selectionRevisionRef = useRef<number | null>(null);
   const selectionServerSignatureRef = useRef("");
   const selectionSyncReadyRef = useRef(false);
-  const selectionPendingRequestRef = useRef<ReplaceSelectionRequest | null>(null);
+  const selectionPendingRequestRef = useRef<{
+    request: ReplaceSelectionRequest;
+    localVersion: number;
+  } | null>(null);
   const selectionWriteActiveRef = useRef(false);
+  const selectionActiveWriteVersionRef = useRef<number | null>(null);
+  const selectionLocalVersionRef = useRef(0);
+  const selectionSyncedLocalVersionRef = useRef(0);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const previewSettings = useMemo(() => {
     if (!settingsOpen) return settings;
@@ -387,6 +434,32 @@ export function App({
     setConnectionStates((current) =>
       current[sessionID] === state ? current : { ...current, [sessionID]: state },
     );
+  }, []);
+  const applySessionSnapshot = useCallback((items: Session[]) => {
+    const previous = previousSessionsRef.current;
+    const transitions = attentionTransitions(previous, items);
+    pendingAgentLaunchIDsRef.current = new Set(
+      agentLaunchTransitions(previous, items).map((session) => session.id),
+    );
+    pendingAttentionSelectionIDsRef.current = new Set(
+      transitions.map((session) => session.id),
+    );
+    previousSessionsRef.current = items;
+    setSessions((current) =>
+      current && sessionsEqual(current, items) ? current : items,
+    );
+    for (const session of transitions) {
+      if (
+        typeof Notification !== "undefined" &&
+        Notification.permission === "granted"
+      ) {
+        new Notification("Euphony needs attention", {
+          body: session.agentTitle || session.cwd,
+          tag: `euphony-${session.id}`,
+        });
+      }
+      playAttentionTone();
+    }
   }, []);
 
   function applyServerSelection(
@@ -444,23 +517,53 @@ export function App({
     );
   }
 
+  function acceptServerSelection(snapshot: SelectionSnapshot) {
+    if (
+      selectionRevisionRef.current !== null &&
+      snapshot.revision <= selectionRevisionRef.current
+    ) {
+      return;
+    }
+    const hasUnsyncedLocalSelection =
+      selectionLocalVersionRef.current >
+        selectionSyncedLocalVersionRef.current ||
+      selectionPendingRequestRef.current !== null ||
+      selectionActiveWriteVersionRef.current !== null;
+    if (hasUnsyncedLocalSelection) {
+      recordServerSelection(snapshot);
+      return;
+    }
+    applyServerSelection(snapshot);
+  }
+
+  function markLocalSelectionMutation() {
+    if (syncSelection) {
+      selectionLocalVersionRef.current += 1;
+    }
+  }
+
   async function flushSelectionWrites() {
     if (!api || selectionWriteActiveRef.current) return;
     selectionWriteActiveRef.current = true;
     try {
       while (selectionPendingRequestRef.current) {
-        const request = selectionPendingRequestRef.current;
+        const pending = selectionPendingRequestRef.current;
         selectionPendingRequestRef.current = null;
+        selectionActiveWriteVersionRef.current = pending.localVersion;
         try {
           const snapshot = await api.replaceSelection({
-            ...request,
+            ...pending.request,
             ...(selectionRevisionRef.current === null
               ? {}
               : { expectedRevision: selectionRevisionRef.current }),
           });
-          if (selectionPendingRequestRef.current) {
+          if (
+            selectionPendingRequestRef.current ||
+            selectionLocalVersionRef.current > pending.localVersion
+          ) {
             recordServerSelection(snapshot);
           } else {
+            selectionSyncedLocalVersionRef.current = pending.localVersion;
             applyServerSelection(snapshot);
           }
         } catch (error) {
@@ -469,7 +572,7 @@ export function App({
               const snapshot = await api.getSelection();
               recordServerSelection(snapshot);
               if (!selectionPendingRequestRef.current) {
-                selectionPendingRequestRef.current = request;
+                selectionPendingRequestRef.current = pending;
               }
               continue;
             } catch {
@@ -483,6 +586,8 @@ export function App({
               : "The shared selection could not be updated.",
           );
           break;
+        } finally {
+          selectionActiveWriteVersionRef.current = null;
         }
       }
     } finally {
@@ -511,6 +616,7 @@ export function App({
       setPaneTabShortcutDraft(loaded.paneTabShortcut);
       setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
       setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
+      setAutoSelectAttentionDraft(loaded.autoSelectAttention);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -597,36 +703,15 @@ export function App({
     if (!api || !sessions) return;
     const timer = window.setInterval(() => {
       api.listSessions().then(async (items) => {
-        const transitions = attentionTransitions(previousSessionsRef.current, items);
-        pendingAgentLaunchIDsRef.current = new Set(
-          agentLaunchTransitions(previousSessionsRef.current, items).map((session) => session.id),
-        );
-        previousSessionsRef.current = items;
-        setSessions((current) =>
-          current && sessionsEqual(current, items) ? current : items,
-        );
-        for (const session of transitions) {
-          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            new Notification("Euphony needs attention", {
-              body: session.agentTitle || session.cwd,
-              tag: `euphony-${session.id}`,
-            });
-          }
-          playAttentionTone();
-        }
+        applySessionSnapshot(items);
         if (syncSelection) {
           const selection = await api.getSelection();
-          if (
-            selectionRevisionRef.current === null ||
-            selection.revision > selectionRevisionRef.current
-          ) {
-            applyServerSelection(selection);
-          }
+          acceptServerSelection(selection);
         }
       }).catch(() => undefined);
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [api, sessions !== null, syncSelection]);
+  }, [api, applySessionSnapshot, sessions !== null, syncSelection]);
 
   useEffect(() => {
     if (!syncSelection || !syncEvents || !api || !sessions) return;
@@ -643,16 +728,8 @@ export function App({
           api.getSelection(),
         ]);
         if (controller.signal.aborted) return;
-        previousSessionsRef.current = items;
-        setSessions((current) =>
-          current && sessionsEqual(current, items) ? current : items
-        );
-        if (
-          selectionRevisionRef.current === null ||
-          selection.revision > selectionRevisionRef.current
-        ) {
-          applyServerSelection(selection);
-        }
+        applySessionSnapshot(items);
+        acceptServerSelection(selection);
       } finally {
         refreshRunning = false;
       }
@@ -680,12 +757,8 @@ export function App({
           await api.subscribeEvents(controller.signal, (event) => {
             if (event.type === "selection.changed") {
               const snapshot = event.data as SelectionSnapshot;
-              if (
-                typeof snapshot?.revision === "number" &&
-                (selectionRevisionRef.current === null ||
-                  snapshot.revision > selectionRevisionRef.current)
-              ) {
-                applyServerSelection(snapshot);
+              if (typeof snapshot?.revision === "number") {
+                acceptServerSelection(snapshot);
               }
               return;
             }
@@ -715,7 +788,13 @@ export function App({
     };
     void consume();
     return () => controller.abort();
-  }, [api, sessions !== null, syncSelection, syncEvents]);
+  }, [
+    api,
+    applySessionSnapshot,
+    sessions !== null,
+    syncSelection,
+    syncEvents,
+  ]);
 
   useEffect(() => {
     if (!syncSelection || !api || !selectionSyncReadyRef.current) return;
@@ -741,14 +820,19 @@ export function App({
       signature === selectionServerSignatureRef.current &&
       !selectionWriteActiveRef.current
     ) {
+      selectionSyncedLocalVersionRef.current =
+        selectionLocalVersionRef.current;
       return;
     }
 
     selectionPendingRequestRef.current = {
-      manualTerminalIds,
-      pinnedTerminalIds: pinnedIDs,
-      ...(focusedID ? { focusedTerminalId: focusedID } : {}),
-      filters: { statuses: statusFilters, cwds: cwdFilterValues },
+      request: {
+        manualTerminalIds,
+        pinnedTerminalIds: pinnedIDs,
+        ...(focusedID ? { focusedTerminalId: focusedID } : {}),
+        filters: { statuses: statusFilters, cwds: cwdFilterValues },
+      },
+      localVersion: selectionLocalVersionRef.current,
     };
     void flushSelectionWrites();
   }, [
@@ -798,7 +882,54 @@ export function App({
   ]);
 
   useEffect(() => {
-    if (syncSelection) return;
+    const available = new Set(sessions?.map((session) => session.id) ?? []);
+    const attentionIDs = settings.autoSelectAttention
+      ? [...pendingAttentionSelectionIDsRef.current].filter((id) => available.has(id))
+      : [];
+    pendingAttentionSelectionIDsRef.current.clear();
+    attentionIDs.forEach((id) => filterSelectedIDsRef.current.delete(id));
+
+    if (syncSelection) {
+      const promotedID =
+        focusedID &&
+        selectedIDs.includes(focusedID) &&
+        pendingAgentLaunchIDsRef.current.has(focusedID)
+          ? focusedID
+          : null;
+      pendingAgentLaunchIDsRef.current.clear();
+      if (promotedID) {
+        filterSelectedIDsRef.current.clear();
+        decomposedStatusFiltersRef.current.clear();
+        const next = [
+          ...new Set([
+            ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+            promotedID,
+            ...attentionIDs,
+          ]),
+        ];
+        markLocalSelectionMutation();
+        setSelectedIDs(next);
+        setFocusedID(promotedID);
+        setStatusFilters([]);
+        setCwdFilters([]);
+        writeWorkspaceToURL(next, pinnedIDs, promotedID, [], [], "replace");
+        return;
+      }
+      if (attentionIDs.length === 0) return;
+      const next = [...new Set([...selectedIDs, ...attentionIDs])];
+      markLocalSelectionMutation();
+      setSelectedIDs(next);
+      writeWorkspaceToURL(
+        next,
+        pinnedIDs,
+        focusedID,
+        statusFilters,
+        cwdFilters,
+        "replace",
+      );
+      return;
+    }
+
     const promotedID =
       focusedID &&
       selectedIDs.includes(focusedID) &&
@@ -814,6 +945,7 @@ export function App({
         ...new Set([
           ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
           promotedID,
+          ...attentionIDs,
         ]),
       ];
       setSelectedIDs(next);
@@ -824,7 +956,20 @@ export function App({
       return;
     }
 
-    if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) return;
+    if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) {
+      if (attentionIDs.length === 0) return;
+      const next = [...new Set([...selectedIDs, ...attentionIDs])];
+      setSelectedIDs(next);
+      writeWorkspaceToURL(
+        next,
+        pinnedIDs,
+        focusedID,
+        statusFilters,
+        cwdFilters,
+        "replace",
+      );
+      return;
+    }
     const matches = sessions
       .filter((session) => matchesWorkspaceFilter(session, statusFilters, cwdFilters))
       .map((session) => session.id);
@@ -832,6 +977,7 @@ export function App({
     const next = [
       ...selectedIDs.filter((id) => !previousMatches.has(id)),
       ...matches,
+      ...attentionIDs,
     ].filter((id, index, values) => values.indexOf(id) === index);
     filterSelectedIDsRef.current = new Set(
       matches.filter((id) => !pinnedIDs.includes(id)),
@@ -857,6 +1003,7 @@ export function App({
     selectedIDs,
     pinnedIDs,
     focusedID,
+    settings.autoSelectAttention,
   ]);
 
   useEffect(() => {
@@ -897,16 +1044,46 @@ export function App({
   }, [api, sessions, focusedID]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(
+        recentQuickActionsKey,
+        JSON.stringify(recentQuickActionValues),
+      );
+    } catch {
+      // Keep the in-memory history when browser storage is unavailable.
+    }
+  }, [recentQuickActionValues]);
+
+  useEffect(() => {
+    if (!sessions) return;
+    const availableValues = availableQuickActionValues(sessions);
+    const availableRecentValues = recentQuickActionValues.filter((value) =>
+      availableValues.has(value),
+    );
+    if (
+      availableRecentValues.length === recentQuickActionValues.length &&
+      availableRecentValues.every((value, index) => value === recentQuickActionValues[index])
+    ) {
+      return;
+    }
+    setRecentQuickActionValues(availableRecentValues);
+  }, [recentQuickActionValues, sessions]);
+
+  useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
       event.preventDefault();
+      const availableValues = availableQuickActionValues(sessions ?? []);
       setCommandQuery("");
-      setCommandValue("new-terminal");
+      setCommandValue(
+        recentQuickActionValues.find((value) => availableValues.has(value)) ??
+          "new-terminal",
+      );
       setCommandOpen(true);
     };
     window.addEventListener("keydown", openCommands, { capture: true });
     return () => window.removeEventListener("keydown", openCommands, { capture: true });
-  }, []);
+  }, [recentQuickActionValues, sessions]);
 
   useEffect(() => {
     if (!commandOpen) return;
@@ -1011,6 +1188,7 @@ export function App({
     allowEmpty = false,
     checkboxPin?: boolean,
   ) {
+    markLocalSelectionMutation();
     let nextPinnedIDs = pinnedIDs;
     const pinned = pinnedIDs.includes(id);
     if (checkboxPin !== undefined && pinned) {
@@ -1148,6 +1326,7 @@ export function App({
     nextStatusFilters: string[],
     nextCwdFilters: string[],
   ) {
+    markLocalSelectionMutation();
     const matching = sessions
       ?.filter((session) =>
         matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
@@ -1256,6 +1435,7 @@ export function App({
       ?.filter((session) => sessionActivity(session) === status)
       .map((session) => session.id) ?? [];
     if (matching.length === 0) return;
+    markLocalSelectionMutation();
     const nextIDs = [
       ...new Set([
         ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
@@ -1282,6 +1462,7 @@ export function App({
       )
       .map((session) => session.id) ?? [];
     if (matching.length === 0) return;
+    markLocalSelectionMutation();
     const nextIDs = [
       ...new Set([
         ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
@@ -1302,6 +1483,7 @@ export function App({
   }
 
   function focusPane(id: string) {
+    markLocalSelectionMutation();
     setFocusedID(id);
     writeWorkspaceToURL(selectedIDs, pinnedIDs, id, statusFilters, cwdFilters);
   }
@@ -1463,6 +1645,7 @@ export function App({
     setPaneTabShortcutDraft(settings.paneTabShortcut);
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
+    setAutoSelectAttentionDraft(settings.autoSelectAttention);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -1536,6 +1719,7 @@ export function App({
       terminalFontSize: fontSizes.terminalFontSize!,
       agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
+      autoSelectAttention: autoSelectAttentionDraft,
     });
     setSettingsOpen(false);
   }
@@ -1600,7 +1784,7 @@ export function App({
       },
       group: "Actions",
     },
-    ...["blocked", "running", "waiting", "terminal"]
+    ...quickActionStatuses
       .filter((status) => sessions.some((session) => sessionActivity(session) === status))
       .map((status) => ({
         value: `status:${status}`,
@@ -1626,16 +1810,47 @@ export function App({
     })),
   ];
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
-  const filteredQuickActions = quickActions.filter((action) =>
-    `${action.label} ${action.search}`.toLowerCase().includes(normalizedCommandQuery),
-  );
+  const quickActionGroupsForQuery = (query: string) => {
+    const matchingActions = quickActions.filter((action) =>
+      `${action.label} ${action.search}`.toLowerCase().includes(query),
+    );
+    if (query) {
+      return ["Actions", "Terminals"].map((heading) => ({
+        heading,
+        actions: matchingActions.filter((action) => action.group === heading),
+      }));
+    }
+
+    const recentActions = recentQuickActionValues
+      .map((value) => matchingActions.find((action) => action.value === value))
+      .filter((action): action is (typeof matchingActions)[number] => Boolean(action));
+    const recentValues = new Set(recentActions.map((action) => action.value));
+    return [
+      { heading: "Recent", actions: recentActions },
+      ...["Actions", "Terminals"].map((heading) => ({
+        heading,
+        actions: matchingActions.filter(
+          (action) => action.group === heading && !recentValues.has(action.value),
+        ),
+      })),
+    ];
+  };
+  const quickActionGroups = quickActionGroupsForQuery(normalizedCommandQuery);
+  const filteredQuickActions = quickActionGroups.flatMap((group) => group.actions);
+
+  const runQuickAction = (action: (typeof quickActions)[number]) => {
+    setRecentQuickActionValues((current) =>
+      [action.value, ...current.filter((value) => value !== action.value)]
+        .slice(0, recentQuickActionsLimit),
+    );
+    action.run();
+  };
 
   const updateCommandQuery = (query: string) => {
     setCommandQuery(query);
     const normalized = query.trim().toLowerCase();
-    const first = quickActions.find((action) =>
-      `${action.label} ${action.search}`.toLowerCase().includes(normalized),
-    );
+    const first = quickActionGroupsForQuery(normalized)
+      .flatMap((group) => group.actions)[0];
     setCommandValue(first?.value ?? "");
   };
 
@@ -1673,7 +1888,7 @@ export function App({
       );
       if (!selectedAction) return;
       event.preventDefault();
-      selectedAction.run();
+      runQuickAction(selectedAction);
     }
   };
 
@@ -1806,10 +2021,11 @@ export function App({
         onOpenChange={setCommandOpen}
         title="Quick Actions"
         description="Search for a terminal or action."
-        className="sm:max-w-xl"
+        className="top-[10vh] h-[min(40rem,80vh)] max-h-[calc(100vh-2rem)] sm:max-w-xl"
         initialFocus={commandInputRef}
       >
         <Command
+          className="min-h-0"
           value={commandValue}
           onValueChange={setCommandValue}
           shouldFilter={false}
@@ -1821,20 +2037,17 @@ export function App({
             onValueChange={updateCommandQuery}
             placeholder="Terminal or status"
           />
-          <CommandList ref={commandListRef}>
+          <CommandList ref={commandListRef} className="min-h-0 max-h-none flex-1">
             <CommandEmpty>No matching actions.</CommandEmpty>
-            {["Actions", "Terminals"].map((group) => {
-              const actions = filteredQuickActions.filter(
-                (action) => action.group === group,
-              );
+            {quickActionGroups.map(({ heading, actions }) => {
               if (actions.length === 0) return null;
               return (
-                <CommandGroup heading={group} key={group}>
+                <CommandGroup heading={heading} key={heading}>
                   {actions.map((action) => (
                     <CommandItem
                       key={action.value}
                       value={action.value}
-                      onSelect={action.run}
+                      onSelect={() => runQuickAction(action)}
                     >
                       <span className="quick-action-copy">
                         <span>{action.label}</span>
@@ -1906,11 +2119,11 @@ export function App({
         </DialogContent>
       </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure workspace shortcuts, text sizing, and terminal history.
+              Configure workspace shortcuts, selection, text sizing, and terminal history.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1986,6 +2199,22 @@ export function App({
                 {settingsError?.field === "terminalHistoryLimit" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="auto-select-attention"
+                  checked={autoSelectAttentionDraft}
+                  onCheckedChange={(checked) =>
+                    setAutoSelectAttentionDraft(Boolean(checked))}
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="auto-select-attention">
+                    Auto-select attention terminals
+                  </FieldLabel>
+                  <FieldDescription>
+                    Add them to the workspace without moving focus.
+                  </FieldDescription>
+                </FieldContent>
               </Field>
               <section className="font-size-section" aria-labelledby="font-size-heading">
                 <div className="settings-section-heading">

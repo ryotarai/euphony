@@ -274,6 +274,28 @@ func TestRefreshCWDPreservesEquivalentLogicalPath(t *testing.T) {
 	}
 }
 
+func TestUpdateCWDPreservesEquivalentLogicalPath(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", link)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := manager.UpdateCWD(metadata.ID, target)
+	if err != nil {
+		t.Fatalf("UpdateCWD() error = %v", err)
+	}
+	if updated.CWD != link {
+		t.Fatalf("CWD = %q, want logical path %q", updated.CWD, link)
+	}
+}
+
 func TestUpdateAgentMarksRunningToWaitingAsNeedingAttention(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

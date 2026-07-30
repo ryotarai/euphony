@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 
+const requestedPort = process.env.EUPHONY_E2E_PORT;
+const e2ePort = requestedPort && /^\d+$/.test(requestedPort) ? requestedPort : "18080";
+const claudeConfigDir = `/tmp/euphony-e2e-${e2ePort}-claude`;
+
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
     headers: {
@@ -16,6 +20,7 @@ async function clearSessions(page: Page) {
       terminalFontSize: 14,
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
+      autoSelectAttention: true,
     },
   });
   const existing = await page.request.get("/api/sessions", {
@@ -27,6 +32,35 @@ async function clearSessions(page: Page) {
       headers: { Authorization: "Bearer test-token" },
     });
   }
+  await replaceSharedSelection(page, []);
+}
+
+async function replaceSharedSelection(
+  page: Page,
+  terminalIDs: string[],
+  focusedTerminalID?: string,
+) {
+  const currentResponse = await page.request.get("/api/v1/selection", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(currentResponse.ok()).toBe(true);
+  const current = await currentResponse.json() as {
+    result: { revision: number };
+  };
+  const response = await page.request.put("/api/v1/selection", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: {
+      manualTerminalIds: terminalIDs,
+      pinnedTerminalIds: [],
+      ...(focusedTerminalID ? { focusedTerminalId: focusedTerminalID } : {}),
+      filters: { statuses: [], cwds: [] },
+      expectedRevision: current.result.revision,
+    },
+  });
+  expect(response.ok()).toBe(true);
 }
 
 async function reportAgent(
@@ -77,6 +111,9 @@ function claudeTranscriptLine(index: number) {
   const table = index === 40
     ? "\n\n| Command | State | Artifact |\n| --- | --- | --- |\n| go test ./... | Passed | `very-wide-unbroken-table-value-that-stays-readable-with-horizontal-scrolling-0123456789` |"
     : "";
+  const diagram = index === 40
+    ? "\n\n```mermaid\nflowchart LR\n  Plan[Plan] --> Build[Build]\n  Build --> Verify[Verify]\n```"
+    : "";
   return JSON.stringify({
     type: "assistant",
     timestamp: `2026-07-30T01:${String(index).padStart(2, "0")}:00Z`,
@@ -84,7 +121,7 @@ function claudeTranscriptLine(index: number) {
       role: "assistant",
       content: [{
         type: "text",
-        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}`,
+        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}${diagram}`,
       }],
     },
   }) + "\n";
@@ -137,6 +174,10 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   const blocked = await createSession(page, "Permission request");
   await reportAgent(page, blocked.id, "codex", "Permission request", "running");
   await page.goto("/?token=test-token");
+  await page
+    .getByRole("button", { name: "Select Permission request" })
+    .click({ modifiers: ["Meta"] });
+  await page.getByLabel("Focused pane", { exact: true }).click();
 
   await reportAgent(page, blocked.id, "codex", "Permission request", "blocked");
 
@@ -151,6 +192,18 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   await expect(attentionDot).toHaveCSS("height", "6px");
   await expect(attentionDot).toHaveCSS("border-radius", "50%");
   await expect(attentionDot).toHaveCSS("background-color", "rgb(56, 189, 248)");
+  const paneAttention = page
+    .getByLabel("Permission request pane", { exact: true })
+    .getByRole("status", { name: "Needs attention" });
+  const paneAttentionDot = paneAttention.locator(".attention-dot");
+  await expect(paneAttention).toBeVisible();
+  await expect(paneAttentionDot).toHaveCSS("width", "6px");
+  await expect(paneAttentionDot).toHaveCSS("height", "6px");
+  await expect(paneAttentionDot).toHaveCSS("border-radius", "50%");
+  await expect(paneAttentionDot).toHaveCSS(
+    "background-color",
+    "rgb(56, 189, 248)",
+  );
   await expect(
     page.getByRole("checkbox", { name: "Show all Need attention terminals" }),
   ).toHaveCount(0);
@@ -195,8 +248,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await clearSessions(page);
   const terminal = await createSession(page, "Log stream", "/tmp");
   const sessionID = `e2e-${terminal.id}`;
-  const transcriptPath = `/tmp/euphony-e2e-claude/projects/euphony/${sessionID}.jsonl`;
-  await mkdir("/tmp/euphony-e2e-claude/projects/euphony", { recursive: true });
+  const transcriptPath = `${claudeConfigDir}/projects/euphony/${sessionID}.jsonl`;
+  await mkdir(`${claudeConfigDir}/projects/euphony`, { recursive: true });
   await writeFile(
     transcriptPath,
     Array.from({ length: 40 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
@@ -232,6 +285,10 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   const tableScroll = page.locator(".agent-log-table-scroll");
   await expect(tableScroll).toHaveCSS("overflow-x", "auto");
   expect(await tableScroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const diagram = page.getByRole("figure", { name: "Mermaid diagram" });
+  await expect(diagram.locator("svg")).toBeVisible();
+  await expect(diagram).toHaveCSS("overflow-x", "auto");
+  await page.screenshot({ path: testInfo.outputPath("agent-log-mermaid.png") });
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
@@ -302,6 +359,43 @@ test("keeps the agent log open when a filtered running agent starts waiting", as
   await expect(firstPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
     "data-active",
   );
+});
+
+test("auto-selects an attention terminal without moving focus", async ({ page }) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  const second = await createSession(page, "Second", "/tmp");
+
+  await page.goto("/?token=test-token");
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("First pane", { exact: true })).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+
+  await reportAgent(page, second.id, "claude", "Reviewing changes", "running");
+  await reportAgent(page, second.id, "claude", "Waiting for review");
+
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("First pane", { exact: true })).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  await expect(page.getByLabel("Second pane", { exact: true })).toHaveAttribute(
+    "data-active",
+    "false",
+  );
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{
+      id: string;
+      needsAttention?: boolean;
+    }>;
+    return sessions.find((session) => session.id === second.id)?.needsAttention;
+  }).toBe(true);
+  expect(new URL(page.url()).searchParams.get("focus")).toBe(first.id);
 });
 
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {
@@ -415,7 +509,7 @@ test("reloads a running terminal with its previous output", async ({ page }) => 
   await expect.poll(() => readTerminalHistory(page, session.id)).toContain("reload-history-marker");
 });
 
-test("keeps the selected terminal in the URL across navigation and reload", async ({ page }) => {
+test("keeps the server selection authoritative across navigation and reload", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First");
   const second = await createSession(page, "Second");
@@ -431,7 +525,9 @@ test("keeps the selected terminal in the URL across navigation and reload", asyn
   await page.getByRole("button", { name: "Select First" }).click();
   await expect(page).toHaveURL(new RegExp(`terminal=${first.id}`));
   await page.goBack();
-  await expect(page.getByLabel("Second terminal")).toBeVisible();
+  await expect(page.getByLabel("First terminal")).toBeVisible();
+  await expect(page.getByLabel("Second terminal")).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`terminal=${first.id}`));
 });
 
 test("keeps a selected split checkbox visibly checked", async ({ page }) => {
@@ -551,10 +647,10 @@ test("inherits status filters into nested cwd controls and supports child overri
   await status.click();
 
   const tmpCwd = page.getByRole("checkbox", {
-    name: "Include all terminals in /tmp",
+    name: /Include all terminals in \/(?:private\/)?tmp$/,
   });
   const varCwd = page.getByRole("checkbox", {
-    name: "Include all terminals in /var",
+    name: /Include all terminals in \/(?:private\/)?var$/,
   });
   await expect(tmpCwd).toBeChecked();
   await expect(varCwd).toBeChecked();
@@ -740,9 +836,37 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
+test("shows recent Quick Actions first in a taller dialog", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Left");
+  const right = await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const dialog = page.getByRole("dialog", { name: "Quick Actions" });
+  await expect(dialog).toBeVisible();
+  const initialBounds = await dialog.boundingBox();
+  expect(initialBounds?.height).toBeGreaterThan(500);
+
+  await page.getByRole("option", { name: /^Right/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("Meta+K");
+
+  const groups = page.locator("[cmdk-group]");
+  await expect(groups.first().locator("[cmdk-group-heading]")).toHaveText("Recent");
+  const recentRight = groups.first().getByRole("option", { name: /^Right/ });
+  await expect(recentRight).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("option", { name: /^Right/ })).toHaveCount(1);
+  expect(
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null"),
+    ),
+  ).toEqual([`session:${right.id}`]);
+});
+
 test("keeps the Quick Actions keyboard selection in the scroll viewport", async ({ page }) => {
   await clearSessions(page);
-  for (let index = 1; index <= 6; index += 1) {
+  for (let index = 1; index <= 12; index += 1) {
     await createSession(page, `Terminal ${index}`);
   }
 
@@ -753,11 +877,11 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
     commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
   ).toBe(true);
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 14; index += 1) {
     await page.keyboard.press("ArrowDown");
   }
 
-  const lastTerminal = page.getByRole("option", { name: /^Terminal 6/ });
+  const lastTerminal = page.getByRole("option", { name: /^Terminal 12/ });
   await expect(lastTerminal).toHaveAttribute("aria-selected", "true");
   await expect.poll(() =>
     lastTerminal.evaluate((element) => {
@@ -771,7 +895,7 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
   const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
   expect(scrolledDown).toBeGreaterThan(0);
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 14; index += 1) {
     await page.keyboard.press("ArrowUp");
   }
 
@@ -846,6 +970,7 @@ test("navigates overflowing terminal panes one pane at a time", async ({ page })
   [one, two, three, four].forEach((session) =>
     parameters.append("terminal", session.id),
   );
+  await replaceSharedSelection(page, [one.id, two.id, three.id, four.id], one.id);
   await page.goto(`/?${parameters.toString()}`);
 
   const panes = page.locator(".terminal-pane");
@@ -879,6 +1004,7 @@ test("shows the next terminal pane on mobile", async ({ page }) => {
 
   const parameters = new URLSearchParams({ token: "test-token", focus: one.id });
   [one, two].forEach((session) => parameters.append("terminal", session.id));
+  await replaceSharedSelection(page, [one.id, two.id], one.id);
   await page.goto(`/?${parameters.toString()}`);
 
   await expect(page.getByLabel("One terminal", { exact: true })).toBeVisible();
@@ -939,8 +1065,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("Pane tab toggle").fill("Ctrl+J");
   await settingsDialog.getByLabel("History buffer").fill("8");
   await settingsDialog.getByLabel("Interface").fill("18");
-  await settingsDialog.getByLabel("Terminal").fill("17");
+  await settingsDialog.getByLabel("Terminal", { exact: true }).fill("17");
   await settingsDialog.getByLabel("Agent log").fill("16");
+  const autoSelectAttention = settingsDialog.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  });
+  await expect(autoSelectAttention).toBeChecked();
+  await autoSelectAttention.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
   await expect(page.locator(".agent-log-view").first()).toHaveCSS(
@@ -954,8 +1085,11 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const savedSettingsDialog = page.getByRole("dialog", { name: "Settings" });
   await expect(savedSettingsDialog.getByLabel("History buffer")).toHaveValue("8");
   await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
-  await expect(savedSettingsDialog.getByLabel("Terminal")).toHaveValue("17");
+  await expect(savedSettingsDialog.getByLabel("Terminal", { exact: true })).toHaveValue("17");
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
+  await expect(savedSettingsDialog.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  })).not.toBeChecked();
   await savedSettingsDialog.getByRole("checkbox", { name: "Unlimited history" }).check();
   await expect(savedSettingsDialog.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Save settings" }).click();
