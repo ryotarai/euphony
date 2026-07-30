@@ -27,12 +27,15 @@ type Session struct {
 	close          sync.Once
 	fileMu         sync.Mutex
 	outputMu       sync.Mutex
-	history        []byte
+	history        [][]byte
+	historySize    int
 	historyLimit   int
 	subscribers    map[uint64]chan []byte
 	nextSubscriber uint64
 	outputClosed   bool
 }
+
+const historyChunkSize = 32 * 1024
 
 func (s *Session) Write(data []byte) (int, error) {
 	s.fileMu.Lock()
@@ -56,9 +59,9 @@ func (s *Session) WorkingDirectory() (string, error) {
 	return processWorkingDirectory(s.command.Process.Pid)
 }
 
-func (s *Session) Subscribe() ([]byte, <-chan []byte, func()) {
+func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {
 	s.outputMu.Lock()
-	history := append([]byte(nil), s.history...)
+	history := append([][]byte(nil), s.history...)
 	id := s.nextSubscriber
 	s.nextSubscriber++
 	output := make(chan []byte, 64)
@@ -107,7 +110,12 @@ func (s *Session) pump() {
 func (s *Session) publish(data []byte) {
 	chunk := append([]byte(nil), data...)
 	s.outputMu.Lock()
-	s.history = append(s.history, chunk...)
+	for len(data) > 0 {
+		size := min(len(data), historyChunkSize)
+		s.history = append(s.history, append([]byte(nil), data[:size]...))
+		s.historySize += size
+		data = data[size:]
+	}
 	s.trimHistoryLocked()
 	for id, output := range s.subscribers {
 		select {
@@ -128,8 +136,22 @@ func (s *Session) setHistoryLimit(limit int) {
 }
 
 func (s *Session) trimHistoryLocked() {
-	if s.historyLimit > 0 && len(s.history) > s.historyLimit {
-		s.history = append([]byte(nil), s.history[len(s.history)-s.historyLimit:]...)
+	if s.historyLimit <= 0 {
+		return
+	}
+	excess := s.historySize - s.historyLimit
+	for excess > 0 {
+		first := s.history[0]
+		if len(first) <= excess {
+			s.history[0] = nil
+			s.history = s.history[1:]
+			s.historySize -= len(first)
+			excess -= len(first)
+			continue
+		}
+		s.history[0] = append([]byte(nil), first[excess:]...)
+		s.historySize -= excess
+		excess = 0
 	}
 }
 

@@ -56,7 +56,9 @@ func validTerminalHistoryLimit(value *float64) bool {
 		return false
 	}
 	return *value == 0 ||
-		(*value >= session.MinTerminalHistoryLimit && *value <= session.MaxTerminalHistoryLimit)
+		(*value >= session.MinTerminalHistoryLimit &&
+			*value <= session.MaxTerminalHistoryLimit &&
+			math.Mod(*value, session.MinTerminalHistoryLimit) == 0)
 }
 
 func shortcutsEqual(left, right string) bool {

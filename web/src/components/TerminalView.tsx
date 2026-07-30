@@ -46,9 +46,18 @@ interface TerminalViewProps {
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 
 const maxTerminalScrollback = 4294967295;
+const maxFiniteTerminalScrollback = 100000;
+const estimatedBytesPerScrollbackRow = 128;
 
 export function terminalScrollback(historyLimit: number): number {
-  return historyLimit === 0 ? maxTerminalScrollback : historyLimit;
+  if (historyLimit === 0) return maxTerminalScrollback;
+  return Math.max(
+    1000,
+    Math.min(
+      maxFiniteTerminalScrollback,
+      Math.ceil(historyLimit / estimatedBytesPerScrollbackRow),
+    ),
+  );
 }
 
 function defaultTerminal(scrollback: number): TerminalDriver {
@@ -165,6 +174,8 @@ export function TerminalView({
     if (!host) return;
     let active = true;
     let replayingHistory = false;
+    let pendingHistoryWrites = 0;
+    let historyStreamComplete = false;
     let socket: WebSocketLike | undefined;
     let lastSize = "";
     let lastReportedCWD = session.cwd;
@@ -260,13 +271,23 @@ export function TerminalView({
           };
           if (message.type === "history" && message.data) {
             replayingHistory = true;
+            pendingHistoryWrites++;
             try {
               terminal.write(decodeTerminalData(message.data), () => {
-                replayingHistory = false;
+                pendingHistoryWrites--;
+                if (historyStreamComplete && pendingHistoryWrites === 0) {
+                  replayingHistory = false;
+                }
               });
             } catch {
-              replayingHistory = false;
+              pendingHistoryWrites--;
+              if (historyStreamComplete && pendingHistoryWrites === 0) {
+                replayingHistory = false;
+              }
             }
+          } else if (message.type === "history_end") {
+            historyStreamComplete = true;
+            if (pendingHistoryWrites === 0) replayingHistory = false;
           } else if (message.type === "output" && message.data) {
             try {
               terminal.write(decodeTerminalData(message.data));

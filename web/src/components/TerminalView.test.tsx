@@ -65,7 +65,8 @@ test("does not fit xterm while its mounted tab panel is hidden", () => {
 });
 
 test("maps finite and unlimited history limits to xterm scrollback rows", () => {
-  expect(terminalScrollback(1024 * 1024)).toBe(1048576);
+  expect(terminalScrollback(1024 * 1024)).toBe(8192);
+  expect(terminalScrollback(4095 * 1024 * 1024)).toBe(100000);
   expect(terminalScrollback(0)).toBe(4294967295);
 });
 
@@ -247,7 +248,10 @@ test("does not report a stale working directory from replayed history", async ()
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => socket.receive({ type: "history", data: encodeTerminalData("stale title") }));
+  act(() => {
+    socket.receive({ type: "history", data: encodeTerminalData("stale title") });
+    socket.receive({ type: "history_end" });
+  });
   expect(socket.sent).toEqual([]);
 
   act(() => socket.receive({ type: "output", data: encodeTerminalData("current title") }));
@@ -586,7 +590,10 @@ test("does not send terminal query responses generated while replaying history",
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => socket.receive({ type: "history", data: encodeTerminalData("query") }));
+  act(() => {
+    socket.receive({ type: "history", data: encodeTerminalData("query") });
+    socket.receive({ type: "history_end" });
+  });
   expect(writes).toEqual(["query"]);
   expect(socket.sent).toEqual([]);
 
@@ -599,11 +606,11 @@ test("does not send terminal query responses generated while replaying history",
 test("keeps replay-generated terminal replies suppressed until the write completes", async () => {
   const socket = new FakeSocket();
   let onData: ((data: string) => void) | undefined;
-  let finishWrite: (() => void) | undefined;
+  const finishWrites: Array<() => void> = [];
   const terminal: TerminalDriver = {
     open: () => undefined,
     write: (_data, callback) => {
-      finishWrite = callback;
+      if (callback) finishWrites.push(callback);
     },
     focus: () => undefined,
     fit: () => undefined,
@@ -630,13 +637,21 @@ test("keeps replay-generated terminal replies suppressed until the write complet
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
   act(() => {
-    socket.receive({ type: "history", data: encodeTerminalData("\u001b[c") });
+    socket.receive({ type: "history", data: encodeTerminalData("first \u001b[c") });
+    socket.receive({ type: "history", data: encodeTerminalData("second \u001b[c") });
+    socket.receive({ type: "history_end" });
     onData?.("\u001b[?1;2c");
   });
   expect(socket.sent).toEqual([]);
 
   act(() => {
-    finishWrite?.();
+    finishWrites[0]?.();
+    onData?.("\u001b[?1;2c");
+  });
+  expect(socket.sent).toEqual([]);
+
+  act(() => {
+    finishWrites[1]?.();
     onData?.("pwd\r");
   });
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([

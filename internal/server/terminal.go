@@ -57,11 +57,15 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	outputDone := make(chan struct{})
 	go func() {
 		defer close(outputDone)
-		if len(history) > 0 {
-			payload, _ := json.Marshal(serverMessage{Type: "history", Data: history})
+		for _, chunk := range history {
+			payload, _ := json.Marshal(serverMessage{Type: "history", Data: chunk})
 			if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
 				return
 			}
+		}
+		payload, _ := json.Marshal(serverMessage{Type: "history_end"})
+		if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+			return
 		}
 		for {
 			select {

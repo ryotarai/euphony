@@ -780,11 +780,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.getByLabel("Pane tab toggle").fill("Ctrl+J");
   await page.getByLabel("History buffer").fill("8");
   await page.getByRole("button", { name: "Save settings" }).click();
+  await page.reload();
   await page.getByRole("button", { name: "Open settings" }).click();
   await expect(page.getByLabel("History buffer")).toHaveValue("8");
   await page.getByRole("checkbox", { name: "Unlimited history" }).check();
   await expect(page.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Save settings" }).click();
+  await page.reload();
   await page.getByRole("button", { name: "Open settings" }).click();
   await expect(page.getByRole("checkbox", { name: "Unlimited history" })).toBeChecked();
   await expect(page.getByLabel("History buffer")).toBeDisabled();

@@ -691,7 +691,7 @@ func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
 
 	history, liveOutput, unsubscribeReloaded := running.Subscribe()
 	defer unsubscribeReloaded()
-	if !strings.Contains(string(history), "before-reload\r\n") {
+	if !strings.Contains(historyString(history), "before-reload\r\n") {
 		t.Fatalf("reloaded history = %q, want previous terminal output", history)
 	}
 
@@ -718,8 +718,28 @@ func TestSessionHistoryLimitRetainsNewestBytes(t *testing.T) {
 
 	history, _, unsubscribe := running.Subscribe()
 	defer unsubscribe()
-	if got := string(history); got != "bcdef" {
+	if got := historyString(history); got != "bcdef" {
 		t.Fatalf("history = %q, want %q", got, "bcdef")
+	}
+}
+
+func TestSessionHistorySnapshotUsesBoundedChunks(t *testing.T) {
+	running := &Session{
+		historyLimit: 128 * 1024,
+		subscribers:  make(map[uint64]chan []byte),
+	}
+
+	running.publish(make([]byte, 70*1024))
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if len(history) != 3 {
+		t.Fatalf("history chunks = %d, want 3", len(history))
+	}
+	for index, chunk := range history {
+		if len(chunk) > 32*1024 {
+			t.Fatalf("history chunk %d length = %d, want at most 32768", index, len(chunk))
+		}
 	}
 }
 
@@ -734,8 +754,28 @@ func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
 
 	history, _, unsubscribe := running.Subscribe()
 	defer unsubscribe()
-	if got := string(history); got != "abcdef" {
+	if got := historyString(history); got != "abcdef" {
 		t.Fatalf("history = %q, want %q", got, "abcdef")
+	}
+}
+
+func TestRegisterSessionAppliesLatestHistoryLimit(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	settings := DefaultSettings()
+	settings.TerminalHistoryLimit = 8 * 1024 * 1024
+	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	running := &Session{subscribers: make(map[uint64]chan []byte)}
+
+	manager.registerSession("one", &entry{session: running})
+
+	if running.historyLimit != settings.TerminalHistoryLimit {
+		t.Fatalf(
+			"history limit = %d, want latest setting %d",
+			running.historyLimit,
+			settings.TerminalHistoryLimit,
+		)
 	}
 }
 
@@ -743,7 +783,8 @@ func TestUpdateSettingsTrimsHistoryForRunningSessions(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	running := &Session{
 		historyLimit: 10,
-		history:      []byte("0123456789"),
+		history:      [][]byte{[]byte("0123456789")},
+		historySize:  10,
 		subscribers:  make(map[uint64]chan []byte),
 	}
 	manager.sessions["one"] = &entry{session: running}
@@ -756,7 +797,7 @@ func TestUpdateSettingsTrimsHistoryForRunningSessions(t *testing.T) {
 
 	history, _, unsubscribe := running.Subscribe()
 	defer unsubscribe()
-	if got := string(history); got != "6789" {
+	if got := historyString(history); got != "6789" {
 		t.Fatalf("history = %q, want %q", got, "6789")
 	}
 }
@@ -786,7 +827,7 @@ func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
 
 	history, exitedOutput, unsubscribeExited := running.Subscribe()
 	defer unsubscribeExited()
-	if !strings.Contains(string(history), "final-output\r\n") {
+	if !strings.Contains(historyString(history), "final-output\r\n") {
 		t.Fatalf("history = %q, want final output", history)
 	}
 	select {
@@ -797,6 +838,14 @@ func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("exited output channel did not close")
 	}
+}
+
+func historyString(history [][]byte) string {
+	var result strings.Builder
+	for _, chunk := range history {
+		result.Write(chunk)
+	}
+	return result.String()
 }
 
 func receiveUntil(t *testing.T, output <-chan []byte, needle string, timeout time.Duration) string {

@@ -1354,8 +1354,8 @@ export function App({
                   />
                 </Field>
                 <FieldDescription>
-                  Controls scrolling and reconnect history. Unlimited history can
-                  increase memory use.
+                  Controls retained reconnect output and scrollback capacity.
+                  Large or unlimited histories can increase memory use.
                 </FieldDescription>
                 {settingsError?.field === "terminalHistoryLimit" && (
                   <FieldError>{settingsError.message}</FieldError>

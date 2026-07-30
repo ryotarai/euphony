@@ -66,6 +66,7 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"terminalHistoryLimit":1.5}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"terminalHistoryLimit":-1}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"terminalHistoryLimit":1048575}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"terminalHistoryLimit":1048577}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"terminalHistoryLimit":4293918721}`,
 	} {
 		response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)

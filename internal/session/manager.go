@@ -192,9 +192,7 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 			return Metadata{}, err
 		}
 	}
-	m.mu.Lock()
-	m.sessions[id] = item
-	m.mu.Unlock()
+	m.registerSession(id, item)
 
 	go item.session.pump()
 	go m.watch(item)
@@ -225,7 +223,7 @@ func (m *Manager) restore(metadata Metadata) error {
 		item.session.terminate()
 		return err
 	}
-	m.sessions[metadata.ID] = item
+	m.registerSession(metadata.ID, item)
 	go item.session.pump()
 	go m.watch(item)
 	return nil
@@ -264,15 +262,21 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 	return &entry{
 		metadata: metadata,
 		session: &Session{
-			id:           metadata.ID,
-			command:      command,
-			terminal:     terminal,
-			waitDone:     make(chan struct{}),
-			pumpDone:     make(chan struct{}),
-			historyLimit: m.Settings().TerminalHistoryLimit,
-			subscribers:  make(map[uint64]chan []byte),
+			id:          metadata.ID,
+			command:     command,
+			terminal:    terminal,
+			waitDone:    make(chan struct{}),
+			pumpDone:    make(chan struct{}),
+			subscribers: make(map[uint64]chan []byte),
 		},
 	}, nil
+}
+
+func (m *Manager) registerSession(id string, item *entry) {
+	m.mu.Lock()
+	item.session.setHistoryLimit(m.settings.TerminalHistoryLimit)
+	m.sessions[id] = item
+	m.mu.Unlock()
 }
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
