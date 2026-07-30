@@ -36,21 +36,22 @@ interface TerminalViewProps {
   active?: boolean;
   layoutVersion?: number;
   reconnectSignal?: number;
+  fontSize?: number;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
-  createTerminal?: () => TerminalDriver;
+  createTerminal?: (fontSize: number) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 
-function defaultTerminal(): TerminalDriver {
+function defaultTerminal(fontSize: number): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
     cursorBlink: true,
     cursorStyle: "bar",
     allowTransparency: true,
     fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
-    fontSize: 14,
+    fontSize,
     lineHeight: 1.25,
     scrollSensitivity: 3,
     theme: {
@@ -132,6 +133,7 @@ export function TerminalView({
   active = true,
   layoutVersion = 1,
   reconnectSignal = 0,
+  fontSize = 14,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -155,7 +157,7 @@ export function TerminalView({
     let socket: WebSocketLike | undefined;
     let lastSize = "";
     let lastReportedCWD = session.cwd;
-    const terminal = createTerminal();
+    const terminal = createTerminal(fontSize);
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
@@ -289,7 +291,7 @@ export function TerminalView({
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
     };
-  }, [api, createSocket, createTerminal, reconnectSignal, session.id]);
+  }, [api, createSocket, createTerminal, fontSize, reconnectSignal, session.id]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

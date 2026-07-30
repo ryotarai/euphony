@@ -19,6 +19,9 @@ async function clearSessions(page: Page) {
       paneTabShortcut: "Meta+L",
       sidebarWidth: 304,
       sidebarCollapsed: false,
+      interfaceFontSize: 16,
+      terminalFontSize: 14,
+      agentLogFontSize: 14,
     },
   });
   const existing = await page.request.get("/api/sessions", {
@@ -165,6 +168,47 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   expect(result.records.length).toBeGreaterThan(30);
   expect(Math.min(...result.records.map((record) => record.cols))).toBeGreaterThan(20);
   expect(result.screenWidth).toBeLessThanOrEqual(result.hostWidth);
+});
+
+test("keeps table columns aligned for full-width Japanese punctuation", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Table");
+  await page.goto("/?token=test-token");
+  await page.getByRole("button", { name: "Select Table" }).click();
+
+  const terminal = page.getByLabel("Table terminal", { exact: true });
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await terminal.click();
+  await page.keyboard.insertText(
+    'printf "%s\\n" "│ 漢字 │ aa │" "│ （） │ aa │" "│ 、。 │ aa │" "│ ＡＢ │ aa │"',
+  );
+  await page.keyboard.press("Enter");
+
+  const expectedRows = [
+    "│ 漢字 │ aa │",
+    "│ （） │ aa │",
+    "│ 、。 │ aa │",
+    "│ ＡＢ │ aa │",
+  ];
+  const readFollowingColumnPositions = () =>
+    terminal.evaluate((host, rows) => {
+      const renderedRows = [...host.querySelectorAll<HTMLElement>(".xterm-rows > div")];
+      return rows.map((expectedRow) => {
+        const renderedRow = renderedRows.find((row) => row.textContent === expectedRow);
+        const followingColumns = renderedRow
+          ? [...renderedRow.querySelectorAll<HTMLElement>("span")].find((span) =>
+              span.textContent?.startsWith(" │ aa │")
+            )
+          : undefined;
+        return followingColumns?.getBoundingClientRect().left ?? null;
+      });
+    }, expectedRows);
+  await expect
+    .poll(readFollowingColumnPositions)
+    .toEqual(expectedRows.map(() => expect.any(Number)));
+
+  const positions = await readFollowingColumnPositions() as number[];
+  expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(0.1);
 });
 
 declare global {

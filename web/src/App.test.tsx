@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { App, attentionTransitions } from "./App";
@@ -9,6 +9,9 @@ const defaultSettings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
 };
 
 const runningSession: Session = {
@@ -1579,7 +1582,20 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   render(
     <App
       initialToken="valid-token"
-      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      renderTerminal={(
+        session,
+        _api,
+        _active,
+        _layoutVersion,
+        _onConnectionChange,
+        _reconnectSignal,
+        fontSize,
+      ) => (
+        <div
+          aria-label={`${session.id} terminal pane`}
+          data-font-size={fontSize}
+        />
+      )}
     />,
   );
   await screen.findByLabelText("session-1 terminal pane");
@@ -1590,16 +1606,45 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const prefix = screen.getByLabelText("Prefix");
   expect(prefix).toHaveAttribute("data-slot", "input");
   expect(prefix).toHaveFocus();
+  const interfaceFontSize = within(dialog).getByLabelText("Interface");
+  const terminalFontSize = within(dialog).getByLabelText("Terminal");
+  const agentLogFontSize = within(dialog).getByLabelText("Agent log");
+  await user.clear(interfaceFontSize);
+  await user.type(interfaceFontSize, "18");
+  await user.clear(terminalFontSize);
+  await user.type(terminalFontSize, "17");
+  await user.clear(agentLogFontSize);
+  await user.type(agentLogFontSize, "16");
+  expect(document.documentElement).toHaveStyle({ fontSize: "18px" });
+  expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-font-size",
+    "17",
+  );
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+  expect(document.documentElement).toHaveStyle({ fontSize: "16px" });
+  expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-font-size",
+    "14",
+  );
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
   const reopenedPrefix = screen.getByLabelText("Prefix");
   const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
+  expect(within(reopenedDialog).getByLabelText("Interface")).toHaveValue(16);
+  expect(within(reopenedDialog).getByLabelText("Terminal")).toHaveValue(14);
+  expect(within(reopenedDialog).getByLabelText("Agent log")).toHaveValue(14);
   await user.clear(reopenedPrefix);
   await user.type(reopenedPrefix, "Ctrl+A");
   await user.clear(paneTabShortcut);
   await user.type(paneTabShortcut, "control+j");
+  await user.clear(within(reopenedDialog).getByLabelText("Interface"));
+  await user.type(within(reopenedDialog).getByLabelText("Interface"), "18");
+  await user.clear(within(reopenedDialog).getByLabelText("Terminal"));
+  await user.type(within(reopenedDialog).getByLabelText("Terminal"), "17");
+  await user.clear(within(reopenedDialog).getByLabelText("Agent log"));
+  await user.type(within(reopenedDialog).getByLabelText("Agent log"), "16");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
@@ -1610,6 +1655,9 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         ...defaultSettings,
         prefix: "Ctrl+A",
         paneTabShortcut: "Ctrl+J",
+        interfaceFontSize: 18,
+        terminalFontSize: 17,
+        agentLogFontSize: 16,
       }),
     }),
   );
@@ -1640,6 +1688,37 @@ test("rejects a pane tab shortcut that duplicates the prefix", async () => {
 
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Choose a different shortcut from Prefix.",
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  expect(
+    fetchMock.mock.calls.some(([input, init]) =>
+      input === "/api/settings" && init?.method === "PATCH"),
+  ).toBe(false);
+});
+
+test("rejects a font size outside the supported range", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  const interfaceFontSize = within(dialog).getByLabelText("Interface");
+  await user.clear(interfaceFontSize);
+  await user.type(interfaceFontSize, "25");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose a whole number from 10 to 24.",
   );
   expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
   expect(
