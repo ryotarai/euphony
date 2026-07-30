@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/ryotarai/euphony/internal/selection"
 )
 
 var ErrNotFound = errors.New("session not found")
@@ -530,6 +531,26 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 		item.session.setHistoryLimit(settings.TerminalHistoryLimit)
 	}
 	return nil
+}
+
+func (m *Manager) LoadSelection(ctx context.Context) (selection.State, bool, error) {
+	m.mu.RLock()
+	store := m.store
+	m.mu.RUnlock()
+	if store == nil {
+		return selection.State{}, false, nil
+	}
+	return store.LoadSelection(ctx)
+}
+
+func (m *Manager) SaveSelection(ctx context.Context, state selection.State) error {
+	m.mu.RLock()
+	store := m.store
+	m.mu.RUnlock()
+	if store == nil {
+		return nil
+	}
+	return store.SaveSelection(ctx, state)
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {

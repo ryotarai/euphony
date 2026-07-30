@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/ryotarai/euphony/internal/selection"
 )
 
 func TestSQLiteStoreMigratesLegacyAttentionStatus(t *testing.T) {
@@ -138,6 +141,51 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSQLiteStorePersistsSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	empty, found, err := store.LoadSelection(context.Background())
+	if err != nil || found || !reflect.DeepEqual(empty, selection.State{}) {
+		t.Fatalf("empty LoadSelection() = %#v, %t, %v", empty, found, err)
+	}
+	want := selection.State{
+		ManualTerminalIDs: []string{"manual"},
+		PinnedTerminalIDs: []string{"pinned"},
+		FocusedTerminalID: "manual",
+		StatusFilters:     []string{"blocked"},
+		CWDFilters: []selection.CWDFilter{
+			{Status: "running", CWD: "/repo"},
+		},
+		Revision: 42,
+	}
+	if err := store.SaveSelection(context.Background(), want); err != nil {
+		t.Fatalf("SaveSelection() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	store, err = OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store.Close()
+	got, found, err := store.LoadSelection(context.Background())
+	if err != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadSelection() = %#v, %t, %v; want %#v", got, found, err, want)
+	}
+	var version int
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version != 7 {
+		t.Fatalf("user_version = %d, want 7", version)
 	}
 }
 
