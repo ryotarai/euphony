@@ -137,6 +137,10 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   const blocked = await createSession(page, "Permission request");
   await reportAgent(page, blocked.id, "codex", "Permission request", "running");
   await page.goto("/?token=test-token");
+  await page
+    .getByRole("button", { name: "Select Permission request" })
+    .click({ modifiers: ["Meta"] });
+  await page.getByLabel("Focused pane", { exact: true }).click();
 
   await reportAgent(page, blocked.id, "codex", "Permission request", "blocked");
 
@@ -151,6 +155,18 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   await expect(attentionDot).toHaveCSS("height", "6px");
   await expect(attentionDot).toHaveCSS("border-radius", "50%");
   await expect(attentionDot).toHaveCSS("background-color", "rgb(56, 189, 248)");
+  const paneAttention = page
+    .getByLabel("Permission request pane", { exact: true })
+    .getByRole("status", { name: "Needs attention" });
+  const paneAttentionDot = paneAttention.locator(".attention-dot");
+  await expect(paneAttention).toBeVisible();
+  await expect(paneAttentionDot).toHaveCSS("width", "6px");
+  await expect(paneAttentionDot).toHaveCSS("height", "6px");
+  await expect(paneAttentionDot).toHaveCSS("border-radius", "50%");
+  await expect(paneAttentionDot).toHaveCSS(
+    "background-color",
+    "rgb(56, 189, 248)",
+  );
   await expect(
     page.getByRole("checkbox", { name: "Show all Need attention terminals" }),
   ).toHaveCount(0);
