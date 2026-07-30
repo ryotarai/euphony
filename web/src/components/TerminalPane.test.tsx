@@ -162,8 +162,41 @@ test("opens a secondary source with Command-click without changing the primary s
   expect(screen.getByRole("separator", { name: "Resize source split" }))
     .toHaveAttribute("aria-valuenow", "50");
   expect(activeStates.at(-1)).toBe(false);
-  expect(sourceVisibilities.at(-1)).toBe(false);
+  expect(sourceVisibilities.at(-1)).toBe(true);
   expect(screen.getByText("Terminal + Workspace files")).toBeVisible();
+});
+
+test("reports Terminal as visible without activating it on the secondary side", async () => {
+  const user = userEvent.setup();
+  const activeStates: boolean[] = [];
+  const sourceVisibilities: boolean[] = [];
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={(_layoutVersion, terminalActive, sourceVisible) => {
+        activeStates.push(terminalActive);
+        sourceVisibilities.push(sourceVisible);
+        return <div aria-label="live terminal">terminal</div>;
+      }}
+    />,
+  );
+
+  await user.click(screen.getByRole("tab", { name: "Files" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Terminal" }), {
+    metaKey: true,
+  });
+
+  expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
+  expect(screen.getByRole("tab", { name: "Terminal" }))
+    .toHaveAttribute("data-split-active", "true");
+  expect(screen.getByLabelText("live terminal")).toBeVisible();
+  expect(activeStates.at(-1)).toBe(false);
+  expect(sourceVisibilities.at(-1)).toBe(true);
 });
 
 test("opens a keyboard-accessible secondary source with Command-Enter", () => {
@@ -186,6 +219,36 @@ test("opens a keyboard-accessible secondary source with Command-Enter", () => {
   expect(filesTab).toHaveAttribute("data-split-active", "true");
   expect(screen.getByRole("separator", { name: "Resize source split" }))
     .toBeVisible();
+});
+
+test("does not activate Terminal when Command-click closes its split", async () => {
+  const user = userEvent.setup();
+  const activeStates: boolean[] = [];
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={(_layoutVersion, terminalActive) => {
+        activeStates.push(terminalActive);
+        return <div>terminal</div>;
+      }}
+    />,
+  );
+
+  const terminalTab = screen.getByRole("tab", { name: "Terminal" });
+  const filesTab = screen.getByRole("tab", { name: "Files" });
+  fireEvent.click(filesTab, { metaKey: true });
+  expect(activeStates.at(-1)).toBe(false);
+
+  fireEvent.click(filesTab, { metaKey: true });
+  expect(activeStates.at(-1)).toBe(false);
+
+  await user.click(terminalTab);
+  expect(activeStates.at(-1)).toBe(true);
 });
 
 test("replaces, closes, and clears a secondary source without unmounting views", async () => {

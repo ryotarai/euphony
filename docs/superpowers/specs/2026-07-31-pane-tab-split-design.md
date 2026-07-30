@@ -28,10 +28,16 @@ selected panel is visible. In split mode CSS grid assigns the selected source
 to the left track and the secondary source to the right track, separated by a
 flush one-pixel divider with a wider pointer target.
 
-Opening, closing, or resizing a source split must not renegotiate the PTY size.
-While any source split is open, terminal capacity reporting is disabled even
-when the terminal panel is visible. The last accepted terminal claim is
-retained. Returning to a single Terminal view resumes the existing fit path.
+The Terminal source reports capacity whenever it is visible on either side of
+a split. Opening a split beside Terminal shrinks the PTY to the terminal
+track's measured width, dragging the divider continuously follows that width,
+and closing the split restores the full-width claim. This keeps PTY wrapping
+aligned with the visible xterm canvas instead of clipping full-width rows.
+
+Switching to a single non-terminal source still retains the last accepted
+terminal claim. A split containing no visible Terminal source also retains that
+claim. Split visibility must remain independent from pane activity so opening a
+secondary source does not focus the terminal.
 
 Agent log, Git changes, and Files views are active whenever they are visible in
 either side of the split. Annotation removal closes or repairs a split before
@@ -40,7 +46,8 @@ falling back to Terminal.
 ## Verification
 
 Component tests cover normal versus Command-click behavior, split replacement
-and closing, terminal lifecycle signals, divider dragging, divider keyboard
-controls, and annotation cleanup. Existing pane and terminal tests guard the
-single-source behavior. Type checking, the frontend suite, a production build,
-and an affected Playwright scenario provide integration evidence.
+and closing, terminal visibility and focus signals, divider dragging, divider
+keyboard controls, and annotation cleanup. Existing pane and terminal tests
+guard hidden-source capacity retention. Type checking, the frontend suite, a
+production build, and a Playwright scenario verify that the reported terminal
+columns shrink, follow the divider, and return to full width.
