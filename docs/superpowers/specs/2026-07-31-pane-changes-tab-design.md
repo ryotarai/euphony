@@ -25,15 +25,17 @@ Euphony.
 
 Create `internal/gitchanges`, a package that receives a trusted repository root
 from terminal metadata and runs Git without a shell. It reads porcelain v2
-status records with NUL delimiters, then asks Git for a unified patch per
-changed path. The package converts patches into transport-safe files, hunks,
+status records with NUL delimiters, then asks Git for the selected path's
+unified patch. The package converts patches into transport-safe files, hunks,
 and lines rather than exposing arbitrary command output to the browser.
 
 The reader caps the number of returned files and bytes retained from each Git
 command. Oversized patches remain selectable and show a visible truncation
 state. Untracked files are diffed against `/dev/null` through `git diff
 --no-index`; paths come only from Git status output and are passed as separate
-process arguments.
+process arguments. Summary refreshes do not load patches. A `path` query loads
+one patch only after the reader confirms that the path is present in the
+current porcelain status.
 
 ### HTTP API
 
@@ -61,9 +63,10 @@ state and shortcut cycle include it. Annotation remains conditional and is
 appended when available. Returning to Terminal follows the existing fit-version
 path, while switching to or from Changes does not alter the PTY capacity claim.
 
-`GitChangesView` polls every two seconds only while active. It retains the
-selected path across refreshes when that path still exists and otherwise
-selects the first changed file.
+`GitChangesView` polls every two seconds only while active. Its initial request
+loads the summary; subsequent requests include the selected path and load that
+file's patch. It retains the selected path across refreshes when that path still
+exists and otherwise selects the first changed file.
 
 ## Visual Direction
 
@@ -109,4 +112,3 @@ navigator becomes a short horizontal header region above the diff.
 - Playwright creates an isolated temporary Git repository, opens a terminal in
   it, selects Changes, verifies file selection and diff content, and captures a
   screenshot for visual review.
-

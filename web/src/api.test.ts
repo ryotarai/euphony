@@ -215,3 +215,36 @@ test("requests older and appended agent log pages with cursors", async () => {
     }),
   );
 });
+
+test("requests Git change summaries and selected file patches", async () => {
+  const snapshot = {
+    repoRoot: "/repo",
+    branch: "main",
+    ahead: 0,
+    behind: 0,
+    additions: 2,
+    deletions: 1,
+    files: [],
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementation(() => jsonResponse(snapshot));
+  const api = new ApiClient("token");
+
+  await api.getGitChanges("terminal/one");
+  await api.getGitChanges("terminal/one", "src/file name.ts");
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/sessions/terminal%2Fone/git-changes",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions/terminal%2Fone/git-changes?path=src%2Ffile+name.ts",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});

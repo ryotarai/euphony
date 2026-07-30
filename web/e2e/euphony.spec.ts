@@ -1,9 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 
 const requestedPort = process.env.EUPHONY_E2E_PORT;
 const e2ePort = requestedPort && /^\d+$/.test(requestedPort) ? requestedPort : "18080";
 const claudeConfigDir = `/tmp/euphony-e2e-${e2ePort}-claude`;
+const execFileAsync = promisify(execFile);
+
+async function runGit(repo: string, ...args: string[]) {
+  await execFileAsync("git", ["-C", repo, ...args]);
+}
 
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
@@ -414,6 +421,42 @@ test("keeps the agent log open when a filtered running agent starts waiting", as
   await expect(firstPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
     "data-active",
   );
+});
+
+test("browses Git changes inside a terminal pane", async ({ page }, testInfo) => {
+  await clearSessions(page);
+  const repo = await mkdtemp(`/tmp/euphony-e2e-${e2ePort}-git-`);
+  try {
+    await runGit(repo, "init", "-b", "main");
+    await runGit(repo, "config", "user.name", "Euphony Test");
+    await runGit(repo, "config", "user.email", "euphony@example.test");
+    await mkdir(`${repo}/src`, { recursive: true });
+    await writeFile(`${repo}/src/app.ts`, "export const state = 'before';\n");
+    await runGit(repo, "add", "src/app.ts");
+    await runGit(repo, "commit", "-m", "baseline");
+    await writeFile(`${repo}/src/app.ts`, "export const state = 'after';\n");
+    await writeFile(`${repo}/draft file.md`, "# Draft\n");
+
+    await createSession(page, "Git review", repo);
+    await page.goto("/?token=test-token");
+    const pane = page.getByLabel("Git review pane", { exact: true });
+    await pane.getByRole("tab", { name: "Changes" }).click();
+
+    await expect(pane.getByText("main", { exact: true })).toBeVisible();
+    const appFile = pane.getByRole("button", { name: /src\/app\.ts, modified/ });
+    await appFile.click();
+    await expect(pane.getByText("export const state = 'before';")).toBeVisible();
+    await expect(pane.getByText("export const state = 'after';")).toBeVisible();
+
+    const draftFile = pane.getByRole("button", { name: /draft file\.md, untracked/ });
+    await draftFile.click();
+    await expect(pane.getByText("# Draft")).toBeVisible();
+    await expect(draftFile).toHaveAttribute("aria-current", "true");
+    await page.screenshot({ path: testInfo.outputPath("git-changes-tab.png") });
+  } finally {
+    await clearSessions(page);
+    await rm(repo, { recursive: true, force: true });
+  }
 });
 
 test("auto-selects an attention terminal without moving focus", async ({ page }) => {
@@ -1255,6 +1298,8 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
+  await page.keyboard.press("Control+J");
+  await expect(page.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+A");

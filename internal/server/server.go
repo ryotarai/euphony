@@ -116,6 +116,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/sessions/{id}/acknowledge-attention", server.acknowledgeAttention)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
 	protected.HandleFunc("GET /api/sessions/{id}/agent-log", server.agentLog)
+	protected.HandleFunc("GET /api/sessions/{id}/git-changes", server.gitChanges)
 	protected.HandleFunc("POST /api/hooks/terminal", server.updateTerminalHook)
 	protected.HandleFunc("GET /api/settings", server.getSettings)
 	protected.HandleFunc("PATCH /api/settings", server.updateSettings)
