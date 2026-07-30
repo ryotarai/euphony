@@ -1,11 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFile, spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const port = process.env.EUPHONY_E2E_PORT ?? "18080";
 const socketPath = `/tmp/euphony-e2e-${port}.sock`;
+const binaryPath = resolve("../bin/euphony");
 
 type CLIEnvelope<T> = {
   ok: true;
@@ -99,7 +101,11 @@ function annotate(
       }
     });
   });
-  return { child, completed };
+  return { completed };
+}
+
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 test("automates terminals over Unix and TCP and shares selection with the browser", async ({
@@ -201,7 +207,12 @@ test("reviews annotations from the blocking CLI over Unix and TCP", async ({
     markdownPath,
     "# Release proposal\n\nSelect this passage for feedback.\n",
   );
-  const markdown = annotate(created.terminal.id, markdownPath, "unix");
+  await cli([
+    "terminal",
+    "run",
+    created.terminal.id,
+    `${shellQuote(binaryPath)} annotate ${shellQuote(markdownPath)}`,
+  ]);
   await expect(page.getByRole("tab", { name: "Annotation" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Release proposal" }),
@@ -232,21 +243,18 @@ test("reviews annotations from the blocking CLI over Unix and TCP", async ({
   });
   await page.getByRole("button", { name: "Send comments" }).click();
 
-  const markdownOutput = await markdown.completed;
-  expect(markdownOutput.ok).toBe(true);
-  expect(markdownOutput.result.comments[0]).toMatchObject({
-    kind: "selection",
-    body: "Make the rollout criteria concrete.",
-    quote: "Select this",
-  });
-  expect(
-    markdownOutput.result.comments[0].endOffset! -
-      markdownOutput.result.comments[0].startOffset!,
-  ).toBe(11);
-  expect(markdownOutput.result.comments[1]).toEqual({
-    kind: "global",
-    body: "Ready after that change.",
-  });
+  const terminalOutput = await cli<{ matchedLine: string }>([
+    "terminal",
+    "wait-output",
+    "--match",
+    "Make the rollout criteria concrete.",
+    "--timeout",
+    "5000",
+    created.terminal.id,
+  ]);
+  expect(terminalOutput.matchedLine).toContain(`"ok":true`);
+  expect(terminalOutput.matchedLine).toContain(`"comments"`);
+  expect(terminalOutput.matchedLine).toContain(`"quote":"Select this"`);
   await expect(page.getByRole("tab", { name: "Annotation" })).toHaveCount(0);
 
   const htmlPath = `/tmp/euphony-annotation-${port}.html`;

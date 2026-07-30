@@ -5,6 +5,7 @@ import { isEditableTarget, matchesPrefix } from "../keybindings";
 import type { AnnotationSession, Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
 import { AnnotationView } from "./AnnotationView";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -35,6 +36,8 @@ export function TerminalPane({
 }: TerminalPaneProps) {
   const [source, setSource] = useState<PaneSource>("terminal");
   const [annotation, setAnnotation] = useState<AnnotationSession | null>(null);
+  const [annotationRetry, setAnnotationRetry] = useState(0);
+  const [annotationSyncFailed, setAnnotationSyncFailed] = useState(false);
   const annotationIDRef = useRef<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const changeSource = (next: string | null) => {
@@ -58,16 +61,17 @@ export function TerminalPane({
       if (!current) return;
       const previousID = annotationIDRef.current;
       annotationIDRef.current = next?.id ?? null;
+      setAnnotationSyncFailed(false);
       if (next && next.id !== previousID) setSource("annotation");
       if (!next && previousID) setSource("terminal");
       setAnnotation(next);
     }).catch(() => {
-      // Keep an already displayed review available until the next event retry.
+      if (annotationIDRef.current) setAnnotationSyncFailed(true);
     });
     return () => {
       current = false;
     };
-  }, [api, annotationRevision, session.id]);
+  }, [annotationRetry, api, annotationRevision, session.id]);
 
   useEffect(() => {
     if (!active) return;
@@ -171,6 +175,19 @@ export function TerminalPane({
           value="annotation"
           keepMounted
         >
+          {annotationSyncFailed && (
+            <div className="annotation-sync-warning" role="status">
+              <span>Review status could not be refreshed.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => setAnnotationRetry((current) => current + 1)}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
           <AnnotationView
             annotation={annotation}
             api={api}

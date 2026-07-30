@@ -364,6 +364,64 @@ test("applies a remote selection event without writing it back", async () => {
   eventController?.close();
 });
 
+test("rediscovers an annotation created before the event subscription starts", async () => {
+  let annotationReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: ["session-1"],
+          manualTerminalIds: ["session-1"],
+          pinnedTerminalIds: [],
+          focusedTerminalId: "session-1",
+          filters: { statuses: [], cwds: [] },
+          revision: 3,
+        },
+      });
+    }
+    if (input === "/api/v1/terminals/session-1/annotation") {
+      annotationReads++;
+      return jsonResponse({
+        ok: true,
+        result: {
+          annotation: annotationReads === 1
+            ? null
+            : {
+              id: "annotation-1",
+              terminalId: "session-1",
+              filename: "review.md",
+              format: "markdown",
+              content: "# Review",
+              createdAt: "2026-07-30T00:00:00Z",
+            },
+        },
+      });
+    }
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>(), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  expect(await screen.findByRole("tab", { name: "Annotation" }))
+    .toHaveAttribute("data-active");
+  expect(annotationReads).toBeGreaterThanOrEqual(2);
+});
+
 test("detects only new transitions into attention", () => {
   const attention = { ...runningSession, needsAttention: true };
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);

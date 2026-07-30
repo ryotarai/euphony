@@ -499,7 +499,7 @@
         },
         "responses": {
           "201": {
-            "description": "Annotation created"
+            "$ref": "#/components/responses/AnnotationCreated"
           },
           "400": {"$ref": "#/components/responses/Error"},
           "404": {"$ref": "#/components/responses/Error"},
@@ -515,7 +515,7 @@
         "operationId": "getCurrentAnnotation",
         "responses": {
           "200": {
-            "description": "Current annotation or null"
+            "$ref": "#/components/responses/CurrentAnnotation"
           },
           "404": {"$ref": "#/components/responses/Error"}
         }
@@ -534,7 +534,7 @@
         "operationId": "waitForAnnotation",
         "responses": {
           "200": {
-            "description": "Submitted annotation comments"
+            "$ref": "#/components/responses/AnnotationResult"
           },
           "404": {"$ref": "#/components/responses/Error"},
           "410": {"$ref": "#/components/responses/Error"}
@@ -562,7 +562,7 @@
         },
         "responses": {
           "200": {
-            "description": "Annotation completed"
+            "$ref": "#/components/responses/AnnotationResult"
           },
           "400": {"$ref": "#/components/responses/Error"},
           "404": {"$ref": "#/components/responses/Error"}
@@ -582,7 +582,7 @@
         "operationId": "cancelAnnotation",
         "responses": {
           "200": {
-            "description": "Annotation canceled"
+            "$ref": "#/components/responses/AnnotationCanceled"
           },
           "404": {"$ref": "#/components/responses/Error"}
         }
@@ -607,6 +607,38 @@
       }
     },
     "responses": {
+      "AnnotationCreated": {
+        "description": "Annotation created",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AnnotationCreatedEnvelope"}
+          }
+        }
+      },
+      "CurrentAnnotation": {
+        "description": "Current annotation or null",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/CurrentAnnotationEnvelope"}
+          }
+        }
+      },
+      "AnnotationResult": {
+        "description": "Submitted annotation comments",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AnnotationResultEnvelope"}
+          }
+        }
+      },
+      "AnnotationCanceled": {
+        "description": "Annotation canceled",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AnnotationCanceledEnvelope"}
+          }
+        }
+      },
       "Accepted": {
         "description": "Input accepted",
         "content": {
@@ -1027,6 +1059,74 @@
           },
           "result": {}
         }
+      },
+      "AnnotationCreatedEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["annotation"],
+                "properties": {
+                  "annotation": {"$ref": "#/components/schemas/Annotation"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "CurrentAnnotationEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["annotation"],
+                "properties": {
+                  "annotation": {
+                    "anyOf": [
+                      {"$ref": "#/components/schemas/Annotation"},
+                      {"type": "null"}
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AnnotationResultEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {"$ref": "#/components/schemas/AnnotationResult"}
+            }
+          }
+        ]
+      },
+      "AnnotationCanceledEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {"id": {"type": "string"}},
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
       },
       "StatusEnvelope": {
         "allOf": [

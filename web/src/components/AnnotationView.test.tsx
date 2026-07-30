@@ -95,6 +95,8 @@ test("sanitizes active HTML before rendering it", () => {
         format: "html",
         content: `<h1>Safe heading</h1>
           <a href="javascript:alert(1)" onclick="alert(1)">unsafe link</a>
+          <img src="http://127.0.0.1/private.png" alt="external resource">
+          <video src="https://example.com/video.mp4" autoplay></video>
           <form><input value="secret"></form>
           <iframe src="https://example.com"></iframe>
           <script>alert("x")</script>
@@ -107,7 +109,9 @@ test("sanitizes active HTML before rendering it", () => {
 
   expect(screen.getByRole("heading", { name: "Safe heading" })).toBeVisible();
   expect(screen.getByText("Safe paragraph")).not.toHaveAttribute("style");
-  expect(container.querySelector("script, iframe, form, input")).toBeNull();
+  expect(
+    container.querySelector("script, iframe, form, input, img, video"),
+  ).toBeNull();
   const link = screen.getByText("unsafe link").closest("a");
   expect(link).not.toBeNull();
   expect(link).not.toHaveAttribute("href");

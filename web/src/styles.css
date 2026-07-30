@@ -2230,6 +2230,27 @@ input {
   background: #050505;
 }
 
+.annotation-sync-warning {
+  position: absolute;
+  z-index: 2;
+  top: 0.55rem;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.7rem;
+  color: #f5f5f5;
+  background: #171717;
+  border: 1px solid #f59e0b;
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 55%);
+  font-size: 0.68rem;
+  transform: translateX(-50%);
+}
+
+.annotation-sync-warning [data-slot="button"] {
+  border-radius: 0;
+}
+
 .annotation-reader,
 .annotation-comments {
   display: grid;

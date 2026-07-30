@@ -295,3 +295,44 @@ test("discovers a new annotation as a third tab and selects it", async () => {
   expect(screen.getByLabelText("live terminal")).not.toBeVisible();
   expect(document.querySelector(".agent-log-view")).toBeInTheDocument();
 });
+
+test("keeps a displayed annotation and offers retry after refresh failure", async () => {
+  const user = userEvent.setup();
+  const annotation = {
+    id: "annotation-1",
+    terminalId: "terminal-1",
+    filename: "review.md",
+    format: "markdown" as const,
+    content: "# Review",
+    createdAt: "2026-07-30T00:00:00Z",
+  };
+  const getCurrentAnnotation = vi.fn()
+    .mockResolvedValueOnce(annotation)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(annotation);
+  const api = paneAPI({ getCurrentAnnotation });
+  const props = {
+    session,
+    api,
+    active: true,
+    layoutVersion: 1,
+    tabShortcut: "Meta+L",
+    onDeselect: () => undefined,
+    renderTerminal: () => <div>terminal</div>,
+  };
+  const { rerender } = render(
+    <TerminalPane {...props} annotationRevision={0} />,
+  );
+  expect(await screen.findByRole("tab", { name: "Annotation" })).toBeVisible();
+
+  rerender(<TerminalPane {...props} annotationRevision={1} />);
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Review status could not be refreshed.",
+  );
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+
+  await screen.findByRole("heading", { name: "Review" });
+  expect(screen.queryByText("Review status could not be refreshed."))
+    .not.toBeInTheDocument();
+  expect(getCurrentAnnotation).toHaveBeenCalledTimes(3);
+});

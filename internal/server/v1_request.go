@@ -9,7 +9,8 @@ import (
 	"net/http"
 )
 
-const maxV1RequestBody = 1024 * 1024
+// JSON escaping can expand one byte of annotation content to six bytes.
+const maxV1RequestBody = 6*maxAnnotationContentBytes + 64*1024
 
 var errV1RequestTooLarge = errors.New("v1 request body too large")
 
@@ -35,7 +36,7 @@ func decodeV1JSON(r *http.Request, target any) error {
 func writeV1DecodeError(w http.ResponseWriter, err error, message string) {
 	if errors.Is(err, errV1RequestTooLarge) {
 		writeV1Error(w, http.StatusRequestEntityTooLarge, "request_too_large",
-			"Request bodies must not exceed 1048576 bytes.", nil)
+			"Request body exceeds the supported size.", nil)
 		return
 	}
 	writeV1Error(w, http.StatusBadRequest, "invalid_request", message, nil)

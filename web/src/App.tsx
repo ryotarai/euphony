@@ -806,6 +806,7 @@ export function App({
         if (controller.signal.aborted) return;
         applySessionSnapshot(items);
         acceptServerSelection(selection);
+        setAnnotationRevision((current) => current + 1);
       } finally {
         refreshRunning = false;
       }

@@ -35,6 +35,15 @@ const forbiddenHTMLTags = [
   "embed",
   "link",
   "meta",
+  "img",
+  "picture",
+  "audio",
+  "video",
+  "source",
+  "track",
+  "svg",
+  "math",
+  "canvas",
 ];
 
 export function AnnotationView({
@@ -54,7 +63,14 @@ export function AnnotationView({
   const sanitizedHTML = useMemo(
     () => DOMPurify.sanitize(annotation.content, {
       FORBID_TAGS: forbiddenHTMLTags,
-      FORBID_ATTR: ["style"],
+      FORBID_ATTR: [
+        "style",
+        "src",
+        "srcset",
+        "poster",
+        "background",
+        "xlink:href",
+      ],
     }),
     [annotation.content],
   );

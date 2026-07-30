@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,14 +210,70 @@ func TestV1AnnotationCancelRemovesCurrentAndWakesWaiter(t *testing.T) {
 	decodeResponse(t, created, &envelope)
 	id := envelope.Result.Annotation.ID
 
+	type waitResponse struct {
+		recorder *httptest.ResponseRecorder
+	}
+	waited := make(chan waitResponse, 1)
+	go func() {
+		waited <- waitResponse{recorder: performRequest(
+			t,
+			srv,
+			http.MethodGet,
+			"/api/v1/annotations/"+id+"/wait",
+			"",
+		)}
+	}()
+	waitForAnnotationWaiter(t, srv, id)
 	canceled := performRequest(t, srv, http.MethodDelete, "/api/v1/annotations/"+id, "")
 	if canceled.Code != http.StatusOK {
 		t.Fatalf("cancel status = %d, body = %s", canceled.Code, canceled.Body.String())
 	}
-	waited := performRequest(t, srv, http.MethodGet, "/api/v1/annotations/"+id+"/wait", "")
-	assertV1Error(t, waited, http.StatusGone, "annotation_canceled")
+	assertV1Error(t, (<-waited).recorder, http.StatusGone, "annotation_canceled")
 	missing := performRequest(t, srv, http.MethodDelete, "/api/v1/annotations/"+id, "")
 	assertV1Error(t, missing, http.StatusNotFound, "annotation_not_found")
+}
+
+func TestV1AnnotationAcceptsOneMiBContent(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	terminalID := createAnnotationTestTerminal(t, srv)
+	body, err := json.Marshal(map[string]any{
+		"terminalId": terminalID,
+		"filename":   "boundary.md",
+		"format":     "markdown",
+		"content":    strings.Repeat("a", maxAnnotationContentBytes),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := performRequest(
+		t,
+		srv,
+		http.MethodPost,
+		"/api/v1/annotations",
+		string(body),
+	)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func waitForAnnotationWaiter(t *testing.T, srv *Server, id string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if srv.annotations.Waiting(id) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("annotation wait did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func createAnnotationTestTerminal(t *testing.T, srv *Server) string {

@@ -110,6 +110,13 @@ func (s *Store) Current(terminalID string) (Session, bool) {
 	return item.session, true
 }
 
+func (s *Store) Waiting(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.entries[id]
+	return item != nil && item.waiting > 0
+}
+
 func (s *Store) Wait(ctx context.Context, id string) (Result, error) {
 	s.mu.Lock()
 	item, found := s.entries[id]

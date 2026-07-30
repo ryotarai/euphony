@@ -14,6 +14,10 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ryotarai/euphony/internal/annotation"
+	"github.com/ryotarai/euphony/internal/apiclient"
+	"github.com/ryotarai/euphony/internal/server"
 )
 
 func TestAutomationCLIPrintsStableSuccessJSON(t *testing.T) {
@@ -92,6 +96,75 @@ func TestAnnotateCLIWaitsForCommentsAndPrintsStableJSON(t *testing.T) {
 		envelope.Result.Comments[0].Kind != "selection" ||
 		stderr.Len() != 0 {
 		t.Fatalf("stdout = %#v, stderr = %q", envelope, stderr.String())
+	}
+}
+
+func TestAnnotateCLIAcceptsOneMiBThroughTheRealServer(t *testing.T) {
+	apiServer, err := server.New(server.Config{Token: "secret", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = apiServer.Close(t.Context()) })
+	httpServer := httptest.NewServer(apiServer.Handler())
+	t.Cleanup(httpServer.Close)
+	client, err := apiclient.New(apiclient.Config{
+		BaseURL: httpServer.URL,
+		Token:   "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.CreateTerminal(t.Context(), apiclient.CreateTerminalRequest{
+		Name: "Boundary",
+		CWD:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentPath := filepath.Join(t.TempDir(), "boundary.md")
+	if err := os.WriteFile(
+		documentPath,
+		bytes.Repeat([]byte("a"), 1024*1024),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EUPHONY_URL", httpServer.URL)
+	t.Setenv("EUPHONY_TOKEN", "secret")
+	t.Setenv("EUPHONY_SOCKET", t.TempDir()+"/missing.sock")
+	t.Setenv("EUPHONY_TERMINAL_ID", created.Terminal.ID)
+	var stdout, stderr bytes.Buffer
+	finished := make(chan error, 1)
+	go func() {
+		finished <- run(
+			[]string{"annotate", documentPath},
+			bytes.NewReader(nil),
+			&stdout,
+			&stderr,
+		)
+	}()
+	var current *annotation.Session
+	deadline := time.Now().Add(3 * time.Second)
+	for current == nil && time.Now().Before(deadline) {
+		current, err = client.CurrentAnnotation(t.Context(), created.Terminal.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current == nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if current == nil {
+		t.Fatal("one MiB annotation was not created")
+	}
+	if _, err := client.CompleteAnnotation(t.Context(), current.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatalf("run() error = %v, stderr = %s", err, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"comments":[]`)) {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 
