@@ -598,6 +598,62 @@ test("keeps a Shift-pinned terminal selected until its checkbox is clicked", asy
   expect(parameters.getAll("pin")).toEqual([]);
 });
 
+test("does not toggle a pinned terminal off from its row", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+    { shiftKey: true },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
+  fireEvent.click(screen.getByRole("button", { name: "Select Codex" }), {
+    metaKey: true,
+  });
+
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1", "session-2"]);
+  expect(parameters.getAll("pin")).toEqual(["session-1"]);
+});
+
+test("prefix navigation reads a pin added to the current terminal", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+    { shiftKey: true },
+  );
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "n" });
+
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1", "session-2"]);
+  expect(parameters.getAll("pin")).toEqual(["session-1"]);
+});
+
 test("restores URL pins into terminal selection", async () => {
   history.replaceState(
     null,

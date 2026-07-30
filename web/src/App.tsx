@@ -576,7 +576,7 @@ export function App({
     return () => {
       window.removeEventListener("keydown", handleKey, { capture: true });
     };
-  }, [focusedID, selectedIDs, sessions, settings.prefix]);
+  }, [focusedID, selectedIDs, pinnedIDs, sessions, settings.prefix]);
 
   function selectSession(
     id: string,
@@ -602,6 +602,17 @@ export function App({
       writeWorkspaceToURL(
         nextIDs,
         nextPinnedIDs,
+        id,
+        statusFilters,
+        cwdFilters,
+      );
+      return;
+    }
+    if (checkboxPin === undefined && multiple && pinned) {
+      setFocusedID(id);
+      writeWorkspaceToURL(
+        selectedIDs,
+        pinnedIDs,
         id,
         statusFilters,
         cwdFilters,
