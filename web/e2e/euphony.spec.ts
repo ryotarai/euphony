@@ -92,6 +92,35 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
+test("shows empty status groups with interactive checkboxes", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  await createSession(page, "Shell");
+  await page.goto("/?token=test-token");
+
+  for (const label of [
+    "Show all Blocked terminals",
+    "Show all Need attention terminals",
+    "Show all Running terminals",
+    "Show all Waiting terminals",
+    "Show all Terminal terminals",
+  ]) {
+    await expect(page.getByRole("checkbox", { name: label })).toBeVisible();
+  }
+  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(4);
+  await page.screenshot({ path: testInfo.outputPath("empty-status-groups.png") });
+
+  const running = page.getByRole("checkbox", {
+    name: "Show all Running terminals",
+  });
+  await running.click();
+
+  await expect(running).toBeChecked();
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["running"]);
+  await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
+});
+
 test("confirms before deleting a terminal", async ({ page }) => {
   await clearSessions(page);
   const terminal = await createSession(page, "Disposable");
@@ -631,6 +660,58 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
 
   await expect(page.getByRole("dialog", { name: "Quick Actions" })).toHaveCount(0);
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
+});
+
+test("keeps the Quick Actions keyboard selection in the scroll viewport", async ({ page }) => {
+  await clearSessions(page);
+  for (let index = 1; index <= 6; index += 1) {
+    await createSession(page, `Terminal ${index}`);
+  }
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const commandList = page.locator('[data-slot="command-list"]');
+  await expect.poll(() =>
+    commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
+  ).toBe(true);
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
+
+  const lastTerminal = page.getByRole("option", { name: /^Terminal 6/ });
+  await expect(lastTerminal).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() =>
+    lastTerminal.evaluate((element) => {
+      const list = element.closest('[data-slot="command-list"]');
+      if (!list) return false;
+      const itemBounds = element.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return itemBounds.top >= listBounds.top && itemBounds.bottom <= listBounds.bottom;
+    }),
+  ).toBe(true);
+  const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
+  expect(scrolledDown).toBeGreaterThan(0);
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("ArrowUp");
+  }
+
+  const firstAction = page.getByRole("option", {
+    name: /^New terminal in directory…/,
+  });
+  await expect(firstAction).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() =>
+    firstAction.evaluate((element) => {
+      const list = element.closest('[data-slot="command-list"]');
+      if (!list) return false;
+      const itemBounds = element.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return itemBounds.top >= listBounds.top && itemBounds.bottom <= listBounds.bottom;
+    }),
+  ).toBe(true);
+  await expect.poll(() => commandList.evaluate((element) => element.scrollTop))
+    .toBeLessThan(scrolledDown);
 });
 
 test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
