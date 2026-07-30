@@ -518,73 +518,6 @@ input {
   z-index: 2;
 }
 
-.settings-layer {
-  position: fixed;
-  z-index: 30;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-  background: rgb(5 7 9 / 72%);
-  backdrop-filter: blur(5px);
-}
-
-.settings-dialog {
-  width: min(28rem, 100%);
-  display: grid;
-  gap: 0.9rem;
-  padding: 1.4rem;
-  background: #1b2026;
-  border: 1px solid #394149;
-  box-shadow: 0 28px 80px rgb(0 0 0 / 50%);
-}
-
-.settings-dialog h2,
-.settings-dialog p {
-  margin: 0;
-}
-
-.settings-dialog h2 {
-  font-size: 1.5rem;
-}
-
-.settings-dialog label {
-  color: #829099;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.settings-hint {
-  color: #829099;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.7rem;
-  line-height: 1.6;
-}
-
-.settings-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.65rem;
-  margin-top: 0.3rem;
-}
-
-.settings-controls button {
-  min-height: 40px;
-  padding: 0.55rem 0.85rem;
-  color: #dce5e8;
-  background: transparent;
-  border: 1px solid #394149;
-}
-
-.settings-controls button[type="submit"] {
-  color: #111417;
-  background: #b8f34a;
-  border-color: #b8f34a;
-  font-weight: 700;
-}
-
 .session-channel:hover .session-delete,
 .session-delete:focus-visible {
   opacity: 1;
@@ -677,19 +610,27 @@ input {
   z-index: 4;
   top: 0.8rem;
   left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   transform: translateX(-50%);
-  padding: 0.42rem 0.65rem;
-  color: #111417;
-  background: #b8f34a;
-  border-radius: 2px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 32%);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  padding: 0.45rem 0.65rem;
+  color: #e5e5e5;
+  background: #0a0a0a;
+  border: 1px solid #262626;
+  border-radius: 0.5rem;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 55%);
+  font-family: "Geist Variable", sans-serif;
+  font-size: 0.75rem;
+  font-weight: 550;
   pointer-events: none;
   animation: copied-toast-in 140ms ease-out;
+}
+
+.copied-toast svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: #a3a3a3;
 }
 
 .signal-status {
@@ -1415,6 +1356,25 @@ input:focus-visible,
   white-space: nowrap;
 }
 
+.cwd-select {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.cwd-select:hover {
+  color: var(--sidebar-foreground);
+}
+
+.cwd-terminal-list {
+  width: calc(100% - 1.25rem);
+  margin-left: 1.25rem;
+}
+
 .session-group {
   display: flex;
   flex-direction: column;
@@ -1657,6 +1617,33 @@ input:focus-visible,
 .create-terminal-form {
   display: grid;
   gap: 0.75rem;
+}
+
+.settings-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.settings-field > label {
+  color: var(--foreground);
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+
+.settings-field [data-slot="input"] {
+  min-height: 2.5rem;
+}
+
+.settings-hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .create-terminal-form > label {

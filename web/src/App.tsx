@@ -32,6 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import type { Session, Settings } from "./types";
 
 const tokenKey = "euphony.token";
@@ -74,6 +75,10 @@ function matchesWorkspaceFilter(
     statusFilters.includes(status) ||
     cwdFilters.includes(cwdFilterKey(status, session.cwd))
   );
+}
+
+function cwdFilterBelongsToStatus(filter: string, status: string) {
+  return filter.startsWith(`${status}\u0000`);
 }
 
 export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
@@ -405,7 +410,63 @@ export function App({
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
     } else if (selectedIDs.includes(id)) {
-      nextIDs = selectedIDs.length === 1 ? selectedIDs : selectedIDs.filter((item) => item !== id);
+      const availableSessions = sessions ?? [];
+      const session = availableSessions.find((item) => item.id === id);
+      const status = session ? sessionActivity(session) : "";
+      const key = session ? cwdFilterKey(status, session.cwd) : "";
+      const statusOwnsSession = statusFilters.includes(status);
+      const cwdOwnsSession = cwdFilters.includes(key);
+      if (session && (statusOwnsSession || cwdOwnsSession)) {
+        const nextStatusFilters = statusFilters.filter((item) => item !== status);
+        let nextCwdFilters = cwdFilters.filter((item) => item !== key);
+        if (statusOwnsSession) {
+          const siblingCwdFilters = [
+            ...new Set(
+              availableSessions
+                .filter(
+                  (item) =>
+                    sessionActivity(item) === status &&
+                    item.cwd !== session.cwd,
+                )
+                .map((item) => cwdFilterKey(status, item.cwd)),
+            ),
+          ];
+          nextCwdFilters = [
+            ...cwdFilters.filter(
+              (filter) => !cwdFilterBelongsToStatus(filter, status),
+            ),
+            ...siblingCwdFilters,
+          ];
+        }
+        const matching = availableSessions
+          .filter((item) =>
+            matchesWorkspaceFilter(item, nextStatusFilters, nextCwdFilters)
+          )
+          .map((item) => item.id);
+        nextIDs = [
+          ...new Set([
+            ...selectedIDs.filter((item) => item !== id),
+            ...matching,
+          ]),
+        ];
+        if (nextIDs.length === 0) nextIDs = [id];
+        filterSelectedIDsRef.current = new Set(matching);
+        const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+        setStatusFilters(nextStatusFilters);
+        setCwdFilters(nextCwdFilters);
+        setSelectedIDs(nextIDs);
+        setFocusedID(nextFocus);
+        writeWorkspaceToURL(
+          nextIDs,
+          nextFocus,
+          nextStatusFilters,
+          nextCwdFilters,
+        );
+        return;
+      }
+      nextIDs = selectedIDs.length === 1
+        ? selectedIDs
+        : selectedIDs.filter((item) => item !== id);
     } else {
       nextIDs = [...selectedIDs, id];
     }
@@ -448,10 +509,13 @@ export function App({
   }
 
   function updateStatusFilter(status: string, checked: boolean) {
-    const nextFilters = checked
-      ? [...statusFilters, status]
+    const nextStatusFilters = checked
+      ? [...new Set([...statusFilters, status])]
       : statusFilters.filter((item) => item !== status);
-    updateWorkspaceFilters(nextFilters, cwdFilters);
+    const nextCwdFilters = cwdFilters.filter(
+      (filter) => !cwdFilterBelongsToStatus(filter, status),
+    );
+    updateWorkspaceFilters(nextStatusFilters, nextCwdFilters);
   }
 
   function updateCwdFilter(
@@ -460,8 +524,30 @@ export function App({
     checked: boolean,
   ) {
     const key = cwdFilterKey(status, cwd);
+    if (!checked && statusFilters.includes(status)) {
+      const siblingCwdFilters = [
+        ...new Set(
+          (sessions ?? [])
+            .filter(
+              (session) =>
+                sessionActivity(session) === status && session.cwd !== cwd,
+            )
+            .map((session) => cwdFilterKey(status, session.cwd)),
+        ),
+      ];
+      updateWorkspaceFilters(
+        statusFilters.filter((item) => item !== status),
+        [
+          ...cwdFilters.filter(
+            (filter) => !cwdFilterBelongsToStatus(filter, status),
+          ),
+          ...siblingCwdFilters,
+        ],
+      );
+      return;
+    }
     const nextFilters = checked
-      ? [...cwdFilters, key]
+      ? [...new Set([...cwdFilters, key])]
       : cwdFilters.filter((item) => item !== key);
     updateWorkspaceFilters(statusFilters, nextFilters);
   }
@@ -478,6 +564,24 @@ export function App({
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
     writeWorkspaceToURL(nextIDs, nextFocus, [status], []);
+  }
+
+  function selectCwd(status: string, cwd: string) {
+    const nextIDs = sessions
+      ?.filter(
+        (session) =>
+          sessionActivity(session) === status && session.cwd === cwd,
+      )
+      .map((session) => session.id) ?? [];
+    if (nextIDs.length === 0) return;
+    const nextFocus = nextIDs[0];
+    const nextCwdFilters = [cwdFilterKey(status, cwd)];
+    setStatusFilters([]);
+    setCwdFilters(nextCwdFilters);
+    filterSelectedIDsRef.current = new Set(nextIDs);
+    setSelectedIDs(nextIDs);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(nextIDs, nextFocus, [], nextCwdFilters);
   }
 
   function focusPane(id: string) {
@@ -735,6 +839,7 @@ export function App({
         onStatusFilter={updateStatusFilter}
         onStatusSelect={selectStatus}
         onCwdFilter={updateCwdFilter}
+        onCwdSelect={selectCwd}
         onCreate={() => void createSession()}
         onDelete={(item) => void deleteSession(item)}
         settings={settings}
@@ -892,40 +997,40 @@ export function App({
           </form>
         </DialogContent>
       </Dialog>
-      {settingsOpen && (
-        <div
-          className="settings-layer"
-          onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}
-        >
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+            <DialogDescription>
+              Configure terminal workspace shortcuts.
+            </DialogDescription>
+          </DialogHeader>
           <form
-            className="settings-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Settings"
+            className="settings-form"
             onSubmit={(event) => void saveSettings(event)}
           >
-            <p className="eyebrow">Key bindings</p>
-            <h2>Settings</h2>
-            <label htmlFor="prefix">Prefix</label>
-            <input
-              id="prefix"
-              value={prefixDraft}
-              onChange={(event) => setPrefixDraft(event.target.value)}
-              autoFocus
-            />
-            <p className="settings-hint">
-              Commands: c new, v split, h/l pane, n/p terminal.
-            </p>
-            {settingsError && <p className="field-error">{settingsError}</p>}
-            <div className="settings-controls">
-              <button type="button" onClick={() => setSettingsOpen(false)}>
-                Cancel
-              </button>
-              <button type="submit">Save settings</button>
+            <div className="settings-field">
+              <label htmlFor="prefix">Prefix</label>
+              <Input
+                id="prefix"
+                value={prefixDraft}
+                onChange={(event) => setPrefixDraft(event.target.value)}
+                autoFocus
+              />
+              <p className="settings-hint">
+                Commands: c new, v split, h/l pane, n/p terminal.
+              </p>
             </div>
+            {settingsError && <p className="field-error">{settingsError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save settings</Button>
+            </DialogFooter>
           </form>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

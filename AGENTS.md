@@ -23,3 +23,5 @@
   aggregate connection status at workspace level instead of repeating it per pane.
 - Treat checked sidebar groups as persistent dynamic filters: automatically add
   and remove panes as sessions enter or leave the checked group.
+- Reflect checked parent filters in child controls, and release or decompose an
+  active parent filter when a child is unchecked.

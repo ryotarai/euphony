@@ -122,6 +122,7 @@ test("groups terminals by status then cwd and exposes group selection controls",
   const onStatusFilter = vi.fn();
   const onStatusSelect = vi.fn();
   const onCwdFilter = vi.fn();
+  const onCwdSelect = vi.fn();
   const onSelect = vi.fn();
   const user = userEvent.setup();
   render(
@@ -134,6 +135,7 @@ test("groups terminals by status then cwd and exposes group selection controls",
       onStatusSelect={onStatusSelect}
       cwdFilters={["running\u0000/Users/ryotarai/work/euphony"]}
       onCwdFilter={onCwdFilter}
+      onCwdSelect={onCwdSelect}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -180,11 +182,81 @@ test("groups terminals by status then cwd and exposes group selection controls",
     false,
   );
 
+  await user.click(
+    screen.getByRole("button", {
+      name: "Show only Running terminals in ~/work/euphony",
+    }),
+  );
+  expect(onCwdSelect).toHaveBeenCalledWith(
+    "running",
+    "/Users/ryotarai/work/euphony",
+  );
+
   expect(screen.getByRole("checkbox", { name: "Include Codex in split" })).toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }).closest("ul"),
+  ).toHaveClass("cwd-terminal-list");
   const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal in split" });
   expect(terminalCheckbox).not.toBeChecked();
   await user.click(terminalCheckbox);
   expect(onSelect).toHaveBeenCalledWith("three", true);
+});
+
+test("inherits status selection into cwd controls and marks partial selection", () => {
+  const runningElsewhere: Session = {
+    ...sessions[0],
+    id: "four",
+    name: "Other",
+    cwd: "/tmp",
+  };
+  const { rerender } = render(
+    <SessionNavigation
+      sessions={[sessions[0], runningElsewhere]}
+      selectedIDs={["one", "four"]}
+      statusFilters={["running"]}
+      cwdFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCwdFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in ~/work/euphony",
+    }),
+  ).toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Include all terminals in /tmp" }),
+  ).toBeChecked();
+
+  rerender(
+    <SessionNavigation
+      sessions={[sessions[0], runningElsewhere]}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      cwdFilters={["running\u0000/Users/ryotarai/work/euphony"]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCwdFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("aria-checked", "mixed");
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in ~/work/euphony",
+    }),
+  ).toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Include all terminals in /tmp" }),
+  ).not.toBeChecked();
 });
 
 test("groups terminals by their exact cwd within each ordered status", () => {

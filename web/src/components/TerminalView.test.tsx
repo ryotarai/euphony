@@ -662,7 +662,10 @@ test("copies a completed selection and then clears it", async () => {
 
   expect(writeText).toHaveBeenCalledWith("selected output");
   expect(clearSelection).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("status")).toHaveTextContent("Copied");
+  const toast = screen.getByRole("status");
+  expect(toast).toHaveTextContent("Copied");
+  expect(toast).toHaveAttribute("data-slot", "copied-toast");
+  expect(toast.querySelector('[data-slot="copied-icon"]')).toBeInTheDocument();
 
   act(() => {
     vi.advanceTimersByTime(1600);

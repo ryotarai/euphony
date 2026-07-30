@@ -41,13 +41,17 @@ async function reportAgent(
   expect(response.ok()).toBe(true);
 }
 
-async function createSession(page: Page, name: string): Promise<{ id: string; name: string }> {
+async function createSession(
+  page: Page,
+  name: string,
+  cwd?: string,
+): Promise<{ id: string; name: string }> {
   const response = await page.request.post("/api/sessions", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
     },
-    data: { name },
+    data: { name, ...(cwd ? { cwd } : {}) },
   });
   expect(response.ok()).toBe(true);
   return response.json();
@@ -197,6 +201,59 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await expect(checkbox).toBeChecked();
   await expect(checkbox).toHaveCSS("background-color", "rgb(245, 245, 245)");
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+});
+
+test("inherits status filters into nested cwd controls and supports child overrides", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  await createSession(page, "Tmp terminal", "/tmp");
+  await createSession(page, "Var terminal", "/var");
+
+  await page.goto("/?token=test-token");
+  const status = page.getByRole("checkbox", {
+    name: "Show all Terminal terminals",
+  });
+  await status.click();
+
+  const tmpCwd = page.getByRole("checkbox", {
+    name: "Include all terminals in /tmp",
+  });
+  const varCwd = page.getByRole("checkbox", {
+    name: "Include all terminals in /var",
+  });
+  await expect(tmpCwd).toBeChecked();
+  await expect(varCwd).toBeChecked();
+
+  const cwdX = (await tmpCwd.boundingBox())?.x;
+  const terminalX = (
+    await page.getByRole("checkbox", {
+      name: "Include Tmp terminal in split",
+    }).boundingBox()
+  )?.x;
+  expect(cwdX).toBeDefined();
+  expect(terminalX).toBeDefined();
+  expect(terminalX!).toBeGreaterThan(cwdX!);
+
+  await varCwd.click();
+  await expect(status).toHaveAttribute("aria-checked", "mixed");
+  await expect(status.locator(".lucide-minus")).toBeVisible();
+  await expect(tmpCwd).toBeChecked();
+  await expect(varCwd).not.toBeChecked();
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", {
+    name: "Show only Terminal terminals in /var",
+  }).click();
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings).toHaveAttribute("data-slot", "dialog-content");
+  await expect(page.getByLabel("Prefix")).toHaveAttribute("data-slot", "input");
+  await page.screenshot({ path: testInfo.outputPath("sidebar-settings.png") });
 });
 
 test("uses a flush black workspace with only a divider between panes", async ({ page }) => {
@@ -357,7 +414,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(page.getByRole("heading", { name: "~/work/euphony" }).first()).toBeVisible();
   await page.getByRole("checkbox", { name: "Include Claude in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
-  await page.getByRole("button", { name: "Show only Terminal terminals" }).click();
+  await page.getByRole("button", {
+    name: "Show only Terminal terminals",
+    exact: true,
+  }).click();
   await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Codex terminal", { exact: true })).toHaveCount(0);
   await codexItem.click();

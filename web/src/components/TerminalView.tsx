@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
@@ -296,8 +297,9 @@ export function TerminalView({
     <div className="terminal-view" data-connection={connection}>
       <div className="terminal-host" ref={hostRef} aria-label={`${session.name} terminal`} />
       {copied && (
-        <div className="copied-toast" role="status">
-          Copied
+        <div className="copied-toast" data-slot="copied-toast" role="status">
+          <CheckIcon data-slot="copied-icon" aria-hidden="true" />
+          <span>Copied</span>
         </div>
       )}
     </div>

@@ -40,6 +40,7 @@ interface SessionNavigationProps {
   onStatusSelect?(status: string): void;
   cwdFilters?: string[];
   onCwdFilter?(status: string, cwd: string, checked: boolean): void;
+  onCwdSelect?(status: string, cwd: string): void;
   onCreate(): void;
   onDelete(session: Session): void;
   settings?: Settings;
@@ -103,12 +104,17 @@ function SessionList(props: SessionNavigationProps) {
           (session) => activity(session) === status,
         );
         const cwds = [...new Set(statusSessions.map((session) => session.cwd))];
+        const statusSelected = props.statusFilters.includes(status);
+        const statusHasSelectedCwd = props.cwdFilters?.some((filter) =>
+          filter.startsWith(`${status}\u0000`)
+        ) ?? false;
         return (
           <SidebarGroup className="session-group" key={status}>
             <SidebarGroupLabel className="status-heading">
               <Checkbox
                 aria-label={`Show all ${statusLabel(status)} terminals`}
-                checked={props.statusFilters.includes(status)}
+                checked={statusSelected}
+                indeterminate={!statusSelected && statusHasSelectedCwd}
                 onCheckedChange={(checked) =>
                   props.onStatusFilter(status, checked === true)
                 }
@@ -133,15 +139,24 @@ function SessionList(props: SessionNavigationProps) {
                     <SidebarGroupLabel className="cwd-heading" title={cwd}>
                       <Checkbox
                         aria-label={`Include all terminals in ${displayPath(cwd)}`}
-                        checked={props.cwdFilters?.includes(filterKey) ?? false}
+                        checked={
+                          statusSelected ||
+                          (props.cwdFilters?.includes(filterKey) ?? false)
+                        }
                         onCheckedChange={(checked) =>
                           props.onCwdFilter?.(status, cwd, checked === true)
                         }
                       />
-                      <h3>{displayPath(cwd)}</h3>
+                      <button
+                        className="cwd-select"
+                        aria-label={`Show only ${statusLabel(status)} terminals in ${displayPath(cwd)}`}
+                        onClick={() => props.onCwdSelect?.(status, cwd)}
+                      >
+                        <h3>{displayPath(cwd)}</h3>
+                      </button>
                     </SidebarGroupLabel>
                     <SidebarGroupContent>
-                      <SidebarMenu>
+                      <SidebarMenu className="cwd-terminal-list">
                         {cwdSessions.map((session) => {
                           const icon = agentIcon(session);
                           const selected = props.selectedIDs.includes(session.id);

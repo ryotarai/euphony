@@ -636,6 +636,111 @@ test("clicking a status label replaces the current pane selection", async () => 
   expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["waiting"]);
 });
 
+test("clicking a cwd label selects only terminals in that status and cwd", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Show only Running terminals in /workspace/api",
+    }),
+  );
+
+  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("status")).toEqual([]);
+  expect(parameters.getAll("cwd")).toEqual(["running\u0000/workspace/api"]);
+});
+
+test("a status selection checks its cwd groups and allows one cwd to be excluded", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, thirdRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+  ).toBeChecked();
+  const apiCwd = screen.getByRole("checkbox", {
+    name: "Include all terminals in /workspace/api",
+  });
+  expect(apiCwd).toBeChecked();
+
+  fireEvent.click(apiCwd);
+
+  expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("aria-checked", "mixed");
+  expect(apiCwd).not.toBeChecked();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("status")).toEqual([]);
+  expect(parameters.getAll("cwd")).toEqual([
+    "running\u0000/workspace/euphony",
+  ]);
+});
+
+test("unchecking a terminal releases its ancestor status filter", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, thirdRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  await screen.findByLabelText("session-3 terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+  );
+
+  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("session-3 terminal pane")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("aria-checked", "mixed");
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+  ).not.toBeChecked();
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/api",
+    }),
+  ).toBeChecked();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("status")).toEqual([]);
+  expect(parameters.getAll("cwd")).toEqual(["running\u0000/workspace/api"]);
+});
+
 test("tmux navigation keys switch terminals and focus panes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
@@ -829,9 +934,18 @@ test("loads settings and saves a changed prefix", async () => {
   await screen.findByLabelText("session-1 terminal pane");
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  expect(dialog).toHaveAttribute("data-slot", "dialog-content");
   const prefix = screen.getByLabelText("Prefix");
-  await user.clear(prefix);
-  await user.type(prefix, "Ctrl+A");
+  expect(prefix).toHaveAttribute("data-slot", "input");
+  expect(prefix).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const reopenedPrefix = screen.getByLabelText("Prefix");
+  await user.clear(reopenedPrefix);
+  await user.type(reopenedPrefix, "Ctrl+A");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
