@@ -489,10 +489,24 @@ test("shows the five most recently executed Quick Actions first without duplicat
 test("discards unavailable recent Quick Actions and searches the full catalog", async () => {
   localStorage.setItem(
     "euphony.recentQuickActions",
-    JSON.stringify(["session:missing", "session:session-2", "session:session-2", 42]),
+    JSON.stringify([
+      "status:exited",
+      "session:missing",
+      "session:session-2",
+      "session:session-2",
+      42,
+    ]),
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-    jsonResponse([runningSession, secondRunningSession]),
+    jsonResponse([
+      runningSession,
+      secondRunningSession,
+      {
+        ...plainTerminalSession,
+        id: "session-exited",
+        state: "exited",
+      },
+    ]),
   );
   const user = userEvent.setup();
   render(

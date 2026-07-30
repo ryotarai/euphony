@@ -60,6 +60,12 @@ import type { Session, Settings } from "./types";
 const tokenKey = "euphony.token";
 const recentQuickActionsKey = "euphony.recentQuickActions";
 const recentQuickActionsLimit = 5;
+const quickActionStatuses = [
+  "attention",
+  "running",
+  "waiting",
+  "terminal",
+] as const;
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 interface AppProps {
@@ -120,10 +126,12 @@ function availableQuickActionValues(sessions: Session[]): Set<string> {
   return new Set([
     "new-terminal",
     "attention-alerts",
-    ...sessions.flatMap((session) => [
-      `session:${session.id}`,
-      `status:${sessionActivity(session)}`,
-    ]),
+    ...sessions.map((session) => `session:${session.id}`),
+    ...quickActionStatuses
+      .filter((status) =>
+        sessions.some((session) => sessionActivity(session) === status),
+      )
+      .map((status) => `status:${status}`),
   ]);
 }
 
@@ -1287,7 +1295,7 @@ export function App({
       },
       group: "Actions",
     },
-    ...["attention", "running", "waiting", "terminal"]
+    ...quickActionStatuses
       .filter((status) => sessions.some((session) => sessionActivity(session) === status))
       .map((status) => ({
         value: `status:${status}`,
