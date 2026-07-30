@@ -144,6 +144,20 @@ export function agentLaunchTransitions(
   );
 }
 
+export function sessionsEqual(left: Session[], right: Session[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((session, index) => {
+    const next = right[index];
+    if (!next) return false;
+    const keys = Object.keys(session) as Array<keyof Session>;
+    const nextKeys = Object.keys(next) as Array<keyof Session>;
+    return (
+      keys.length === nextKeys.length &&
+      keys.every((key) => session[key] === next[key])
+    );
+  });
+}
+
 function playAttentionTone() {
   if (typeof AudioContext === "undefined") return;
   const context = new AudioContext();
@@ -399,7 +413,9 @@ export function App({
           agentLaunchTransitions(previousSessionsRef.current, items).map((session) => session.id),
         );
         previousSessionsRef.current = items;
-        setSessions(items);
+        setSessions((current) =>
+          current && sessionsEqual(current, items) ? current : items,
+        );
         for (const session of transitions) {
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             new Notification("Euphony needs attention", {

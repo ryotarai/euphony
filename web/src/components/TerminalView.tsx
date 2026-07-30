@@ -47,7 +47,7 @@ export type ConnectionState = "connecting" | "connected" | "disconnected" | "exi
 function defaultTerminal(fontSize: number): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
-    cursorBlink: true,
+    cursorBlink: false,
     cursorStyle: "bar",
     allowTransparency: true,
     fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',

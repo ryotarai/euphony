@@ -930,6 +930,38 @@ test("a checked activity group removes a terminal after its status changes", asy
   vi.useRealTimers();
 });
 
+test("does not render terminal panes again for an unchanged polling response", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      jsonResponse([{ ...runningSession }]),
+    );
+    let renders = 0;
+    function TerminalProbe() {
+      renders += 1;
+      return <div aria-label="terminal probe" />;
+    }
+
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={() => <TerminalProbe />}
+      />,
+    );
+    await screen.findByLabelText("terminal probe");
+    expect(renders).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(renders).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("removes a pin when polling removes its terminal", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
