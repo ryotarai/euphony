@@ -56,6 +56,82 @@ const plainTerminalSession: Session = {
   createdAt: "2026-07-28T00:03:00Z",
 };
 
+test("uses the server selection as authoritative and persists browser changes", async () => {
+  history.replaceState(null, "", "/?terminal=session-2");
+  const initialSelection = {
+    terminalIds: ["session-1"],
+    manualTerminalIds: ["session-1"],
+    pinnedTerminalIds: [],
+    focusedTerminalId: "session-1",
+    filters: { statuses: [], cwds: [] },
+    revision: 7,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+    async (input, init) => {
+      if (input === "/api/sessions") {
+        return jsonResponse([runningSession, secondRunningSession]);
+      }
+      if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+        return jsonResponse({ ok: true, result: initialSelection });
+      }
+      if (input === "/api/v1/selection" && init?.method === "PUT") {
+        const request = JSON.parse(String(init.body)) as {
+          manualTerminalIds: string[];
+          pinnedTerminalIds: string[];
+          focusedTerminalId: string;
+          filters: { statuses: string[]; cwds: unknown[] };
+          expectedRevision: number;
+        };
+        return jsonResponse({
+          ok: true,
+          result: {
+            terminalIds: request.manualTerminalIds,
+            manualTerminalIds: request.manualTerminalIds,
+            pinnedTerminalIds: request.pinnedTerminalIds,
+            focusedTerminalId: request.focusedTerminalId,
+            filters: request.filters,
+            revision: 8,
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    },
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toEqual([
+    "session-1",
+  ]);
+
+  await user.click(screen.getByRole("button", { name: "Select Claude" }));
+  await waitFor(() => {
+    const update = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        input === "/api/v1/selection" && init?.method === "PUT",
+    );
+    expect(update).toBeDefined();
+    expect(JSON.parse(String(update?.[1]?.body))).toEqual({
+      manualTerminalIds: ["session-2"],
+      pinnedTerminalIds: [],
+      focusedTerminalId: "session-2",
+      filters: { statuses: [], cwds: [] },
+      expectedRevision: 7,
+    });
+  });
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
 test("detects only new transitions into attention", () => {
   const attention = { ...runningSession, needsAttention: true };
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);
@@ -72,7 +148,7 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
     );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -109,7 +185,7 @@ test("stores a valid token and starts one terminal when the session list is empt
     .mockImplementationOnce(() => jsonResponse(runningSession, 201));
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.name}</div>}
     />,
@@ -141,7 +217,7 @@ test("consumes a token from the URL without leaving it in browser history", asyn
     .mockImplementationOnce(() => jsonResponse(runningSession, 201));
 
   render(
-    <App
+    <App syncSelection={false}
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.name}</div>}
     />,
@@ -163,7 +239,7 @@ test("returns to token entry after an invalid token", async () => {
     jsonResponse({ code: "unauthorized", message: "A valid access token is required." }, 401),
   );
   const user = userEvent.setup();
-  render(<App initialSettings={defaultSettings} />);
+  render(<App syncSelection={false} initialSettings={defaultSettings} />);
 
   await user.type(screen.getByLabelText("Access token"), "invalid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
@@ -181,7 +257,7 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
 
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.name}</div>}
@@ -244,7 +320,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.id}</div>}
@@ -285,7 +361,7 @@ test("does not fall back when an explicit terminal cwd is invalid", async () => 
     );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.id}</div>}
@@ -326,7 +402,7 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.id}</div>}
@@ -360,7 +436,7 @@ test("the new terminal dialog owns focus and closes with Escape", async () => {
   );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div>{session.id}</div>}
@@ -384,7 +460,7 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", as
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -429,7 +505,7 @@ test("scrolls the Quick Actions keyboard selection into view", async () => {
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -493,7 +569,7 @@ test("shows one workspace connection status and retries disconnected panes", asy
   )) as unknown as ComponentProps<typeof App>["renderTerminal"];
 
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={renderTerminal}
@@ -527,7 +603,7 @@ test("restores the selected session from the URL and follows browser navigation"
   );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -551,7 +627,7 @@ test("browser navigation clears ownership from previous dynamic filters", async 
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -574,7 +650,7 @@ test("command-click selects multiple terminal panes and stores them in the URL",
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -606,7 +682,7 @@ test("keeps a Shift-pinned terminal selected until its checkbox is clicked", asy
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -642,7 +718,7 @@ test("does not toggle a pinned terminal off from its row", async () => {
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -671,7 +747,7 @@ test("prefix navigation reads a pin added to the current terminal", async () => 
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -703,7 +779,7 @@ test("restores URL pins into terminal selection", async () => {
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -727,7 +803,7 @@ test("pane rail checkboxes remove selected terminals and allow an empty workspac
   );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -762,7 +838,7 @@ test("deselecting an unfocused pane preserves the current focus", async () => {
     jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -811,7 +887,7 @@ test("deselecting a filter-owned unfocused pane preserves the current focus", as
     ]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -848,7 +924,7 @@ test("passes the pane count to terminals when the topology changes", async () =>
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session, _api, _active, layoutVersion) => (
@@ -885,7 +961,7 @@ test("a checked activity group automatically adds newly matching terminal panes"
       jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
     );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -910,7 +986,7 @@ test("a checked activity group removes a terminal after its status changes", asy
       jsonResponse([runningSession, { ...thirdRunningSession, agentStatus: "waiting" }]),
     );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -944,7 +1020,7 @@ test("does not render terminal panes again for an unchanged polling response", a
     }
 
     render(
-      <App
+      <App syncSelection={false}
         initialToken="valid-token"
         initialSettings={defaultSettings}
         renderTerminal={() => <TerminalProbe />}
@@ -976,7 +1052,7 @@ test("removes a pin when polling removes its terminal", async () => {
       )
       .mockImplementation(() => jsonResponse([secondRunningSession]));
     render(
-      <App
+      <App syncSelection={false}
         initialToken="valid-token"
         initialSettings={defaultSettings}
         renderTerminal={(session) => (
@@ -1035,7 +1111,7 @@ test("keeps the agent log selected when a focused agent starts waiting", async (
     );
   });
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1077,7 +1153,7 @@ test.each(["claude", "codex"] as const)(
         ]),
       );
     render(
-      <App
+      <App syncSelection={false}
         initialToken="valid-token"
         initialSettings={defaultSettings}
         renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1123,7 +1199,7 @@ test("a checked status and cwd group dynamically follows matching terminals", as
       ]),
     );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1155,7 +1231,7 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
     jsonResponse([runningSession, plainTerminalSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1173,7 +1249,7 @@ test("shows built-in activity groups when they have no terminals", async () => {
     jsonResponse([runningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1206,7 +1282,7 @@ test("unchecking an activity group removes only its terminal panes", async () =>
     jsonResponse([runningSession, ...terminals]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1242,7 +1318,7 @@ test("clicking a status label replaces the current pane selection", async () => 
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1266,7 +1342,7 @@ test("clicking a cwd label selects only terminals in that status and cwd", async
     jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1293,7 +1369,7 @@ test("a status selection checks its cwd groups and allows one cwd to be excluded
     jsonResponse([runningSession, thirdRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1345,7 +1421,7 @@ test("rechecking the only cwd restores its parent status as a dynamic filter", a
     .mockImplementationOnce(() => jsonResponse([runningSession]))
     .mockImplementation(() => jsonResponse([runningSession, thirdRunningSession]));
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1379,7 +1455,7 @@ test("unchecking a terminal releases its ancestor status filter", async () => {
     jsonResponse([runningSession, thirdRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1418,7 +1494,7 @@ test("tmux navigation keys switch terminals and focus panes", async () => {
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1448,7 +1524,7 @@ test("tmux keys work when the focused terminal stops key event propagation", asy
     jsonResponse([runningSession, secondRunningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -1476,7 +1552,7 @@ test("keeps prefix mode active without a timeout", async () => {
     jsonResponse([runningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1501,7 +1577,7 @@ test("Escape cancels prefix mode without reaching the focused terminal", async (
   );
   const terminalKeyDown = vi.fn();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -1533,7 +1609,7 @@ test("tmux split keys are not delivered to the focused terminal", async () => {
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const terminalKeyDown = vi.fn();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -1565,7 +1641,7 @@ test("tmux create and vertical split keys create the expected selection", async 
     .mockImplementationOnce(() => jsonResponse(createdByC, 201))
     .mockImplementationOnce(() => jsonResponse(createdByV, 201));
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1618,7 +1694,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   });
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       renderTerminal={(
         session,
@@ -1716,7 +1792,7 @@ test("saves unlimited terminal history and disables the finite size", async () =
   });
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1748,7 +1824,7 @@ test("rejects a terminal history size outside the supported MiB range", async ()
   );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
@@ -1776,7 +1852,7 @@ test("forwards the saved history limit to terminal panes", async () => {
     jsonResponse([runningSession]),
   );
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={{
         ...defaultSettings,
@@ -1812,7 +1888,7 @@ test("rejects a pane tab shortcut that duplicates the prefix", async () => {
   );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={{
         ...defaultSettings,
@@ -1845,7 +1921,7 @@ test("rejects a font size outside the supported range", async () => {
   );
   const user = userEvent.setup();
   render(
-    <App
+    <App syncSelection={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}

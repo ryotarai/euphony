@@ -1,4 +1,12 @@
-import type { AgentLogResult, AgentTranscript, ApiErrorBody, Session, Settings } from "./types";
+import type {
+  AgentLogResult,
+  AgentTranscript,
+  ApiErrorBody,
+  ReplaceSelectionRequest,
+  SelectionSnapshot,
+  Session,
+  Settings,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -24,8 +32,40 @@ export class ApiClient {
     });
   }
 
+  createTerminal(
+    name: string,
+    cwd: string | undefined,
+    selectionMode: "none" | "add" | "replace",
+  ): Promise<{ terminal: Session; selection: SelectionSnapshot }> {
+    return this.v1Request("/api/v1/terminals", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        ...(cwd ? { cwd } : {}),
+        selectionMode,
+      }),
+    });
+  }
+
   async deleteSession(id: string): Promise<void> {
     await this.request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  deleteTerminal(id: string): Promise<{ id: string; selection: SelectionSnapshot }> {
+    return this.v1Request(`/api/v1/terminals/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  getSelection(): Promise<SelectionSnapshot> {
+    return this.v1Request("/api/v1/selection");
+  }
+
+  replaceSelection(request: ReplaceSelectionRequest): Promise<SelectionSnapshot> {
+    return this.v1Request("/api/v1/selection", {
+      method: "PUT",
+      body: JSON.stringify(request),
+    });
   }
 
   acknowledgeAttention(id: string): Promise<Session> {
@@ -88,6 +128,30 @@ export class ApiClient {
       return undefined as T;
     }
     return (await response.json()) as T;
+  }
+
+  private async v1Request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+    });
+    const envelope = await response.json() as {
+      ok: boolean;
+      result?: T;
+      error?: ApiErrorBody;
+    };
+    if (!response.ok || !envelope.ok || envelope.result === undefined) {
+      const error = envelope.error ?? {
+        code: "request_failed",
+        message: "The request failed.",
+      };
+      throw new ApiError(response.status, error.code, error.message);
+    }
+    return envelope.result;
   }
 
   private async apiError(response: Response): Promise<ApiError> {

@@ -55,7 +55,12 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group";
-import type { Session, Settings } from "./types";
+import type {
+  CwdSelectionFilter,
+  SelectionSnapshot,
+  Session,
+  Settings,
+} from "./types";
 
 const tokenKey = "euphony.token";
 const bytesPerMiB = 1024 * 1024;
@@ -63,6 +68,7 @@ const maxHistoryMiB = 4095;
 interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
+  syncSelection?: boolean;
   renderTerminal?: (
     session: Session,
     api: ApiClient,
@@ -124,6 +130,31 @@ function matchesWorkspaceFilter(
 
 function cwdFilterBelongsToStatus(filter: string, status: string) {
   return filter.startsWith(`${status}\u0000`);
+}
+
+function parseCwdFilter(filter: string): CwdSelectionFilter | null {
+  const separator = filter.indexOf("\u0000");
+  if (separator < 1 || separator === filter.length - 1) return null;
+  return {
+    status: filter.slice(0, separator),
+    cwd: filter.slice(separator + 1),
+  };
+}
+
+function selectionSourceSignature(
+  manualTerminalIds: string[],
+  pinnedTerminalIds: string[],
+  focusedTerminalId: string | null | undefined,
+  statuses: string[],
+  cwds: CwdSelectionFilter[],
+) {
+  return JSON.stringify({
+    manualTerminalIds,
+    pinnedTerminalIds,
+    focusedTerminalId: focusedTerminalId ?? "",
+    statuses,
+    cwds,
+  });
 }
 
 export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
@@ -257,6 +288,7 @@ function writeWorkspaceToURL(
 export function App({
   initialToken,
   initialSettings,
+  syncSelection = true,
   renderTerminal = (
     session,
     api,
@@ -329,6 +361,10 @@ export function App({
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
+  const selectionRevisionRef = useRef<number | null>(null);
+  const selectionServerSignatureRef = useRef("");
+  const selectionSyncReadyRef = useRef(false);
+  const selectionWriteSequenceRef = useRef(0);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const previewSettings = useMemo(() => {
     if (!settingsOpen) return settings;
@@ -347,6 +383,49 @@ export function App({
       current[sessionID] === state ? current : { ...current, [sessionID]: state },
     );
   }, []);
+
+  function applyServerSelection(
+    snapshot: SelectionSnapshot,
+    mode: "push" | "replace" = "replace",
+  ) {
+    const nextStatusFilters = snapshot.filters.statuses;
+    const nextCwdFilters = snapshot.filters.cwds.map((filter) =>
+      cwdFilterKey(filter.status, filter.cwd)
+    );
+    filterSelectedIDsRef.current = new Set(
+      snapshot.terminalIds.filter(
+        (id) =>
+          !snapshot.manualTerminalIds.includes(id) &&
+          !snapshot.pinnedTerminalIds.includes(id),
+      ),
+    );
+    decomposedStatusFiltersRef.current = new Set(
+      snapshot.filters.cwds
+        .map((filter) => filter.status)
+        .filter((status) => !nextStatusFilters.includes(status)),
+    );
+    selectionRevisionRef.current = snapshot.revision;
+    selectionServerSignatureRef.current = selectionSourceSignature(
+      snapshot.manualTerminalIds,
+      snapshot.pinnedTerminalIds,
+      snapshot.focusedTerminalId,
+      snapshot.filters.statuses,
+      snapshot.filters.cwds,
+    );
+    setSelectedIDs(snapshot.terminalIds);
+    setPinnedIDs(snapshot.pinnedTerminalIds);
+    setFocusedID(snapshot.focusedTerminalId ?? null);
+    setStatusFilters(nextStatusFilters);
+    setCwdFilters(nextCwdFilters);
+    writeWorkspaceToURL(
+      snapshot.terminalIds,
+      snapshot.pinnedTerminalIds,
+      snapshot.focusedTerminalId ?? null,
+      nextStatusFilters,
+      nextCwdFilters,
+      mode,
+    );
+  }
 
   useEffect(() => {
     const previous = document.documentElement.style.fontSize;
@@ -387,12 +466,37 @@ export function App({
       .then(async (items) => {
         if (!active) return;
         if (items.length === 0) {
-          const created = await api.createSession("Terminal");
+          if (syncSelection) {
+            const created = await api.createTerminal("Terminal", undefined, "replace");
+            if (!active) return;
+            items = [created.terminal];
+            applyServerSelection(created.selection);
+            selectionSyncReadyRef.current = true;
+          } else {
+            const created = await api.createSession("Terminal");
+            if (!active) return;
+            items = [created];
+          }
+        }
+        if (syncSelection && !selectionSyncReadyRef.current) {
+          let selection = await api.getSelection();
           if (!active) return;
-          items = [created];
+          if (selection.terminalIds.length === 0 && items[0]) {
+            selection = await api.replaceSelection({
+              manualTerminalIds: [items[0].id],
+              pinnedTerminalIds: [],
+              focusedTerminalId: items[0].id,
+              filters: { statuses: [], cwds: [] },
+              expectedRevision: selection.revision,
+            });
+          }
+          if (!active) return;
+          applyServerSelection(selection);
+          selectionSyncReadyRef.current = true;
         }
         setSessions(items);
         previousSessionsRef.current = items;
+        if (syncSelection) return;
         const workspace = workspaceFromURL(items);
         setSelectedIDs(workspace.selectedIDs);
         setPinnedIDs(workspace.pinnedIDs);
@@ -421,12 +525,12 @@ export function App({
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api, syncSelection]);
 
   useEffect(() => {
     if (!api || !sessions) return;
     const timer = window.setInterval(() => {
-      api.listSessions().then((items) => {
+      api.listSessions().then(async (items) => {
         const transitions = attentionTransitions(previousSessionsRef.current, items);
         pendingAgentLaunchIDsRef.current = new Set(
           agentLaunchTransitions(previousSessionsRef.current, items).map((session) => session.id),
@@ -444,10 +548,71 @@ export function App({
           }
           playAttentionTone();
         }
+        if (syncSelection) {
+          const selection = await api.getSelection();
+          if (selection.revision !== selectionRevisionRef.current) {
+            applyServerSelection(selection);
+          }
+        }
       }).catch(() => undefined);
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [api, sessions !== null]);
+  }, [api, sessions !== null, syncSelection]);
+
+  useEffect(() => {
+    if (!syncSelection || !api || !selectionSyncReadyRef.current) return;
+    const cwdFilterValues = cwdFilters
+      .map(parseCwdFilter)
+      .filter((filter): filter is CwdSelectionFilter => filter !== null);
+    const manualTerminalIds = selectedIDs.filter(
+      (id) => !filterSelectedIDsRef.current.has(id),
+    );
+    const signature = selectionSourceSignature(
+      manualTerminalIds,
+      pinnedIDs,
+      focusedID,
+      statusFilters,
+      cwdFilterValues,
+    );
+    if (signature === selectionServerSignatureRef.current) return;
+
+    const sequence = ++selectionWriteSequenceRef.current;
+    api.replaceSelection({
+      manualTerminalIds,
+      pinnedTerminalIds: pinnedIDs,
+      ...(focusedID ? { focusedTerminalId: focusedID } : {}),
+      filters: { statuses: statusFilters, cwds: cwdFilterValues },
+      ...(selectionRevisionRef.current === null
+        ? {}
+        : { expectedRevision: selectionRevisionRef.current }),
+    }).then((snapshot) => {
+      if (sequence !== selectionWriteSequenceRef.current) return;
+      applyServerSelection(snapshot);
+    }).catch(async (error: unknown) => {
+      if (sequence !== selectionWriteSequenceRef.current) return;
+      if (error instanceof ApiError && error.code === "selection_conflict") {
+        try {
+          applyServerSelection(await api.getSelection());
+        } catch {
+          setRequestError("The shared selection could not be refreshed.");
+        }
+        return;
+      }
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The shared selection could not be updated.",
+      );
+    });
+  }, [
+    api,
+    syncSelection,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+    statusFilters,
+    cwdFilters,
+  ]);
 
   useEffect(() => {
     if (!sessions) return;
@@ -604,6 +769,17 @@ export function App({
   useEffect(() => {
     if (!sessions) return;
     const restore = () => {
+      if (syncSelection) {
+        writeWorkspaceToURL(
+          selectedIDs,
+          pinnedIDs,
+          focusedID,
+          statusFilters,
+          cwdFilters,
+          "replace",
+        );
+        return;
+      }
       const workspace = workspaceFromURL(sessions);
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
@@ -615,7 +791,15 @@ export function App({
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [sessions]);
+  }, [
+    sessions,
+    syncSelection,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+    statusFilters,
+    cwdFilters,
+  ]);
 
   useEffect(() => {
     const clearPrefix = () => {
@@ -982,8 +1166,19 @@ export function App({
           ? sessions?.find((session) => session.id === focusedID)?.cwd
           : undefined;
       let created: Session;
+      let serverSelection: SelectionSnapshot | null = null;
       try {
-        created = await api.createSession("Terminal", cwd ?? inheritedCWD);
+        if (syncSelection) {
+          const result = await api.createTerminal(
+            "Terminal",
+            cwd ?? inheritedCWD,
+            split ? "add" : "replace",
+          );
+          created = result.terminal;
+          serverSelection = result.selection;
+        } else {
+          created = await api.createSession("Terminal", cwd ?? inheritedCWD);
+        }
       } catch (error) {
         if (
           !(error instanceof ApiError) ||
@@ -992,9 +1187,24 @@ export function App({
         ) {
           throw error;
         }
-        created = await api.createSession("Terminal");
+        if (syncSelection) {
+          const result = await api.createTerminal(
+            "Terminal",
+            undefined,
+            split ? "add" : "replace",
+          );
+          created = result.terminal;
+          serverSelection = result.selection;
+        } else {
+          created = await api.createSession("Terminal");
+        }
       }
       setSessions((current) => [...(current ?? []), created]);
+      if (serverSelection) {
+        applyServerSelection(serverSelection, "push");
+        setRequestError("");
+        return;
+      }
       const nextIDs = split
         ? [...selectedIDs, created.id]
         : [
@@ -1039,9 +1249,18 @@ export function App({
   async function deleteSession(item: Session) {
     if (!api) return;
     try {
-      await api.deleteSession(item.id);
+      const deleted = syncSelection
+        ? await api.deleteTerminal(item.id)
+        : null;
+      if (!syncSelection) {
+        await api.deleteSession(item.id);
+      }
       const remaining = sessions?.filter((candidate) => candidate.id !== item.id) ?? [];
       setSessions(remaining);
+      if (deleted) {
+        applyServerSelection(deleted.selection, "push");
+        return;
+      }
       let nextIDs = selectedIDs.filter((id) => id !== item.id);
       if (nextIDs.length === 0 && remaining[0]) nextIDs = [remaining[0].id];
       const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;

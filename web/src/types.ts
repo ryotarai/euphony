@@ -32,6 +32,33 @@ export interface Settings {
   terminalHistoryLimit: number;
 }
 
+export interface CwdSelectionFilter {
+  status: string;
+  cwd: string;
+}
+
+export interface SelectionFilters {
+  statuses: string[];
+  cwds: CwdSelectionFilter[];
+}
+
+export interface SelectionSnapshot {
+  terminalIds: string[];
+  manualTerminalIds: string[];
+  pinnedTerminalIds: string[];
+  focusedTerminalId?: string;
+  filters: SelectionFilters;
+  revision: number;
+}
+
+export interface ReplaceSelectionRequest {
+  manualTerminalIds: string[];
+  pinnedTerminalIds: string[];
+  focusedTerminalId?: string;
+  filters: SelectionFilters;
+  expectedRevision?: number;
+}
+
 export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";
 
 export interface AgentLogEntry {
