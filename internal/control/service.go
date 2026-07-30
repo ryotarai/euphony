@@ -86,6 +86,10 @@ func (s *Service) SubscribeEvents(types []string) (<-chan Event, func()) {
 	return s.events.subscribe(types)
 }
 
+func (s *Service) PublishHeartbeat() {
+	s.events.publish("heartbeat", map[string]string{"status": "ok"})
+}
+
 func (s *Service) handleSessionChange(change session.Change) {
 	s.reconcileFromSessions(&change)
 }

@@ -37,3 +37,15 @@ func TestTicketExpiresAfterThirtySeconds(t *testing.T) {
 		t.Fatal("consume() accepted expired ticket")
 	}
 }
+
+func TestTicketCarriesReadOnlyStreamMode(t *testing.T) {
+	store := newTicketStore(time.Now)
+	ticket, err := store.createWithMode("session", true)
+	if err != nil {
+		t.Fatalf("createWithMode() error = %v", err)
+	}
+	entry, ok := store.consumeEntry(ticket, "session")
+	if !ok || !entry.readOnly {
+		t.Fatalf("consumeEntry() = %#v, %t", entry, ok)
+	}
+}

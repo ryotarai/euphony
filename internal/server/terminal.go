@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -11,10 +12,11 @@ import (
 )
 
 type clientMessage struct {
-	Type string `json:"type"`
-	Data string `json:"data,omitempty"`
-	Cols uint16 `json:"cols,omitempty"`
-	Rows uint16 `json:"rows,omitempty"`
+	Type       string `json:"type"`
+	Data       string `json:"data,omitempty"`
+	DataBase64 string `json:"dataBase64,omitempty"`
+	Cols       uint16 `json:"cols,omitempty"`
+	Rows       uint16 `json:"rows,omitempty"`
 }
 
 type serverMessage struct {
@@ -25,14 +27,33 @@ type serverMessage struct {
 }
 
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
+	s.terminalStream(w, r, false)
+}
+
+func (s *Server) v1TerminalStream(w http.ResponseWriter, r *http.Request) {
+	s.terminalStream(w, r, true)
+}
+
+func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool) {
 	id := r.PathValue("id")
-	if !s.tickets.consume(r.URL.Query().Get("ticket"), id) {
-		writeError(w, http.StatusUnauthorized, "invalid_ticket", "The terminal connection ticket is invalid or expired.")
+	ticket, valid := s.tickets.consumeEntry(r.URL.Query().Get("ticket"), id)
+	if !valid {
+		if v1 {
+			writeV1Error(w, http.StatusUnauthorized, "invalid_ticket",
+				"The terminal connection ticket is invalid or expired.", nil)
+		} else {
+			writeError(w, http.StatusUnauthorized, "invalid_ticket", "The terminal connection ticket is invalid or expired.")
+		}
 		return
 	}
 	terminal, ok := s.sessions.Get(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")
+		if v1 {
+			writeV1Error(w, http.StatusNotFound, "terminal_not_found",
+				"The terminal does not exist.", nil)
+		} else {
+			writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")
+		}
 		return
 	}
 
@@ -57,6 +78,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	outputDone := make(chan struct{})
 	go func() {
 		defer close(outputDone)
+		defer cancel()
 		writeContext, cancelWrites := interruptTerminalWritesOnLag(
 			ctx,
 			lagged,
@@ -69,12 +91,12 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		)
 		defer cancelWrites()
 		for _, chunk := range history {
-			payload, _ := json.Marshal(serverMessage{Type: "history", Data: chunk})
+			payload := marshalTerminalFrame(serverMessage{Type: "history", Data: chunk}, v1)
 			if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 				return
 			}
 		}
-		payload, _ := json.Marshal(serverMessage{Type: "history_end"})
+		payload := marshalTerminalFrame(serverMessage{Type: "history_end"}, v1)
 		if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 			return
 		}
@@ -88,11 +110,11 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 					default:
 					}
 					exitCode := s.sessionExitCode(id)
-					payload, _ := json.Marshal(serverMessage{Type: "exit", ExitCode: exitCode})
+					payload := marshalTerminalFrame(serverMessage{Type: "exit", ExitCode: exitCode}, v1)
 					_ = connection.Write(writeContext, websocket.MessageText, payload)
 					return
 				}
-				payload, _ := json.Marshal(serverMessage{Type: "output", Data: data})
+				payload := marshalTerminalFrame(serverMessage{Type: "output", Data: data}, v1)
 				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 					return
 				}
@@ -103,6 +125,14 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+
+	if ticket.readOnly {
+		_, _, err := connection.Read(ctx)
+		if err == nil {
+			_ = connection.Close(websocket.StatusPolicyViolation, "observe streams are read-only")
+		}
+		return
+	}
 
 	invalidMessages := 0
 	for {
@@ -117,11 +147,15 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		} else {
 			switch message.Type {
 			case "input":
-				if message.Data == "" {
+				data := []byte(message.Data)
+				if v1 {
+					data, err = base64.RawStdEncoding.DecodeString(message.DataBase64)
+				}
+				if err != nil || len(data) == 0 {
 					invalidMessages++
-				} else if _, err := terminal.Write([]byte(message.Data)); err != nil {
+				} else if _, err := terminal.Write(data); err != nil {
 					return
-				} else if strings.ContainsAny(message.Data, "\r\n") {
+				} else if strings.ContainsAny(string(data), "\r\n") {
 					if cancelCWDRefresh != nil {
 						cancelCWDRefresh()
 					}
@@ -152,6 +186,25 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
+}
+
+func marshalTerminalFrame(message serverMessage, v1 bool) []byte {
+	if !v1 {
+		payload, _ := json.Marshal(message)
+		return payload
+	}
+	payload, _ := json.Marshal(struct {
+		Type       string `json:"type"`
+		DataBase64 string `json:"dataBase64,omitempty"`
+		ExitCode   *int   `json:"exitCode,omitempty"`
+		Message    string `json:"message,omitempty"`
+	}{
+		Type:       message.Type,
+		DataBase64: base64.RawStdEncoding.EncodeToString(message.Data),
+		ExitCode:   message.ExitCode,
+		Message:    message.Message,
+	})
+	return payload
 }
 
 func interruptTerminalWritesOnLag(

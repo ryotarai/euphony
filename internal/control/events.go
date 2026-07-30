@@ -79,7 +79,9 @@ func (h *eventHub) publish(eventType string, data any) Event {
 		Data:       data,
 	}
 	for id, subscriber := range h.subscribers {
-		if len(subscriber.types) > 0 && !subscriber.types[eventType] {
+		if eventType != "heartbeat" &&
+			len(subscriber.types) > 0 &&
+			!subscriber.types[eventType] {
 			continue
 		}
 		select {

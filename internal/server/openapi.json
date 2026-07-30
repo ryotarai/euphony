@@ -39,10 +39,515 @@
           }
         }
       }
+    },
+    "/api/v1/events": {
+      "get": {
+        "operationId": "subscribeEvents",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newline-delimited state events",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/terminals": {
+      "get": {
+        "operationId": "listTerminals",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createTerminal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTerminalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        }
+      ],
+      "get": {
+        "operationId": "getTerminal",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTerminal",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/output": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        }
+      ],
+      "get": {
+        "operationId": "readTerminal",
+        "parameters": [
+          {
+            "name": "maxBytes",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216,
+              "default": 1048576
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/input": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        }
+      ],
+      "post": {
+        "operationId": "sendTerminalInput",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalInputRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/run": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        }
+      ],
+      "post": {
+        "operationId": "runTerminalCommand",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1048576
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/wait-output": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        }
+      ],
+      "post": {
+        "operationId": "waitForTerminalOutput",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitOutputRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "408": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/tickets": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        }
+      ],
+      "post": {
+        "operationId": "createTerminalStreamTicket",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["mode"],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["observe", "control"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/stream": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TerminalID"
+        },
+        {
+          "name": "ticket",
+          "in": "query",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "streamTerminal",
+        "x-euphony-websocket": {
+          "serverFrame": {
+            "$ref": "#/components/schemas/TerminalFrame"
+          }
+        },
+        "responses": {
+          "101": {
+            "description": "WebSocket terminal stream"
+          }
+        }
+      }
+    },
+    "/api/v1/selection": {
+      "get": {
+        "operationId": "getSelection",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceSelection",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceSelectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/selection/actions": {
+      "post": {
+        "operationId": "applySelectionAction",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectionAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "parameters": {
+      "TerminalID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Success": {
+        "description": "Successful operation",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuccessEnvelope"
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "API error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
     "schemas": {
+      "CreateTerminalRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "default": "Terminal"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "selectionMode": {
+            "type": "string",
+            "enum": ["none", "add", "replace"],
+            "default": "none"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TerminalInputRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "dataBase64": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "WaitOutputRequest": {
+        "type": "object",
+        "properties": {
+          "match": {
+            "type": "string"
+          },
+          "regex": {
+            "type": "string"
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400000
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16777216
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReplaceSelectionRequest": {
+        "type": "object",
+        "required": [
+          "manualTerminalIds",
+          "pinnedTerminalIds",
+          "filters",
+          "expectedRevision"
+        ],
+        "properties": {
+          "manualTerminalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTerminalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "focusedTerminalId": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectionAction": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "add",
+              "remove",
+              "focus",
+              "pin",
+              "unpin",
+              "filter_status_set",
+              "filter_status_add",
+              "filter_status_remove",
+              "filter_cwd_set",
+              "filter_cwd_add",
+              "filter_cwd_remove"
+            ]
+          },
+          "terminalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "focusedTerminalId": {
+            "type": "string"
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwdFilters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["status", "cwd"],
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "cwd": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "SuccessEnvelope": {
         "type": "object",
         "required": ["ok", "result"],
