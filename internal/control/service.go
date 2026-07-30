@@ -17,8 +17,12 @@ type Service struct {
 	sessions *session.Manager
 	events   *eventHub
 
-	runCommand func(string, string) error
-	sendInput  func(string, TerminalInput) error
+	runCommand      func(string, string) error
+	sendInput       func(string, TerminalInput) error
+	agentForeground func(string, string) error
+
+	dispatchMu         sync.Mutex
+	lastChangeSequence uint64
 
 	mu        sync.RWMutex
 	selection selection.State
@@ -30,7 +34,7 @@ func New(manager *session.Manager) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	terminals := projectTerminals(manager.List())
+	terminals := projectTerminals(manager.ListCurrent())
 	if !found {
 		if len(terminals) > 0 {
 			state.ManualTerminalIDs = []string{terminals[0].ID}
@@ -53,8 +57,11 @@ func New(manager *session.Manager) (*Service, error) {
 	}
 	service.runCommand = service.RunTerminal
 	service.sendInput = service.SendTerminalInput
+	service.agentForeground = service.requireAgentForeground
 	manager.SetChangeHandler(service.handleSessionChange)
+	service.dispatchMu.Lock()
 	service.reconcileFromSessions(nil)
+	service.dispatchMu.Unlock()
 	return service, nil
 }
 
@@ -68,7 +75,10 @@ func (s *Service) ApplySelection(
 	ctx context.Context,
 	action selection.Action,
 ) (selection.Snapshot, error) {
-	terminals := projectTerminals(s.sessions.List())
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
+	terminals := projectTerminals(s.sessions.ListCurrent())
 	s.mu.Lock()
 	next, err := selection.Apply(s.selection, action, terminals)
 	if err != nil {
@@ -91,16 +101,24 @@ func (s *Service) SubscribeEvents(types []string) (<-chan Event, func()) {
 	return s.events.subscribe(types)
 }
 
-func (s *Service) PublishHeartbeat() {
-	s.events.publish("heartbeat", map[string]string{"status": "ok"})
+func (s *Service) Heartbeat() Event {
+	return s.events.heartbeat()
 }
 
 func (s *Service) handleSessionChange(change session.Change) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if change.Sequence != 0 && change.Sequence <= s.lastChangeSequence {
+		return
+	}
+	if change.Sequence != 0 {
+		s.lastChangeSequence = change.Sequence
+	}
 	s.reconcileFromSessions(&change)
 }
 
 func (s *Service) reconcileFromSessions(change *session.Change) {
-	terminals := projectTerminals(s.sessions.List())
+	terminals := projectTerminals(s.sessions.ListCurrent())
 	s.mu.Lock()
 	previousSnapshot := s.snapshot
 	next := s.selection

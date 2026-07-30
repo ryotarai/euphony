@@ -92,3 +92,46 @@ func TestServicePublishesSelectionWhenAgentStatusEntersDynamicFilter(t *testing.
 		t.Fatal("timed out waiting for selection.changed")
 	}
 }
+
+func TestServiceIgnoresOutOfOrderSessionChanges(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	terminal, err := manager.Create(t.Context(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	events, unsubscribe := service.SubscribeEvents([]string{"terminal.updated"})
+	defer unsubscribe()
+
+	newer := terminal
+	newer.Name = "Newer"
+	older := terminal
+	older.Name = "Older"
+	service.handleSessionChange(session.Change{
+		Sequence: 2,
+		Kind:     session.ChangeUpdated,
+		Before:   &terminal,
+		After:    &newer,
+	})
+	service.handleSessionChange(session.Change{
+		Sequence: 1,
+		Kind:     session.ChangeUpdated,
+		Before:   &terminal,
+		After:    &older,
+	})
+
+	event := <-events
+	metadata, ok := event.Data.(session.Metadata)
+	if !ok || metadata.Name != "Newer" {
+		t.Fatalf("event = %#v", event)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("stale change was published: %#v", event)
+	default:
+	}
+}

@@ -211,9 +211,14 @@ func (s *Service) WaitOutput(
 	maxBytes := normalizeReadLimit(match.MaxBytes)
 	history, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
 	defer unsubscribe()
-	buffer := joinAndTail(history, maxBytes)
+	historyBytes := joinChunks(history)
+	truncated := len(historyBytes) > maxBytes
+	buffer := historyBytes
+	if truncated {
+		buffer = append([]byte(nil), historyBytes[len(historyBytes)-maxBytes:]...)
+	}
 	if line, ok := matcher(buffer); ok {
-		return waitResult(id, buffer, len(joinChunks(history)) > len(buffer), line), nil
+		return waitResult(id, buffer, truncated, line), nil
 	}
 	for {
 		select {
@@ -227,7 +232,6 @@ func (s *Service) WaitOutput(
 				return WaitOutputResult{}, ErrTerminalClosed
 			}
 			buffer = append(buffer, data...)
-			truncated := false
 			if len(buffer) > maxBytes {
 				buffer = append([]byte(nil), buffer[len(buffer)-maxBytes:]...)
 				truncated = true
@@ -348,14 +352,6 @@ func waitResult(id string, data []byte, truncated bool, line string) WaitOutputR
 		MatchedLine: line,
 		Read:        terminalRead(id, data, truncated),
 	}
-}
-
-func joinAndTail(chunks [][]byte, maxBytes int) []byte {
-	data := joinChunks(chunks)
-	if len(data) > maxBytes {
-		return append([]byte(nil), data[len(data)-maxBytes:]...)
-	}
-	return data
 }
 
 func joinChunks(chunks [][]byte) []byte {

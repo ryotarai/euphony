@@ -59,6 +59,13 @@ export interface ReplaceSelectionRequest {
   expectedRevision?: number;
 }
 
+export interface APIEvent<T = unknown> {
+  sequence: number;
+  occurredAt: string;
+  type: string;
+  data: T;
+}
+
 export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";
 
 export interface AgentLogEntry {

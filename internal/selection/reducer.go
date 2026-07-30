@@ -14,6 +14,9 @@ func Apply(current State, action Action, terminals []Terminal) (State, error) {
 	if err := validateTerminalIDs(action.PinnedTerminalIDs, available); err != nil {
 		return State{}, err
 	}
+	if err := validateStatuses(action.Statuses, action.CWDFilters); err != nil {
+		return State{}, err
+	}
 
 	switch action.Type {
 	case ActionReplace:
@@ -194,6 +197,30 @@ func validateTerminalIDs(ids []string, available map[string]struct{}) error {
 	for _, id := range ids {
 		if _, ok := available[id]; !ok {
 			return ErrTerminalNotFound
+		}
+	}
+	return nil
+}
+
+func validateStatuses(statuses []string, cwdFilters []CWDFilter) error {
+	valid := map[string]bool{
+		"starting":  true,
+		"running":   true,
+		"waiting":   true,
+		"blocked":   true,
+		"attention": true,
+		"terminal":  true,
+		"exited":    true,
+		"failed":    true,
+	}
+	for _, status := range statuses {
+		if !valid[status] {
+			return ErrInvalidAction
+		}
+	}
+	for _, filter := range cwdFilters {
+		if !valid[filter.Status] || filter.CWD == "" {
+			return ErrInvalidAction
 		}
 	}
 	return nil

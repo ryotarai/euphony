@@ -321,6 +321,16 @@ func TestFilterActionsSetAddAndRemoveStatusAndCWDSelectors(t *testing.T) {
 	}
 }
 
+func TestFilterActionsRejectUnknownStatus(t *testing.T) {
+	_, err := Apply(State{}, Action{
+		Type:     ActionFilterStatusSet,
+		Statuses: []string{"paused"},
+	}, []Terminal{{ID: "a", CWD: "/repo", Statuses: []string{"running"}}})
+	if !errors.Is(err, ErrInvalidAction) {
+		t.Fatalf("Apply(paused) error = %v", err)
+	}
+}
+
 func TestReconcileRemovesDeletedTerminalsAndRepairsFocus(t *testing.T) {
 	state := State{
 		ManualTerminalIDs: []string{"deleted", "kept"},

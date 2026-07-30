@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/coder/websocket"
 	"github.com/ryotarai/euphony/internal/apiclient"
 	"github.com/ryotarai/euphony/internal/control"
+	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/selection"
 )
 
@@ -73,15 +75,27 @@ func runAutomation(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		}
 		result, err = client.Status(ctx)
 	case "api":
-		if len(remaining) != 2 || remaining[1] != "schema" {
-			err = &usageError{message: "usage: euphony api schema"}
+		if len(remaining) < 2 || remaining[1] != "schema" {
+			err = &usageError{message: "usage: euphony api schema [--output PATH]"}
+			break
+		}
+		var outputPath string
+		flags, parseErr := parseFlags("api schema", remaining[2:], func(flags *flag.FlagSet) {
+			flags.StringVar(&outputPath, "output", "", "write schema atomically")
+		})
+		if parseErr != nil || len(flags.Args()) != 0 {
+			err = flagPositionError(parseErr, "usage: euphony api schema [--output PATH]")
 			break
 		}
 		var schema []byte
 		schema, err = client.Schema(ctx)
 		if err == nil {
-			_, err = stdout.Write(append(schema, '\n'))
-			return err
+			if outputPath == "" {
+				_, err = stdout.Write(append(bytesWithoutTrailingNewline(schema), '\n'))
+				return err
+			}
+			err = writeFileAtomically(outputPath, schema)
+			result = map[string]string{"path": outputPath}
 		}
 	case "events":
 		return runEvents(ctx, client, remaining[1:], stdout, stderr)
@@ -120,17 +134,27 @@ func parseGlobalOptions(args []string) (cliOptions, []string, error) {
 }
 
 func automationClient(options cliOptions) (*apiclient.Client, error) {
+	token := options.token
+	if token == "" {
+		token = os.Getenv("EUPHONY_TOKEN")
+	}
 	if options.socket != "" {
 		return apiclient.New(apiclient.Config{SocketPath: options.socket})
 	}
 	if options.url != "" {
-		return apiclient.New(apiclient.Config{BaseURL: options.url, Token: options.token})
+		return apiclient.New(apiclient.Config{BaseURL: options.url, Token: token})
 	}
-	if options.token != "" {
-		baseURL := os.Getenv("EUPHONY_URL")
-		return apiclient.New(apiclient.Config{BaseURL: baseURL, Token: options.token})
+	if baseURL := os.Getenv("EUPHONY_URL"); baseURL != "" {
+		return apiclient.New(apiclient.Config{BaseURL: baseURL, Token: token})
 	}
-	return apiclient.NewDefault()
+	socketPath, err := localapi.DefaultSocketPath()
+	if err == nil {
+		if info, statErr := os.Stat(socketPath); statErr == nil &&
+			info.Mode()&os.ModeSocket != 0 {
+			return apiclient.New(apiclient.Config{SocketPath: socketPath})
+		}
+	}
+	return apiclient.New(apiclient.Config{Token: token})
 }
 
 func runEvents(
@@ -471,6 +495,12 @@ func replaceSelection(
 	if err := decoder.Decode(&request); err != nil {
 		return nil, &usageError{message: "invalid selection JSON: " + err.Error()}
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, &usageError{message: "invalid selection JSON: " + err.Error()}
+	}
 	return client.ReplaceSelection(ctx, request)
 }
 
@@ -620,7 +650,7 @@ func writeCLIError(writer io.Writer, err error) error {
 	status := 1
 	code := "cli_failed"
 	message := err.Error()
-	details := any(nil)
+	details := any(map[string]any{})
 	var usage *usageError
 	var apiError *apiclient.APIError
 	switch {
@@ -639,14 +669,14 @@ func writeCLIError(writer io.Writer, err error) error {
 		Error struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
-			Details any    `json:"details,omitempty"`
+			Details any    `json:"details"`
 		} `json:"error"`
 	}{
 		OK: false,
 		Error: struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
-			Details any    `json:"details,omitempty"`
+			Details any    `json:"details"`
 		}{Code: code, Message: message, Details: details},
 	})
 	if encodeErr != nil {
@@ -699,4 +729,34 @@ func readDash(value string, stdin io.Reader) (string, error) {
 		return "", &usageError{message: "stdin exceeds 1048576 bytes"}
 	}
 	return string(data), nil
+}
+
+func bytesWithoutTrailingNewline(value []byte) []byte {
+	return []byte(strings.TrimRight(string(value), "\r\n"))
+}
+
+func writeFileAtomically(path string, content []byte) error {
+	directory := filepath.Dir(path)
+	file, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := file.Name()
+	defer os.Remove(temporaryPath)
+	if err := file.Chmod(0o644); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }

@@ -40,3 +40,5 @@
   multi-megabyte files stay cheap to poll.
 - Keep CJK punctuation spacing untrimmed inside terminal renderers so every
   full-width glyph occupies the same cell geometry.
+- Exercise public automation features through the built CLI against both the
+  Unix socket and TCP API; do not treat handler-only tests as transport proof.

@@ -21,7 +21,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SuccessEnvelope"
+                  "$ref": "#/components/schemas/StatusEnvelope"
                 }
               }
             }
@@ -81,7 +81,7 @@
         "operationId": "listTerminals",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/TerminalList"
           }
         }
       },
@@ -99,7 +99,7 @@
         },
         "responses": {
           "201": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/TerminalCreated"
           }
         }
       }
@@ -114,7 +114,7 @@
         "operationId": "getTerminal",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/Terminal"
           },
           "404": {
             "$ref": "#/components/responses/Error"
@@ -125,7 +125,7 @@
         "operationId": "deleteTerminal",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/TerminalDeleted"
           },
           "404": {
             "$ref": "#/components/responses/Error"
@@ -155,7 +155,7 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/TerminalRead"
           }
         }
       }
@@ -180,7 +180,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/Accepted"
           }
         }
       }
@@ -214,7 +214,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/Accepted"
           },
           "409": {
             "$ref": "#/components/responses/Error"
@@ -242,7 +242,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/WaitOutput"
           },
           "408": {
             "$ref": "#/components/responses/Error"
@@ -278,7 +278,7 @@
         },
         "responses": {
           "201": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/TerminalTicket"
           }
         }
       }
@@ -301,6 +301,9 @@
         "operationId": "streamTerminal",
         "security": [],
         "x-euphony-websocket": {
+          "clientFrame": {
+            "$ref": "#/components/schemas/TerminalClientFrame"
+          },
           "serverFrame": {
             "$ref": "#/components/schemas/TerminalFrame"
           }
@@ -317,7 +320,7 @@
         "operationId": "listAgents",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/AgentList"
           }
         }
       }
@@ -327,7 +330,7 @@
       "get": {
         "operationId": "getAgent",
         "responses": {
-          "200": {"$ref": "#/components/responses/Success"},
+          "200": {"$ref": "#/components/responses/Agent"},
           "409": {"$ref": "#/components/responses/Error"}
         }
       }
@@ -345,7 +348,7 @@
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/Success"},
+          "200": {"$ref": "#/components/responses/Agent"},
           "408": {"$ref": "#/components/responses/Error"}
         }
       }
@@ -375,7 +378,7 @@
           }
         ],
         "responses": {
-          "200": {"$ref": "#/components/responses/Success"}
+          "200": {"$ref": "#/components/responses/AgentOutput"}
         }
       }
     },
@@ -392,7 +395,7 @@
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/Success"}
+          "200": {"$ref": "#/components/responses/AgentAccepted"}
         }
       }
     },
@@ -409,7 +412,7 @@
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/Success"},
+          "200": {"$ref": "#/components/responses/AgentAccepted"},
           "408": {"$ref": "#/components/responses/Error"}
         }
       }
@@ -427,7 +430,7 @@
           }
         },
         "responses": {
-          "200": {"$ref": "#/components/responses/Success"},
+          "200": {"$ref": "#/components/responses/Agent"},
           "408": {"$ref": "#/components/responses/Error"}
         }
       }
@@ -437,7 +440,7 @@
         "operationId": "getSelection",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/Selection"
           }
         }
       },
@@ -455,7 +458,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/Selection"
           },
           "409": {
             "$ref": "#/components/responses/Error"
@@ -478,7 +481,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/Selection"
           }
         }
       }
@@ -502,6 +505,110 @@
       }
     },
     "responses": {
+      "Accepted": {
+        "description": "Input accepted",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AcceptedEnvelope"}
+          }
+        }
+      },
+      "TerminalList": {
+        "description": "Terminal list",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/TerminalListEnvelope"}
+          }
+        }
+      },
+      "TerminalCreated": {
+        "description": "Created terminal and shared selection",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/TerminalCreatedEnvelope"}
+          }
+        }
+      },
+      "Terminal": {
+        "description": "Terminal metadata",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/TerminalEnvelope"}
+          }
+        }
+      },
+      "TerminalDeleted": {
+        "description": "Deleted terminal and shared selection",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/TerminalDeletedEnvelope"}
+          }
+        }
+      },
+      "TerminalRead": {
+        "description": "Bounded terminal output",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/TerminalReadEnvelope"}
+          }
+        }
+      },
+      "WaitOutput": {
+        "description": "Matched terminal output",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/WaitOutputEnvelope"}
+          }
+        }
+      },
+      "TerminalTicket": {
+        "description": "Single-use terminal stream ticket",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/TerminalTicketEnvelope"}
+          }
+        }
+      },
+      "AgentList": {
+        "description": "Active coding agents",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AgentListEnvelope"}
+          }
+        }
+      },
+      "Agent": {
+        "description": "Coding agent metadata",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AgentEnvelope"}
+          }
+        }
+      },
+      "AgentAccepted": {
+        "description": "Agent input accepted",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AgentAcceptedEnvelope"}
+          }
+        }
+      },
+      "AgentOutput": {
+        "description": "Agent transcript or terminal output",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AgentOutputEnvelope"}
+          }
+        }
+      },
+      "Selection": {
+        "description": "Shared selection snapshot",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/SelectionEnvelope"}
+          }
+        }
+      },
       "Success": {
         "description": "Successful operation",
         "content": {
@@ -545,16 +652,24 @@
       },
       "TerminalInputRequest": {
         "type": "object",
+        "oneOf": [
+          {"required": ["text"]},
+          {"required": ["dataBase64"]},
+          {"required": ["keys"]}
+        ],
         "properties": {
           "text": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "dataBase64": {
             "type": "string",
-            "contentEncoding": "base64"
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9+/]*$"
           },
           "keys": {
             "type": "array",
+            "minItems": 1,
             "items": {
               "type": "string"
             }
@@ -662,8 +777,7 @@
         "required": [
           "manualTerminalIds",
           "pinnedTerminalIds",
-          "filters",
-          "expectedRevision"
+          "filters"
         ],
         "properties": {
           "manualTerminalIds": {
@@ -682,7 +796,7 @@
             "type": "string"
           },
           "filters": {
-            "type": "object"
+            "$ref": "#/components/schemas/SelectionFilters"
           },
           "expectedRevision": {
             "type": "integer",
@@ -724,22 +838,13 @@
           "statuses": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/TerminalStatus"
             }
           },
           "cwdFilters": {
             "type": "array",
             "items": {
-              "type": "object",
-              "required": ["status", "cwd"],
-              "properties": {
-                "status": {
-                  "type": "string"
-                },
-                "cwd": {
-                  "type": "string"
-                }
-              }
+              "$ref": "#/components/schemas/CWDFilter"
             }
           },
           "expectedRevision": {
@@ -759,6 +864,253 @@
           "result": {}
         }
       },
+      "StatusEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["apiVersion", "status"],
+                "properties": {
+                  "apiVersion": {"const": "v1"},
+                  "status": {"const": "ok"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AcceptedEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["accepted"],
+                "properties": {"accepted": {"const": true}},
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "TerminalListEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["terminals"],
+                "properties": {
+                  "terminals": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/Terminal"}
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "TerminalCreatedEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["terminal", "selection"],
+                "properties": {
+                  "terminal": {"$ref": "#/components/schemas/Terminal"},
+                  "selection": {"$ref": "#/components/schemas/Selection"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "TerminalEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["terminal"],
+                "properties": {
+                  "terminal": {"$ref": "#/components/schemas/Terminal"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "TerminalDeletedEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["id", "selection"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "selection": {"$ref": "#/components/schemas/Selection"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "TerminalReadEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {"$ref": "#/components/schemas/TerminalRead"}
+            }
+          }
+        ]
+      },
+      "WaitOutputEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["terminalId", "matchedLine", "read"],
+                "properties": {
+                  "terminalId": {"type": "string"},
+                  "matchedLine": {"type": "string"},
+                  "read": {"$ref": "#/components/schemas/TerminalRead"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "TerminalTicketEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["ticket", "mode"],
+                "properties": {
+                  "ticket": {"type": "string"},
+                  "mode": {"type": "string", "enum": ["observe", "control"]}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AgentListEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["agents"],
+                "properties": {
+                  "agents": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/Terminal"}
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AgentEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["agent"],
+                "properties": {
+                  "agent": {"$ref": "#/components/schemas/Terminal"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AgentAcceptedEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["accepted", "agent"],
+                "properties": {
+                  "accepted": {"const": true},
+                  "agent": {"$ref": "#/components/schemas/Terminal"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AgentOutputEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "oneOf": [
+                  {"$ref": "#/components/schemas/TerminalRead"},
+                  {"$ref": "#/components/schemas/AgentTranscript"}
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "SelectionEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {"$ref": "#/components/schemas/Selection"}
+            }
+          }
+        ]
+      },
       "ErrorEnvelope": {
         "type": "object",
         "required": ["ok", "error"],
@@ -773,7 +1125,7 @@
       },
       "APIError": {
         "type": "object",
-        "required": ["code", "message"],
+        "required": ["code", "message", "details"],
         "properties": {
           "code": {
             "type": "string"
@@ -783,6 +1135,78 @@
           },
           "details": {}
         }
+      },
+      "TerminalStatus": {
+        "type": "string",
+        "enum": ["starting", "running", "waiting", "blocked", "attention", "terminal", "exited", "failed"]
+      },
+      "CWDFilter": {
+        "type": "object",
+        "required": ["status", "cwd"],
+        "properties": {
+          "status": {"$ref": "#/components/schemas/TerminalStatus"},
+          "cwd": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      },
+      "SelectionFilters": {
+        "type": "object",
+        "required": ["statuses", "cwds"],
+        "properties": {
+          "statuses": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/TerminalStatus"}
+          },
+          "cwds": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/CWDFilter"}
+          }
+        },
+        "additionalProperties": false
+      },
+      "TerminalRead": {
+        "type": "object",
+        "required": ["terminalId", "dataBase64", "text", "byteCount", "truncated"],
+        "properties": {
+          "terminalId": {"type": "string"},
+          "dataBase64": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+/]*$"
+          },
+          "text": {"type": "string"},
+          "byteCount": {"type": "integer", "minimum": 0},
+          "truncated": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      },
+      "AgentTranscriptEntry": {
+        "type": "object",
+        "required": ["id", "kind"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {
+            "type": "string",
+            "enum": ["message", "thinking", "tool", "tool_result"]
+          },
+          "role": {"type": "string"},
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "timestamp": {"type": "string"}
+        },
+        "additionalProperties": false
+      },
+      "AgentTranscript": {
+        "type": "object",
+        "required": ["agent", "sessionId", "entries"],
+        "properties": {
+          "agent": {"type": "string", "enum": ["codex", "claude"]},
+          "sessionId": {"type": "string"},
+          "entries": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/AgentTranscriptEntry"}
+          }
+        },
+        "additionalProperties": false
       },
       "Terminal": {
         "type": "object",
@@ -854,7 +1278,7 @@
             "type": "string"
           },
           "filters": {
-            "type": "object"
+            "$ref": "#/components/schemas/SelectionFilters"
           },
           "revision": {
             "type": "integer",
@@ -890,12 +1314,49 @@
           },
           "dataBase64": {
             "type": "string",
-            "contentEncoding": "base64"
+            "pattern": "^[A-Za-z0-9+/]*$"
           },
           "exitCode": {
             "type": "integer"
           }
-        }
+        },
+        "additionalProperties": false
+      },
+      "TerminalClientFrame": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["type", "dataBase64"],
+            "properties": {
+              "type": {"const": "input"},
+              "dataBase64": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9+/]*$"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "cols", "rows"],
+            "properties": {
+              "type": {"const": "resize"},
+              "cols": {"type": "integer", "minimum": 1, "maximum": 1000},
+              "rows": {"type": "integer", "minimum": 1, "maximum": 1000}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "data"],
+            "properties": {
+              "type": {"const": "cwd"},
+              "data": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        ]
       }
     }
   }

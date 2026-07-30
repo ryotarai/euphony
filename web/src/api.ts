@@ -1,6 +1,7 @@
 import type {
   AgentLogResult,
   AgentTranscript,
+  APIEvent,
   ApiErrorBody,
   ReplaceSelectionRequest,
   SelectionSnapshot,
@@ -66,6 +67,48 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(request),
     });
+  }
+
+  async subscribeEvents(
+    signal: AbortSignal,
+    onEvent: (event: APIEvent) => void,
+  ): Promise<void> {
+    const response = await fetch("/api/v1/events", {
+      signal,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/x-ndjson",
+      },
+    });
+    if (!response.ok) {
+      throw await this.v1ApiError(response);
+    }
+    if (!response.body) {
+      throw new ApiError(
+        response.status,
+        "streaming_unsupported",
+        "The event response has no readable stream.",
+      );
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      pending += decoder.decode(value, { stream: !done });
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        onEvent(JSON.parse(line) as APIEvent);
+      }
+      if (done) {
+        if (pending.trim()) {
+          onEvent(JSON.parse(pending) as APIEvent);
+        }
+        return;
+      }
+    }
   }
 
   acknowledgeAttention(id: string): Promise<Session> {
@@ -152,6 +195,28 @@ export class ApiClient {
       throw new ApiError(response.status, error.code, error.message);
     }
     return envelope.result;
+  }
+
+  private async v1ApiError(response: Response): Promise<ApiError> {
+    try {
+      const envelope = await response.json() as {
+        error?: ApiErrorBody;
+      };
+      if (envelope.error) {
+        return new ApiError(
+          response.status,
+          envelope.error.code,
+          envelope.error.message,
+        );
+      }
+    } catch {
+      // Use the stable fallback for non-JSON proxies.
+    }
+    return new ApiError(
+      response.status,
+      "request_failed",
+      "The request failed.",
+    );
   }
 
   private async apiError(response: Response): Promise<ApiError> {

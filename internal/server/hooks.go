@@ -25,7 +25,8 @@ func (s *Server) updateTerminalHook(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil || ensureJSONEnd(decoder) != nil ||
 		strings.TrimSpace(request.TerminalID) == "" ||
-		len(request.Agent) > 40 || len(request.ResumeAgent) > 40 ||
+		!validHookAgent(request.Agent) || !validHookAgent(request.ResumeAgent) ||
+		!validHookStatus(request.Status) ||
 		len(request.AgentSessionID) > 200 || len(request.Status) > 40 ||
 		len(request.AgentTranscriptPath) > 8192 ||
 		len(request.Title) > 240 || len(request.CWD) > 4096 {
@@ -47,4 +48,22 @@ func (s *Server) updateTerminalHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, metadata)
+}
+
+func validHookAgent(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "codex", "claude":
+		return true
+	default:
+		return false
+	}
+}
+
+func validHookStatus(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "running", "waiting", "blocked":
+		return true
+	default:
+		return false
+	}
 }

@@ -112,6 +112,12 @@ func TestPromptAgentUsesBracketedPasteAndWaitsForRunningThenSettled(t *testing.T
 	}); err != nil {
 		t.Fatalf("UpdateAgent(waiting) error = %v", err)
 	}
+	service.agentForeground = func(id, kind string) error {
+		if id != metadata.ID || kind != "claude" {
+			t.Fatalf("agent foreground check = %q, %q", id, kind)
+		}
+		return nil
+	}
 	inputs := make(chan TerminalInput, 1)
 	service.sendInput = func(id string, input TerminalInput) error {
 		if id != metadata.ID {
@@ -189,6 +195,34 @@ func TestPromptAgentRejectsTerminalWithoutRecognizedAgent(t *testing.T) {
 	_, err = service.PromptAgent(context.Background(), metadata.ID, "hello", false, nil)
 	if !errors.Is(err, ErrAgentNotRunning) {
 		t.Fatalf("PromptAgent() error = %v, want ErrAgentNotRunning", err)
+	}
+}
+
+func TestPromptAgentRejectsStaleMetadataWhenAgentDoesNotOwnForeground(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	metadata, err := manager.Create(t.Context(), "Stale", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	called := false
+	service.sendInput = func(string, TerminalInput) error {
+		called = true
+		return nil
+	}
+
+	_, err = service.PromptAgent(context.Background(), metadata.ID, "hello", false, nil)
+	if !errors.Is(err, ErrAgentNotRunning) || called {
+		t.Fatalf("PromptAgent() error = %v, input called = %t", err, called)
 	}
 }
 

@@ -35,8 +35,7 @@ func (s *Server) v1StartAgent(w http.ResponseWriter, r *http.Request) {
 		TimeoutMS int      `json:"timeoutMs"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid agent start object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid agent start object.")
 		return
 	}
 	ctx, cancel, ok := agentTimeoutContext(r.Context(), request.TimeoutMS)
@@ -106,8 +105,7 @@ func (s *Server) v1SendAgentInput(w http.ResponseWriter, r *http.Request) {
 		Keys []string `json:"keys"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid agent input object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid agent input object.")
 		return
 	}
 	agent, err := s.control.SendAgentKeys(r.PathValue("id"), request.Keys)
@@ -125,8 +123,11 @@ func (s *Server) v1PromptAgent(w http.ResponseWriter, r *http.Request) {
 		Until     []string `json:"until"`
 		TimeoutMS int      `json:"timeoutMs"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil ||
-		(len(request.Until) > 0 && (request.Wait == nil || !*request.Wait)) {
+	if err := decodeV1JSON(r, &request); err != nil {
+		writeV1DecodeError(w, err, "Provide one valid agent prompt object.")
+		return
+	}
+	if len(request.Until) > 0 && (request.Wait == nil || !*request.Wait) {
 		writeV1Error(w, http.StatusBadRequest, "invalid_request",
 			"until requires wait to be true.", nil)
 		return
@@ -158,8 +159,7 @@ func (s *Server) v1WaitAgent(w http.ResponseWriter, r *http.Request) {
 		TimeoutMS int      `json:"timeoutMs"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid agent wait object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid agent wait object.")
 		return
 	}
 	ctx, cancel, ok := agentTimeoutContext(r.Context(), request.TimeoutMS)

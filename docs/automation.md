@@ -13,8 +13,8 @@ The Unix path is selected in this order:
 2. `$XDG_RUNTIME_DIR/euphony/euphony.sock`;
 3. `~/.local/euphony/euphony.sock`.
 
-The Unix socket and its parent directory are private to the current user. Unix
-requests do not require a bearer token. TCP requests require
+The Unix socket is created with mode `0600`; a parent directory created by
+Euphony uses mode `0700`. Unix requests do not require a bearer token. TCP requests require
 `Authorization: Bearer <EUPHONY_TOKEN>` except for status, schema, and a
 single-use-ticket terminal WebSocket.
 
@@ -27,8 +27,9 @@ euphony --url https://euphony.example.test --token "$EUPHONY_TOKEN" status
 ```
 
 `EUPHONY_SOCKET`, `EUPHONY_URL`, and `EUPHONY_TOKEN` provide the equivalent
-environment configuration. An explicit URL selects TCP even when a default
-socket exists.
+environment configuration. Explicit `--socket` or `--url` wins first, then
+`EUPHONY_URL`, then an active configured/default Unix socket, and finally the
+default TCP URL. An explicit URL selects TCP even when a socket exists.
 
 ## JSON contract
 
@@ -107,7 +108,9 @@ Agent targets are terminal IDs. Codex and Claude must have Euphony lifecycle
 hooks installed with `euphony setup`. A start operation waits for the matching
 start hook. A prompt sent with `--wait` observes a `running` transition before
 accepting `waiting` or `blocked`, preventing a stale pre-prompt state from
-completing the wait.
+completing the wait. Prompt and key input also verify that the reported Codex
+or Claude process still owns the PTY foreground, so stale hook metadata cannot
+send input into a returned shell or another foreground program.
 
 Use `-` as the prompt argument to read up to 1 MiB from stdin.
 
@@ -169,7 +172,9 @@ Fetch the raw OpenAPI 3.1 document with:
 
 ```sh
 euphony api schema
+euphony api schema --output ./euphony-openapi.json
 ```
 
 The HTTP endpoints are rooted at `/api/v1`; the schema is also available from
-`GET /api/v1/schema`.
+`GET /api/v1/schema`. `--output` replaces the destination atomically and
+returns a normal JSON success envelope.

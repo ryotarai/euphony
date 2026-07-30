@@ -122,6 +122,27 @@ func TestTerminalHookUpdatesSessionMetadata(t *testing.T) {
 	}
 }
 
+func TestTerminalHookRejectsUnsupportedAgentAndStatus(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+
+	for _, body := range []string{
+		`{"terminalId":"` + metadata.ID + `","agent":"gemini","status":"running"}`,
+		`{"terminalId":"` + metadata.ID + `","agent":"codex","status":"paused"}`,
+	} {
+		response := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal", body)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("hook status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestAcknowledgeAttention(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

@@ -70,6 +70,7 @@ interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
   syncSelection?: boolean;
+  syncEvents?: boolean;
   renderTerminal?: (
     session: Session,
     api: ApiClient,
@@ -290,6 +291,7 @@ export function App({
   initialToken,
   initialSettings,
   syncSelection = true,
+  syncEvents = true,
   renderTerminal = (
     session,
     api,
@@ -358,6 +360,7 @@ export function App({
   const scrollCommandSelectionRef = useRef(false);
   const prefixActiveRef = useRef(false);
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
+  const manualSelectedIDsRef = useRef<Set<string>>(new Set());
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
@@ -401,6 +404,7 @@ export function App({
           !snapshot.pinnedTerminalIds.includes(id),
       ),
     );
+    manualSelectedIDsRef.current = new Set(snapshot.manualTerminalIds);
     decomposedStatusFiltersRef.current = new Set(
       snapshot.filters.cwds
         .map((filter) => filter.status)
@@ -463,10 +467,9 @@ export function App({
           if (error instanceof ApiError && error.code === "selection_conflict") {
             try {
               const snapshot = await api.getSelection();
-              if (selectionPendingRequestRef.current) {
-                recordServerSelection(snapshot);
-              } else {
-                applyServerSelection(snapshot);
+              recordServerSelection(snapshot);
+              if (!selectionPendingRequestRef.current) {
+                selectionPendingRequestRef.current = request;
               }
               continue;
             } catch {
@@ -613,7 +616,10 @@ export function App({
         }
         if (syncSelection) {
           const selection = await api.getSelection();
-          if (selection.revision !== selectionRevisionRef.current) {
+          if (
+            selectionRevisionRef.current === null ||
+            selection.revision > selectionRevisionRef.current
+          ) {
             applyServerSelection(selection);
           }
         }
@@ -623,12 +629,106 @@ export function App({
   }, [api, sessions !== null, syncSelection]);
 
   useEffect(() => {
+    if (!syncSelection || !syncEvents || !api || !sessions) return;
+    const controller = new AbortController();
+    let retryDelay = 250;
+    let refreshRunning = false;
+
+    const refreshSnapshots = async () => {
+      if (refreshRunning || controller.signal.aborted) return;
+      refreshRunning = true;
+      try {
+        const [items, selection] = await Promise.all([
+          api.listSessions(),
+          api.getSelection(),
+        ]);
+        if (controller.signal.aborted) return;
+        previousSessionsRef.current = items;
+        setSessions((current) =>
+          current && sessionsEqual(current, items) ? current : items
+        );
+        if (
+          selectionRevisionRef.current === null ||
+          selection.revision > selectionRevisionRef.current
+        ) {
+          applyServerSelection(selection);
+        }
+      } finally {
+        refreshRunning = false;
+      }
+    };
+
+    const waitToReconnect = (milliseconds: number) =>
+      new Promise<void>((resolve) => {
+        const finish = () => {
+          controller.signal.removeEventListener("abort", abort);
+          resolve();
+        };
+        const abort = () => {
+          window.clearTimeout(timer);
+          finish();
+        };
+        const timer = window.setTimeout(finish, milliseconds);
+        controller.signal.addEventListener("abort", abort, { once: true });
+      });
+
+    const consume = async () => {
+      while (!controller.signal.aborted) {
+        try {
+          await refreshSnapshots();
+          retryDelay = 250;
+          await api.subscribeEvents(controller.signal, (event) => {
+            if (event.type === "selection.changed") {
+              const snapshot = event.data as SelectionSnapshot;
+              if (
+                typeof snapshot?.revision === "number" &&
+                (selectionRevisionRef.current === null ||
+                  snapshot.revision > selectionRevisionRef.current)
+              ) {
+                applyServerSelection(snapshot);
+              }
+              return;
+            }
+            if (
+              event.type === "terminal.created" ||
+              event.type === "terminal.updated" ||
+              event.type === "terminal.deleted" ||
+              event.type === "agent.updated" ||
+              event.type === "subscriber_lagged"
+            ) {
+              void refreshSnapshots();
+            }
+          });
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (error instanceof ApiError && error.status === 401) {
+            sessionStorage.removeItem(tokenKey);
+            setAuthError(true);
+            setToken("");
+            return;
+          }
+        }
+        if (controller.signal.aborted) return;
+        await waitToReconnect(retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 5_000);
+      }
+    };
+    void consume();
+    return () => controller.abort();
+  }, [api, sessions !== null, syncSelection, syncEvents]);
+
+  useEffect(() => {
     if (!syncSelection || !api || !selectionSyncReadyRef.current) return;
     const cwdFilterValues = cwdFilters
       .map(parseCwdFilter)
       .filter((filter): filter is CwdSelectionFilter => filter !== null);
     const manualTerminalIds = selectedIDs.filter(
-      (id) => !filterSelectedIDsRef.current.has(id),
+      (id) =>
+        !filterSelectedIDsRef.current.has(id) &&
+        (
+          !pinnedIDs.includes(id) ||
+          manualSelectedIDsRef.current.has(id)
+        ),
     );
     const signature = selectionSourceSignature(
       manualTerminalIds,
@@ -662,7 +762,7 @@ export function App({
   ]);
 
   useEffect(() => {
-    if (!sessions) return;
+    if (!sessions || syncSelection) return;
     const available = new Set(sessions.map((session) => session.id));
     const removed =
       selectedIDs.some((id) => !available.has(id)) ||
@@ -689,6 +789,7 @@ export function App({
     );
   }, [
     sessions,
+    syncSelection,
     selectedIDs,
     pinnedIDs,
     focusedID,
@@ -697,6 +798,7 @@ export function App({
   ]);
 
   useEffect(() => {
+    if (syncSelection) return;
     const promotedID =
       focusedID &&
       selectedIDs.includes(focusedID) &&
@@ -747,7 +849,15 @@ export function App({
         "replace",
       );
     }
-  }, [sessions, statusFilters, cwdFilters, selectedIDs, pinnedIDs, focusedID]);
+  }, [
+    sessions,
+    syncSelection,
+    statusFilters,
+    cwdFilters,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+  ]);
 
   useEffect(() => {
     if (!api || !sessions || !focusedID) return;

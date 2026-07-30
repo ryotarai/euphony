@@ -20,8 +20,7 @@ func (s *Server) v1ReplaceSelection(w http.ResponseWriter, r *http.Request) {
 		ExpectedRevision  *uint64           `json:"expectedRevision"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid complete selection.", nil)
+		writeV1DecodeError(w, err, "Provide one valid complete selection.")
 		return
 	}
 	snapshot, err := s.control.ApplySelection(r.Context(), selection.Action{
@@ -43,8 +42,7 @@ func (s *Server) v1ReplaceSelection(w http.ResponseWriter, r *http.Request) {
 func (s *Server) v1ApplySelection(w http.ResponseWriter, r *http.Request) {
 	var action selection.Action
 	if err := decodeV1JSON(r, &action); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid selection action.", nil)
+		writeV1DecodeError(w, err, "Provide one valid selection action.")
 		return
 	}
 	snapshot, err := s.control.ApplySelection(r.Context(), action)

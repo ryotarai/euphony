@@ -154,6 +154,67 @@ func TestV1TerminalRequestRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestV1TerminalWaitRejectsNegativeTimeout(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"Wait","cwd":`+strconv.Quote(t.TempDir())+`}`)
+	var createEnvelope struct {
+		Result struct {
+			Terminal session.Metadata `json:"terminal"`
+		} `json:"result"`
+	}
+	decodeResponse(t, created, &createEnvelope)
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/v1/terminals/"+createEnvelope.Result.Terminal.ID+"/wait-output",
+		`{"match":"never","timeoutMs":-1}`)
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeResponse(t, response, &envelope)
+	if response.Code != http.StatusBadRequest || envelope.Error.Code != "invalid_timeout" {
+		t.Fatalf("response = %d %#v", response.Code, envelope)
+	}
+
+	response = performRequest(t, srv, http.MethodPost,
+		"/api/v1/terminals/"+createEnvelope.Result.Terminal.ID+"/wait-output",
+		`{"match":"never","maxBytes":-1}`)
+	decodeResponse(t, response, &envelope)
+	if response.Code != http.StatusBadRequest || envelope.Error.Code != "invalid_max_bytes" {
+		t.Fatalf("negative maxBytes response = %d %#v", response.Code, envelope)
+	}
+}
+
+func TestV1RequestRejectsOversizedTrailingWhitespace(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	body := `{"command":"true"}` + strings.Repeat(" ", maxV1RequestBody)
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/v1/terminals/missing/run", body)
+	var envelope struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	decodeResponse(t, response, &envelope)
+	if response.Code != http.StatusRequestEntityTooLarge ||
+		envelope.Error.Code != "request_too_large" ||
+		envelope.Error.Details == nil {
+		t.Fatalf("response = %d %#v", response.Code, envelope)
+	}
+}
+
 func TestV1TerminalObserveWebSocketStreamsRawBase64Frames(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

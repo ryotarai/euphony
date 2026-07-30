@@ -43,11 +43,24 @@ func Listen(path string) (net.Listener, func() error, error) {
 		_ = os.Remove(path)
 		return nil, nil, fmt.Errorf("protect Unix socket: %w", err)
 	}
+	ownedInfo, err := os.Lstat(path)
+	if err != nil {
+		_ = listener.Close()
+		_ = os.Remove(path)
+		return nil, nil, fmt.Errorf("inspect created Unix socket: %w", err)
+	}
 	cleanup := func() error {
-		err := os.Remove(path)
+		currentInfo, err := os.Lstat(path)
 		if os.IsNotExist(err) {
 			return nil
 		}
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(ownedInfo, currentInfo) {
+			return nil
+		}
+		err = os.Remove(path)
 		return err
 	}
 	return listener, cleanup, nil

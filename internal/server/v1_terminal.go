@@ -25,8 +25,7 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 		SelectionMode control.SelectionMode `json:"selectionMode"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid terminal creation object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid terminal creation object.")
 		return
 	}
 	if strings.TrimSpace(request.Name) == "" {
@@ -109,8 +108,7 @@ func (s *Server) v1SendTerminalInput(w http.ResponseWriter, r *http.Request) {
 		Keys       []string `json:"keys"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid terminal input object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid terminal input object.")
 		return
 	}
 	err := s.control.SendTerminalInput(r.PathValue("id"), control.TerminalInput{
@@ -130,8 +128,7 @@ func (s *Server) v1RunTerminal(w http.ResponseWriter, r *http.Request) {
 		Command string `json:"command"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid terminal command object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid terminal command object.")
 		return
 	}
 	if err := s.control.RunTerminal(r.PathValue("id"), request.Command); err != nil {
@@ -146,28 +143,37 @@ func (s *Server) v1WaitTerminalOutput(w http.ResponseWriter, r *http.Request) {
 		Match     string `json:"match"`
 		Regex     string `json:"regex"`
 		TimeoutMS int    `json:"timeoutMs"`
-		MaxBytes  int    `json:"maxBytes"`
+		MaxBytes  *int   `json:"maxBytes"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid terminal output wait object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid terminal output wait object.")
 		return
 	}
 	ctx := r.Context()
 	var cancel context.CancelFunc
+	if request.TimeoutMS < 0 ||
+		request.TimeoutMS > int((24*time.Hour).Milliseconds()) {
+		writeV1Error(w, http.StatusBadRequest, "invalid_timeout",
+			"timeoutMs must be between 0 and 86400000.", nil)
+		return
+	}
 	if request.TimeoutMS > 0 {
-		if request.TimeoutMS > int((24 * time.Hour).Milliseconds()) {
-			writeV1Error(w, http.StatusBadRequest, "invalid_timeout",
-				"timeoutMs must not exceed 86400000.", nil)
-			return
-		}
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(request.TimeoutMS)*time.Millisecond)
 		defer cancel()
+	}
+	maxBytes := 0
+	if request.MaxBytes != nil {
+		if *request.MaxBytes < 1 || *request.MaxBytes > control.MaxTerminalReadBytes {
+			writeV1Error(w, http.StatusBadRequest, "invalid_max_bytes",
+				"maxBytes must be between 1 and 16777216.", nil)
+			return
+		}
+		maxBytes = *request.MaxBytes
 	}
 	result, err := s.control.WaitOutput(ctx, r.PathValue("id"), control.OutputMatch{
 		Literal:  request.Match,
 		Regex:    request.Regex,
-		MaxBytes: request.MaxBytes,
+		MaxBytes: maxBytes,
 	})
 	if err != nil {
 		writeTerminalControlError(w, err)
@@ -181,8 +187,7 @@ func (s *Server) v1CreateTerminalTicket(w http.ResponseWriter, r *http.Request) 
 		Mode string `json:"mode"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
-			"Provide one valid terminal stream ticket object.", nil)
+		writeV1DecodeError(w, err, "Provide one valid terminal stream ticket object.")
 		return
 	}
 	if request.Mode != "observe" && request.Mode != "control" {

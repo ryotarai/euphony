@@ -2,11 +2,13 @@ package apiclient
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/server"
@@ -63,6 +65,37 @@ func TestClientUsesUnixSocketWithoutBearerToken(t *testing.T) {
 	selection, err := client.Selection(context.Background())
 	if err != nil || selection.TerminalIDs == nil {
 		t.Fatalf("Selection() = %#v, %v", selection, err)
+	}
+	created, err := client.CreateTerminal(context.Background(), CreateTerminalRequest{
+		Name: "Stream",
+		CWD:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTerminal() error = %v", err)
+	}
+	streamContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	connection, err := client.TerminalStream(
+		streamContext,
+		created.Terminal.ID,
+		"observe",
+	)
+	if err != nil {
+		t.Fatalf("TerminalStream() error = %v", err)
+	}
+	defer connection.CloseNow()
+	for {
+		_, payload, err := connection.Read(streamContext)
+		if err != nil {
+			t.Fatalf("terminal stream Read() error = %v", err)
+		}
+		var frame TerminalFrame
+		if err := json.Unmarshal(payload, &frame); err != nil {
+			t.Fatalf("decode terminal frame: %v", err)
+		}
+		if frame.Type == "history_end" {
+			break
+		}
 	}
 }
 

@@ -102,6 +102,7 @@ test("uses the server selection as authoritative and persists browser changes", 
     <App
       initialToken="valid-token"
       initialSettings={defaultSettings}
+      syncEvents={false}
       renderTerminal={(session) => (
         <div aria-label={`${session.name} terminal pane`} />
       )}
@@ -186,6 +187,7 @@ test("serializes rapid shared-selection writes and rebases the latest state", as
     <App
       initialToken="valid-token"
       initialSettings={defaultSettings}
+      syncEvents={false}
       renderTerminal={(session) => <div>{session.id}</div>}
     />,
   );
@@ -206,6 +208,156 @@ test("serializes rapid shared-selection writes and rebases the latest state", as
     { ids: ["session-2"], focus: "session-2", revision: 7 },
     { ids: ["session-1"], focus: "session-1", revision: 8 },
   ]);
+});
+
+test("retries a conflicting shared-selection write against the latest revision", async () => {
+  let selectionReads = 0;
+  const writes: Array<{ manualTerminalIds: string[]; expectedRevision: number }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      selectionReads++;
+      const revision = selectionReads === 1 ? 7 : 8;
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: ["session-1"],
+          manualTerminalIds: ["session-1"],
+          pinnedTerminalIds: [],
+          focusedTerminalId: "session-1",
+          filters: { statuses: [], cwds: [] },
+          revision,
+        },
+      });
+    }
+    if (input === "/api/v1/selection" && init?.method === "PUT") {
+      const request = JSON.parse(String(init.body)) as {
+        manualTerminalIds: string[];
+        expectedRevision: number;
+      };
+      writes.push(request);
+      if (writes.length === 1) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: {
+              code: "selection_conflict",
+              message: "stale",
+              details: {},
+            },
+          },
+          409,
+        );
+      }
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: request.manualTerminalIds,
+          manualTerminalIds: request.manualTerminalIds,
+          pinnedTerminalIds: [],
+          focusedTerminalId: "session-2",
+          filters: { statuses: [], cwds: [] },
+          revision: 9,
+        },
+      });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncEvents={false}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByText("session-1");
+
+  await user.click(screen.getByRole("button", { name: "Select Claude" }));
+
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(
+    writes.map(({ manualTerminalIds, expectedRevision }) => ({
+      manualTerminalIds,
+      expectedRevision,
+    })),
+  ).toEqual([
+    { manualTerminalIds: ["session-2"], expectedRevision: 7 },
+    { manualTerminalIds: ["session-2"], expectedRevision: 8 },
+  ]);
+  expect(await screen.findByText("session-2")).toBeVisible();
+});
+
+test("applies a remote selection event without writing it back", async () => {
+  const encoder = new TextEncoder();
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+    async (input, init) => {
+      if (input === "/api/sessions") {
+        return jsonResponse([runningSession, secondRunningSession]);
+      }
+      if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            terminalIds: ["session-1"],
+            manualTerminalIds: ["session-1"],
+            pinnedTerminalIds: [],
+            focusedTerminalId: "session-1",
+            filters: { statuses: [], cwds: [] },
+            revision: 3,
+          },
+        });
+      }
+      if (input === "/api/v1/events") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            eventController = controller;
+          },
+        }), {
+          headers: { "Content-Type": "application/x-ndjson" },
+        });
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    },
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+  await waitFor(() => expect(eventController).toBeDefined());
+
+  eventController?.enqueue(encoder.encode(JSON.stringify({
+    sequence: 9,
+    occurredAt: "2026-07-30T00:00:00Z",
+    type: "selection.changed",
+    data: {
+      terminalIds: ["session-1", "session-2"],
+      manualTerminalIds: ["session-1"],
+      pinnedTerminalIds: ["session-2"],
+      focusedTerminalId: "session-2",
+      filters: { statuses: [], cwds: [] },
+      revision: 4,
+    },
+  }) + "\n"));
+
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) =>
+      input === "/api/v1/selection" && init?.method === "PUT",
+  )).toBe(false);
+  eventController?.close();
 });
 
 test("detects only new transitions into attention", () => {

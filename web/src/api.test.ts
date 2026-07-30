@@ -84,3 +84,33 @@ test("creates and deletes terminals through v1 with returned selection", async (
     selection,
   });
 });
+
+test("parses split NDJSON event chunks without losing records", async () => {
+  const encoder = new TextEncoder();
+  vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>
+    Promise.resolve(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(
+          '{"sequence":1,"occurredAt":"2026-07-30T00:00:00Z","type":"terminal.created",',
+        ));
+        controller.enqueue(encoder.encode(
+          '"data":{"id":"terminal-1"}}\n{"sequence":2,"occurredAt":"2026-07-30T00:00:01Z",',
+        ));
+        controller.enqueue(encoder.encode(
+          '"type":"selection.changed","data":{"revision":2}}\n',
+        ));
+        controller.close();
+      },
+    }), {
+      headers: { "Content-Type": "application/x-ndjson" },
+    })),
+  );
+  const api = new ApiClient("token");
+  const events: string[] = [];
+
+  await api.subscribeEvents(new AbortController().signal, (event) => {
+    events.push(event.type);
+  });
+
+  expect(events).toEqual(["terminal.created", "selection.changed"]);
+});

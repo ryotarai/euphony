@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ryotarai/euphony/internal/agentlog"
 	"github.com/ryotarai/euphony/internal/session"
@@ -22,6 +23,25 @@ func TestV1AgentListGetInputPromptAndWait(t *testing.T) {
 	terminal, err := srv.sessions.Create(t.Context(), "Agent")
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	agentPath := filepath.Join(t.TempDir(), "codex-test-agent")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(agent) error = %v", err)
+	}
+	if err := srv.control.RunTerminal(terminal.ID, strconv.Quote(agentPath)); err != nil {
+		t.Fatalf("RunTerminal(agent) error = %v", err)
+	}
+	running, _ := srv.sessions.Get(terminal.ID)
+	deadline := time.Now().Add(time.Second)
+	for {
+		command, commandErr := running.ForegroundCommand()
+		if commandErr == nil && strings.Contains(command, "codex-test-agent") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("agent did not enter foreground: %q, %v", command, commandErr)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
 		Agent: "codex", AgentSessionID: "session-1", Status: "blocked",

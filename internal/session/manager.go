@@ -29,9 +29,10 @@ const (
 )
 
 type Change struct {
-	Kind   ChangeKind
-	Before *Metadata
-	After  *Metadata
+	Sequence uint64
+	Kind     ChangeKind
+	Before   *Metadata
+	After    *Metadata
 }
 
 type Metadata struct {
@@ -104,14 +105,15 @@ type entry struct {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	shell    string
-	hooks    HookConfig
-	sessions map[string]*entry
-	store    metadataStore
-	closing  bool
-	settings Settings
-	onChange func(Change)
+	mu             sync.RWMutex
+	shell          string
+	hooks          HookConfig
+	sessions       map[string]*entry
+	store          metadataStore
+	closing        bool
+	settings       Settings
+	onChange       func(Change)
+	changeSequence uint64
 
 	workspaceSelection    selection.State
 	hasWorkspaceSelection bool
@@ -219,7 +221,10 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	}
 	m.registerSession(id, item)
 	created := item.metadata
-	m.emitChange(Change{Kind: ChangeCreated, After: &created})
+	m.mu.Lock()
+	change := m.nextChangeLocked(ChangeCreated, nil, &created)
+	m.mu.Unlock()
+	m.emitChange(change)
 
 	go item.session.pump()
 	go m.watch(item)
@@ -355,9 +360,14 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		}
 	}
 	after := item.metadata
-	m.mu.Unlock()
+	var change *Change
 	if before != after {
-		m.emitChange(Change{Kind: ChangeUpdated, Before: &before, After: &after})
+		nextChange := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		change = &nextChange
+	}
+	m.mu.Unlock()
+	if change != nil {
+		m.emitChange(*change)
 	}
 	return after, nil
 }
@@ -383,8 +393,9 @@ func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 		}
 	}
 	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
 	m.mu.Unlock()
-	m.emitChange(Change{Kind: ChangeUpdated, Before: &before, After: &after})
+	m.emitChange(change)
 	return after, nil
 }
 
@@ -455,8 +466,9 @@ func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metada
 		}
 	}
 	item.metadata = next
+	change := m.nextChangeLocked(ChangeUpdated, &before, &next)
 	m.mu.Unlock()
-	m.emitChange(Change{Kind: ChangeUpdated, Before: &before, After: &next})
+	m.emitChange(change)
 	return next, nil
 }
 
@@ -502,7 +514,7 @@ func repositoryRoot(cwd string) string {
 func (m *Manager) watch(item *entry) {
 	_ = item.session.command.Wait()
 
-	var deleted *Metadata
+	var deleted *Change
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
 		if !m.closing {
@@ -511,18 +523,26 @@ func (m *Manager) watch(item *entry) {
 				_ = m.store.Delete(context.Background(), item.metadata.ID)
 			}
 			before := item.metadata
-			deleted = &before
+			change := m.nextChangeLocked(ChangeDeleted, &before, nil)
+			deleted = &change
 		}
 	}
 	m.mu.Unlock()
 	if deleted != nil {
-		m.emitChange(Change{Kind: ChangeDeleted, Before: deleted})
+		m.emitChange(*deleted)
 	}
 	close(item.session.waitDone)
 }
 
 func (m *Manager) List() []Metadata {
 	m.refreshCodexTitles()
+	return m.ListCurrent()
+}
+
+// ListCurrent returns the current metadata without running refresh hooks.
+// Control reconciliation uses this method so a change handler cannot recursively
+// trigger another change while it is serializing event publication.
+func (m *Manager) ListCurrent() []Metadata {
 	m.mu.RLock()
 	result := make([]Metadata, 0, len(m.sessions))
 	for _, item := range m.sessions {
@@ -559,7 +579,7 @@ func (m *Manager) refreshCodexTitles() {
 			_ = m.store.Save(context.Background(), item.metadata)
 		}
 		after := item.metadata
-		changes = append(changes, Change{Kind: ChangeUpdated, Before: &before, After: &after})
+		changes = append(changes, m.nextChangeLocked(ChangeUpdated, &before, &after))
 	}
 	m.mu.Unlock()
 	for _, change := range changes {
@@ -648,8 +668,11 @@ func (m *Manager) Metadata(id string) (Metadata, bool) {
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
+	var change Change
 	if ok {
 		delete(m.sessions, id)
+		before := item.metadata
+		change = m.nextChangeLocked(ChangeDeleted, &before, nil)
 	}
 	m.mu.Unlock()
 	if !ok {
@@ -664,8 +687,7 @@ func (m *Manager) Delete(id string) error {
 		}
 	}
 	item.session.terminate()
-	before := item.metadata
-	m.emitChange(Change{Kind: ChangeDeleted, Before: &before})
+	m.emitChange(change)
 	return nil
 }
 
@@ -673,6 +695,19 @@ func (m *Manager) SetChangeHandler(handler func(Change)) {
 	m.mu.Lock()
 	m.onChange = handler
 	m.mu.Unlock()
+}
+
+func (m *Manager) nextChangeLocked(
+	kind ChangeKind,
+	before, after *Metadata,
+) Change {
+	m.changeSequence++
+	return Change{
+		Sequence: m.changeSequence,
+		Kind:     kind,
+		Before:   before,
+		After:    after,
+	}
 }
 
 func (m *Manager) emitChange(change Change) {

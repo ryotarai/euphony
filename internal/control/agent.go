@@ -79,6 +79,9 @@ func (s *Service) PromptAgent(
 	if err != nil {
 		return session.Metadata{}, err
 	}
+	if err := s.agentForeground(terminalID, current.Agent); err != nil {
+		return session.Metadata{}, err
+	}
 	if prompt == "" || strings.IndexByte(prompt, 0) >= 0 ||
 		len(prompt) > MaxAgentInputBytes {
 		return session.Metadata{}, ErrInvalidAgentInput
@@ -114,10 +117,38 @@ func (s *Service) SendAgentKeys(terminalID string, keys []string) (session.Metad
 	if err != nil {
 		return session.Metadata{}, err
 	}
+	if err := s.agentForeground(terminalID, current.Agent); err != nil {
+		return session.Metadata{}, err
+	}
 	if err := s.sendInput(terminalID, TerminalInput{Keys: keys}); err != nil {
 		return session.Metadata{}, err
 	}
 	return current, nil
+}
+
+func (s *Service) requireAgentForeground(terminalID, kind string) error {
+	terminal, ok := s.sessions.Get(terminalID)
+	if !ok {
+		return ErrTerminalNotFound
+	}
+	command, err := terminal.ForegroundCommand()
+	if errors.Is(err, session.ErrForegroundUnsupported) {
+		isShell, shellErr := terminal.ForegroundIsShell()
+		if shellErr != nil {
+			return shellErr
+		}
+		if isShell {
+			return ErrAgentNotRunning
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(strings.ToLower(command), kind) {
+		return ErrAgentNotRunning
+	}
+	return nil
 }
 
 func (s *Service) WaitAgent(

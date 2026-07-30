@@ -40,3 +40,19 @@ func TestEventHubClosesLaggingSubscriberWithFinalRecord(t *testing.T) {
 		t.Fatal("events remained open after subscriber lagged")
 	}
 }
+
+func TestEventHubHeartbeatIsScopedToItsRequestStream(t *testing.T) {
+	hub := newEventHub(2, time.Now)
+	events, unsubscribe := hub.subscribe(nil)
+	defer unsubscribe()
+
+	heartbeat := hub.heartbeat()
+	if heartbeat.Type != "heartbeat" || heartbeat.Sequence == 0 {
+		t.Fatalf("heartbeat = %#v", heartbeat)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("heartbeat was broadcast to another subscriber: %#v", event)
+	default:
+	}
+}

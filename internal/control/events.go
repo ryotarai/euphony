@@ -104,3 +104,15 @@ func (h *eventHub) publish(eventType string, data any) Event {
 	}
 	return event
 }
+
+func (h *eventHub) heartbeat() Event {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.sequence++
+	return Event{
+		Sequence:   h.sequence,
+		OccurredAt: h.now().UTC(),
+		Type:       "heartbeat",
+		Data:       map[string]string{"status": "ok"},
+	}
+}

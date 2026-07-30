@@ -82,7 +82,10 @@ func TestV1AuthenticationFailureUsesV1ErrorEnvelope(t *testing.T) {
 
 func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 	var document struct {
-		Paths map[string]map[string]any `json:"paths"`
+		Paths      map[string]map[string]any `json:"paths"`
+		Components struct {
+			Schemas map[string]map[string]any `json:"schemas"`
+		} `json:"components"`
 	}
 	if err := json.Unmarshal(openAPIDocument, &document); err != nil {
 		t.Fatalf("decode embedded schema: %v", err)
@@ -115,5 +118,18 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 		if _, ok := operations[method]; !ok {
 			t.Errorf("schema path %s missing method %s", path, method)
 		}
+	}
+	replaceRequired, ok := document.Components.Schemas["ReplaceSelectionRequest"]["required"].([]any)
+	if !ok {
+		t.Fatalf("ReplaceSelectionRequest.required = %#v",
+			document.Components.Schemas["ReplaceSelectionRequest"]["required"])
+	}
+	for _, field := range replaceRequired {
+		if field == "expectedRevision" {
+			t.Fatal("schema incorrectly requires optional expectedRevision")
+		}
+	}
+	if _, ok := document.Components.Schemas["TerminalClientFrame"]; !ok {
+		t.Fatal("schema missing TerminalClientFrame")
 	}
 }

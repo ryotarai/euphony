@@ -36,7 +36,10 @@ func (s *Server) v1Events(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			s.control.PublishHeartbeat()
+			if err := encoder.Encode(s.control.Heartbeat()); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}
