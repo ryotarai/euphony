@@ -310,6 +310,59 @@ func TestTerminalRejectsReusedTicket(t *testing.T) {
 	}
 }
 
+func TestTerminalWebSocketDoesNotReportExitForLaggingClient(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Burst"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+
+	connection := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer connection.CloseNow()
+	connection.SetReadLimit(8 * 1024 * 1024)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+
+	burst, _ := json.Marshal(clientMessage{Type: "input", Data: "seq 1 100000; printf 'burst-done\\n'\n"})
+	if err := connection.Write(ctx, websocket.MessageText, burst); err != nil {
+		t.Fatalf("Write(burst) error = %v", err)
+	}
+	// Stop reading the way a busy browser tab does, then catch up.
+	time.Sleep(500 * time.Millisecond)
+
+	var output strings.Builder
+	for !strings.Contains(output.String(), "burst-done\r\n") {
+		_, payload, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("Read() error = %v; output tail = %q", err, tail(output.String(), 200))
+		}
+		var message serverMessage
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode message: %v", err)
+		}
+		if message.Type == "exit" {
+			t.Fatalf("received exit message while the terminal is running; output tail = %q",
+				tail(output.String(), 200))
+		}
+		if message.Type == "output" || message.Type == "history" {
+			output.Write(message.Data)
+		}
+	}
+}
+
+func tail(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return text[len(text)-limit:]
+}
+
 func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {
