@@ -167,7 +167,7 @@ test("returns to token entry after an invalid token", async () => {
   expect(sessionStorage.getItem("euphony.token")).toBeNull();
 });
 
-test("creates a terminal without asking for a name, selects it, and deletes it", async () => {
+test("creates a terminal in the focused terminal cwd, selects it, and deletes it", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
@@ -191,7 +191,10 @@ test("creates a terminal without asking for a name, selects it, and deletes it",
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ name: "Terminal" }),
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/euphony",
+      }),
     }),
   );
   expect(await screen.findByRole("button", { name: "Select Claude" })).toHaveAttribute("aria-current", "true");
@@ -1201,11 +1204,31 @@ test("tmux create and vertical split keys create the expected selection", async 
   fireEvent.keyDown(window, { key: "c" });
   expect(await screen.findByLabelText("created-c terminal pane")).toBeVisible();
   expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/euphony",
+      }),
+    }),
+  );
 
   fireEvent.keyDown(window, { key: "b", ctrlKey: true });
   fireEvent.keyDown(window, { key: "v" });
   expect(await screen.findByLabelText("created-v terminal pane")).toBeVisible();
   expect(screen.getByLabelText("created-c terminal pane")).toBeVisible();
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/shell",
+      }),
+    }),
+  );
   expect(new URLSearchParams(window.location.search).getAll("terminal")).toEqual([
     "created-c",
     "created-v",

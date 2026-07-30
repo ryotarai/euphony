@@ -733,7 +733,8 @@ export function App({
   async function createSession(split = false, cwd?: string) {
     if (!api) return;
     try {
-      const created = await api.createSession("Terminal", cwd);
+      const focusedCWD = sessions?.find((session) => session.id === focusedID)?.cwd;
+      const created = await api.createSession("Terminal", cwd ?? focusedCWD);
       setSessions((current) => [...(current ?? []), created]);
       const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
       setSelectedIDs(nextIDs);
