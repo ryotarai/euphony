@@ -15,7 +15,7 @@ export default defineConfig({
     command:
       "cd .. && make build && EUPHONY_DB=:memory: EUPHONY_TOKEN=test-token EUPHONY_ADDR=127.0.0.1:18080 bin/euphony",
     url: "http://127.0.0.1:18080/api/health",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [
