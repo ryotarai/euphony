@@ -36,3 +36,5 @@
 - Read agent metadata that hooks do not carry from the artifacts they point at
   (for example a transcript path), and bound such reads to a tail window so
   multi-megabyte files stay cheap to poll.
+- Keep CJK punctuation spacing untrimmed inside terminal renderers so every
+  full-width glyph occupies the same cell geometry.
