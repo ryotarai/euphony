@@ -60,10 +60,11 @@ function statusLabel(status: string) {
 }
 
 const activityOrder = new Map([
-  ["attention", 0],
-  ["running", 1],
-  ["waiting", 2],
-  ["terminal", 3],
+  ["blocked", 0],
+  ["attention", 1],
+  ["running", 2],
+  ["waiting", 3],
+  ["terminal", 4],
 ]);
 
 function orderedActivities(sessions: Session[]) {
