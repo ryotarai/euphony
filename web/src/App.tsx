@@ -1,8 +1,10 @@
 import {
   FormEvent,
+  type CSSProperties,
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -68,6 +70,7 @@ interface AppProps {
     layoutVersion: number,
     onConnectionChange: (sessionID: string, state: ConnectionState) => void,
     reconnectSignal: number,
+    fontSize: number,
     terminalHistoryLimit: number,
   ) => ReactNode;
 }
@@ -77,11 +80,21 @@ const defaultSettings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 256,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
 };
 
 function historyLimitDraft(limit: number): string {
   return String(limit === 0 ? 1 : limit / bytesPerMiB);
+}
+
+type FontSizeSetting = "interfaceFontSize" | "terminalFontSize" | "agentLogFontSize";
+
+function parseFontSize(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 10 && parsed <= 24 ? parsed : null;
 }
 
 function sessionActivity(session: Session) {
@@ -178,6 +191,7 @@ function resolveInitialToken(explicitToken?: string): string {
 
 function workspaceFromURL(sessions: Session[]): {
   selectedIDs: string[];
+  pinnedIDs: string[];
   focusedID: string | null;
   statusFilters: string[];
   cwdFilters: string[];
@@ -185,14 +199,21 @@ function workspaceFromURL(sessions: Session[]): {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
   let selectedIDs = parameters.getAll("terminal").filter((id) => available.has(id));
+  const pinnedIDs = [
+    ...new Set(parameters.getAll("pin").filter((id) => available.has(id))),
+  ];
   if (selectedIDs.length === 0) {
     selectedIDs = [parameters.get("session"), parameters.get("split")]
       .filter((id): id is string => Boolean(id && available.has(id)));
   }
+  selectedIDs = [
+    ...new Set([...selectedIDs, ...pinnedIDs]),
+  ];
   if (selectedIDs.length === 0 && sessions[0]) selectedIDs = [sessions[0].id];
   const focus = parameters.get("focus");
   return {
     selectedIDs,
+    pinnedIDs,
     focusedID: focus && selectedIDs.includes(focus) ? focus : selectedIDs[0] ?? null,
     statusFilters: parameters.getAll("status"),
     cwdFilters: parameters.getAll("cwd"),
@@ -201,6 +222,7 @@ function workspaceFromURL(sessions: Session[]): {
 
 function writeWorkspaceToURL(
   selectedIDs: string[],
+  pinnedIDs: string[],
   focusedID: string | null,
   statusFilters: string[],
   cwdFilters: string[],
@@ -210,9 +232,11 @@ function writeWorkspaceToURL(
   parameters.delete("session");
   parameters.delete("split");
   parameters.delete("terminal");
+  parameters.delete("pin");
   parameters.delete("status");
   parameters.delete("cwd");
   selectedIDs.forEach((id) => parameters.append("terminal", id));
+  pinnedIDs.forEach((id) => parameters.append("pin", id));
   statusFilters.forEach((status) => parameters.append("status", status));
   cwdFilters.forEach((filter) => parameters.append("cwd", filter));
   if (focusedID) parameters.set("focus", focusedID);
@@ -232,6 +256,7 @@ export function App({
     layoutVersion,
     onConnectionChange,
     reconnectSignal,
+    fontSize,
     terminalHistoryLimit,
   ) => (
     <TerminalView
@@ -242,6 +267,7 @@ export function App({
       layoutVersion={layoutVersion}
       onConnectionChange={onConnectionChange}
       reconnectSignal={reconnectSignal}
+      fontSize={fontSize}
       terminalHistoryLimit={terminalHistoryLimit}
     />
   ),
@@ -250,6 +276,7 @@ export function App({
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [pinnedIDs, setPinnedIDs] = useState<string[]>([]);
   const [focusedID, setFocusedID] = useState<string | null>(null);
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [cwdFilters, setCwdFilters] = useState<string[]>([]);
@@ -267,8 +294,13 @@ export function App({
   const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
     settings.terminalHistoryLimit === 0,
   );
+  const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
+    interfaceFontSize: String(settings.interfaceFontSize),
+    terminalFontSize: String(settings.terminalFontSize),
+    agentLogFontSize: String(settings.agentLogFontSize),
+  });
   const [settingsError, setSettingsError] = useState<{
-    field: "prefix" | "paneTabShortcut" | "terminalHistoryLimit";
+    field: "prefix" | "paneTabShortcut" | "terminalHistoryLimit" | FontSizeSetting;
     message: string;
   } | null>(null);
   const [prefixActive, setPrefixActive] = useState(false);
@@ -281,6 +313,8 @@ export function App({
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const commandListRef = useRef<HTMLDivElement>(null);
+  const scrollCommandSelectionRef = useRef(false);
   const prefixActiveRef = useRef(false);
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
@@ -288,11 +322,31 @@ export function App({
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const previewSettings = useMemo(() => {
+    if (!settingsOpen) return settings;
+    return {
+      ...settings,
+      interfaceFontSize:
+        parseFontSize(fontSizeDrafts.interfaceFontSize) ?? settings.interfaceFontSize,
+      terminalFontSize:
+        parseFontSize(fontSizeDrafts.terminalFontSize) ?? settings.terminalFontSize,
+      agentLogFontSize:
+        parseFontSize(fontSizeDrafts.agentLogFontSize) ?? settings.agentLogFontSize,
+    };
+  }, [fontSizeDrafts, settings, settingsOpen]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
       current[sessionID] === state ? current : { ...current, [sessionID]: state },
     );
   }, []);
+
+  useEffect(() => {
+    const previous = document.documentElement.style.fontSize;
+    document.documentElement.style.fontSize = `${previewSettings.interfaceFontSize}px`;
+    return () => {
+      document.documentElement.style.fontSize = previous;
+    };
+  }, [previewSettings.interfaceFontSize]);
 
   useEffect(() => {
     if (!api || initialSettings) return;
@@ -333,11 +387,13 @@ export function App({
         previousSessionsRef.current = items;
         const workspace = workspaceFromURL(items);
         setSelectedIDs(workspace.selectedIDs);
+        setPinnedIDs(workspace.pinnedIDs);
         setFocusedID(workspace.focusedID);
         setStatusFilters(workspace.statusFilters);
         setCwdFilters(workspace.cwdFilters);
         writeWorkspaceToURL(
           workspace.selectedIDs,
+          workspace.pinnedIDs,
           workspace.focusedID,
           workspace.statusFilters,
           workspace.cwdFilters,
@@ -384,6 +440,41 @@ export function App({
   }, [api, sessions !== null]);
 
   useEffect(() => {
+    if (!sessions) return;
+    const available = new Set(sessions.map((session) => session.id));
+    const removed =
+      selectedIDs.some((id) => !available.has(id)) ||
+      pinnedIDs.some((id) => !available.has(id));
+    if (!removed) return;
+
+    let nextIDs = selectedIDs.filter((id) => available.has(id));
+    if (nextIDs.length === 0 && sessions[0]) nextIDs = [sessions[0].id];
+    const nextPinnedIDs = pinnedIDs.filter((id) => available.has(id));
+    const nextFocus =
+      focusedID && nextIDs.includes(focusedID)
+        ? focusedID
+        : nextIDs[0] ?? null;
+    setSelectedIDs(nextIDs);
+    setPinnedIDs(nextPinnedIDs);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(
+      nextIDs,
+      nextPinnedIDs,
+      nextFocus,
+      statusFilters,
+      cwdFilters,
+      "replace",
+    );
+  }, [
+    sessions,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+    statusFilters,
+    cwdFilters,
+  ]);
+
+  useEffect(() => {
     const promotedID =
       focusedID &&
       selectedIDs.includes(focusedID) &&
@@ -395,11 +486,17 @@ export function App({
     if (promotedID) {
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
-      setSelectedIDs([promotedID]);
+      const next = [
+        ...new Set([
+          ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+          promotedID,
+        ]),
+      ];
+      setSelectedIDs(next);
       setFocusedID(promotedID);
       setStatusFilters([]);
       setCwdFilters([]);
-      writeWorkspaceToURL([promotedID], promotedID, [], [], "replace");
+      writeWorkspaceToURL(next, pinnedIDs, promotedID, [], [], "replace");
       return;
     }
 
@@ -412,14 +509,23 @@ export function App({
       ...selectedIDs.filter((id) => !previousMatches.has(id)),
       ...matches,
     ].filter((id, index, values) => values.indexOf(id) === index);
-    filterSelectedIDsRef.current = new Set(matches);
+    filterSelectedIDsRef.current = new Set(
+      matches.filter((id) => !pinnedIDs.includes(id)),
+    );
     if (next.join("\0") !== selectedIDs.join("\0")) {
       setSelectedIDs(next);
       const nextFocus = focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
       setFocusedID(nextFocus);
-      writeWorkspaceToURL(next, nextFocus, statusFilters, cwdFilters, "replace");
+      writeWorkspaceToURL(
+        next,
+        pinnedIDs,
+        nextFocus,
+        statusFilters,
+        cwdFilters,
+        "replace",
+      );
     }
-  }, [sessions, statusFilters, cwdFilters, selectedIDs, focusedID]);
+  }, [sessions, statusFilters, cwdFilters, selectedIDs, pinnedIDs, focusedID]);
 
   useEffect(() => {
     if (!api || !sessions || !focusedID) return;
@@ -476,6 +582,15 @@ export function App({
     return () => window.cancelAnimationFrame(frame);
   }, [commandOpen]);
 
+  useLayoutEffect(() => {
+    if (!scrollCommandSelectionRef.current) return;
+    scrollCommandSelectionRef.current = false;
+    const selectedItem = Array.from(
+      commandListRef.current?.querySelectorAll<HTMLElement>("[cmdk-item]") ?? [],
+    ).find((item) => item.getAttribute("data-value") === commandValue);
+    selectedItem?.scrollIntoView({ block: "nearest" });
+  }, [commandValue]);
+
   useEffect(() => {
     if (!sessions) return;
     const restore = () => {
@@ -483,6 +598,7 @@ export function App({
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
       setSelectedIDs(workspace.selectedIDs);
+      setPinnedIDs(workspace.pinnedIDs);
       setFocusedID(workspace.focusedID);
       setStatusFilters(workspace.statusFilters);
       setCwdFilters(workspace.cwdFilters);
@@ -536,12 +652,58 @@ export function App({
     return () => {
       window.removeEventListener("keydown", handleKey, { capture: true });
     };
-  }, [focusedID, selectedIDs, sessions, settings.prefix]);
+  }, [focusedID, selectedIDs, pinnedIDs, sessions, settings.prefix]);
 
-  function selectSession(id: string, multiple: boolean, allowEmpty = false) {
+  function selectSession(
+    id: string,
+    multiple: boolean,
+    allowEmpty = false,
+    checkboxPin?: boolean,
+  ) {
+    let nextPinnedIDs = pinnedIDs;
+    const pinned = pinnedIDs.includes(id);
+    if (checkboxPin !== undefined && pinned) {
+      nextPinnedIDs = pinnedIDs.filter((item) => item !== id);
+      setPinnedIDs(nextPinnedIDs);
+      allowEmpty = true;
+    } else if (checkboxPin === true) {
+      nextPinnedIDs = [...new Set([...pinnedIDs, id])];
+      const nextIDs = selectedIDs.includes(id)
+        ? selectedIDs
+        : [...selectedIDs, id];
+      filterSelectedIDsRef.current.delete(id);
+      setPinnedIDs(nextPinnedIDs);
+      setSelectedIDs(nextIDs);
+      setFocusedID(id);
+      writeWorkspaceToURL(
+        nextIDs,
+        nextPinnedIDs,
+        id,
+        statusFilters,
+        cwdFilters,
+      );
+      return;
+    }
+    if (checkboxPin === undefined && multiple && pinned) {
+      setFocusedID(id);
+      writeWorkspaceToURL(
+        selectedIDs,
+        pinnedIDs,
+        id,
+        statusFilters,
+        cwdFilters,
+      );
+      return;
+    }
+
     let nextIDs: string[];
     if (!multiple) {
-      nextIDs = [id];
+      nextIDs = [
+        ...new Set([
+          ...selectedIDs.filter((item) => nextPinnedIDs.includes(item)),
+          id,
+        ]),
+      ];
       setStatusFilters([]);
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
@@ -588,7 +750,9 @@ export function App({
           ]),
         ];
         if (nextIDs.length === 0 && !allowEmpty) nextIDs = [id];
-        filterSelectedIDsRef.current = new Set(matching);
+        filterSelectedIDsRef.current = new Set(
+          matching.filter((item) => !nextPinnedIDs.includes(item)),
+        );
         const nextFocus =
           focusedID && nextIDs.includes(focusedID)
             ? focusedID
@@ -599,6 +763,7 @@ export function App({
         setFocusedID(nextFocus);
         writeWorkspaceToURL(
           nextIDs,
+          nextPinnedIDs,
           nextFocus,
           nextStatusFilters,
           nextCwdFilters,
@@ -621,6 +786,7 @@ export function App({
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
       nextIDs,
+      nextPinnedIDs,
       nextFocus,
       multiple ? statusFilters : [],
       multiple ? cwdFilters : [],
@@ -636,9 +802,15 @@ export function App({
         matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
       )
       .map((session) => session.id) ?? [];
-    const base = selectedIDs.filter((id) => !filterSelectedIDsRef.current.has(id));
+    const base = selectedIDs.filter(
+      (id) =>
+        pinnedIDs.includes(id) ||
+        !filterSelectedIDsRef.current.has(id),
+    );
     const nextIDs = [...new Set([...base, ...matching])];
-    filterSelectedIDsRef.current = new Set(matching);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
     const nextFocus = focusedID && nextIDs.includes(focusedID)
       ? focusedID
       : nextIDs[0] ?? null;
@@ -648,6 +820,7 @@ export function App({
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
       nextIDs,
+      pinnedIDs,
       nextFocus,
       nextStatusFilters,
       nextCwdFilters,
@@ -728,42 +901,58 @@ export function App({
   }
 
   function selectStatus(status: string) {
-    const nextIDs = sessions
+    const matching = sessions
       ?.filter((session) => sessionActivity(session) === status)
       .map((session) => session.id) ?? [];
-    if (nextIDs.length === 0) return;
+    if (matching.length === 0) return;
+    const nextIDs = [
+      ...new Set([
+        ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+        ...matching,
+      ]),
+    ];
     decomposedStatusFiltersRef.current.clear();
-    const nextFocus = nextIDs[0];
+    const nextFocus = matching[0];
     setStatusFilters([status]);
     setCwdFilters([]);
-    filterSelectedIDsRef.current = new Set(nextIDs);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, [status], []);
+    writeWorkspaceToURL(nextIDs, pinnedIDs, nextFocus, [status], []);
   }
 
   function selectCwd(status: string, cwd: string) {
-    const nextIDs = sessions
+    const matching = sessions
       ?.filter(
         (session) =>
           sessionActivity(session) === status && session.cwd === cwd,
       )
       .map((session) => session.id) ?? [];
-    if (nextIDs.length === 0) return;
+    if (matching.length === 0) return;
+    const nextIDs = [
+      ...new Set([
+        ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+        ...matching,
+      ]),
+    ];
     decomposedStatusFiltersRef.current.clear();
-    const nextFocus = nextIDs[0];
+    const nextFocus = matching[0];
     const nextCwdFilters = [cwdFilterKey(status, cwd)];
     setStatusFilters([]);
     setCwdFilters(nextCwdFilters);
-    filterSelectedIDsRef.current = new Set(nextIDs);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, [], nextCwdFilters);
+    writeWorkspaceToURL(nextIDs, pinnedIDs, nextFocus, [], nextCwdFilters);
   }
 
   function focusPane(id: string) {
     setFocusedID(id);
-    writeWorkspaceToURL(selectedIDs, id, statusFilters, cwdFilters);
+    writeWorkspaceToURL(selectedIDs, pinnedIDs, id, statusFilters, cwdFilters);
   }
 
   function authenticate(event: FormEvent) {
@@ -796,14 +985,21 @@ export function App({
         created = await api.createSession("Terminal");
       }
       setSessions((current) => [...(current ?? []), created]);
-      const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
+      const nextIDs = split
+        ? [...selectedIDs, created.id]
+        : [
+            ...new Set([
+              ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+              created.id,
+            ]),
+          ];
       setSelectedIDs(nextIDs);
       setFocusedID(created.id);
       setStatusFilters([]);
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
-      writeWorkspaceToURL(nextIDs, created.id, [], []);
+      writeWorkspaceToURL(nextIDs, pinnedIDs, created.id, [], []);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -839,9 +1035,17 @@ export function App({
       let nextIDs = selectedIDs.filter((id) => id !== item.id);
       if (nextIDs.length === 0 && remaining[0]) nextIDs = [remaining[0].id];
       const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;
+      const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
       setSelectedIDs(nextIDs);
+      setPinnedIDs(nextPinnedIDs);
       setFocusedID(nextFocus);
-      writeWorkspaceToURL(nextIDs, nextFocus, statusFilters, cwdFilters);
+      writeWorkspaceToURL(
+        nextIDs,
+        nextPinnedIDs,
+        nextFocus,
+        statusFilters,
+        cwdFilters,
+      );
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
@@ -873,6 +1077,11 @@ export function App({
     setPaneTabShortcutDraft(settings.paneTabShortcut);
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
+    setFontSizeDrafts({
+      interfaceFontSize: String(settings.interfaceFontSize),
+      terminalFontSize: String(settings.terminalFontSize),
+      agentLogFontSize: String(settings.agentLogFontSize),
+    });
     setSettingsError(null);
     setSettingsOpen(true);
   }
@@ -918,10 +1127,28 @@ export function App({
     const terminalHistoryLimit = unlimitedTerminalHistory
       ? 0
       : terminalHistoryMiB * bytesPerMiB;
+    const fontSizes = {
+      interfaceFontSize: parseFontSize(fontSizeDrafts.interfaceFontSize),
+      terminalFontSize: parseFontSize(fontSizeDrafts.terminalFontSize),
+      agentLogFontSize: parseFontSize(fontSizeDrafts.agentLogFontSize),
+    };
+    const invalidFontSize = (
+      Object.entries(fontSizes) as Array<[FontSizeSetting, number | null]>
+    ).find(([, value]) => value === null);
+    if (invalidFontSize) {
+      setSettingsError({
+        field: invalidFontSize[0],
+        message: "Choose a whole number from 10 to 24.",
+      });
+      return;
+    }
     await persistSettings({
       ...settings,
       prefix,
       paneTabShortcut,
+      interfaceFontSize: fontSizes.interfaceFontSize!,
+      terminalFontSize: fontSizes.terminalFontSize!,
+      agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
     });
     setSettingsOpen(false);
@@ -1034,7 +1261,10 @@ export function App({
     const start = currentIndex < 0 ? (offset > 0 ? -1 : 0) : currentIndex;
     const nextIndex =
       (start + offset + filteredQuickActions.length) % filteredQuickActions.length;
-    setCommandValue(filteredQuickActions[nextIndex].value);
+    const nextValue = filteredQuickActions[nextIndex].value;
+    if (nextValue === commandValue) return;
+    scrollCommandSelectionRef.current = true;
+    setCommandValue(nextValue);
   };
 
   const handleCommandKeyDown = (event: React.KeyboardEvent) => {
@@ -1072,13 +1302,21 @@ export function App({
   };
 
   return (
-    <main className="workspace">
+    <main
+      className="workspace"
+      style={{
+        "--interface-font-size": `${previewSettings.interfaceFontSize}px`,
+      } as CSSProperties}
+    >
       <SessionNavigation
         sessions={sessions}
         selectedIDs={selectedIDs}
+        pinnedIDs={pinnedIDs}
         statusFilters={statusFilters}
         cwdFilters={cwdFilters}
-        onSelect={selectSession}
+        onSelect={(id, multiple, pin) =>
+          selectSession(id, multiple, false, pin)
+        }
         onStatusFilter={updateStatusFilter}
         onStatusSelect={selectStatus}
         onCwdFilter={updateCwdFilter}
@@ -1139,7 +1377,8 @@ export function App({
                   active={focusedID === pane.id}
                   layoutVersion={panes.length}
                   tabShortcut={settings.paneTabShortcut}
-                  onDeselect={() => selectSession(pane.id, true, true)}
+                  agentLogFontSize={previewSettings.agentLogFontSize}
+                  onDeselect={() => selectSession(pane.id, true, true, false)}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
                       pane,
@@ -1148,6 +1387,7 @@ export function App({
                       paneLayoutVersion,
                       handleConnectionChange,
                       reconnectSignals[pane.id] ?? 0,
+                      previewSettings.terminalFontSize,
                       settings.terminalHistoryLimit,
                     )
                   }
@@ -1195,7 +1435,7 @@ export function App({
             onValueChange={updateCommandQuery}
             placeholder="Terminal or status"
           />
-          <CommandList>
+          <CommandList ref={commandListRef}>
             <CommandEmpty>No matching actions.</CommandEmpty>
             {["Actions", "Terminals"].map((group) => {
               const actions = filteredQuickActions.filter(
@@ -1280,11 +1520,11 @@ export function App({
         </DialogContent>
       </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure workspace shortcuts and terminal history.
+              Configure workspace shortcuts, text sizing, and terminal history.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1361,6 +1601,47 @@ export function App({
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>
+              <section className="font-size-section" aria-labelledby="font-size-heading">
+                <div className="settings-section-heading">
+                  <h3 id="font-size-heading">Font sizes</h3>
+                  <span>10–24 px</span>
+                </div>
+                <div className="font-size-fields">
+                  {([
+                    ["interfaceFontSize", "Interface"],
+                    ["terminalFontSize", "Terminal"],
+                    ["agentLogFontSize", "Agent log"],
+                  ] as const).map(([field, label]) => (
+                    <Field key={field} data-invalid={settingsError?.field === field}>
+                      <FieldLabel htmlFor={field}>{label}</FieldLabel>
+                      <div className="font-size-input">
+                        <Input
+                          id={field}
+                          name={field}
+                          type="number"
+                          min={10}
+                          max={24}
+                          step={1}
+                          inputMode="numeric"
+                          value={fontSizeDrafts[field]}
+                          onChange={(event) => {
+                            setFontSizeDrafts((current) => ({
+                              ...current,
+                              [field]: event.target.value,
+                            }));
+                            if (settingsError?.field === field) setSettingsError(null);
+                          }}
+                          aria-invalid={settingsError?.field === field}
+                        />
+                        <span aria-hidden="true">px</span>
+                      </div>
+                      {settingsError?.field === field && (
+                        <FieldError>{settingsError.message}</FieldError>
+                      )}
+                    </Field>
+                  ))}
+                </div>
+              </section>
             </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>

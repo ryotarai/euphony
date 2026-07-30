@@ -26,6 +26,9 @@ export interface Settings {
   paneTabShortcut: string;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  interfaceFontSize: number;
+  terminalFontSize: number;
+  agentLogFontSize: number;
   terminalHistoryLimit: number;
 }
 

@@ -22,6 +22,9 @@ const settings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
 };
 
@@ -120,6 +123,31 @@ test("selecting a mobile session closes the drawer", async () => {
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 
+test("opening settings from mobile closes the terminal drawer", async () => {
+  useMobileViewport();
+  const onOpenSettings = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenSettings={onOpenSettings}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Open terminal menu" }));
+  const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
+  await user.click(within(drawer).getByRole("button", { name: "Open settings" }));
+
+  expect(onOpenSettings).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
+});
+
 test("groups terminals by status then cwd and exposes group selection controls", async () => {
   const onStatusFilter = vi.fn();
   const onStatusSelect = vi.fn();
@@ -201,7 +229,49 @@ test("groups terminals by status then cwd and exposes group selection controls",
   const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal in split" });
   expect(terminalCheckbox).not.toBeChecked();
   await user.click(terminalCheckbox);
-  expect(onSelect).toHaveBeenCalledWith("three", true);
+  expect(onSelect).toHaveBeenCalledWith("three", true, false);
+});
+
+test("forwards Shift-clicks on terminal checkboxes as pin requests", () => {
+  const onSelect = vi.fn();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={onSelect}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
+    { shiftKey: true },
+  );
+
+  expect(onSelect).toHaveBeenCalledWith("three", true, true);
+});
+
+test("marks pinned terminal checkboxes and explains direct removal", () => {
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one", "three"]}
+      pinnedIDs={["three"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(
+    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(screen.getByTitle("Pinned — click to remove")).toBeVisible();
 });
 
 test("inherits status selection into cwd controls and marks partial selection", () => {
@@ -280,6 +350,13 @@ test("groups terminals by their exact cwd within each ordered status", () => {
       repoRoot: "/workspace/project",
       agentStatus: "waiting",
     },
+    {
+      ...sessions[0],
+      id: "blocked",
+      name: "Blocked",
+      repoRoot: "/workspace/project",
+      agentStatus: "blocked",
+    },
   ];
   render(
     <SessionNavigation
@@ -295,12 +372,15 @@ test("groups terminals by their exact cwd within each ordered status", () => {
 
   const statusNames = screen.getAllByRole("heading").map((heading) => heading.textContent);
   expect(statusNames).toEqual([
+    "Blocked",
+    "~/work/euphony",
     "Need attention",
     "/workspace/project/tmp/worktrees/fix",
     "Running",
     "~/work/euphony",
     "Waiting",
     "~/work/euphony",
+    "Terminal",
   ]);
 });
 

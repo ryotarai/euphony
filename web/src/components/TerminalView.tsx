@@ -38,8 +38,9 @@ interface TerminalViewProps {
   layoutVersion?: number;
   reconnectSignal?: number;
   terminalHistoryLimit?: number;
+  fontSize?: number;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
-  createTerminal?: (scrollback: number) => TerminalDriver;
+  createTerminal?: (fontSize: number, scrollback: number) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
 
@@ -60,14 +61,14 @@ export function terminalScrollback(historyLimit: number): number {
   );
 }
 
-function defaultTerminal(scrollback: number): TerminalDriver {
+function defaultTerminal(fontSize: number, scrollback: number): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
     cursorBlink: true,
     cursorStyle: "bar",
     allowTransparency: true,
     fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
-    fontSize: 14,
+    fontSize,
     lineHeight: 1.25,
     scrollback,
     scrollSensitivity: 3,
@@ -154,6 +155,7 @@ export function TerminalView({
   layoutVersion = 1,
   reconnectSignal = 0,
   terminalHistoryLimit = 1024 * 1024,
+  fontSize = 14,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -179,7 +181,10 @@ export function TerminalView({
     let socket: WebSocketLike | undefined;
     let lastSize = "";
     let lastReportedCWD = session.cwd;
-    const terminal = createTerminal(terminalScrollback(terminalHistoryLimit));
+    const terminal = createTerminal(
+      fontSize,
+      terminalScrollback(terminalHistoryLimit),
+    );
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
@@ -323,7 +328,7 @@ export function TerminalView({
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
     };
-  }, [api, createSocket, createTerminal, reconnectSignal, session.id]);
+  }, [api, createSocket, createTerminal, fontSize, reconnectSignal, session.id]);
 
   useEffect(() => {
     terminalRef.current?.setScrollback?.(terminalScrollback(terminalHistoryLimit));

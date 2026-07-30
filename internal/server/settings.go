@@ -23,6 +23,9 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		PaneTabShortcut      string   `json:"paneTabShortcut"`
 		SidebarWidth         float64  `json:"sidebarWidth"`
 		SidebarCollapsed     bool     `json:"sidebarCollapsed"`
+		InterfaceFontSize    float64  `json:"interfaceFontSize"`
+		TerminalFontSize     float64  `json:"terminalFontSize"`
+		AgentLogFontSize     float64  `json:"agentLogFontSize"`
 		TerminalHistoryLimit *float64 `json:"terminalHistoryLimit"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
@@ -33,6 +36,9 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		shortcutsEqual(input.Prefix, input.PaneTabShortcut) ||
 		math.IsNaN(input.SidebarWidth) || math.IsInf(input.SidebarWidth, 0) ||
 		input.SidebarWidth < 180 || input.SidebarWidth > 600 ||
+		!validFontSize(input.InterfaceFontSize) ||
+		!validFontSize(input.TerminalFontSize) ||
+		!validFontSize(input.AgentLogFontSize) ||
 		!validTerminalHistoryLimit(input.TerminalHistoryLimit) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
@@ -42,6 +48,9 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		PaneTabShortcut:      input.PaneTabShortcut,
 		SidebarWidth:         int(math.Round(input.SidebarWidth)),
 		SidebarCollapsed:     input.SidebarCollapsed,
+		InterfaceFontSize:    int(input.InterfaceFontSize),
+		TerminalFontSize:     int(input.TerminalFontSize),
+		AgentLogFontSize:     int(input.AgentLogFontSize),
 		TerminalHistoryLimit: int(*input.TerminalHistoryLimit),
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
@@ -59,6 +68,11 @@ func validTerminalHistoryLimit(value *float64) bool {
 		(*value >= session.MinTerminalHistoryLimit &&
 			*value <= session.MaxTerminalHistoryLimit &&
 			math.Mod(*value, session.MinTerminalHistoryLimit) == 0)
+}
+
+func validFontSize(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
+		value >= 10 && value <= 24 && math.Trunc(value) == value
 }
 
 func shortcutsEqual(left, right string) bool {

@@ -59,6 +59,9 @@ type Settings struct {
 	PaneTabShortcut      string `json:"paneTabShortcut"`
 	SidebarWidth         int    `json:"sidebarWidth"`
 	SidebarCollapsed     bool   `json:"sidebarCollapsed"`
+	InterfaceFontSize    int    `json:"interfaceFontSize"`
+	TerminalFontSize     int    `json:"terminalFontSize"`
+	AgentLogFontSize     int    `json:"agentLogFontSize"`
 	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
 }
 
@@ -73,6 +76,9 @@ func DefaultSettings() Settings {
 		Prefix:               "Ctrl+B",
 		PaneTabShortcut:      "Meta+L",
 		SidebarWidth:         304,
+		InterfaceFontSize:    16,
+		TerminalFontSize:     14,
+		AgentLogFontSize:     14,
 		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
 	}
 }

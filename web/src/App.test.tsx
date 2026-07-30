@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { App, attentionTransitions } from "./App";
@@ -9,6 +9,9 @@ const defaultSettings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
 };
 
@@ -421,6 +424,41 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", as
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
 });
 
+test("scrolls the Quick Actions keyboard selection into view", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const input = await screen.findByPlaceholderText("Terminal or status");
+  await waitFor(() => expect(input).toHaveFocus());
+  const attentionOption = screen.getByRole("option", {
+    name: /^Enable attention alerts/,
+  });
+  const scrollIntoView = vi.spyOn(
+    HTMLElement.prototype,
+    "scrollIntoView",
+  );
+
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+
+  await waitFor(() =>
+    expect(attentionOption).toHaveAttribute("aria-selected", "true"),
+  );
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+  expect(scrollIntoView.mock.contexts).toContain(attentionOption);
+});
+
 test("shows one workspace connection status and retries disconnected panes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession]),
@@ -561,6 +599,126 @@ test("command-click selects multiple terminal panes and stores them in the URL",
   await waitFor(() => {
     expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
   });
+});
+
+test("keeps a Shift-pinned terminal selected until its checkbox is clicked", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+    { shiftKey: true },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
+
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  let parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1", "session-2"]);
+  expect(parameters.getAll("pin")).toEqual(["session-1"]);
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+  );
+
+  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
+  parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-2"]);
+  expect(parameters.getAll("pin")).toEqual([]);
+});
+
+test("does not toggle a pinned terminal off from its row", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+    { shiftKey: true },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
+  fireEvent.click(screen.getByRole("button", { name: "Select Codex" }), {
+    metaKey: true,
+  });
+
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1", "session-2"]);
+  expect(parameters.getAll("pin")).toEqual(["session-1"]);
+});
+
+test("prefix navigation reads a pin added to the current terminal", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+    { shiftKey: true },
+  );
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "n" });
+
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1", "session-2"]);
+  expect(parameters.getAll("pin")).toEqual(["session-1"]);
+});
+
+test("restores URL pins into terminal selection", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/?terminal=session-2&pin=session-1&focus=session-2",
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: "Include Codex in split" }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toEqual([
+    "session-2",
+    "session-1",
+  ]);
 });
 
 test("pane rail checkboxes remove selected terminals and allow an empty workspace", async () => {
@@ -773,6 +931,48 @@ test("a checked activity group removes a terminal after its status changes", asy
   vi.useRealTimers();
 });
 
+test("removes a pin when polling removes its terminal", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, secondRunningSession]),
+      )
+      .mockImplementation(() => jsonResponse([secondRunningSession]));
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.id} terminal pane`} />
+        )}
+      />,
+    );
+
+    await screen.findByLabelText("session-1 terminal pane");
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Include Codex in split" }),
+      { shiftKey: true },
+    );
+    expect(new URLSearchParams(window.location.search).getAll("pin")).toEqual([
+      "session-1",
+    ]);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    await waitFor(() => {
+      expect(new URLSearchParams(window.location.search).getAll("pin")).toEqual(
+        [],
+      );
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("keeps the agent log selected when a focused agent starts waiting", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const waitingSession = {
@@ -931,6 +1131,32 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   fireEvent.click(screen.getByRole("checkbox", { name: "Show all Terminal terminals" }));
 
   expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
+});
+
+test("shows built-in activity groups when they have no terminals", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+
+  for (const label of [
+    "Show all Blocked terminals",
+    "Show all Need attention terminals",
+    "Show all Running terminals",
+    "Show all Waiting terminals",
+    "Show all Terminal terminals",
+  ]) {
+    expect(screen.getByRole("checkbox", { name: label })).toBeVisible();
+  }
+  expect(screen.getAllByText("No terminal")).toHaveLength(4);
 });
 
 test("unchecking an activity group removes only its terminal panes", async () => {
@@ -1357,7 +1583,20 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   render(
     <App
       initialToken="valid-token"
-      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      renderTerminal={(
+        session,
+        _api,
+        _active,
+        _layoutVersion,
+        _onConnectionChange,
+        _reconnectSignal,
+        fontSize,
+      ) => (
+        <div
+          aria-label={`${session.id} terminal pane`}
+          data-font-size={fontSize}
+        />
+      )}
     />,
   );
   await screen.findByLabelText("session-1 terminal pane");
@@ -1368,21 +1607,50 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const prefix = screen.getByLabelText("Prefix");
   expect(prefix).toHaveAttribute("data-slot", "input");
   expect(prefix).toHaveFocus();
+  const interfaceFontSize = within(dialog).getByLabelText("Interface");
+  const terminalFontSize = within(dialog).getByLabelText("Terminal");
+  const agentLogFontSize = within(dialog).getByLabelText("Agent log");
+  await user.clear(interfaceFontSize);
+  await user.type(interfaceFontSize, "18");
+  await user.clear(terminalFontSize);
+  await user.type(terminalFontSize, "17");
+  await user.clear(agentLogFontSize);
+  await user.type(agentLogFontSize, "16");
+  expect(document.documentElement).toHaveStyle({ fontSize: "18px" });
+  expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-font-size",
+    "17",
+  );
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+  expect(document.documentElement).toHaveStyle({ fontSize: "16px" });
+  expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-font-size",
+    "14",
+  );
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
   const reopenedPrefix = screen.getByLabelText("Prefix");
   const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
   const historyBuffer = screen.getByLabelText("History buffer");
   expect(historyBuffer).toHaveValue(1);
   expect(screen.getByRole("checkbox", { name: "Unlimited history" })).not.toBeChecked();
+  expect(within(reopenedDialog).getByLabelText("Interface")).toHaveValue(16);
+  expect(within(reopenedDialog).getByLabelText("Terminal")).toHaveValue(14);
+  expect(within(reopenedDialog).getByLabelText("Agent log")).toHaveValue(14);
   await user.clear(reopenedPrefix);
   await user.type(reopenedPrefix, "Ctrl+A");
   await user.clear(paneTabShortcut);
   await user.type(paneTabShortcut, "control+j");
   await user.clear(historyBuffer);
   await user.type(historyBuffer, "8");
+  await user.clear(within(reopenedDialog).getByLabelText("Interface"));
+  await user.type(within(reopenedDialog).getByLabelText("Interface"), "18");
+  await user.clear(within(reopenedDialog).getByLabelText("Terminal"));
+  await user.type(within(reopenedDialog).getByLabelText("Terminal"), "17");
+  await user.clear(within(reopenedDialog).getByLabelText("Agent log"));
+  await user.type(within(reopenedDialog).getByLabelText("Agent log"), "16");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
@@ -1393,6 +1661,9 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         ...defaultSettings,
         prefix: "Ctrl+A",
         paneTabShortcut: "Ctrl+J",
+        interfaceFontSize: 18,
+        terminalFontSize: 17,
+        agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
       }),
     }),
@@ -1481,6 +1752,7 @@ test("forwards the saved history limit to terminal panes", async () => {
         _layoutVersion,
         _onConnectionChange,
         _reconnectSignal,
+        _fontSize,
         terminalHistoryLimit,
       ) => (
         <div
@@ -1522,6 +1794,37 @@ test("rejects a pane tab shortcut that duplicates the prefix", async () => {
 
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Choose a different shortcut from Prefix.",
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  expect(
+    fetchMock.mock.calls.some(([input, init]) =>
+      input === "/api/settings" && init?.method === "PATCH"),
+  ).toBe(false);
+});
+
+test("rejects a font size outside the supported range", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  const interfaceFontSize = within(dialog).getByLabelText("Interface");
+  await user.clear(interfaceFontSize);
+  await user.type(interfaceFontSize, "25");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose a whole number from 10 to 24.",
   );
   expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
   expect(

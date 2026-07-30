@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useState } from "react";
-import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
+import { PinIcon, PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
 import { Badge } from "@/components/ui/badge";
@@ -34,8 +34,9 @@ function normalizeSidebarWidth(width: number): number {
 interface SessionNavigationProps {
   sessions: Session[];
   selectedIDs: string[];
+  pinnedIDs?: string[];
   statusFilters: string[];
-  onSelect(id: string, multiple: boolean): void;
+  onSelect(id: string, multiple: boolean, pin?: boolean): void;
   onStatusFilter(status: string, checked: boolean): void;
   onStatusSelect?(status: string): void;
   cwdFilters?: string[];
@@ -59,15 +60,20 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-const activityOrder = new Map([
-  ["attention", 0],
-  ["running", 1],
-  ["waiting", 2],
-  ["terminal", 3],
-]);
+const builtInActivities = [
+  "blocked",
+  "attention",
+  "running",
+  "waiting",
+  "terminal",
+];
+
+const activityOrder = new Map(
+  builtInActivities.map((status, index) => [status, index]),
+);
 
 function orderedActivities(sessions: Session[]) {
-  return [...new Set(sessions.map(activity))].sort(
+  return [...new Set([...builtInActivities, ...sessions.map(activity)])].sort(
     (left, right) =>
       (activityOrder.get(left) ?? 100) - (activityOrder.get(right) ?? 100) ||
       left.localeCompare(right),
@@ -93,8 +99,9 @@ function agentIcon(session: Session) {
 function SessionList(props: SessionNavigationProps) {
   const { isMobile, setOpenMobile } = useSidebar();
 
-  const selectSession = (id: string, multiple: boolean) => {
-    props.onSelect(id, multiple);
+  const selectSession = (id: string, multiple: boolean, pin?: boolean) => {
+    if (pin === undefined) props.onSelect(id, multiple);
+    else props.onSelect(id, multiple, pin);
     if (isMobile && !multiple) setOpenMobile(false);
   };
 
@@ -130,6 +137,9 @@ function SessionList(props: SessionNavigationProps) {
               </button>
             </SidebarGroupLabel>
             <SidebarGroupContent>
+              {statusSessions.length === 0 && (
+                <p className="status-empty">No terminal</p>
+              )}
               {cwds.map((cwd) => {
                 const cwdSessions = statusSessions.filter(
                   (session) => session.cwd === cwd,
@@ -161,6 +171,7 @@ function SessionList(props: SessionNavigationProps) {
                         {cwdSessions.map((session) => {
                           const icon = agentIcon(session);
                           const selected = props.selectedIDs.includes(session.id);
+                          const pinned = props.pinnedIDs?.includes(session.id) ?? false;
                           return (
                             <SidebarMenuItem
                               className="session-channel"
@@ -171,8 +182,22 @@ function SessionList(props: SessionNavigationProps) {
                                 className="pane-checkbox"
                                 aria-label={`Include ${session.name} in split`}
                                 checked={selected}
-                                onCheckedChange={() => selectSession(session.id, true)}
+                                data-pinned={pinned || undefined}
+                                title={
+                                  pinned
+                                    ? "Pinned — click to remove"
+                                    : "Shift-click to pin"
+                                }
+                                onClick={(event) =>
+                                  selectSession(session.id, true, event.shiftKey)
+                                }
                               />
+                              {pinned && (
+                                <PinIcon
+                                  className="pane-checkbox-pin"
+                                  aria-hidden="true"
+                                />
+                              )}
                               <SidebarMenuButton
                                 className="session-select"
                                 size="lg"
@@ -241,7 +266,7 @@ function SessionNavigationContent({
   resizing: boolean;
   setResizing(resizing: boolean): void;
 }) {
-  const { state } = useSidebar();
+  const { isMobile, setOpenMobile, state } = useSidebar();
   const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
 
@@ -283,6 +308,11 @@ function SessionNavigationContent({
     props.onSettingsChange?.({ ...settings, sidebarWidth: next });
   };
 
+  const openSettings = () => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenSettings?.();
+  };
+
   return (
     <>
       <Sidebar
@@ -312,7 +342,7 @@ function SessionNavigationContent({
               <SidebarMenuButton
                 tooltip="Settings"
                 aria-label="Open settings"
-                onClick={props.onOpenSettings}
+                onClick={openSettings}
               >
                 <Settings2Icon aria-hidden="true" />
                 <span>Settings</span>
@@ -357,6 +387,9 @@ export function SessionNavigation(props: SessionNavigationProps) {
     paneTabShortcut: "Meta+L",
     sidebarWidth: defaultSidebarWidth,
     sidebarCollapsed: false,
+    interfaceFontSize: 16,
+    terminalFontSize: 14,
+    agentLogFontSize: 14,
     terminalHistoryLimit: 1024 * 1024,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);

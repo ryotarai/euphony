@@ -12,6 +12,9 @@ async function clearSessions(page: Page) {
       paneTabShortcut: "Meta+L",
       sidebarWidth: 304,
       sidebarCollapsed: false,
+      interfaceFontSize: 16,
+      terminalFontSize: 14,
+      agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
     },
   });
@@ -46,7 +49,11 @@ async function reportAgent(
       cwd: "/Users/ryotarai/work/euphony",
     },
   });
-  expect(response.ok()).toBe(true);
+  if (!response.ok()) {
+    throw new Error(
+      `Agent report failed (${response.status()}): ${await response.text()}`,
+    );
+  }
 }
 
 async function createSession(
@@ -91,6 +98,35 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   await expect(page.getByLabel("Access token")).toHaveCount(0);
   expect(new URL(page.url()).searchParams.has("token")).toBe(false);
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
+});
+
+test("shows empty status groups with interactive checkboxes", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  await createSession(page, "Shell");
+  await page.goto("/?token=test-token");
+
+  for (const label of [
+    "Show all Blocked terminals",
+    "Show all Need attention terminals",
+    "Show all Running terminals",
+    "Show all Waiting terminals",
+    "Show all Terminal terminals",
+  ]) {
+    await expect(page.getByRole("checkbox", { name: label })).toBeVisible();
+  }
+  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(4);
+  await page.screenshot({ path: testInfo.outputPath("empty-status-groups.png") });
+
+  const running = page.getByRole("checkbox", {
+    name: "Show all Running terminals",
+  });
+  await running.click();
+
+  await expect(running).toBeChecked();
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["running"]);
+  await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
 });
 
 test("confirms before deleting a terminal", async ({ page }) => {
@@ -288,8 +324,16 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   await menu.click();
   await expect(page.getByRole("dialog", { name: "Terminal menu" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("mobile-drawer.png") });
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const mobileSettings = page.getByRole("dialog", { name: "Settings" });
+  await expect(mobileSettings).toBeVisible();
+  const settingsBox = await mobileSettings.boundingBox();
+  expect(settingsBox).not.toBeNull();
+  expect(settingsBox!.y).toBeGreaterThanOrEqual(0);
+  expect(settingsBox!.y + settingsBox!.height).toBeLessThanOrEqual(844);
+  await page.screenshot({ path: testInfo.outputPath("mobile-font-size-settings.png") });
   await page.keyboard.press("Escape");
-  await expect(menu).toBeFocused();
+  await expect(menu).toBeVisible();
 
   const mobileDimensions = await page.evaluate(() => ({
     height: document.documentElement.scrollHeight,
@@ -375,6 +419,41 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await expect(checkbox).toBeChecked();
   await expect(checkbox).toHaveCSS("background-color", "rgb(245, 245, 245)");
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+});
+
+test("pins a terminal checkbox until that checkbox is clicked", async ({ page }) => {
+  await clearSessions(page);
+  const left = await createSession(page, "Left");
+  const right = await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  const leftCheckbox = page.getByRole("checkbox", {
+    name: "Include Left in split",
+  });
+  await leftCheckbox.click({ modifiers: ["Shift"] });
+  await expect(leftCheckbox).toHaveAttribute("data-pinned", "true");
+  await expect(page.locator(".pane-checkbox-pin")).toBeVisible();
+
+  await page.getByRole("button", { name: "Select Right" }).click();
+
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  let parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([left.id, right.id]);
+  expect(parameters.getAll("pin")).toEqual([left.id]);
+
+  await page.reload();
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: "Include Left in split" })
+    .click();
+
+  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([right.id]);
+  expect(parameters.getAll("pin")).toEqual([]);
 });
 
 test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
@@ -634,6 +713,58 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
+test("keeps the Quick Actions keyboard selection in the scroll viewport", async ({ page }) => {
+  await clearSessions(page);
+  for (let index = 1; index <= 6; index += 1) {
+    await createSession(page, `Terminal ${index}`);
+  }
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const commandList = page.locator('[data-slot="command-list"]');
+  await expect.poll(() =>
+    commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
+  ).toBe(true);
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
+
+  const lastTerminal = page.getByRole("option", { name: /^Terminal 6/ });
+  await expect(lastTerminal).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() =>
+    lastTerminal.evaluate((element) => {
+      const list = element.closest('[data-slot="command-list"]');
+      if (!list) return false;
+      const itemBounds = element.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return itemBounds.top >= listBounds.top && itemBounds.bottom <= listBounds.bottom;
+    }),
+  ).toBe(true);
+  const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
+  expect(scrolledDown).toBeGreaterThan(0);
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press("ArrowUp");
+  }
+
+  const firstAction = page.getByRole("option", {
+    name: /^New terminal in directory…/,
+  });
+  await expect(firstAction).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() =>
+    firstAction.evaluate((element) => {
+      const list = element.closest('[data-slot="command-list"]');
+      if (!list) return false;
+      const itemBounds = element.getBoundingClientRect();
+      const listBounds = list.getBoundingClientRect();
+      return itemBounds.top >= listBounds.top && itemBounds.bottom <= listBounds.bottom;
+    }),
+  ).toBe(true);
+  await expect.poll(() => commandList.evaluate((element) => element.scrollTop))
+    .toBeLessThan(scrolledDown);
+});
+
 test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "Left");
@@ -776,21 +907,37 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(sidebar).toHaveCSS("width", "420px");
 
   await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByLabel("Prefix").fill("Ctrl+A");
-  await page.getByLabel("Pane tab toggle").fill("Ctrl+J");
-  await page.getByLabel("History buffer").fill("8");
+  const settingsDialog = page.getByRole("dialog", { name: "Settings" });
+  await settingsDialog.getByLabel("Prefix").fill("Ctrl+A");
+  await settingsDialog.getByLabel("Pane tab toggle").fill("Ctrl+J");
+  await settingsDialog.getByLabel("History buffer").fill("8");
+  await settingsDialog.getByLabel("Interface").fill("18");
+  await settingsDialog.getByLabel("Terminal").fill("17");
+  await settingsDialog.getByLabel("Agent log").fill("16");
+  await expect(page.locator("html")).toHaveCSS("font-size", "18px");
+  await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
+  await expect(page.locator(".agent-log-view").first()).toHaveCSS(
+    "--agent-log-font-size",
+    "16px",
+  );
+  await page.screenshot({ path: testInfo.outputPath("font-size-settings.png") });
   await page.getByRole("button", { name: "Save settings" }).click();
   await page.reload();
   await page.getByRole("button", { name: "Open settings" }).click();
-  await expect(page.getByLabel("History buffer")).toHaveValue("8");
-  await page.getByRole("checkbox", { name: "Unlimited history" }).check();
-  await expect(page.getByLabel("History buffer")).toBeDisabled();
+  const savedSettingsDialog = page.getByRole("dialog", { name: "Settings" });
+  await expect(savedSettingsDialog.getByLabel("History buffer")).toHaveValue("8");
+  await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
+  await expect(savedSettingsDialog.getByLabel("Terminal")).toHaveValue("17");
+  await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
+  await savedSettingsDialog.getByRole("checkbox", { name: "Unlimited history" }).check();
+  await expect(savedSettingsDialog.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Save settings" }).click();
   await page.reload();
   await page.getByRole("button", { name: "Open settings" }).click();
   await expect(page.getByRole("checkbox", { name: "Unlimited history" })).toBeChecked();
   await expect(page.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Select Codex" }).click();
   await page.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
