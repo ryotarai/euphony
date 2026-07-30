@@ -26,15 +26,14 @@ Request review in the Euphony pane associated with the current agent.
 ## Temporary Review File
 
 Use a temporary directory so the review file can retain the extension required
-by `euphony annotate`:
+by `euphony annotate`. Across agent tool calls:
 
-```sh
-review_dir="$(mktemp -d)"
-review_file="$review_dir/review.md"
-trap 'rm -rf -- "$review_dir"' EXIT
-# Write the complete draft directly to "$review_file".
-euphony annotate "$review_file"
-```
+1. Run `mktemp -d` and continue only if it succeeds.
+2. Record the exact absolute path printed by the command.
+3. Write the complete draft to `review.md` or `review.html` under that path.
+4. Run `euphony annotate` with that exact file path.
+5. After processing stdout, delete only the exact temporary directory created
+   in step 1.
 
 ## Quick Reference
 
