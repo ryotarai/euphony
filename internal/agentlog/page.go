@@ -40,7 +40,7 @@ func ReadPage(
 		before = info.Size()
 	}
 	if before == info.Size() {
-		before, err = completeJSONLEnd(file, before)
+		before, err = completeJSONLEnd(file, before, maxAgentLogPageBytes)
 		if err != nil {
 			return Page{}, err
 		}
@@ -82,12 +82,15 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 	if after > info.Size() {
 		return Page{}, ErrCursorBeyondEnd
 	}
-	end, err := completeJSONLEnd(file, info.Size())
+	end, err := completeJSONLEnd(file, info.Size(), maxAgentLogPageBytes)
 	if err != nil {
 		return Page{}, err
 	}
 	if after > end {
 		return Page{}, ErrCursorBeyondEnd
+	}
+	if end-after > maxAgentLogPageBytes {
+		end = after + maxAgentLogPageBytes
 	}
 	entries, err := ParseAt(
 		agent,
@@ -101,6 +104,7 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 		Entries:     CompactTools(entries),
 		StartCursor: after,
 		EndCursor:   end,
+		ReadBytes:   end - after,
 	}, nil
 }
 
@@ -173,39 +177,11 @@ func boundedPageStart(
 	return floor, nil
 }
 
-func pageStart(file *os.File, before int64, recordLimit int) (int64, error) {
-	if before == 0 {
-		return 0, nil
-	}
-	buffer := make([]byte, reverseScanChunkBytes)
-	cursor := before
-	boundaries := 0
-	for cursor > 0 {
-		start := cursor - int64(len(buffer))
-		if start < 0 {
-			start = 0
-		}
-		length := int(cursor - start)
-		n, err := file.ReadAt(buffer[:length], start)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return 0, fmt.Errorf("scan transcript: %w", err)
-		}
-		for index := n - 1; index >= 0; index-- {
-			position := start + int64(index)
-			if buffer[index] != '\n' || position == before-1 {
-				continue
-			}
-			boundaries++
-			if boundaries == recordLimit {
-				return position + 1, nil
-			}
-		}
-		cursor = start
-	}
-	return 0, nil
-}
-
-func completeJSONLEnd(file *os.File, size int64) (int64, error) {
+func completeJSONLEnd(
+	file *os.File,
+	size int64,
+	byteLimit int64,
+) (int64, error) {
 	if size == 0 {
 		return 0, nil
 	}
@@ -216,9 +192,12 @@ func completeJSONLEnd(file *os.File, size int64) (int64, error) {
 	if last[0] == '\n' {
 		return size, nil
 	}
-	start, err := pageStart(file, size, 1)
+	start, err := boundedPageStart(file, size, 1, byteLimit)
 	if err != nil {
 		return 0, err
+	}
+	if size > byteLimit && start == size-byteLimit {
+		return size, nil
 	}
 	record := make([]byte, size-start)
 	if _, err := file.ReadAt(record, start); err != nil && !errors.Is(err, io.EOF) {

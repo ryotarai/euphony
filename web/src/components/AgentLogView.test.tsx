@@ -308,6 +308,62 @@ test("discards an older-page response after the terminal changes", async () => {
   expect(screen.queryByText("Stale older page")).not.toBeInTheDocument();
 });
 
+test("discards an older-page response after the linked transcript changes", async () => {
+  vi.useFakeTimers();
+  let resolveOlder: ((value: {
+    log: AgentTranscript;
+    etag: string;
+  }) => void) | undefined;
+  const pendingOlder = new Promise<{
+    log: AgentTranscript;
+    etag: string;
+  }>((resolve) => {
+    resolveOlder = resolve;
+  });
+  const replacementLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-2",
+    startCursor: "0",
+    endCursor: "50",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "New transcript" },
+    ],
+  };
+  const staleOlder: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Old transcript history" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockReturnValueOnce(pendingOlder)
+    .mockResolvedValueOnce({ log: replacementLog, etag: 'W/"replacement"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await act(async () => Promise.resolve());
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+  });
+  expect(screen.getByText("New transcript")).toBeInTheDocument();
+
+  await act(async () => {
+    resolveOlder?.({ log: staleOlder, etag: 'W/"stale"' });
+    await pendingOlder;
+  });
+
+  expect(screen.getByText("New transcript")).toBeInTheDocument();
+  expect(screen.queryByText("Old transcript history")).not.toBeInTheDocument();
+  vi.useRealTimers();
+});
+
 test("appends only records after the observed live edge", async () => {
   vi.useFakeTimers();
   const appendedLog: AgentTranscript = {

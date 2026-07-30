@@ -332,6 +332,7 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     const before = log?.nextCursor;
     if (!before || loadingMore) return;
     const requestSessionKey = sessionKey;
+    const requestTranscriptID = log.sessionId;
     const requestGeneration = ++loadMoreGenerationRef.current;
     const viewport = viewportRef.current;
     if (viewport) {
@@ -355,8 +356,13 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
       }
       const olderLog = result.log;
       setLog((currentLog) => {
-        if (!currentLog || currentLog.sessionId !== olderLog.sessionId) {
-          return olderLog;
+        if (
+          !currentLog ||
+          currentLog.sessionId !== requestTranscriptID ||
+          olderLog.sessionId !== requestTranscriptID
+        ) {
+          prependAdjustmentRef.current = null;
+          return currentLog;
         }
         return {
           ...currentLog,

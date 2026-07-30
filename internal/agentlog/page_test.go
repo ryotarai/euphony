@@ -183,6 +183,33 @@ func TestReadAfterDoesNotAdvancePastAnIncompleteJSONLRecord(t *testing.T) {
 	}
 }
 
+func TestCompleteJSONLEndBoundsANewlineFreeOversizedRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	record := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"` +
+		strings.Repeat("x", maxAgentLogPageBytes*2) +
+		`"}]}}`
+	if err := os.WriteFile(path, []byte(record), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer file.Close()
+
+	end, err := completeJSONLEnd(
+		file,
+		int64(len(record)),
+		maxAgentLogPageBytes,
+	)
+	if err != nil {
+		t.Fatalf("completeJSONLEnd() error = %v", err)
+	}
+	if end != int64(len(record)) {
+		t.Fatalf("completeJSONLEnd() = %d, want %d", end, len(record))
+	}
+}
+
 func TestCompactToolsCountsCallsAndDropsPayloadsAndResults(t *testing.T) {
 	entries := []Entry{
 		{ID: "1-0", Kind: "message", Content: "Before"},

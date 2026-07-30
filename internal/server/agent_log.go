@@ -50,7 +50,11 @@ func (s *Server) agentLog(w http.ResponseWriter, r *http.Request) {
 	}
 	identity := sha256.Sum256([]byte(transcript.Agent + "\x00" + transcript.SessionID + "\x00" + path))
 	etag := fmt.Sprintf(
-		`W/"%x-%x-%x"`, identity[:8], info.Size(), info.ModTime().UnixNano(),
+		`W/"%x-%x-%x-%s"`,
+		identity[:8],
+		info.Size(),
+		info.ModTime().UnixNano(),
+		transcript.EndCursor,
 	)
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("ETag", etag)

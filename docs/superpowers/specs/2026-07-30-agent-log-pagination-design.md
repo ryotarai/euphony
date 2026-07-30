@@ -31,7 +31,8 @@ The endpoint supports three read modes:
 - No cursor: read the newest 100 JSONL records within a 2 MiB page.
 - `before=<cursor>`: read up to 100 records and 2 MiB immediately before the
   cursor.
-- `after=<cursor>`: read records appended after the cursor for live polling.
+- `after=<cursor>`: read up to 2 MiB of records appended after the cursor for
+  live polling.
 
 Every response includes the byte range it covers:
 
