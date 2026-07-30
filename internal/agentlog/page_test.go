@@ -76,6 +76,42 @@ func TestReadPageReturnsOnlyTheNewestRecordsWithAnOlderCursor(t *testing.T) {
 	}
 }
 
+func TestReadPageBoundsBytesWhenANewestToolResultIsHuge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	before := `{"type":"assistant","message":{"role":"assistant","content":"Before huge result"}}` + "\n"
+	hugeResult := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"` +
+		strings.Repeat("x", maxAgentLogPageBytes*2) +
+		`"}]}}` + "\n"
+	after := `{"type":"assistant","message":{"role":"assistant","content":"After huge result"}}` + "\n"
+	transcript := before + hugeResult + after
+	if err := os.WriteFile(path, []byte(transcript), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer file.Close()
+
+	page, err := ReadPage("claude", file, int64(len(transcript)), 100)
+	if err != nil {
+		t.Fatalf("ReadPage() error = %v", err)
+	}
+	if page.ReadBytes > maxAgentLogPageBytes {
+		t.Fatalf(
+			"ReadPage() ReadBytes = %d, want <= %d",
+			page.ReadBytes,
+			maxAgentLogPageBytes,
+		)
+	}
+	if len(page.Entries) != 1 || page.Entries[0].Content != "After huge result" {
+		t.Fatalf("ReadPage() entries = %#v", page.Entries)
+	}
+	if !page.HasMore || page.StartCursor == 0 {
+		t.Fatalf("ReadPage() page = %#v, want an older cursor", page)
+	}
+}
+
 func TestReadAfterReturnsOnlyAppendedRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	initial := `{"type":"assistant","message":{"role":"assistant","content":"First"}}` + "\n"

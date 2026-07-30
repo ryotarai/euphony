@@ -8,7 +8,10 @@ import (
 	"os"
 )
 
-const reverseScanChunkBytes = 64 << 10
+const (
+	reverseScanChunkBytes = 64 << 10
+	maxAgentLogPageBytes  = 2 << 20
+)
 
 var ErrCursorBeyondEnd = errors.New("agent log cursor is beyond the transcript")
 
@@ -17,6 +20,7 @@ type Page struct {
 	StartCursor int64
 	EndCursor   int64
 	HasMore     bool
+	ReadBytes   int64
 }
 
 func ReadPage(
@@ -41,7 +45,12 @@ func ReadPage(
 			return Page{}, err
 		}
 	}
-	start, err := pageStart(file, before, recordLimit)
+	start, err := boundedPageStart(
+		file,
+		before,
+		recordLimit,
+		maxAgentLogPageBytes,
+	)
 	if err != nil {
 		return Page{}, err
 	}
@@ -58,6 +67,7 @@ func ReadPage(
 		StartCursor: start,
 		EndCursor:   before,
 		HasMore:     start > 0,
+		ReadBytes:   before - start,
 	}, nil
 }
 
@@ -123,6 +133,44 @@ func CompactTools(entries []Entry) []Entry {
 	}
 	flush()
 	return compacted
+}
+
+func boundedPageStart(
+	file *os.File,
+	before int64,
+	recordLimit int,
+	byteLimit int64,
+) (int64, error) {
+	floor := before - byteLimit
+	if floor < 0 {
+		floor = 0
+	}
+	buffer := make([]byte, reverseScanChunkBytes)
+	cursor := before
+	boundaries := 0
+	for cursor > floor {
+		start := cursor - int64(len(buffer))
+		if start < floor {
+			start = floor
+		}
+		length := int(cursor - start)
+		n, err := file.ReadAt(buffer[:length], start)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("scan transcript: %w", err)
+		}
+		for index := n - 1; index >= 0; index-- {
+			position := start + int64(index)
+			if buffer[index] != '\n' || position == before-1 {
+				continue
+			}
+			boundaries++
+			if boundaries == recordLimit {
+				return position + 1, nil
+			}
+		}
+		cursor = start
+	}
+	return floor, nil
 }
 
 func pageStart(file *os.File, before int64, recordLimit int) (int64, error) {

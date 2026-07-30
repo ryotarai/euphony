@@ -150,7 +150,7 @@ function TranscriptView({
   viewportRef,
 }: TranscriptViewProps) {
   const entries = transcript.entries ?? [];
-  if (entries.length === 0) {
+  if (entries.length === 0 && !transcript.nextCursor) {
     return (
       <Empty className="agent-log-empty">
         <EmptyHeader>
@@ -226,11 +226,15 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
   const [loadingMore, setLoadingMore] = useState(false);
   const etagRef = useRef("");
   const endCursorRef = useRef("");
+  const loadMoreGenerationRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const prependAdjustmentRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const sessionKey = `${session.id}\u0000${session.agent ?? ""}`;
+  const sessionKeyRef = useRef(sessionKey);
+  sessionKeyRef.current = sessionKey;
   const linkedAgent = session.agent === "claude"
     ? "Claude"
     : session.agent === "codex"
@@ -245,6 +249,8 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     setError("");
     setLoadingMore(false);
     endCursorRef.current = "";
+    loadMoreGenerationRef.current++;
+    prependAdjustmentRef.current = null;
   }, [session.id, session.agent]);
 
   useLayoutEffect(() => {
@@ -325,6 +331,8 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
   const loadMore = async () => {
     const before = log?.nextCursor;
     if (!before || loadingMore) return;
+    const requestSessionKey = sessionKey;
+    const requestGeneration = ++loadMoreGenerationRef.current;
     const viewport = viewportRef.current;
     if (viewport) {
       prependAdjustmentRef.current = {
@@ -335,6 +343,12 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     setLoadingMore(true);
     try {
       const result = await api.getAgentLog(session.id, { before });
+      if (
+        sessionKeyRef.current !== requestSessionKey ||
+        loadMoreGenerationRef.current !== requestGeneration
+      ) {
+        return;
+      }
       if (!result.log) {
         prependAdjustmentRef.current = null;
         return;
@@ -355,10 +369,21 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
         };
       });
     } catch (loadError) {
+      if (
+        sessionKeyRef.current !== requestSessionKey ||
+        loadMoreGenerationRef.current !== requestGeneration
+      ) {
+        return;
+      }
       prependAdjustmentRef.current = null;
       setError(errorMessage(loadError));
     } finally {
-      setLoadingMore(false);
+      if (
+        sessionKeyRef.current === requestSessionKey &&
+        loadMoreGenerationRef.current === requestGeneration
+      ) {
+        setLoadingMore(false);
+      }
     }
   };
 

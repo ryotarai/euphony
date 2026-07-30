@@ -12,6 +12,8 @@
 
 - Work only in `tmp/worktrees/agent-log-pagination` until the verified branch is merged.
 - The newest request reads at most 100 JSONL records rather than the complete transcript.
+- Each newest/older page reads at most 2 MiB, including when a tool result is
+  a multi-megabyte JSONL record.
 - Never return tool arguments or tool result content from the paginated endpoint.
 - Keep transcript path confinement unchanged and never accept a browser-supplied path.
 - Keep initial scroll at the live edge and preserve the visible reading position when prepending history.

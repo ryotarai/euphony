@@ -216,6 +216,98 @@ test("loads older entries from the top and preserves the reading position", asyn
   expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
 });
 
+test("offers older history when the newest page has no displayable entries", async () => {
+  const user = userEvent.setup();
+  const emptyNewest: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "100",
+    endCursor: "200",
+    nextCursor: "100",
+    entries: [],
+  };
+  const olderLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Older message" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: emptyNewest, etag: 'W/"first"' })
+    .mockResolvedValueOnce({ log: olderLog, etag: 'W/"first"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+
+  await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+  expect(await screen.findByText("Older message")).toBeInTheDocument();
+  expect(screen.queryByText("Transcript is empty")).not.toBeInTheDocument();
+});
+
+test("discards an older-page response after the terminal changes", async () => {
+  const user = userEvent.setup();
+  let resolveOlder: ((value: {
+    log: AgentTranscript;
+    etag: string;
+  }) => void) | undefined;
+  const pendingOlder = new Promise<{
+    log: AgentTranscript;
+    etag: string;
+  }>((resolve) => {
+    resolveOlder = resolve;
+  });
+  const replacementLog: AgentTranscript = {
+    agent: "claude",
+    sessionId: "session-2",
+    startCursor: "0",
+    endCursor: "50",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Replacement session" },
+    ],
+  };
+  const staleOlder: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Stale older page" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockReturnValueOnce(pendingOlder)
+    .mockResolvedValueOnce({ log: replacementLog, etag: 'W/"replacement"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  const { rerender } = render(
+    <AgentLogView session={session} api={api} active />,
+  );
+  await screen.findByRole("heading", { name: "Result" });
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+
+  rerender(
+    <AgentLogView
+      session={{ ...session, id: "terminal-2", agent: "claude" }}
+      api={api}
+      active
+    />,
+  );
+  expect(await screen.findByText("Replacement session")).toBeInTheDocument();
+
+  await act(async () => {
+    resolveOlder?.({ log: staleOlder, etag: 'W/"stale"' });
+    await pendingOlder;
+  });
+
+  expect(screen.getByText("Replacement session")).toBeInTheDocument();
+  expect(screen.queryByText("Stale older page")).not.toBeInTheDocument();
+});
+
 test("appends only records after the observed live edge", async () => {
   vi.useFakeTimers();
   const appendedLog: AgentTranscript = {
@@ -302,7 +394,7 @@ test("distinguishes a linked transcript that has not appeared yet", async () => 
 test("shows an explicit empty state for an empty transcript", async () => {
   const api = {
     getAgentLog: vi.fn().mockResolvedValue({
-      log: { ...initialLog, entries: null },
+      log: { ...initialLog, entries: null, nextCursor: undefined },
       etag: 'W/"empty"',
     }),
   } as unknown as ApiClient;

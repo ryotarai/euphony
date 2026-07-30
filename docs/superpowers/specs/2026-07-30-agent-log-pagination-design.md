@@ -28,8 +28,9 @@ unchanged.
 
 The endpoint supports three read modes:
 
-- No cursor: read the newest 100 JSONL records.
-- `before=<cursor>`: read up to 100 records immediately before the cursor.
+- No cursor: read the newest 100 JSONL records within a 2 MiB page.
+- `before=<cursor>`: read up to 100 records and 2 MiB immediately before the
+  cursor.
 - `after=<cursor>`: read records appended after the cursor for live polling.
 
 Every response includes the byte range it covers:
@@ -51,9 +52,11 @@ poll returns `304`; a changed poll uses `after` so the client receives only
 new records.
 
 The range reader scans backward from `before` to locate record boundaries,
-then parses only that byte range. Entry IDs in paginated responses are based
-on absolute source byte offsets, so they remain stable across page requests.
-Malformed records remain skippable.
+stopping when it reaches either limit, then parses only that byte range. A
+record larger than the byte limit is skipped across bounded pages instead of
+being materialized. Entry IDs in paginated responses are based on absolute
+source byte offsets, so they remain stable across page requests. Malformed
+records remain skippable.
 
 ## Tool Compaction
 
@@ -81,7 +84,8 @@ Opening the tab fetches the newest page and starts at the bottom. Polling asks
 for records after the observed live-edge cursor and appends them. `Load more`
 requests the next older page and prepends it. The viewport compensates for the
 inserted height so the same content remains under the reader after the
-prepend.
+prepend. Empty normalized pages retain `Load more` when an older cursor exists,
+and in-flight history responses are discarded when the terminal changes.
 
 The `Load more` row appears at the top of the transcript, uses the existing
 monospace utility style, and remains visually subordinate to messages.
