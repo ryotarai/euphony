@@ -55,14 +55,20 @@ type AgentUpdate struct {
 }
 
 type Settings struct {
-	Prefix           string `json:"prefix"`
-	PaneTabShortcut  string `json:"paneTabShortcut"`
-	SidebarWidth     int    `json:"sidebarWidth"`
-	SidebarCollapsed bool   `json:"sidebarCollapsed"`
+	Prefix            string `json:"prefix"`
+	PaneTabShortcut   string `json:"paneTabShortcut"`
+	SidebarWidth      int    `json:"sidebarWidth"`
+	SidebarCollapsed  bool   `json:"sidebarCollapsed"`
+	InterfaceFontSize int    `json:"interfaceFontSize"`
+	TerminalFontSize  int    `json:"terminalFontSize"`
+	AgentLogFontSize  int    `json:"agentLogFontSize"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{Prefix: "Ctrl+B", PaneTabShortcut: "Meta+L", SidebarWidth: 304}
+	return Settings{
+		Prefix: "Ctrl+B", PaneTabShortcut: "Meta+L", SidebarWidth: 304,
+		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
+	}
 }
 
 type entry struct {
