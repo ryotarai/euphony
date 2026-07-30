@@ -753,8 +753,23 @@ export function App({
   async function createSession(split = false, cwd?: string) {
     if (!api) return;
     try {
-      const focusedCWD = sessions?.find((session) => session.id === focusedID)?.cwd;
-      const created = await api.createSession("Terminal", cwd ?? focusedCWD);
+      const inheritedCWD =
+        cwd === undefined
+          ? sessions?.find((session) => session.id === focusedID)?.cwd
+          : undefined;
+      let created: Session;
+      try {
+        created = await api.createSession("Terminal", cwd ?? inheritedCWD);
+      } catch (error) {
+        if (
+          !(error instanceof ApiError) ||
+          error.code !== "invalid_cwd" ||
+          inheritedCWD === undefined
+        ) {
+          throw error;
+        }
+        created = await api.createSession("Terminal");
+      }
       setSessions((current) => [...(current ?? []), created]);
       const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
       setSelectedIDs(nextIDs);

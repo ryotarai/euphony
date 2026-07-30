@@ -4,7 +4,7 @@
 
 **Goal:** Start each new terminal in the focused terminal's working directory, or in the user's home directory when no working directory can be inherited.
 
-**Architecture:** Keep focused-session lookup in `App`, which already owns session and focus state, and pass the derived `cwd` through the existing optional API field. Change `Manager.Create` so an omitted `cwd` resolves with `os.UserHomeDir()` instead of `os.Getwd()`, while preserving validation for explicitly supplied paths.
+**Architecture:** Keep focused-session lookup in `App`, which already owns session and focus state, and pass the derived `cwd` through the existing optional API field. Retry an `invalid_cwd` response without `cwd` only when the rejected value was implicitly inherited. Change `Manager.Create` so an omitted `cwd` resolves with `os.UserHomeDir()` instead of `os.Getwd()`, while preserving validation for explicitly supplied paths.
 
 **Tech Stack:** React 19, TypeScript, Vitest, Testing Library, Go 1.24, `creack/pty`
 
@@ -13,7 +13,9 @@
 - Do not add a new API field or visual control.
 - Preserve the explicit directory dialog and invalid-directory validation.
 - Use the focused terminal, not another selected pane, as the inheritance source.
-- Use the home directory only when creation has no inherited or explicit `cwd`.
+- Use the home directory when creation has no inherited or explicit `cwd`, or
+  when an implicitly inherited `cwd` is rejected as invalid.
+- Never retry an invalid `cwd` that the user explicitly entered.
 
 ---
 
@@ -218,3 +220,54 @@ git diff -- web/src/App.tsx web/src/App.test.tsx internal/session/manager.go int
 git add web/src/App.tsx web/src/App.test.tsx internal/session/manager.go internal/session/manager_test.go docs/superpowers/plans/2026-07-30-terminal-cwd-inheritance.md
 git commit -m "feat: inherit cwd for new terminals"
 ```
+
+### Task 3: Fall Back When an Inherited CWD Becomes Invalid
+
+**Files:**
+- Modify: `web/src/App.tsx`
+- Test: `web/src/App.test.tsx`
+- Modify: `docs/superpowers/specs/2026-07-30-terminal-cwd-inheritance-design.md`
+
+**Interfaces:**
+- Consumes: `ApiError.code`, explicit `cwd`, and focused session metadata
+- Produces: one cwd-less retry for an inherited `invalid_cwd`; explicit invalid
+  directories still surface their first error
+
+- [x] **Step 1: Write failing inherited-CWD fallback coverage**
+
+Mock an `invalid_cwd` response for sidebar creation and require a second POST
+with `{"name":"Terminal"}` that succeeds from the backend home default.
+
+- [x] **Step 2: Write explicit-CWD non-retry coverage**
+
+Submit `/workspace/missing` through the directory dialog, require the stable
+error message, and assert that only one creation request was made.
+
+- [x] **Step 3: Run the App tests to verify RED**
+
+Run:
+
+```bash
+cd web
+npm test -- --run src/App.test.tsx
+```
+
+Expected: the inherited fallback test fails because only two total fetches
+occur, while the explicit-CWD guard passes.
+
+- [x] **Step 4: Retry only an implicitly inherited invalid CWD**
+
+Derive `inheritedCWD` only when the `cwd` argument is `undefined`. If the first
+creation throws `ApiError` with code `invalid_cwd` and `inheritedCWD` exists,
+retry `api.createSession("Terminal")` once. Rethrow every other error.
+
+- [x] **Step 5: Run the App tests to verify GREEN**
+
+Run:
+
+```bash
+cd web
+npm test -- --run src/App.test.tsx
+```
+
+Expected: all 35 App tests pass.

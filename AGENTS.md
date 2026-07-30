@@ -33,3 +33,6 @@
   transcript data remains legible.
 - Do not let agent lifecycle transitions reset a pane's user-selected Terminal
   or Agent log source.
+- Read agent metadata that hooks do not carry from the artifacts they point at
+  (for example a transcript path), and bound such reads to a tail window so
+  multi-megabyte files stay cheap to poll.
