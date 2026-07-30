@@ -61,6 +61,7 @@ export function TerminalPane({
   const [secondarySource, setSecondarySource] = useState<PaneSource | null>(null);
   const [primarySize, setPrimarySize] = useState(50);
   const [resizingSplit, setResizingSplit] = useState(false);
+  const [suppressTerminalFocus, setSuppressTerminalFocus] = useState(false);
   const [annotation, setAnnotation] = useState<AnnotationSession | null>(null);
   const [annotationRetry, setAnnotationRetry] = useState(0);
   const [annotationSyncFailed, setAnnotationSyncFailed] = useState(false);
@@ -81,6 +82,7 @@ export function TerminalPane({
     if (source !== "terminal" && next === "terminal") {
       setFitVersion((current) => current + 1);
     }
+    setSuppressTerminalFocus(false);
     setSecondarySource(null);
     setSource(next);
   };
@@ -181,6 +183,11 @@ export function TerminalPane({
     setResizingSplit(false);
   }, [secondarySource]);
 
+  useEffect(() => {
+    if (active && source === "terminal") return;
+    setSuppressTerminalFocus(false);
+  }, [active, source]);
+
   const sourceLabel = (paneSource: PaneSource) => (
     paneSource === "terminal"
       ? "Terminal"
@@ -219,6 +226,12 @@ export function TerminalPane({
     };
   };
   const toggleSecondarySource = (next: PaneSource) => {
+    const closesTerminalSplit = (
+      source === "terminal" &&
+      secondarySource !== null &&
+      (next === source || next === secondarySource)
+    );
+    if (closesTerminalSplit) setSuppressTerminalFocus(true);
     if (next === source) {
       setSecondarySource(null);
       return;
@@ -245,6 +258,7 @@ export function TerminalPane({
       });
       return;
     }
+    if (paneSource === "terminal") setSuppressTerminalFocus(false);
     if (paneSource === source) setSecondarySource(null);
   };
   const resizeSplitWithKeyboard = (
@@ -377,7 +391,10 @@ export function TerminalPane({
         >
           {renderTerminal(
             layoutVersion + fitVersion,
-            active && source === "terminal" && secondarySource === null,
+            active &&
+              source === "terminal" &&
+              secondarySource === null &&
+              !suppressTerminalFocus,
             sourceIsVisible("terminal"),
           )}
         </TabsContent>

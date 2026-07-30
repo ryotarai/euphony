@@ -221,6 +221,36 @@ test("opens a keyboard-accessible secondary source with Command-Enter", () => {
     .toBeVisible();
 });
 
+test("does not activate Terminal when Command-click closes its split", async () => {
+  const user = userEvent.setup();
+  const activeStates: boolean[] = [];
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={(_layoutVersion, terminalActive) => {
+        activeStates.push(terminalActive);
+        return <div>terminal</div>;
+      }}
+    />,
+  );
+
+  const terminalTab = screen.getByRole("tab", { name: "Terminal" });
+  const filesTab = screen.getByRole("tab", { name: "Files" });
+  fireEvent.click(filesTab, { metaKey: true });
+  expect(activeStates.at(-1)).toBe(false);
+
+  fireEvent.click(filesTab, { metaKey: true });
+  expect(activeStates.at(-1)).toBe(false);
+
+  await user.click(terminalTab);
+  expect(activeStates.at(-1)).toBe(true);
+});
+
 test("replaces, closes, and clears a secondary source without unmounting views", async () => {
   const user = userEvent.setup();
   render(

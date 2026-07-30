@@ -595,6 +595,7 @@ test("splits pane sources with Command-click and drags the divider", async ({
     await filesTab.click({ modifiers: ["Meta"] });
     await expect(separator).toHaveCount(0);
     await expect(terminalTab).toHaveAttribute("data-active");
+    await expect(filesTab).toBeFocused();
     await expect.poll(async () => {
       return Number(await terminalView.getAttribute("data-local-cols"));
     }).toBe(fullCols);
