@@ -12,6 +12,9 @@ import type {
   Session,
   Settings,
   GitChangesSnapshot,
+  WorkspaceDirectory,
+  WorkspaceFile,
+  WorkspaceSearchResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -184,6 +187,29 @@ export class ApiClient {
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request(
       `/api/sessions/${encodeURIComponent(id)}/git-changes${suffix}`,
+    );
+  }
+
+  getWorkspaceDirectory(id: string, path?: string): Promise<WorkspaceDirectory> {
+    const query = new URLSearchParams();
+    if (path) query.set("path", path);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request(
+      `/api/sessions/${encodeURIComponent(id)}/workspace${suffix}`,
+    );
+  }
+
+  searchWorkspace(id: string, query: string): Promise<WorkspaceSearchResult> {
+    const search = new URLSearchParams({ query });
+    return this.request(
+      `/api/sessions/${encodeURIComponent(id)}/workspace/search?${search.toString()}`,
+    );
+  }
+
+  getWorkspaceFile(id: string, path: string): Promise<WorkspaceFile> {
+    const query = new URLSearchParams({ path });
+    return this.request(
+      `/api/sessions/${encodeURIComponent(id)}/workspace/file?${query.toString()}`,
     );
   }
 

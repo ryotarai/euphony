@@ -248,3 +248,37 @@ test("requests Git change summaries and selected file patches", async () => {
     }),
   );
 });
+
+test("lists, searches, and reads terminal workspace paths", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementation(() => jsonResponse({}));
+  const api = new ApiClient("token");
+
+  await api.getWorkspaceDirectory("terminal/one");
+  await api.getWorkspaceDirectory("terminal/one", "docs/design notes");
+  await api.searchWorkspace("terminal/one", "user guide");
+  await api.getWorkspaceFile("terminal/one", "docs/User Guide.md");
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/sessions/terminal%2Fone/workspace",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions/terminal%2Fone/workspace?path=docs%2Fdesign+notes",
+    expect.anything(),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/sessions/terminal%2Fone/workspace/search?query=user+guide",
+    expect.anything(),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    4,
+    "/api/sessions/terminal%2Fone/workspace/file?path=docs%2FUser+Guide.md",
+    expect.anything(),
+  );
+});

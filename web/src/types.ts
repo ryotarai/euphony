@@ -178,3 +178,36 @@ export interface GitChangesSnapshot {
   statsTruncated?: boolean;
   files: GitChangedFile[];
 }
+
+export type WorkspaceEntryKind = "directory" | "file" | "symlink" | "other";
+
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  kind: WorkspaceEntryKind;
+  size?: number;
+}
+
+export interface WorkspaceDirectory {
+  root: string;
+  path: string;
+  entries: WorkspaceEntry[];
+  truncated?: boolean;
+}
+
+export interface WorkspaceSearchResult {
+  root: string;
+  query: string;
+  matches: WorkspaceEntry[];
+  truncated?: boolean;
+}
+
+export interface WorkspaceFile {
+  root: string;
+  name: string;
+  path: string;
+  size: number;
+  content?: string;
+  binary?: boolean;
+  truncated?: boolean;
+}
