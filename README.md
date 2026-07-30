@@ -109,6 +109,10 @@ curl --fail --silent \
 Use the agent's start, stop, notification, and session-title hooks to send the
 corresponding status and title. The sidebar refreshes activity automatically.
 
+Claude Code hook payloads carry no session title, so `euphony hook claude` reads
+the newest `ai-title` entry from the `transcript_path` the hook reports. Codex
+titles come from `~/.codex/session_index.jsonl` instead.
+
 ## Persistence
 
 Euphony stores terminal metadata in SQLite at

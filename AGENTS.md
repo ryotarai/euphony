@@ -29,3 +29,6 @@
   clear group filters and other pane selections, then follow that session.
 - Model unread attention independently from the agent's current status; never
   replace statuses such as `waiting` or `running` with an attention status.
+- Read agent metadata that hooks do not carry from the artifacts they point at
+  (for example a transcript path), and bound such reads to a tail window so
+  multi-megabyte files stay cheap to poll.
