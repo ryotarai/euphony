@@ -30,6 +30,7 @@ async function reportAgent(
   terminalID: string,
   agent: "codex" | "claude",
   title: string,
+  status = "waiting",
 ) {
   const response = await page.request.post("/api/hooks/terminal", {
     headers: {
@@ -39,7 +40,7 @@ async function reportAgent(
     data: {
       terminalId: terminalID,
       agent,
-      status: "waiting",
+      status,
       title,
       cwd: "/Users/ryotarai/work/euphony",
     },
@@ -166,6 +167,44 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("agent-log-tab.png") });
+});
+
+test("keeps the agent log open when a filtered running agent starts waiting", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  const second = await createSession(page, "Second", "/tmp");
+  await reportAgent(page, first.id, "codex", "Running task", "running");
+  await reportAgent(page, second.id, "claude", "Waiting task");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("checkbox", { name: "Show all Running terminals" }).click();
+  await page.getByRole("checkbox", { name: "Show all Waiting terminals" }).click();
+  const firstPane = page.getByLabel("First pane", { exact: true });
+  await firstPane.getByRole("tab", { name: "Agent log" }).click();
+
+  await reportAgent(page, first.id, "codex", "Waiting for input");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{
+      id: string;
+      agentStatus?: string;
+      needsAttention?: boolean;
+    }>;
+    const updated = sessions.find((session) => session.id === first.id);
+    return {
+      agentStatus: updated?.agentStatus,
+      needsAttention: Boolean(updated?.needsAttention),
+    };
+  }).toEqual({ agentStatus: "waiting", needsAttention: false });
+
+  await expect(firstPane).toHaveAttribute("data-active", "true");
+  await expect(firstPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
+    "data-active",
+  );
 });
 
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {
@@ -302,6 +341,40 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await expect(checkbox).toBeChecked();
   await expect(checkbox).toHaveCSS("background-color", "rgb(245, 245, 245)");
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+});
+
+test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
+  await clearSessions(page);
+  const left = await createSession(page, "Left", "/private/tmp");
+  const right = await createSession(page, "Right", "/private/var");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("checkbox", { name: "Show all Terminal terminals" }).click();
+  await expect(page.locator(".terminal-pane")).toHaveCount(2);
+
+  const leftSelection = page.getByRole("checkbox", { name: "Deselect Left" });
+  await expect(leftSelection).toBeChecked();
+  await expect(leftSelection).toHaveCSS("width", "14px");
+  await expect(leftSelection).toHaveCSS("height", "14px");
+  await page.screenshot({
+    path: testInfo.outputPath("pane-selection-checkbox.png"),
+  });
+  await leftSelection.click();
+
+  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  await page.waitForTimeout(1_800);
+  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.getAll("terminal")).toEqual([right.id]);
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual([]);
+
+  await page.getByRole("checkbox", { name: "Deselect Right" }).click();
+
+  await expect(page.getByText("No signal yet.")).toBeVisible();
+  const parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([]);
+  expect(parameters.has("focus")).toBe(false);
+  expect(parameters.getAll("terminal")).not.toContain(left.id);
 });
 
 test("follows a focused terminal when polling identifies it as a Claude agent", async ({ page }) => {
@@ -556,8 +629,11 @@ test("navigates overflowing terminal panes one pane at a time", async ({ page })
   await page.goto(`/?${parameters.toString()}`);
 
   const panes = page.locator(".terminal-pane");
+  const nextControl = page.getByRole("button", { name: "Show next pane" });
   await expect(panes).toHaveCount(4);
-  await expect(page.getByRole("button", { name: "Show next pane" })).toBeVisible();
+  await expect(nextControl).toBeVisible();
+  await expect(nextControl).toHaveCSS("background-color", "rgb(245, 245, 245)");
+  await expect(nextControl.locator("svg")).toHaveCSS("color", "rgb(5, 5, 5)");
   const visibleWidths = await panes.evaluateAll((items) =>
     items
       .filter((item) => item.getAttribute("data-visible") === "true")
@@ -566,7 +642,7 @@ test("navigates overflowing terminal panes one pane at a time", async ({ page })
   expect(visibleWidths).toHaveLength(2);
   expect(visibleWidths.every((width) => width >= 360)).toBe(true);
 
-  await page.getByRole("button", { name: "Show next pane" }).click();
+  await nextControl.click();
 
   await expect(page.getByLabel("One pane")).toHaveAttribute("data-visible", "false");
   await expect(page.getByLabel("Two pane")).toHaveAttribute("data-visible", "true");

@@ -149,9 +149,9 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	}
 	if cwd == "" {
 		var err error
-		cwd, err = os.Getwd()
+		cwd, err = os.UserHomeDir()
 		if err != nil {
-			return Metadata{}, err
+			return Metadata{}, fmt.Errorf("resolve home directory: %w", err)
 		}
 	}
 	cwd, err = filepath.Abs(cwd)

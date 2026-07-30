@@ -4,6 +4,7 @@ import type { ApiClient } from "../api";
 import { isEditableTarget, matchesPrefix } from "../keybindings";
 import type { Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface TerminalPaneProps {
@@ -12,6 +13,7 @@ interface TerminalPaneProps {
   active: boolean;
   layoutVersion: number;
   tabShortcut: string;
+  onDeselect: () => void;
   renderTerminal(layoutVersion: number, active: boolean): ReactNode;
 }
 
@@ -23,6 +25,7 @@ export function TerminalPane({
   active,
   layoutVersion,
   tabShortcut,
+  onDeselect,
   renderTerminal,
 }: TerminalPaneProps) {
   const [source, setSource] = useState<PaneSource>("terminal");
@@ -76,9 +79,20 @@ export function TerminalPane({
             <FileClockIcon aria-hidden="true" />
           </TabsTrigger>
         </TabsList>
-        <span className="terminal-tab-source" aria-hidden="true">
-          {source === "terminal" ? "Terminal" : `${agentLabel} log`}
-        </span>
+        <div className="terminal-tab-meta">
+          <span className="terminal-tab-source" aria-hidden="true">
+            {source === "terminal" ? "Terminal" : `${agentLabel} log`}
+          </span>
+          <Checkbox
+            className="terminal-tab-selection"
+            aria-label={`Deselect ${session.name}`}
+            checked
+            onMouseDown={(event) => event.stopPropagation()}
+            onCheckedChange={(checked) => {
+              if (!checked) onDeselect();
+            }}
+          />
+        </div>
       </div>
       <TabsContent
         className="terminal-tab-content"

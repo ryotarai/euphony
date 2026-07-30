@@ -24,6 +24,7 @@ test("switches pane sources while keeping the terminal mounted", async () => {
       active
       layoutVersion={2}
       tabShortcut="Meta+L"
+      onDeselect={() => undefined}
       renderTerminal={(layoutVersion) => {
         layoutVersions.push(layoutVersion);
         return <div aria-label="live terminal">terminal</div>;
@@ -55,6 +56,7 @@ test("keeps an independent selected source for each pane instance", async () => 
         active
         layoutVersion={1}
         tabShortcut="Meta+L"
+        onDeselect={() => undefined}
         renderTerminal={() => <div>first terminal</div>}
       />
       <TerminalPane
@@ -63,6 +65,7 @@ test("keeps an independent selected source for each pane instance", async () => 
         active={false}
         layoutVersion={1}
         tabShortcut="Meta+L"
+        onDeselect={() => undefined}
         renderTerminal={() => <div>second terminal</div>}
       />
     </>,
@@ -84,6 +87,7 @@ test("refreshes a visible log even when its pane is not focused", async () => {
       active={false}
       layoutVersion={1}
       tabShortcut="Meta+L"
+      onDeselect={() => undefined}
       renderTerminal={() => <div>terminal</div>}
     />,
   );
@@ -91,7 +95,6 @@ test("refreshes a visible log even when its pane is not focused", async () => {
   await user.click(screen.getByRole("tab", { name: "Agent log" }));
   expect(getAgentLog).toHaveBeenCalledWith("terminal-1", undefined);
 });
-
 test("toggles the active pane source with its configured shortcut", () => {
   const api = {
     getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
@@ -103,6 +106,7 @@ test("toggles the active pane source with its configured shortcut", () => {
       active
       layoutVersion={1}
       tabShortcut="Meta+L"
+      onDeselect={() => undefined}
       renderTerminal={() => <div aria-label="live terminal">terminal</div>}
     />,
   );
@@ -126,6 +130,7 @@ test("uses a custom shortcut only on the active pane", () => {
         active
         layoutVersion={1}
         tabShortcut="Ctrl+J"
+        onDeselect={() => undefined}
         renderTerminal={() => <div>active terminal</div>}
       />
       <TerminalPane
@@ -134,6 +139,7 @@ test("uses a custom shortcut only on the active pane", () => {
         active={false}
         layoutVersion={1}
         tabShortcut="Ctrl+J"
+        onDeselect={() => undefined}
         renderTerminal={() => <div>inactive terminal</div>}
       />
     </>,
@@ -160,6 +166,7 @@ test("does not toggle while a regular input is being edited", () => {
         active
         layoutVersion={1}
         tabShortcut="Meta+L"
+        onDeselect={() => undefined}
         renderTerminal={() => <div>terminal</div>}
       />
     </>,
@@ -170,4 +177,29 @@ test("does not toggle while a regular input is being edited", () => {
   fireEvent.keyDown(input, { key: "l", metaKey: true });
 
   expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
+});
+
+test("deselects the terminal from the pane rail", async () => {
+  const user = userEvent.setup();
+  const onDeselect = vi.fn();
+  render(
+    <TerminalPane
+      session={session}
+      api={{ getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }) } as unknown as ApiClient}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={onDeselect}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Deselect Terminal one",
+  });
+  expect(checkbox).toBeChecked();
+
+  await user.click(checkbox);
+
+  expect(onDeselect).toHaveBeenCalledOnce();
 });

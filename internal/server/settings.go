@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/ryotarai/euphony/internal/session"
@@ -53,8 +52,16 @@ func shortcutsEqual(left, right string) bool {
 	identity := func(value string) string {
 		parts := strings.Split(strings.ToLower(value), "+")
 		key := parts[len(parts)-1]
-		modifiers := parts[:len(parts)-1]
-		sort.Strings(modifiers)
+		present := make(map[string]bool, len(parts)-1)
+		for _, modifier := range parts[:len(parts)-1] {
+			present[modifier] = true
+		}
+		modifiers := make([]string, 0, len(present))
+		for _, modifier := range []string{"ctrl", "alt", "shift", "meta"} {
+			if present[modifier] {
+				modifiers = append(modifiers, modifier)
+			}
+		}
 		return strings.Join(modifiers, "+") + "+" + key
 	}
 	return identity(left) == identity(right)

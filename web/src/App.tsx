@@ -86,10 +86,18 @@ function matchesWorkspaceFilter(
   statusFilters: string[],
   cwdFilters: string[],
 ) {
-  const status = sessionActivity(session);
-  return (
-    statusFilters.includes(status) ||
-    cwdFilters.includes(cwdFilterKey(status, session.cwd))
+  const statuses = [sessionActivity(session)];
+  if (
+    session.needsAttention &&
+    session.agentStatus &&
+    !statuses.includes(session.agentStatus)
+  ) {
+    statuses.push(session.agentStatus);
+  }
+  return statuses.some(
+    (status) =>
+      statusFilters.includes(status) ||
+      cwdFilters.includes(cwdFilterKey(status, session.cwd)),
   );
 }
 
@@ -504,7 +512,7 @@ export function App({
     };
   }, [focusedID, selectedIDs, sessions, settings.prefix]);
 
-  function selectSession(id: string, multiple: boolean) {
+  function selectSession(id: string, multiple: boolean, allowEmpty = false) {
     let nextIDs: string[];
     if (!multiple) {
       nextIDs = [id];
@@ -553,9 +561,12 @@ export function App({
             ...matching,
           ]),
         ];
-        if (nextIDs.length === 0) nextIDs = [id];
+        if (nextIDs.length === 0 && !allowEmpty) nextIDs = [id];
         filterSelectedIDsRef.current = new Set(matching);
-        const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+        const nextFocus =
+          focusedID && nextIDs.includes(focusedID)
+            ? focusedID
+            : nextIDs[0] ?? null;
         setStatusFilters(nextStatusFilters);
         setCwdFilters(nextCwdFilters);
         setSelectedIDs(nextIDs);
@@ -568,13 +579,18 @@ export function App({
         );
         return;
       }
-      nextIDs = selectedIDs.length === 1
+      nextIDs = selectedIDs.length === 1 && !allowEmpty
         ? selectedIDs
         : selectedIDs.filter((item) => item !== id);
     } else {
       nextIDs = [...selectedIDs, id];
     }
-    const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+    const nextFocus =
+      multiple && selectedIDs.includes(id)
+        ? focusedID && nextIDs.includes(focusedID)
+          ? focusedID
+          : nextIDs[0] ?? null
+        : id;
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
@@ -736,7 +752,8 @@ export function App({
   async function createSession(split = false, cwd?: string) {
     if (!api) return;
     try {
-      const created = await api.createSession("Terminal", cwd);
+      const focusedCWD = sessions?.find((session) => session.id === focusedID)?.cwd;
+      const created = await api.createSession("Terminal", cwd ?? focusedCWD);
       setSessions((current) => [...(current ?? []), created]);
       const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
       setSelectedIDs(nextIDs);
@@ -1051,6 +1068,7 @@ export function App({
                   active={focusedID === pane.id}
                   layoutVersion={panes.length}
                   tabShortcut={settings.paneTabShortcut}
+                  onDeselect={() => selectSession(pane.id, true, true)}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
                       pane,

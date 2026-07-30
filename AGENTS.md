@@ -31,3 +31,5 @@
   replace statuses such as `waiting` or `running` with an attention status.
 - Give rendered Markdown tables explicit cell padding and borders so dense
   transcript data remains legible.
+- Do not let agent lifecycle transitions reset a pane's user-selected Terminal
+  or Agent log source.

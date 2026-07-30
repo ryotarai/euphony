@@ -168,7 +168,7 @@ test("returns to token entry after an invalid token", async () => {
   expect(sessionStorage.getItem("euphony.token")).toBeNull();
 });
 
-test("creates a terminal without asking for a name, selects it, and deletes it", async () => {
+test("creates a terminal in the focused terminal cwd, selects it, and deletes it", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
@@ -192,7 +192,10 @@ test("creates a terminal without asking for a name, selects it, and deletes it",
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ name: "Terminal" }),
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/euphony",
+      }),
     }),
   );
   expect(await screen.findByRole("button", { name: "Select Claude" })).toHaveAttribute("aria-current", "true");
@@ -451,6 +454,128 @@ test("command-click selects multiple terminal panes and stores them in the URL",
   });
 });
 
+test("pane rail checkboxes remove selected terminals and allow an empty workspace", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), {
+    metaKey: true,
+  });
+  await screen.findByLabelText("Claude terminal pane");
+
+  await user.click(screen.getByRole("checkbox", { name: "Deselect Claude" }));
+
+  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  let parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1"]);
+  expect(parameters.get("focus")).toBe("session-1");
+
+  await user.click(screen.getByRole("checkbox", { name: "Deselect Codex" }));
+
+  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByText("No signal yet.")).toBeVisible();
+  parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual([]);
+  expect(parameters.has("focus")).toBe(false);
+});
+
+test("deselecting an unfocused pane preserves the current focus", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), {
+    metaKey: true,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Select Terminal" }), {
+    metaKey: true,
+  });
+  expect(screen.getByLabelText("Terminal pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("checkbox", {
+    name: "Deselect Claude",
+    hidden: true,
+  }));
+
+  expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Terminal pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  expect(new URLSearchParams(window.location.search).get("focus")).toBe(
+    "session-3",
+  );
+});
+
+test("deselecting a filter-owned unfocused pane preserves the current focus", async () => {
+  const fourthRunningSession = {
+    ...thirdRunningSession,
+    id: "session-4",
+    name: "Fourth",
+    cwd: "/workspace/fourth",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([
+      runningSession,
+      thirdRunningSession,
+      fourthRunningSession,
+    ]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", {
+    name: "Show all Running terminals",
+  }));
+  fireEvent.mouseDown(screen.getByLabelText("Fourth pane"));
+  expect(screen.getByLabelText("Fourth pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("checkbox", {
+    name: "Deselect Terminal",
+    hidden: true,
+  }));
+
+  expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Fourth pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  expect(new URLSearchParams(window.location.search).get("focus")).toBe(
+    "session-4",
+  );
+});
+
 test("passes the pane count to terminals when the topology changes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
@@ -536,6 +661,52 @@ test("a checked activity group removes a terminal after its status changes", asy
     expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
   });
   expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  vi.useRealTimers();
+});
+
+test("keeps the agent log selected when a focused agent starts waiting", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const waitingSession = {
+    ...runningSession,
+    agentStatus: "waiting",
+    needsAttention: true,
+  };
+  let sessionRequests = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (String(input).endsWith("/agent-log")) {
+      return jsonResponse({
+        agent: "codex",
+        sessionId: "agent-session-1",
+        entries: [],
+      });
+    }
+    if (String(input).endsWith("/acknowledge-attention") && init?.method === "POST") {
+      return jsonResponse({ ...waitingSession, needsAttention: false });
+    }
+    sessionRequests += 1;
+    return jsonResponse(
+      sessionRequests === 1
+        ? [runningSession, secondRunningSession]
+        : [waitingSession, secondRunningSession],
+    );
+  });
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Waiting terminals" }));
+  fireEvent.click(screen.getAllByRole("tab", { name: "Agent log" })[0]);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+
+  expect(screen.getAllByRole("tab", { name: "Agent log" })[0]).toHaveAttribute("data-active");
   vi.useRealTimers();
 });
 
@@ -1034,11 +1205,31 @@ test("tmux create and vertical split keys create the expected selection", async 
   fireEvent.keyDown(window, { key: "c" });
   expect(await screen.findByLabelText("created-c terminal pane")).toBeVisible();
   expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/euphony",
+      }),
+    }),
+  );
 
   fireEvent.keyDown(window, { key: "b", ctrlKey: true });
   fireEvent.keyDown(window, { key: "v" });
   expect(await screen.findByLabelText("created-v terminal pane")).toBeVisible();
   expect(screen.getByLabelText("created-c terminal pane")).toBeVisible();
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/shell",
+      }),
+    }),
+  );
   expect(new URLSearchParams(window.location.search).getAll("terminal")).toEqual([
     "created-c",
     "created-v",
