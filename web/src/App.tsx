@@ -3,6 +3,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -271,6 +272,8 @@ export function App({
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const commandListRef = useRef<HTMLDivElement>(null);
+  const scrollCommandSelectionRef = useRef(false);
   const prefixActiveRef = useRef(false);
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
@@ -514,6 +517,15 @@ export function App({
     const frame = window.requestAnimationFrame(() => commandInputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [commandOpen]);
+
+  useLayoutEffect(() => {
+    if (!scrollCommandSelectionRef.current) return;
+    scrollCommandSelectionRef.current = false;
+    const selectedItem = Array.from(
+      commandListRef.current?.querySelectorAll<HTMLElement>("[cmdk-item]") ?? [],
+    ).find((item) => item.getAttribute("data-value") === commandValue);
+    selectedItem?.scrollIntoView({ block: "nearest" });
+  }, [commandValue]);
 
   useEffect(() => {
     if (!sessions) return;
@@ -1139,7 +1151,10 @@ export function App({
     const start = currentIndex < 0 ? (offset > 0 ? -1 : 0) : currentIndex;
     const nextIndex =
       (start + offset + filteredQuickActions.length) % filteredQuickActions.length;
-    setCommandValue(filteredQuickActions[nextIndex].value);
+    const nextValue = filteredQuickActions[nextIndex].value;
+    if (nextValue === commandValue) return;
+    scrollCommandSelectionRef.current = true;
+    setCommandValue(nextValue);
   };
 
   const handleCommandKeyDown = (event: React.KeyboardEvent) => {
@@ -1302,7 +1317,7 @@ export function App({
             onValueChange={updateCommandQuery}
             placeholder="Terminal or status"
           />
-          <CommandList>
+          <CommandList ref={commandListRef}>
             <CommandEmpty>No matching actions.</CommandEmpty>
             {["Actions", "Terminals"].map((group) => {
               const actions = filteredQuickActions.filter(
