@@ -18,13 +18,17 @@ terminal creation falls back to the user's home directory.
 - A creation request without a `cwd` starts in `os.UserHomeDir()`, not the
   Euphony server process's working directory.
 - An explicitly supplied missing or non-directory `cwd` remains a validation
-  error. The home fallback applies only when no inherited directory is
-  available; it must not hide an invalid directory entered by the user.
+  error.
+- If an implicitly inherited `cwd` is no longer valid, `App` retries creation
+  once without a `cwd`, which invokes the backend home-directory default. This
+  retry must not hide an invalid directory entered by the user.
 
 ## Architecture
 
 `App` owns the focused terminal ID and loaded session metadata, so it derives
-the inherited `cwd` at the creation boundary and passes it to `ApiClient`.
+the inherited `cwd` at the creation boundary and passes it to `ApiClient`. It
+also knows whether that value was inherited or explicitly entered, allowing
+only an inherited `invalid_cwd` response to trigger one cwd-less retry.
 `Manager.Create` remains the authoritative backend default and resolves the
 home directory when the request omits `cwd`.
 
@@ -34,13 +38,17 @@ contract already distinguishes inherited creation from fallback creation.
 ## Error Handling
 
 If the backend cannot resolve the user's home directory, creation returns that
-resolution error through the existing request-error path. Explicit invalid
-directories retain the existing stable validation error.
+resolution error through the existing request-error path. An inherited
+`invalid_cwd` is retried once; any retry failure is shown through the same
+request-error path. Explicit invalid directories retain the existing stable
+validation error without a retry.
 
 ## Testing
 
 - React component tests verify that sidebar and prefix create/split actions
   send the focused terminal's literal `cwd`.
+- React component tests verify that an invalid inherited `cwd` retries without
+  a `cwd`, while an invalid explicitly entered directory does not retry.
 - A Go manager test changes the process working directory away from a
   test-specific home directory, creates a session without `cwd`, and verifies
   that metadata records the home directory.

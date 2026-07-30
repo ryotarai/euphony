@@ -205,6 +205,94 @@ test("creates a terminal in the focused terminal cwd, selects it, and deletes it
   });
 });
 
+test("falls back to home when the focused terminal cwd cannot be inherited", async () => {
+  const created = { ...plainTerminalSession, id: "created-home", cwd: "/home/me" };
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() =>
+      jsonResponse(
+        { code: "invalid_cwd", message: "Choose an existing working directory." },
+        400,
+      ),
+    )
+    .mockImplementationOnce(() => jsonResponse(created, 201));
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "New terminal" }));
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/euphony",
+      }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({ name: "Terminal" }),
+    }),
+  );
+  expect(await screen.findByText("created-home")).toBeVisible();
+});
+
+test("does not fall back when an explicit terminal cwd is invalid", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() =>
+      jsonResponse(
+        { code: "invalid_cwd", message: "Choose an existing working directory." },
+        400,
+      ),
+    );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByRole("button", { name: "Select Codex" });
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(
+    screen.getByRole("option", { name: /^New terminal in directory…/ }),
+  );
+  const cwd = screen.getByLabelText("Working directory");
+  await user.clear(cwd);
+  await user.type(cwd, "/workspace/missing");
+  await user.click(screen.getByRole("button", { name: "Create terminal" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Choose an existing working directory.",
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/workspace/missing",
+      }),
+    }),
+  );
+});
+
 test("opens Command-K and creates a terminal in the chosen directory", async () => {
   const created = { ...plainTerminalSession, id: "created", cwd: "/workspace/other" };
   const fetchMock = vi.spyOn(globalThis, "fetch");
