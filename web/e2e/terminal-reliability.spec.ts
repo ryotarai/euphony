@@ -19,6 +19,7 @@ async function clearSessions(page: Page) {
       paneTabShortcut: "Meta+L",
       sidebarWidth: 304,
       sidebarCollapsed: false,
+      terminalHistoryLimit: 1024 * 1024,
     },
   });
   const existing = await page.request.get("/api/sessions", {

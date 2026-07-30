@@ -707,6 +707,60 @@ func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
 	}
 }
 
+func TestSessionHistoryLimitRetainsNewestBytes(t *testing.T) {
+	running := &Session{
+		historyLimit: 5,
+		subscribers:  make(map[uint64]chan []byte),
+	}
+
+	running.publish([]byte("abc"))
+	running.publish([]byte("def"))
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if got := string(history); got != "bcdef" {
+		t.Fatalf("history = %q, want %q", got, "bcdef")
+	}
+}
+
+func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
+	running := &Session{
+		historyLimit: 0,
+		subscribers:  make(map[uint64]chan []byte),
+	}
+
+	running.publish([]byte("abc"))
+	running.publish([]byte("def"))
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if got := string(history); got != "abcdef" {
+		t.Fatalf("history = %q, want %q", got, "abcdef")
+	}
+}
+
+func TestUpdateSettingsTrimsHistoryForRunningSessions(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	running := &Session{
+		historyLimit: 10,
+		history:      []byte("0123456789"),
+		subscribers:  make(map[uint64]chan []byte),
+	}
+	manager.sessions["one"] = &entry{session: running}
+	settings := DefaultSettings()
+	settings.TerminalHistoryLimit = 4
+
+	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if got := string(history); got != "6789" {
+		t.Fatalf("history = %q, want %q", got, "6789")
+	}
+}
+
 func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

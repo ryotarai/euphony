@@ -28,12 +28,11 @@ type Session struct {
 	fileMu         sync.Mutex
 	outputMu       sync.Mutex
 	history        []byte
+	historyLimit   int
 	subscribers    map[uint64]chan []byte
 	nextSubscriber uint64
 	outputClosed   bool
 }
-
-const historyLimit = 1024 * 1024
 
 func (s *Session) Write(data []byte) (int, error) {
 	s.fileMu.Lock()
@@ -109,9 +108,7 @@ func (s *Session) publish(data []byte) {
 	chunk := append([]byte(nil), data...)
 	s.outputMu.Lock()
 	s.history = append(s.history, chunk...)
-	if len(s.history) > historyLimit {
-		s.history = append([]byte(nil), s.history[len(s.history)-historyLimit:]...)
-	}
+	s.trimHistoryLocked()
 	for id, output := range s.subscribers {
 		select {
 		case output <- chunk:
@@ -121,6 +118,19 @@ func (s *Session) publish(data []byte) {
 		}
 	}
 	s.outputMu.Unlock()
+}
+
+func (s *Session) setHistoryLimit(limit int) {
+	s.outputMu.Lock()
+	s.historyLimit = limit
+	s.trimHistoryLocked()
+	s.outputMu.Unlock()
+}
+
+func (s *Session) trimHistoryLocked() {
+	if s.historyLimit > 0 && len(s.history) > s.historyLimit {
+		s.history = append([]byte(nil), s.history[len(s.history)-s.historyLimit:]...)
+	}
 }
 
 func (s *Session) terminate() {

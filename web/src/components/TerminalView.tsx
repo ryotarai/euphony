@@ -13,6 +13,7 @@ export interface TerminalDriver {
   write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
   fit(): void;
+  setScrollback?(scrollback: number): void;
   getSelection(): string;
   clearSelection(): void;
   attachCustomKeyEventHandler?(handler: (event: KeyboardEvent) => boolean): void;
@@ -36,14 +37,21 @@ interface TerminalViewProps {
   active?: boolean;
   layoutVersion?: number;
   reconnectSignal?: number;
+  terminalHistoryLimit?: number;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
-  createTerminal?: () => TerminalDriver;
+  createTerminal?: (scrollback: number) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 
-function defaultTerminal(): TerminalDriver {
+const maxTerminalScrollback = 4294967295;
+
+export function terminalScrollback(historyLimit: number): number {
+  return historyLimit === 0 ? maxTerminalScrollback : historyLimit;
+}
+
+function defaultTerminal(scrollback: number): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
     cursorBlink: true,
@@ -52,6 +60,7 @@ function defaultTerminal(): TerminalDriver {
     fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
     fontSize: 14,
     lineHeight: 1.25,
+    scrollback,
     scrollSensitivity: 3,
     theme: {
       background: "#050505",
@@ -81,6 +90,9 @@ function defaultTerminal(): TerminalDriver {
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
+    setScrollback: (next) => {
+      terminal.options.scrollback = next;
+    },
     getSelection: () => terminal.getSelection(),
     clearSelection: () => terminal.clearSelection(),
     attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
@@ -132,6 +144,7 @@ export function TerminalView({
   active = true,
   layoutVersion = 1,
   reconnectSignal = 0,
+  terminalHistoryLimit = 1024 * 1024,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -155,7 +168,7 @@ export function TerminalView({
     let socket: WebSocketLike | undefined;
     let lastSize = "";
     let lastReportedCWD = session.cwd;
-    const terminal = createTerminal();
+    const terminal = createTerminal(terminalScrollback(terminalHistoryLimit));
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
@@ -290,6 +303,10 @@ export function TerminalView({
       if (terminalRef.current === terminal) terminalRef.current = null;
     };
   }, [api, createSocket, createTerminal, reconnectSignal, session.id]);
+
+  useEffect(() => {
+    terminalRef.current?.setScrollback?.(terminalScrollback(terminalHistoryLimit));
+  }, [terminalHistoryLimit]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

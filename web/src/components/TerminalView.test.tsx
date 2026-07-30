@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   fitTerminalIfVisible,
+  terminalScrollback,
   TerminalView,
   type TerminalDriver,
   type WebSocketLike,
@@ -61,6 +62,50 @@ test("does not fit xterm while its mounted tab panel is hidden", () => {
   panel.hidden = false;
   fitTerminalIfVisible(host, terminal);
   expect(terminal.fit).toHaveBeenCalledTimes(1);
+});
+
+test("maps finite and unlimited history limits to xterm scrollback rows", () => {
+  expect(terminalScrollback(1024 * 1024)).toBe(1048576);
+  expect(terminalScrollback(0)).toBe(4294967295);
+});
+
+test("updates scrollback without reconnecting the terminal", async () => {
+  const socket = new FakeSocket();
+  const setScrollback = vi.fn();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    setScrollback,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const createSocket = vi.fn(() => socket);
+  const props = {
+    session: runningSession,
+    api,
+    createTerminal: () => terminal,
+    createSocket,
+  };
+
+  const { rerender } = render(
+    <TerminalView {...props} terminalHistoryLimit={1024 * 1024} />,
+  );
+  await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(1));
+  setScrollback.mockClear();
+
+  rerender(<TerminalView {...props} terminalHistoryLimit={0} />);
+
+  expect(setScrollback).toHaveBeenCalledWith(4294967295);
+  expect(createSocket).toHaveBeenCalledTimes(1);
 });
 
 test("gets a ticket before connecting and relays terminal traffic", async () => {

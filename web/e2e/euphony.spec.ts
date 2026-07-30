@@ -12,6 +12,7 @@ async function clearSessions(page: Page) {
       paneTabShortcut: "Meta+L",
       sidebarWidth: 304,
       sidebarCollapsed: false,
+      terminalHistoryLimit: 1024 * 1024,
     },
   });
   const existing = await page.request.get("/api/sessions", {
@@ -777,7 +778,17 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.getByRole("button", { name: "Open settings" }).click();
   await page.getByLabel("Prefix").fill("Ctrl+A");
   await page.getByLabel("Pane tab toggle").fill("Ctrl+J");
+  await page.getByLabel("History buffer").fill("8");
   await page.getByRole("button", { name: "Save settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await expect(page.getByLabel("History buffer")).toHaveValue("8");
+  await page.getByRole("checkbox", { name: "Unlimited history" }).check();
+  await expect(page.getByLabel("History buffer")).toBeDisabled();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await expect(page.getByRole("checkbox", { name: "Unlimited history" })).toBeChecked();
+  await expect(page.getByLabel("History buffer")).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel" }).click();
   await page.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");

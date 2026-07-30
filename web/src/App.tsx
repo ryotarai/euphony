@@ -46,10 +46,18 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import type { Session, Settings } from "./types";
 
 const tokenKey = "euphony.token";
+const bytesPerMiB = 1024 * 1024;
+const maxHistoryMiB = 4095;
 interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
@@ -60,6 +68,7 @@ interface AppProps {
     layoutVersion: number,
     onConnectionChange: (sessionID: string, state: ConnectionState) => void,
     reconnectSignal: number,
+    terminalHistoryLimit: number,
   ) => ReactNode;
 }
 
@@ -68,7 +77,12 @@ const defaultSettings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 256,
   sidebarCollapsed: false,
+  terminalHistoryLimit: bytesPerMiB,
 };
+
+function historyLimitDraft(limit: number): string {
+  return String(limit === 0 ? 1 : limit / bytesPerMiB);
+}
 
 function sessionActivity(session: Session) {
   if (session.needsAttention) return "attention";
@@ -218,6 +232,7 @@ export function App({
     layoutVersion,
     onConnectionChange,
     reconnectSignal,
+    terminalHistoryLimit,
   ) => (
     <TerminalView
       key={session.id}
@@ -227,6 +242,7 @@ export function App({
       layoutVersion={layoutVersion}
       onConnectionChange={onConnectionChange}
       reconnectSignal={reconnectSignal}
+      terminalHistoryLimit={terminalHistoryLimit}
     />
   ),
 }: AppProps) {
@@ -245,8 +261,14 @@ export function App({
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
   );
+  const [terminalHistoryLimitDraft, setTerminalHistoryLimitDraft] = useState(
+    historyLimitDraft(settings.terminalHistoryLimit),
+  );
+  const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
+    settings.terminalHistoryLimit === 0,
+  );
   const [settingsError, setSettingsError] = useState<{
-    field: "prefix" | "paneTabShortcut";
+    field: "prefix" | "paneTabShortcut" | "terminalHistoryLimit";
     message: string;
   } | null>(null);
   const [prefixActive, setPrefixActive] = useState(false);
@@ -279,6 +301,9 @@ export function App({
       if (!active) return;
       setSettings(loaded);
       setPrefixDraft(loaded.prefix);
+      setPaneTabShortcutDraft(loaded.paneTabShortcut);
+      setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
+      setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -846,6 +871,8 @@ export function App({
   function openSettings() {
     setPrefixDraft(settings.prefix);
     setPaneTabShortcutDraft(settings.paneTabShortcut);
+    setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
+    setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setSettingsError(null);
     setSettingsOpen(true);
   }
@@ -875,7 +902,28 @@ export function App({
       });
       return;
     }
-    await persistSettings({ ...settings, prefix, paneTabShortcut });
+    const terminalHistoryMiB = Number(terminalHistoryLimitDraft);
+    if (
+      !unlimitedTerminalHistory &&
+      (!Number.isInteger(terminalHistoryMiB) ||
+        terminalHistoryMiB < 1 ||
+        terminalHistoryMiB > maxHistoryMiB)
+    ) {
+      setSettingsError({
+        field: "terminalHistoryLimit",
+        message: "Enter a whole number from 1 to 4095 MiB.",
+      });
+      return;
+    }
+    const terminalHistoryLimit = unlimitedTerminalHistory
+      ? 0
+      : terminalHistoryMiB * bytesPerMiB;
+    await persistSettings({
+      ...settings,
+      prefix,
+      paneTabShortcut,
+      terminalHistoryLimit,
+    });
     setSettingsOpen(false);
   }
 
@@ -1100,6 +1148,7 @@ export function App({
                       paneLayoutVersion,
                       handleConnectionChange,
                       reconnectSignals[pane.id] ?? 0,
+                      settings.terminalHistoryLimit,
                     )
                   }
                 />
@@ -1235,11 +1284,12 @@ export function App({
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure terminal workspace shortcuts.
+              Configure workspace shortcuts and terminal history.
             </DialogDescription>
           </DialogHeader>
           <form
             className="settings-form"
+            noValidate
             onSubmit={(event) => void saveSettings(event)}
           >
             <FieldGroup>
@@ -1271,6 +1321,43 @@ export function App({
                   Switch the focused pane between Terminal and Agent log.
                 </FieldDescription>
                 {settingsError?.field === "paneTabShortcut" && (
+                  <FieldError>{settingsError.message}</FieldError>
+                )}
+              </Field>
+              <Field data-invalid={settingsError?.field === "terminalHistoryLimit"}>
+                <FieldLabel htmlFor="terminal-history-limit">
+                  History buffer
+                </FieldLabel>
+                <InputGroup>
+                  <InputGroupInput
+                    id="terminal-history-limit"
+                    type="number"
+                    min={1}
+                    max={maxHistoryMiB}
+                    step={1}
+                    value={terminalHistoryLimitDraft}
+                    onChange={(event) => setTerminalHistoryLimitDraft(event.target.value)}
+                    disabled={unlimitedTerminalHistory}
+                    aria-invalid={settingsError?.field === "terminalHistoryLimit"}
+                  />
+                  <InputGroupAddon align="inline-end">MiB</InputGroupAddon>
+                </InputGroup>
+                <Field orientation="horizontal">
+                  <FieldLabel htmlFor="unlimited-terminal-history">
+                    Unlimited history
+                  </FieldLabel>
+                  <Checkbox
+                    id="unlimited-terminal-history"
+                    checked={unlimitedTerminalHistory}
+                    onCheckedChange={(checked) =>
+                      setUnlimitedTerminalHistory(Boolean(checked))}
+                  />
+                </Field>
+                <FieldDescription>
+                  Controls scrolling and reconnect history. Unlimited history can
+                  increase memory use.
+                </FieldDescription>
+                {settingsError?.field === "terminalHistoryLimit" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>

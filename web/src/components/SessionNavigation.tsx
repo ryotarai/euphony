@@ -357,6 +357,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     paneTabShortcut: "Meta+L",
     sidebarWidth: defaultSidebarWidth,
     sidebarCollapsed: false,
+    terminalHistoryLimit: 1024 * 1024,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

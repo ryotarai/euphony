@@ -55,14 +55,26 @@ type AgentUpdate struct {
 }
 
 type Settings struct {
-	Prefix           string `json:"prefix"`
-	PaneTabShortcut  string `json:"paneTabShortcut"`
-	SidebarWidth     int    `json:"sidebarWidth"`
-	SidebarCollapsed bool   `json:"sidebarCollapsed"`
+	Prefix               string `json:"prefix"`
+	PaneTabShortcut      string `json:"paneTabShortcut"`
+	SidebarWidth         int    `json:"sidebarWidth"`
+	SidebarCollapsed     bool   `json:"sidebarCollapsed"`
+	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
 }
 
+const (
+	DefaultTerminalHistoryLimit = 1024 * 1024
+	MinTerminalHistoryLimit     = 1024 * 1024
+	MaxTerminalHistoryLimit     = 4095 * 1024 * 1024
+)
+
 func DefaultSettings() Settings {
-	return Settings{Prefix: "Ctrl+B", PaneTabShortcut: "Meta+L", SidebarWidth: 304}
+	return Settings{
+		Prefix:               "Ctrl+B",
+		PaneTabShortcut:      "Meta+L",
+		SidebarWidth:         304,
+		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
+	}
 }
 
 type entry struct {
@@ -252,12 +264,13 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 	return &entry{
 		metadata: metadata,
 		session: &Session{
-			id:          metadata.ID,
-			command:     command,
-			terminal:    terminal,
-			waitDone:    make(chan struct{}),
-			pumpDone:    make(chan struct{}),
-			subscribers: make(map[uint64]chan []byte),
+			id:           metadata.ID,
+			command:      command,
+			terminal:     terminal,
+			waitDone:     make(chan struct{}),
+			pumpDone:     make(chan struct{}),
+			historyLimit: m.Settings().TerminalHistoryLimit,
+			subscribers:  make(map[uint64]chan []byte),
 		},
 	}, nil
 }
@@ -502,6 +515,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 		}
 	}
 	m.settings = settings
+	for _, item := range m.sessions {
+		item.session.setHistoryLimit(settings.TerminalHistoryLimit)
+	}
 	return nil
 }
 

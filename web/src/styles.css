@@ -1676,6 +1676,10 @@ input:focus-visible,
   min-height: 2.5rem;
 }
 
+.settings-form [data-slot="input-group"] {
+  min-height: 2.5rem;
+}
+
 .create-terminal-form > label {
   color: var(--muted-foreground);
   font-size: 0.72rem;

@@ -109,12 +109,13 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
-		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed {
+		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed ||
+		defaults.TerminalHistoryLimit != 1048576 {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 	want := Settings{
 		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
-		SidebarWidth: 420, SidebarCollapsed: true,
+		SidebarWidth: 420, SidebarCollapsed: true, TerminalHistoryLimit: 0,
 	}
 	if err := store.SaveSettings(context.Background(), want); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
@@ -172,7 +173,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 	}
 	want := Settings{
 		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L",
-		SidebarWidth: 420, SidebarCollapsed: true,
+		SidebarWidth: 420, SidebarCollapsed: true, TerminalHistoryLimit: 1048576,
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)

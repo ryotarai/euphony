@@ -26,6 +26,7 @@ export interface Settings {
   paneTabShortcut: string;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  terminalHistoryLimit: number;
 }
 
 export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";

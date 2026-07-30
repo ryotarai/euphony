@@ -22,6 +22,7 @@ const settings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
+  terminalHistoryLimit: 1024 * 1024,
 };
 
 const sessions: Session[] = [
