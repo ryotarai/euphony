@@ -122,6 +122,31 @@ test("selecting a mobile session closes the drawer", async () => {
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 
+test("opening settings from mobile closes the terminal drawer", async () => {
+  useMobileViewport();
+  const onOpenSettings = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenSettings={onOpenSettings}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Open terminal menu" }));
+  const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
+  await user.click(within(drawer).getByRole("button", { name: "Open settings" }));
+
+  expect(onOpenSettings).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
+});
+
 test("groups terminals by status then cwd and exposes group selection controls", async () => {
   const onStatusFilter = vi.fn();
   const onStatusSelect = vi.fn();

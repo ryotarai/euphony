@@ -241,7 +241,7 @@ function SessionNavigationContent({
   resizing: boolean;
   setResizing(resizing: boolean): void;
 }) {
-  const { state } = useSidebar();
+  const { isMobile, setOpenMobile, state } = useSidebar();
   const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
 
@@ -283,6 +283,11 @@ function SessionNavigationContent({
     props.onSettingsChange?.({ ...settings, sidebarWidth: next });
   };
 
+  const openSettings = () => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenSettings?.();
+  };
+
   return (
     <>
       <Sidebar
@@ -312,7 +317,7 @@ function SessionNavigationContent({
               <SidebarMenuButton
                 tooltip="Settings"
                 aria-label="Open settings"
-                onClick={props.onOpenSettings}
+                onClick={openSettings}
               >
                 <Settings2Icon aria-hidden="true" />
                 <span>Settings</span>
