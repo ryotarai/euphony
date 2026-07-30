@@ -155,6 +155,18 @@ func TestMonitorTerminalWebSocketReturnsPingError(t *testing.T) {
 	}
 }
 
+func TestMonitorTerminalWebSocketReturnsPingTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := monitorTerminalWebSocket(ctx, 10*time.Millisecond, 10*time.Millisecond, func(pingCtx context.Context) error {
+		<-pingCtx.Done()
+		return pingCtx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("monitorTerminalWebSocket() error = %v, want %v", err, context.DeadlineExceeded)
+	}
+}
+
 func TestMonitorTerminalWebSocketStopsWithoutErrorWhenParentIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	pingStarted := make(chan struct{})
