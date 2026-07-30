@@ -2,10 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 
 const requestedPort = process.env.EUPHONY_E2E_PORT;
-const e2ePort = requestedPort && /^\d+$/.test(requestedPort)
-  ? requestedPort
-  : "18080";
-const claudeProjectsRoot = `/tmp/euphony-e2e-${e2ePort}-claude/projects`;
+const e2ePort = requestedPort && /^\d+$/.test(requestedPort) ? requestedPort : "18080";
+const claudeConfigDir = `/tmp/euphony-e2e-${e2ePort}-claude`;
 
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
@@ -84,6 +82,9 @@ function claudeTranscriptLine(index: number) {
   const table = index === 40
     ? "\n\n| Command | State | Artifact |\n| --- | --- | --- |\n| go test ./... | Passed | `very-wide-unbroken-table-value-that-stays-readable-with-horizontal-scrolling-0123456789` |"
     : "";
+  const diagram = index === 40
+    ? "\n\n```mermaid\nflowchart LR\n  Plan[Plan] --> Build[Build]\n  Build --> Verify[Verify]\n```"
+    : "";
   return JSON.stringify({
     type: "assistant",
     timestamp: `2026-07-30T01:${String(index).padStart(2, "0")}:00Z`,
@@ -91,7 +92,7 @@ function claudeTranscriptLine(index: number) {
       role: "assistant",
       content: [{
         type: "text",
-        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}`,
+        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}${diagram}`,
       }],
     },
   }) + "\n";
@@ -202,9 +203,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await clearSessions(page);
   const terminal = await createSession(page, "Log stream", "/tmp");
   const sessionID = `e2e-${terminal.id}`;
-  const transcriptDirectory = `${claudeProjectsRoot}/euphony`;
-  const transcriptPath = `${transcriptDirectory}/${sessionID}.jsonl`;
-  await mkdir(transcriptDirectory, { recursive: true });
+  const transcriptPath = `${claudeConfigDir}/projects/euphony/${sessionID}.jsonl`;
+  await mkdir(`${claudeConfigDir}/projects/euphony`, { recursive: true });
   await writeFile(
     transcriptPath,
     Array.from({ length: 40 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
@@ -240,6 +240,10 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   const tableScroll = page.locator(".agent-log-table-scroll");
   await expect(tableScroll).toHaveCSS("overflow-x", "auto");
   expect(await tableScroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const diagram = page.getByRole("figure", { name: "Mermaid diagram" });
+  await expect(diagram.locator("svg")).toBeVisible();
+  await expect(diagram).toHaveCSS("overflow-x", "auto");
+  await page.screenshot({ path: testInfo.outputPath("agent-log-mermaid.png") });
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
@@ -785,9 +789,37 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
+test("shows recent Quick Actions first in a taller dialog", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Left");
+  const right = await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const dialog = page.getByRole("dialog", { name: "Quick Actions" });
+  await expect(dialog).toBeVisible();
+  const initialBounds = await dialog.boundingBox();
+  expect(initialBounds?.height).toBeGreaterThan(500);
+
+  await page.getByRole("option", { name: /^Right/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("Meta+K");
+
+  const groups = page.locator("[cmdk-group]");
+  await expect(groups.first().locator("[cmdk-group-heading]")).toHaveText("Recent");
+  const recentRight = groups.first().getByRole("option", { name: /^Right/ });
+  await expect(recentRight).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("option", { name: /^Right/ })).toHaveCount(1);
+  expect(
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null"),
+    ),
+  ).toEqual([`session:${right.id}`]);
+});
+
 test("keeps the Quick Actions keyboard selection in the scroll viewport", async ({ page }) => {
   await clearSessions(page);
-  for (let index = 1; index <= 6; index += 1) {
+  for (let index = 1; index <= 12; index += 1) {
     await createSession(page, `Terminal ${index}`);
   }
 
@@ -798,11 +830,11 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
     commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
   ).toBe(true);
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 14; index += 1) {
     await page.keyboard.press("ArrowDown");
   }
 
-  const lastTerminal = page.getByRole("option", { name: /^Terminal 6/ });
+  const lastTerminal = page.getByRole("option", { name: /^Terminal 12/ });
   await expect(lastTerminal).toHaveAttribute("aria-selected", "true");
   await expect.poll(() =>
     lastTerminal.evaluate((element) => {
@@ -816,7 +848,7 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
   const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
   expect(scrolledDown).toBeGreaterThan(0);
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 14; index += 1) {
     await page.keyboard.press("ArrowUp");
   }
 

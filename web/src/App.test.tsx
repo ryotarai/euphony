@@ -530,6 +530,121 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", as
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
 });
 
+test("shows the five most recently executed Quick Actions first without duplicates", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  const runQuickAction = async (name: RegExp) => {
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await user.click(await screen.findByRole("option", { name }));
+  };
+
+  await runQuickAction(/^New terminal in directory…/);
+  await user.keyboard("{Escape}");
+  await runQuickAction(/^Show only Running terminals/);
+  await runQuickAction(/^Show only Waiting terminals/);
+  await runQuickAction(/^Implement v0\.2/);
+  await runQuickAction(/^Needs approval/);
+  await runQuickAction(/^Fix API/);
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const recentHeading = await screen.findByText("Recent");
+  const recentGroup = recentHeading.closest("[cmdk-group]");
+  expect(recentGroup).not.toBeNull();
+  expect(
+    within(recentGroup as HTMLElement)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual([
+    expect.stringMatching(/^Fix API/),
+    expect.stringMatching(/^Needs approval/),
+    expect.stringMatching(/^Implement v0\.2/),
+    expect.stringMatching(/^Show only Waiting terminals/),
+    expect.stringMatching(/^Show only Running terminals/),
+  ]);
+  expect(
+    within(recentGroup as HTMLElement).queryByRole("option", {
+      name: /^New terminal in directory…/,
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getAllByRole("option", { name: /^New terminal in directory…/ }),
+  ).toHaveLength(1);
+  expect(screen.getAllByRole("option", { name: /^Fix API/ })).toHaveLength(1);
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null")).toEqual([
+    "session:session-3",
+    "session:session-2",
+    "session:session-1",
+    "status:waiting",
+    "status:running",
+  ]);
+});
+
+test("discards unavailable recent Quick Actions and searches the full catalog", async () => {
+  localStorage.setItem(
+    "euphony.recentQuickActions",
+    JSON.stringify([
+      "status:exited",
+      "session:missing",
+      "session:session-2",
+      "session:session-2",
+      42,
+    ]),
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([
+      runningSession,
+      secondRunningSession,
+      {
+        ...plainTerminalSession,
+        id: "session-exited",
+        state: "exited",
+      },
+    ]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const recentHeading = await screen.findByText("Recent");
+  const recentGroup = recentHeading.closest("[cmdk-group]");
+  expect(recentGroup).not.toBeNull();
+  expect(within(recentGroup as HTMLElement).getAllByRole("option")).toHaveLength(1);
+  expect(
+    within(recentGroup as HTMLElement).getByRole("option", { name: /^Needs approval/ }),
+  ).toBeVisible();
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null")).toEqual([
+    "session:session-2",
+  ]);
+
+  await user.type(screen.getByPlaceholderText("Terminal or status"), "new terminal");
+  expect(screen.queryByText("Recent")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("option", { name: /^New terminal in directory…/ }),
+  ).toBeVisible();
+});
+
 test("scrolls the Quick Actions keyboard selection into view", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
