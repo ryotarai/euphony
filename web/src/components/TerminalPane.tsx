@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FileClockIcon, MessageSquareTextIcon, TerminalSquareIcon } from "lucide-react";
+import {
+  FileClockIcon,
+  GitCompareArrowsIcon,
+  MessageSquareTextIcon,
+  TerminalSquareIcon,
+} from "lucide-react";
 import type { ApiClient } from "../api";
 import { isEditableTarget, matchesPrefix } from "../keybindings";
 import type { AnnotationSession, Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
 import { AnnotationView } from "./AnnotationView";
+import { GitChangesView } from "./GitChangesView";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,7 +27,7 @@ interface TerminalPaneProps {
   renderTerminal(layoutVersion: number, active: boolean, sourceVisible: boolean): ReactNode;
 }
 
-type PaneSource = "terminal" | "agent-log" | "annotation";
+type PaneSource = "terminal" | "agent-log" | "changes" | "annotation";
 
 export function TerminalPane({
   session,
@@ -41,7 +47,12 @@ export function TerminalPane({
   const annotationIDRef = useRef<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const changeSource = (next: string | null) => {
-    if (next !== "terminal" && next !== "agent-log" && next !== "annotation") return;
+    if (
+      next !== "terminal" &&
+      next !== "agent-log" &&
+      next !== "changes" &&
+      next !== "annotation"
+    ) return;
     if (next === "annotation" && !annotation) return;
     if (source !== "terminal" && next === "terminal") {
       setFitVersion((current) => current + 1);
@@ -83,8 +94,8 @@ export function TerminalPane({
       event.preventDefault();
       event.stopPropagation();
       const sources: PaneSource[] = annotation
-        ? ["terminal", "agent-log", "annotation"]
-        : ["terminal", "agent-log"];
+        ? ["terminal", "agent-log", "changes", "annotation"]
+        : ["terminal", "agent-log", "changes"];
       const index = sources.indexOf(source);
       changeSource(sources[(index + 1) % sources.length]);
     };
@@ -115,6 +126,13 @@ export function TerminalPane({
           >
             <FileClockIcon aria-hidden="true" />
           </TabsTrigger>
+          <TabsTrigger
+            value="changes"
+            aria-label="Changes"
+            title={`Changes (${tabShortcut})`}
+          >
+            <GitCompareArrowsIcon aria-hidden="true" />
+          </TabsTrigger>
           {annotation && (
             <TabsTrigger
               value="annotation"
@@ -140,7 +158,9 @@ export function TerminalPane({
               ? "Terminal"
               : source === "agent-log"
                 ? `${agentLabel} log`
-                : annotation?.filename ?? "Annotation"}
+                : source === "changes"
+                  ? "Git changes"
+                  : annotation?.filename ?? "Annotation"}
           </span>
           <Checkbox
             className="terminal-tab-selection"
@@ -174,6 +194,17 @@ export function TerminalPane({
           api={api}
           active={source === "agent-log"}
           fontSize={agentLogFontSize}
+        />
+      </TabsContent>
+      <TabsContent
+        className="terminal-tab-content"
+        value="changes"
+        keepMounted
+      >
+        <GitChangesView
+          session={session}
+          api={api}
+          active={source === "changes"}
         />
       </TabsContent>
       {annotation && (

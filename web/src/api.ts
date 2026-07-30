@@ -11,6 +11,7 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
+  GitChangesSnapshot,
 } from "./types";
 
 export class ApiError extends Error {
@@ -175,6 +176,15 @@ export class ApiClient {
       log: (await response.json()) as AgentTranscript,
       etag: response.headers.get("ETag") ?? "",
     };
+  }
+
+  getGitChanges(id: string, path?: string): Promise<GitChangesSnapshot> {
+    const query = new URLSearchParams();
+    if (path) query.set("path", path);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request(
+      `/api/sessions/${encodeURIComponent(id)}/git-changes${suffix}`,
+    );
   }
 
   getSettings(): Promise<Settings> {

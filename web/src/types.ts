@@ -131,3 +131,50 @@ export interface AgentLogResult {
   log: AgentTranscript | null;
   etag: string;
 }
+
+export type GitChangeStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked";
+
+export interface GitDiffLine {
+  kind: "context" | "addition" | "deletion" | "meta";
+  oldLine?: number;
+  newLine?: number;
+  content: string;
+}
+
+export interface GitDiffHunk {
+  header: string;
+  oldStart: number;
+  newStart: number;
+  lines: GitDiffLine[];
+}
+
+export interface GitChangedFile {
+  path: string;
+  previousPath?: string;
+  status: GitChangeStatus;
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+  truncated?: boolean;
+  statsTruncated?: boolean;
+  patchLoaded?: boolean;
+  hunks: GitDiffHunk[];
+}
+
+export interface GitChangesSnapshot {
+  repoRoot: string;
+  branch: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  additions: number;
+  deletions: number;
+  truncated?: boolean;
+  statsTruncated?: boolean;
+  files: GitChangedFile[];
+}

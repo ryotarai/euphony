@@ -2517,7 +2517,7 @@ export function App({
                   aria-invalid={settingsError?.field === "paneTabShortcut"}
                 />
                 <FieldDescription>
-                  Switch the focused pane between Terminal and Agent log.
+                  Cycle the focused pane through Terminal, Agent log, and Changes.
                 </FieldDescription>
                 {settingsError?.field === "paneTabShortcut" && (
                   <FieldError>{settingsError.message}</FieldError>

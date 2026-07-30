@@ -17,6 +17,15 @@ const session: Session = {
 function paneAPI(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
+    getGitChanges: vi.fn().mockResolvedValue({
+      repoRoot: "/repo",
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      additions: 0,
+      deletions: 0,
+      files: [],
+    }),
     getCurrentAnnotation: vi.fn().mockResolvedValue(null),
     completeAnnotation: vi.fn().mockResolvedValue({
       annotationId: "annotation-1",
@@ -57,6 +66,11 @@ test("switches pane sources while keeping the terminal mounted", async () => {
   expect(screen.getByRole("region", { name: "Agent log" })).toHaveStyle({
     "--agent-log-font-size": "17px",
   });
+
+  await user.click(screen.getByRole("tab", { name: "Changes" }));
+  expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
+  expect(await screen.findByRole("region", { name: "Git changes" })).toBeVisible();
+  expect(screen.getByLabelText("live terminal")).not.toBeVisible();
 
   await user.click(screen.getByRole("tab", { name: "Terminal" }));
   expect(screen.getByLabelText("live terminal")).toBeVisible();
@@ -167,6 +181,9 @@ test("toggles the active pane source with its configured shortcut", () => {
 
   fireEvent.keyDown(window, { key: "l", metaKey: true });
   expect(screen.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
+
+  fireEvent.keyDown(window, { key: "l", metaKey: true });
+  expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
 
   fireEvent.keyDown(window, { key: "l", metaKey: true });
   expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
