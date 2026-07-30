@@ -61,6 +61,8 @@ func New(config Config) (*Server, error) {
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	public.HandleFunc("GET /api/v1/status", v1Status)
+	public.HandleFunc("GET /api/v1/schema", v1Schema)
 	public.HandleFunc("GET /api/sessions/{id}/terminal", server.terminal)
 
 	protected := http.NewServeMux()

@@ -1,0 +1,196 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Euphony Automation API",
+    "version": "v1",
+    "description": "Terminal-first automation API exposed over TCP and a local Unix socket."
+  },
+  "paths": {
+    "/api/v1/status": {
+      "get": {
+        "operationId": "getStatus",
+        "responses": {
+          "200": {
+            "description": "Server status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schema": {
+      "get": {
+        "operationId": "getSchema",
+        "responses": {
+          "200": {
+            "description": "Raw OpenAPI 3.1 document",
+            "content": {
+              "application/vnd.oai.openapi+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["ok", "result"],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "result": {}
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["ok", "error"],
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "$ref": "#/components/schemas/APIError"
+          }
+        }
+      },
+      "APIError": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {}
+        }
+      },
+      "Terminal": {
+        "type": "object",
+        "required": ["id", "name", "state", "cwd", "createdAt"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": ["starting", "running", "exited", "failed"]
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "repoRoot": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "agentStatus": {
+            "type": "string"
+          },
+          "needsAttention": {
+            "type": "boolean"
+          },
+          "agentTitle": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Selection": {
+        "type": "object",
+        "required": [
+          "terminalIds",
+          "manualTerminalIds",
+          "pinnedTerminalIds",
+          "filters",
+          "revision"
+        ],
+        "properties": {
+          "terminalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "manualTerminalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTerminalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "focusedTerminalId": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": ["sequence", "occurredAt", "type", "data"],
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string"
+          },
+          "data": {}
+        }
+      },
+      "TerminalFrame": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["history", "history_end", "output", "exit"]
+          },
+          "dataBase64": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "exitCode": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}
