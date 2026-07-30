@@ -1329,7 +1329,7 @@ input:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  padding: 0.125rem 0 0.25rem 1.25rem;
+  padding: 0.125rem 0 0.25rem 0.5rem;
 }
 
 .cwd-heading {
@@ -1367,8 +1367,8 @@ input:focus-visible,
 }
 
 .cwd-terminal-list {
-  width: calc(100% - 1.25rem);
-  margin-left: 1.25rem;
+  width: calc(100% - 0.5rem);
+  margin-left: 0.5rem;
 }
 
 .session-group {
