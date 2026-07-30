@@ -1,6 +1,9 @@
 import type {
   AgentLogResult,
   AgentTranscript,
+  AnnotationComment,
+  AnnotationResult,
+  AnnotationSession,
   APIEvent,
   ApiErrorBody,
   ReplaceSelectionRequest,
@@ -56,6 +59,25 @@ export class ApiClient {
     return this.v1Request(`/api/v1/terminals/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  }
+
+  getCurrentAnnotation(terminalID: string): Promise<AnnotationSession | null> {
+    return this.v1Request<{ annotation: AnnotationSession | null }>(
+      `/api/v1/terminals/${encodeURIComponent(terminalID)}/annotation`,
+    ).then((result) => result.annotation);
+  }
+
+  completeAnnotation(
+    annotationID: string,
+    comments: AnnotationComment[],
+  ): Promise<AnnotationResult> {
+    return this.v1Request(
+      `/api/v1/annotations/${encodeURIComponent(annotationID)}/complete`,
+      {
+        method: "POST",
+        body: JSON.stringify({ comments }),
+      },
+    );
   }
 
   getSelection(): Promise<SelectionSnapshot> {

@@ -14,13 +14,25 @@ const session: Session = {
   createdAt: "2026-07-30T01:00:00Z",
 };
 
+function paneAPI(overrides: Partial<ApiClient> = {}): ApiClient {
+  return {
+    getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
+    getCurrentAnnotation: vi.fn().mockResolvedValue(null),
+    completeAnnotation: vi.fn().mockResolvedValue({
+      annotationId: "annotation-1",
+      comments: [],
+    }),
+    ...overrides,
+  } as unknown as ApiClient;
+}
+
 test("switches pane sources while keeping the terminal mounted", async () => {
   const user = userEvent.setup();
   const layoutVersions: number[] = [];
   render(
     <TerminalPane
       session={session}
-      api={{ getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }) } as unknown as ApiClient}
+      api={paneAPI()}
       active
       layoutVersion={2}
       tabShortcut="Meta+L"
@@ -50,7 +62,7 @@ test("switches pane sources while keeping the terminal mounted", async () => {
 
 test("keeps an independent selected source for each pane instance", async () => {
   const user = userEvent.setup();
-  const api = { getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }) } as unknown as ApiClient;
+  const api = paneAPI();
   render(
     <>
       <TerminalPane
@@ -81,9 +93,7 @@ test("keeps an independent selected source for each pane instance", async () => 
 });
 
 test("shows attention in the pane rail only for flagged sessions", () => {
-  const api = {
-    getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
-  } as unknown as ApiClient;
+  const api = paneAPI();
   render(
     <>
       <TerminalPane
@@ -125,7 +135,7 @@ test("refreshes a visible log even when its pane is not focused", async () => {
   render(
     <TerminalPane
       session={session}
-      api={{ getAgentLog } as unknown as ApiClient}
+      api={paneAPI({ getAgentLog })}
       active={false}
       layoutVersion={1}
       tabShortcut="Meta+L"
@@ -138,9 +148,7 @@ test("refreshes a visible log even when its pane is not focused", async () => {
   expect(getAgentLog).toHaveBeenCalledWith("terminal-1", undefined);
 });
 test("toggles the active pane source with its configured shortcut", () => {
-  const api = {
-    getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
-  } as unknown as ApiClient;
+  const api = paneAPI();
   render(
     <TerminalPane
       session={session}
@@ -161,9 +169,7 @@ test("toggles the active pane source with its configured shortcut", () => {
 });
 
 test("uses a custom shortcut only on the active pane", () => {
-  const api = {
-    getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
-  } as unknown as ApiClient;
+  const api = paneAPI();
   render(
     <>
       <TerminalPane
@@ -196,9 +202,7 @@ test("uses a custom shortcut only on the active pane", () => {
 });
 
 test("does not toggle while a regular input is being edited", () => {
-  const api = {
-    getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
-  } as unknown as ApiClient;
+  const api = paneAPI();
   render(
     <>
       <input aria-label="Regular input" />
@@ -227,7 +231,7 @@ test("deselects the terminal from the pane rail", async () => {
   render(
     <TerminalPane
       session={session}
-      api={{ getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }) } as unknown as ApiClient}
+      api={paneAPI()}
       active
       layoutVersion={1}
       tabShortcut="Meta+L"
@@ -244,4 +248,50 @@ test("deselects the terminal from the pane rail", async () => {
   await user.click(checkbox);
 
   expect(onDeselect).toHaveBeenCalledOnce();
+});
+
+test("discovers a new annotation as a third tab and selects it", async () => {
+  const getCurrentAnnotation = vi.fn()
+    .mockResolvedValueOnce(null)
+    .mockResolvedValueOnce({
+      id: "annotation-1",
+      terminalId: "terminal-1",
+      filename: "review.md",
+      format: "markdown",
+      content: "# Review",
+      createdAt: "2026-07-30T00:00:00Z",
+    });
+  const api = paneAPI({ getCurrentAnnotation });
+  const { rerender } = render(
+    <TerminalPane
+      session={session}
+      api={api}
+      active
+      layoutVersion={1}
+      annotationRevision={0}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div aria-label="live terminal">terminal</div>}
+    />,
+  );
+  expect(await screen.findByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
+  expect(screen.queryByRole("tab", { name: "Annotation" })).not.toBeInTheDocument();
+
+  rerender(
+    <TerminalPane
+      session={session}
+      api={api}
+      active
+      layoutVersion={1}
+      annotationRevision={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div aria-label="live terminal">terminal</div>}
+    />,
+  );
+
+  expect(await screen.findByRole("tab", { name: "Annotation" })).toHaveAttribute("data-active");
+  expect(screen.getByRole("heading", { name: "Review" })).toBeVisible();
+  expect(screen.getByLabelText("live terminal")).not.toBeVisible();
+  expect(document.querySelector(".agent-log-view")).toBeInTheDocument();
 });

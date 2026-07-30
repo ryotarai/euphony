@@ -69,6 +69,31 @@ export interface APIEvent<T = unknown> {
   data: T;
 }
 
+export type AnnotationFormat = "markdown" | "html";
+export type AnnotationCommentKind = "selection" | "global";
+
+export interface AnnotationSession {
+  id: string;
+  terminalId: string;
+  filename: string;
+  format: AnnotationFormat;
+  content: string;
+  createdAt: string;
+}
+
+export interface AnnotationComment {
+  kind: AnnotationCommentKind;
+  body: string;
+  quote?: string;
+  startOffset?: number;
+  endOffset?: number;
+}
+
+export interface AnnotationResult {
+  annotationId: string;
+  comments: AnnotationComment[];
+}
+
 export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";
 
 export interface AgentLogEntry {

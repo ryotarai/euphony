@@ -1,5 +1,5 @@
 import { ApiClient } from "./api";
-import type { SelectionSnapshot } from "./types";
+import type { AnnotationSession, SelectionSnapshot } from "./types";
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
@@ -113,4 +113,56 @@ test("parses split NDJSON event chunks without losing records", async () => {
   });
 
   expect(events).toEqual(["terminal.created", "selection.changed"]);
+});
+
+test("reads and completes a terminal annotation through v1", async () => {
+  const annotation: AnnotationSession = {
+    id: "annotation-1",
+    terminalId: "terminal-1",
+    filename: "review.md",
+    format: "markdown",
+    content: "# Review",
+    createdAt: "2026-07-30T00:00:00Z",
+  };
+  const comments = [
+    {
+      kind: "selection" as const,
+      body: "Clarify this.",
+      quote: "Review",
+      startOffset: 2,
+      endOffset: 8,
+    },
+  ];
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() =>
+      jsonResponse({ ok: true, result: { annotation } }),
+    )
+    .mockImplementationOnce(() =>
+      jsonResponse({
+        ok: true,
+        result: { annotationId: annotation.id, comments },
+      }),
+    );
+  const api = new ApiClient("token");
+
+  expect(await api.getCurrentAnnotation("terminal-1")).toEqual(annotation);
+  expect(await api.completeAnnotation(annotation.id, comments)).toEqual({
+    annotationId: annotation.id,
+    comments,
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/v1/terminals/terminal-1/annotation",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/v1/annotations/annotation-1/complete",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ comments }),
+    }),
+  );
 });

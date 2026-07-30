@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -39,6 +40,66 @@ async function clearTerminals(page: Page) {
       headers: { Authorization: "Bearer test-token" },
     });
   }
+}
+
+function annotate(
+  terminalID: string,
+  path: string,
+  transport: "unix" | "tcp",
+) {
+  const args = transport === "unix"
+    ? ["annotate", path]
+    : [
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--token",
+      "test-token",
+      "annotate",
+      path,
+    ];
+  const child = spawn("../bin/euphony", args, {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      EUPHONY_TERMINAL_ID: terminalID,
+      EUPHONY_SOCKET: transport === "unix" ? socketPath : "",
+      EUPHONY_URL: "",
+      EUPHONY_TOKEN: "",
+    },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString("utf8");
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  const completed = new Promise<CLIEnvelope<{
+    annotationId: string;
+    path: string;
+    comments: Array<{
+      kind: "selection" | "global";
+      body: string;
+      quote?: string;
+      startOffset?: number;
+      endOffset?: number;
+    }>;
+  }>>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`annotate exited ${code}: ${stderr}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        reject(new Error(`invalid annotate output: ${stdout}`));
+      }
+    });
+  });
+  return { child, completed };
 }
 
 test("automates terminals over Unix and TCP and shares selection with the browser", async ({
@@ -111,4 +172,101 @@ test("automates terminals over Unix and TCP and shares selection with the browse
     second.terminal.id,
   ]);
   expect(selection.focusedTerminalId).toBe(second.terminal.id);
+});
+
+test("reviews annotations from the blocking CLI over Unix and TCP", async ({
+  page,
+}, testInfo) => {
+  await clearTerminals(page);
+  const created = await cli<{ terminal: { id: string } }>([
+    "terminal",
+    "create",
+    "--name",
+    "Annotation review",
+    "--cwd",
+    "/tmp",
+    "--selection",
+    "replace",
+  ]);
+  const eventStream = page.waitForRequest((request) =>
+    request.url().endsWith("/api/v1/events")
+  );
+  await page.goto("/?token=test-token");
+  await eventStream;
+  await expect(page.getByLabel("Annotation review terminal", { exact: true }))
+    .toBeVisible();
+
+  const markdownPath = `/tmp/euphony-annotation-${port}.md`;
+  await writeFile(
+    markdownPath,
+    "# Release proposal\n\nSelect this passage for feedback.\n",
+  );
+  const markdown = annotate(created.terminal.id, markdownPath, "unix");
+  await expect(page.getByRole("tab", { name: "Annotation" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Release proposal" }),
+  ).toBeVisible();
+
+  const passage = page.getByText("Select this passage for feedback.");
+  await passage.evaluate((element) => {
+    const text = element.firstChild;
+    if (!text) throw new Error("selection text is missing");
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 11);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("selection is unavailable");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("textbox", { name: "Comment on selection" })
+    .fill("Make the rollout criteria concrete.");
+  await page.getByRole("button", { name: "Add selection comment" }).click();
+  await page.getByRole("textbox", { name: "Global comment" })
+    .fill("Ready after that change.");
+  await page.getByRole("button", { name: "Add global comment" }).click();
+  await page.screenshot({
+    path: testInfo.outputPath("annotation-review.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Send comments" }).click();
+
+  const markdownOutput = await markdown.completed;
+  expect(markdownOutput.ok).toBe(true);
+  expect(markdownOutput.result.comments[0]).toMatchObject({
+    kind: "selection",
+    body: "Make the rollout criteria concrete.",
+    quote: "Select this",
+  });
+  expect(
+    markdownOutput.result.comments[0].endOffset! -
+      markdownOutput.result.comments[0].startOffset!,
+  ).toBe(11);
+  expect(markdownOutput.result.comments[1]).toEqual({
+    kind: "global",
+    body: "Ready after that change.",
+  });
+  await expect(page.getByRole("tab", { name: "Annotation" })).toHaveCount(0);
+
+  const htmlPath = `/tmp/euphony-annotation-${port}.html`;
+  await writeFile(
+    htmlPath,
+    "<h1>HTML review</h1><script>window.hacked = true</script><p>Safe content.</p>",
+  );
+  const html = annotate(created.terminal.id, htmlPath, "tcp");
+  await expect(page.getByRole("tab", { name: "Annotation" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HTML review" })).toBeVisible();
+  await expect(page.locator(".annotation-document script")).toHaveCount(0);
+  expect(await page.evaluate(() => "hacked" in window)).toBe(false);
+  await page.getByRole("textbox", { name: "Global comment" })
+    .fill("HTML looks safe.");
+  await page.getByRole("button", { name: "Add global comment" }).click();
+  await page.getByRole("button", { name: "Send comments" }).click();
+
+  const htmlOutput = await html.completed;
+  expect(htmlOutput.ok).toBe(true);
+  expect(htmlOutput.result.comments).toEqual([
+    { kind: "global", body: "HTML looks safe." },
+  ]);
 });

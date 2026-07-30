@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { FileClockIcon, TerminalSquareIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { FileClockIcon, MessageSquareTextIcon, TerminalSquareIcon } from "lucide-react";
 import type { ApiClient } from "../api";
 import { isEditableTarget, matchesPrefix } from "../keybindings";
-import type { Session } from "../types";
+import type { AnnotationSession, Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
+import { AnnotationView } from "./AnnotationView";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -14,11 +15,12 @@ interface TerminalPaneProps {
   layoutVersion: number;
   tabShortcut: string;
   agentLogFontSize?: number;
+  annotationRevision?: number | null;
   onDeselect: () => void;
   renderTerminal(layoutVersion: number, active: boolean): ReactNode;
 }
 
-type PaneSource = "terminal" | "agent-log";
+type PaneSource = "terminal" | "agent-log" | "annotation";
 
 export function TerminalPane({
   session,
@@ -27,13 +29,17 @@ export function TerminalPane({
   layoutVersion,
   tabShortcut,
   agentLogFontSize = 14,
+  annotationRevision = null,
   onDeselect,
   renderTerminal,
 }: TerminalPaneProps) {
   const [source, setSource] = useState<PaneSource>("terminal");
+  const [annotation, setAnnotation] = useState<AnnotationSession | null>(null);
+  const annotationIDRef = useRef<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const changeSource = (next: string | null) => {
-    if (next !== "terminal" && next !== "agent-log") return;
+    if (next !== "terminal" && next !== "agent-log" && next !== "annotation") return;
+    if (next === "annotation" && !annotation) return;
     if (source === "agent-log" && next === "terminal") {
       setFitVersion((current) => current + 1);
     }
@@ -46,16 +52,38 @@ export function TerminalPane({
       : "Agent";
 
   useEffect(() => {
+    if (annotationRevision === null) return;
+    let current = true;
+    void api.getCurrentAnnotation(session.id).then((next) => {
+      if (!current) return;
+      const previousID = annotationIDRef.current;
+      annotationIDRef.current = next?.id ?? null;
+      if (next && next.id !== previousID) setSource("annotation");
+      if (!next && previousID) setSource("terminal");
+      setAnnotation(next);
+    }).catch(() => {
+      // Keep an already displayed review available until the next event retry.
+    });
+    return () => {
+      current = false;
+    };
+  }, [api, annotationRevision, session.id]);
+
+  useEffect(() => {
     if (!active) return;
     const toggleSource = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target) || !matchesPrefix(event, tabShortcut)) return;
       event.preventDefault();
       event.stopPropagation();
-      changeSource(source === "terminal" ? "agent-log" : "terminal");
+      const sources: PaneSource[] = annotation
+        ? ["terminal", "agent-log", "annotation"]
+        : ["terminal", "agent-log"];
+      const index = sources.indexOf(source);
+      changeSource(sources[(index + 1) % sources.length]);
     };
     window.addEventListener("keydown", toggleSource, { capture: true });
     return () => window.removeEventListener("keydown", toggleSource, { capture: true });
-  }, [active, source, tabShortcut]);
+  }, [active, annotation, source, tabShortcut]);
 
   return (
     <Tabs
@@ -80,6 +108,15 @@ export function TerminalPane({
           >
             <FileClockIcon aria-hidden="true" />
           </TabsTrigger>
+          {annotation && (
+            <TabsTrigger
+              value="annotation"
+              aria-label="Annotation"
+              title={`Annotation (${tabShortcut})`}
+            >
+              <MessageSquareTextIcon aria-hidden="true" />
+            </TabsTrigger>
+          )}
         </TabsList>
         <div className="terminal-tab-meta">
           {session.needsAttention && (
@@ -92,7 +129,11 @@ export function TerminalPane({
             </span>
           )}
           <span className="terminal-tab-source" aria-hidden="true">
-            {source === "terminal" ? "Terminal" : `${agentLabel} log`}
+            {source === "terminal"
+              ? "Terminal"
+              : source === "agent-log"
+                ? `${agentLabel} log`
+                : annotation?.filename ?? "Annotation"}
           </span>
           <Checkbox
             className="terminal-tab-selection"
@@ -124,6 +165,23 @@ export function TerminalPane({
           fontSize={agentLogFontSize}
         />
       </TabsContent>
+      {annotation && (
+        <TabsContent
+          className="terminal-tab-content"
+          value="annotation"
+          keepMounted
+        >
+          <AnnotationView
+            annotation={annotation}
+            api={api}
+            onCompleted={() => {
+              annotationIDRef.current = null;
+              setAnnotation(null);
+              setSource("terminal");
+            }}
+          />
+        </TabsContent>
+      )}
     </Tabs>
   );
 }
