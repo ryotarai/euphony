@@ -681,6 +681,36 @@ func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
 	}
 }
 
+func TestBurstOutputKeepsSubscriberAttachedWhileProcessRuns(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Burst")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatalf("Get(%q) ok = false", metadata.ID)
+	}
+
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if _, err := running.Write([]byte("seq 1 100000; printf 'burst-done\\n'\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	// Let the burst outrun the subscriber the way a browser tab does before
+	// draining it, so a lagging reader must not look like a terminated process.
+	time.Sleep(500 * time.Millisecond)
+
+	received := receiveUntil(t, output, "burst-done\r\n", 10*time.Second)
+	if !strings.Contains(received, "burst-done\r\n") {
+		t.Fatalf("received output = %q, want burst completion marker", received)
+	}
+	if _, ok := manager.Get(metadata.ID); !ok {
+		t.Fatalf("Get(%q) ok = false, want terminal still running", metadata.ID)
+	}
+}
+
 func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
