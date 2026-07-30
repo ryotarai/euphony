@@ -108,10 +108,14 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
-	if defaults.Prefix != "Ctrl+B" || defaults.SidebarWidth != 304 || defaults.SidebarCollapsed {
+	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
+		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed {
 		t.Fatalf("default settings = %#v", defaults)
 	}
-	want := Settings{Prefix: "Ctrl+A", SidebarWidth: 420, SidebarCollapsed: true}
+	want := Settings{
+		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
+		SidebarWidth: 420, SidebarCollapsed: true,
+	}
 	if err := store.SaveSettings(context.Background(), want); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
 	}
@@ -127,6 +131,48 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 	got, err := store.LoadSettings(context.Background())
 	if err != nil {
 		t.Fatalf("LoadSettings() after reopen error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-settings.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE settings (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		prefix TEXT NOT NULL,
+		sidebar_width INTEGER NOT NULL,
+		sidebar_collapsed INTEGER NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy settings schema: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
+		VALUES (1, 'Ctrl+A', 420, 1)`)
+	if err != nil {
+		t.Fatalf("insert legacy settings: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	got, err := store.LoadSettings(context.Background())
+	if err != nil {
+		t.Fatalf("LoadSettings() error = %v", err)
+	}
+	want := Settings{
+		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L",
+		SidebarWidth: 420, SidebarCollapsed: true,
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)

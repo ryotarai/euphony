@@ -1672,26 +1672,8 @@ input:focus-visible,
   gap: 1rem;
 }
 
-.settings-field {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.settings-field > label {
-  color: var(--foreground);
-  font-size: 0.78rem;
-  font-weight: 550;
-}
-
-.settings-field [data-slot="input"] {
+.settings-form [data-slot="input"] {
   min-height: 2.5rem;
-}
-
-.settings-hint {
-  margin: 0;
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-  line-height: 1.5;
 }
 
 .create-terminal-form > label {
@@ -1954,6 +1936,27 @@ input {
   padding-left: 0.8rem;
   color: var(--muted-foreground);
   border-left: 1px solid #525252;
+}
+
+.agent-log-markdown table {
+  width: 100%;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.agent-log-markdown th,
+.agent-log-markdown td {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #343434;
+  text-align: left;
+  vertical-align: top;
+}
+
+.agent-log-markdown th {
+  color: #f5f5f5;
+  background: #151515;
+  font-weight: 620;
 }
 
 .agent-log-detail {

@@ -14,7 +14,12 @@ async function clearSessions(page: Page) {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
     },
-    data: { prefix: "Ctrl+B", sidebarWidth: 304, sidebarCollapsed: false },
+    data: {
+      prefix: "Ctrl+B",
+      paneTabShortcut: "Meta+L",
+      sidebarWidth: 304,
+      sidebarCollapsed: false,
+    },
   });
   const existing = await page.request.get("/api/sessions", {
     headers: { Authorization: "Bearer test-token" },

@@ -19,6 +19,7 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Prefix           string  `json:"prefix"`
+		PaneTabShortcut  string  `json:"paneTabShortcut"`
 		SidebarWidth     float64 `json:"sidebarWidth"`
 		SidebarCollapsed bool    `json:"sidebarCollapsed"`
 	}
@@ -26,6 +27,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
+		!prefixPattern.MatchString(input.PaneTabShortcut) ||
 		math.IsNaN(input.SidebarWidth) || math.IsInf(input.SidebarWidth, 0) ||
 		input.SidebarWidth < 180 || input.SidebarWidth > 600 {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
@@ -33,6 +35,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := session.Settings{
 		Prefix:           input.Prefix,
+		PaneTabShortcut:  input.PaneTabShortcut,
 		SidebarWidth:     int(math.Round(input.SidebarWidth)),
 		SidebarCollapsed: input.SidebarCollapsed,
 	}

@@ -56,12 +56,13 @@ type AgentUpdate struct {
 
 type Settings struct {
 	Prefix           string `json:"prefix"`
+	PaneTabShortcut  string `json:"paneTabShortcut"`
 	SidebarWidth     int    `json:"sidebarWidth"`
 	SidebarCollapsed bool   `json:"sidebarCollapsed"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{Prefix: "Ctrl+B", SidebarWidth: 304}
+	return Settings{Prefix: "Ctrl+B", PaneTabShortcut: "Meta+L", SidebarWidth: 304}
 }
 
 type entry struct {

@@ -34,6 +34,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import type { Session, Settings } from "./types";
 
@@ -53,6 +60,7 @@ interface AppProps {
 
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
+  paneTabShortcut: "Meta+L",
   sidebarWidth: 256,
   sidebarCollapsed: false,
 };
@@ -221,7 +229,13 @@ export function App({
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
-  const [settingsError, setSettingsError] = useState("");
+  const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
+    settings.paneTabShortcut,
+  );
+  const [settingsError, setSettingsError] = useState<{
+    field: "prefix" | "paneTabShortcut";
+    message: string;
+  } | null>(null);
   const [prefixActive, setPrefixActive] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
@@ -786,18 +800,30 @@ export function App({
 
   function openSettings() {
     setPrefixDraft(settings.prefix);
-    setSettingsError("");
+    setPaneTabShortcutDraft(settings.paneTabShortcut);
+    setSettingsError(null);
     setSettingsOpen(true);
   }
 
   async function saveSettings(event: FormEvent) {
     event.preventDefault();
     const prefix = normalizePrefix(prefixDraft);
+    const paneTabShortcut = normalizePrefix(paneTabShortcutDraft);
     if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(prefix)) {
-      setSettingsError("Use modifiers and one key, for example Ctrl+B.");
+      setSettingsError({
+        field: "prefix",
+        message: "Use modifiers and one key, for example Ctrl+B.",
+      });
       return;
     }
-    await persistSettings({ ...settings, prefix });
+    if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(paneTabShortcut)) {
+      setSettingsError({
+        field: "paneTabShortcut",
+        message: "Use modifiers and one key, for example Meta+L.",
+      });
+      return;
+    }
+    await persistSettings({ ...settings, prefix, paneTabShortcut });
     setSettingsOpen(false);
   }
 
@@ -1012,6 +1038,7 @@ export function App({
                   api={api}
                   active={focusedID === pane.id}
                   layoutVersion={panes.length}
+                  tabShortcut={settings.paneTabShortcut}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
                       pane,
@@ -1133,19 +1160,39 @@ export function App({
             className="settings-form"
             onSubmit={(event) => void saveSettings(event)}
           >
-            <div className="settings-field">
-              <label htmlFor="prefix">Prefix</label>
-              <Input
-                id="prefix"
-                value={prefixDraft}
-                onChange={(event) => setPrefixDraft(event.target.value)}
-                autoFocus
-              />
-              <p className="settings-hint">
-                Commands: c new, v split, h/l pane, n/p terminal.
-              </p>
-            </div>
-            {settingsError && <p className="field-error">{settingsError}</p>}
+            <FieldGroup>
+              <Field data-invalid={settingsError?.field === "prefix"}>
+                <FieldLabel htmlFor="prefix">Prefix</FieldLabel>
+                <Input
+                  id="prefix"
+                  value={prefixDraft}
+                  onChange={(event) => setPrefixDraft(event.target.value)}
+                  aria-invalid={settingsError?.field === "prefix"}
+                  autoFocus
+                />
+                <FieldDescription>
+                  Commands: c new, v split, h/l pane, n/p terminal.
+                </FieldDescription>
+                {settingsError?.field === "prefix" && (
+                  <FieldError>{settingsError.message}</FieldError>
+                )}
+              </Field>
+              <Field data-invalid={settingsError?.field === "paneTabShortcut"}>
+                <FieldLabel htmlFor="pane-tab-shortcut">Pane tab toggle</FieldLabel>
+                <Input
+                  id="pane-tab-shortcut"
+                  value={paneTabShortcutDraft}
+                  onChange={(event) => setPaneTabShortcutDraft(event.target.value)}
+                  aria-invalid={settingsError?.field === "paneTabShortcut"}
+                />
+                <FieldDescription>
+                  Switch the focused pane between Terminal and Agent log.
+                </FieldDescription>
+                {settingsError?.field === "paneTabShortcut" && (
+                  <FieldError>{settingsError.message}</FieldError>
+                )}
+              </Field>
+            </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>
                 Cancel

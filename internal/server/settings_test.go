@@ -24,18 +24,22 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 	}
 	var defaults session.Settings
 	decodeResponse(t, response, &defaults)
-	if defaults.Prefix != "Ctrl+B" || defaults.SidebarWidth != 304 {
+	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
+		defaults.SidebarWidth != 304 {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 
 	response = performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+A","sidebarWidth":420,"sidebarCollapsed":true}`)
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var updated session.Settings
 	decodeResponse(t, response, &updated)
-	if updated != (session.Settings{Prefix: "Ctrl+A", SidebarWidth: 420, SidebarCollapsed: true}) {
+	if updated != (session.Settings{
+		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
+		SidebarWidth: 420, SidebarCollapsed: true,
+	}) {
 		t.Fatalf("updated settings = %#v", updated)
 	}
 }
@@ -51,9 +55,11 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close(t.Context()) })
 
 	for _, body := range []string{
-		`{"prefix":"","sidebarWidth":304,"sidebarCollapsed":false}`,
-		`{"prefix":"Ctrl+B","sidebarWidth":100,"sidebarCollapsed":false}`,
-		`{"prefix":"Ctrl+B","sidebarWidth":700,"sidebarCollapsed":false}`,
+		`{"prefix":"","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"","sidebarWidth":304,"sidebarCollapsed":false}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"L","sidebarWidth":304,"sidebarCollapsed":false}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":100,"sidebarCollapsed":false}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":700,"sidebarCollapsed":false}`,
 	} {
 		response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)
 		if response.Code != http.StatusBadRequest {
@@ -73,7 +79,7 @@ func TestSettingsAPIRoundsFractionalSidebarWidth(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close(t.Context()) })
 
 	response := performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+Q","sidebarWidth":229.96875,"sidebarCollapsed":false}`)
+		`{"prefix":"Ctrl+Q","paneTabShortcut":"Meta+L","sidebarWidth":229.96875,"sidebarCollapsed":false}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}

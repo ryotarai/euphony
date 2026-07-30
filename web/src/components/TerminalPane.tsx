@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { FileClockIcon, TerminalSquareIcon } from "lucide-react";
 import type { ApiClient } from "../api";
+import { isEditableTarget, matchesPrefix } from "../keybindings";
 import type { Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,6 +11,7 @@ interface TerminalPaneProps {
   api: ApiClient;
   active: boolean;
   layoutVersion: number;
+  tabShortcut: string;
   renderTerminal(layoutVersion: number, active: boolean): ReactNode;
 }
 
@@ -20,6 +22,7 @@ export function TerminalPane({
   api,
   active,
   layoutVersion,
+  tabShortcut,
   renderTerminal,
 }: TerminalPaneProps) {
   const [source, setSource] = useState<PaneSource>("terminal");
@@ -37,6 +40,18 @@ export function TerminalPane({
       ? "Codex"
       : "Agent";
 
+  useEffect(() => {
+    if (!active) return;
+    const toggleSource = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target) || !matchesPrefix(event, tabShortcut)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      changeSource(source === "terminal" ? "agent-log" : "terminal");
+    };
+    window.addEventListener("keydown", toggleSource, { capture: true });
+    return () => window.removeEventListener("keydown", toggleSource, { capture: true });
+  }, [active, source, tabShortcut]);
+
   return (
     <Tabs
       className="terminal-pane-tabs"
@@ -46,10 +61,18 @@ export function TerminalPane({
     >
       <div className="terminal-tab-rail">
         <TabsList variant="line" aria-label={`${session.name} sources`}>
-          <TabsTrigger value="terminal" aria-label="Terminal" title="Terminal">
+          <TabsTrigger
+            value="terminal"
+            aria-label="Terminal"
+            title={`Terminal (${tabShortcut})`}
+          >
             <TerminalSquareIcon aria-hidden="true" />
           </TabsTrigger>
-          <TabsTrigger value="agent-log" aria-label="Agent log" title="Agent log">
+          <TabsTrigger
+            value="agent-log"
+            aria-label="Agent log"
+            title={`Agent log (${tabShortcut})`}
+          >
             <FileClockIcon aria-hidden="true" />
           </TabsTrigger>
         </TabsList>

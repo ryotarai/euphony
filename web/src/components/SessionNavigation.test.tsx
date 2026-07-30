@@ -19,6 +19,7 @@ afterEach(() => {
 
 const settings: Settings = {
   prefix: "Ctrl+B",
+  paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
 };

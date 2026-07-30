@@ -23,6 +23,7 @@ export interface ApiErrorBody {
 
 export interface Settings {
   prefix: string;
+  paneTabShortcut: string;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
 }

@@ -7,7 +7,12 @@ async function clearSessions(page: Page) {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
     },
-    data: { prefix: "Ctrl+B", sidebarWidth: 304, sidebarCollapsed: false },
+    data: {
+      prefix: "Ctrl+B",
+      paneTabShortcut: "Meta+L",
+      sidebarWidth: 304,
+      sidebarCollapsed: false,
+    },
   });
   const existing = await page.request.get("/api/sessions", {
     headers: { Authorization: "Bearer test-token" },
@@ -60,6 +65,9 @@ async function createSession(
 
 function claudeTranscriptLine(index: number) {
   const label = `Agent log entry ${String(index).padStart(2, "0")}`;
+  const table = index === 40
+    ? "\n\n| Command | State |\n| --- | --- |\n| go test ./... | Passed |"
+    : "";
   return JSON.stringify({
     type: "assistant",
     timestamp: `2026-07-30T01:${String(index).padStart(2, "0")}:00Z`,
@@ -67,7 +75,7 @@ function claudeTranscriptLine(index: number) {
       role: "assistant",
       content: [{
         type: "text",
-        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}`,
+        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}`,
       }],
     },
   }) + "\n";
@@ -116,6 +124,13 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await page.getByRole("tab", { name: "Agent log" }).click();
   const viewport = page.locator('[data-slot="message-scroller-viewport"]');
   await expect(page.getByRole("heading", { name: "Agent log entry 40" })).toBeVisible();
+  const table = page.getByRole("table");
+  const tableCell = table.getByRole("cell", { name: "go test ./..." });
+  await expect(table.getByRole("columnheader", { name: "Command" })).toBeVisible();
+  await expect(tableCell).toHaveCSS("border-top-width", "1px");
+  await expect(tableCell).toHaveCSS("border-top-style", "solid");
+  await expect(tableCell).toHaveCSS("padding-top", "8px");
+  await expect(tableCell).toHaveCSS("padding-left", "10.4px");
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
@@ -601,6 +616,11 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Codex terminal", { exact: true })).toHaveCount(0);
   await codexItem.click();
+  await page.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.press("Meta+L");
+  await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
+  await page.keyboard.press("Meta+L");
+  await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
 
   const sidebar = page.locator(".desktop-sidebar");
   const separator = page.getByRole("separator", { name: "Resize sidebar" });
@@ -616,8 +636,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
 
   await page.getByRole("button", { name: "Open settings" }).click();
   await page.getByLabel("Prefix").fill("Ctrl+A");
+  await page.getByLabel("Pane tab toggle").fill("Ctrl+J");
   await page.getByRole("button", { name: "Save settings" }).click();
   await page.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.press("Control+J");
+  await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
+  await page.keyboard.press("Control+J");
+  await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+A");
   await expect(page.getByRole("status", { name: "Prefix commands" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("prefix-command-guide.png") });

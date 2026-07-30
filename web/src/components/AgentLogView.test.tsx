@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { vi } from "vitest";
 import type { ApiClient } from "../api";
 import type { AgentTranscript, Session } from "../types";
@@ -22,7 +22,7 @@ const initialLog: AgentTranscript = {
       kind: "message",
       role: "assistant",
       timestamp: "2026-07-30T01:02:03Z",
-      content: "# Result\n\n- one\n- two\n\n`go test ./...`\n\n<script>alert('no')</script>",
+      content: "# Result\n\n- one\n- two\n\n| Check | Result |\n| --- | --- |\n| Tests | Pass |\n\n`go test ./...`\n\n<script>alert('no')</script>",
     },
     {
       id: "2-0",
@@ -41,6 +41,11 @@ test("renders normalized transcript as safe semantic HTML", async () => {
 
   expect(await screen.findByRole("heading", { name: "Result" })).toBeInTheDocument();
   expect(screen.getByRole("list")).toHaveTextContent(/one\s+two/);
+  const table = screen.getByRole("table");
+  expect(within(table).getByRole("columnheader", { name: "Check" })).toBeVisible();
+  expect(within(table).getByRole("columnheader", { name: "Result" })).toBeVisible();
+  expect(within(table).getByRole("cell", { name: "Tests" })).toBeVisible();
+  expect(within(table).getByRole("cell", { name: "Pass" })).toBeVisible();
   expect(screen.getByText("go test ./...")).toBeInstanceOf(HTMLElement);
   expect(screen.getByText("<script>alert('no')</script>")).toBeInTheDocument();
   expect(document.querySelector("script")).toBeNull();

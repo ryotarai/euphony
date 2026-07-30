@@ -6,6 +6,7 @@ import type { Session, Settings } from "./types";
 
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
+  paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
 };
@@ -1044,7 +1045,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   ]);
 });
 
-test("loads settings and saves a changed prefix", async () => {
+test("loads settings and saves changed workspace shortcuts", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     if (input === "/api/settings" && init?.method === "PATCH") {
       return jsonResponse(JSON.parse(String(init.body)));
@@ -1072,15 +1073,22 @@ test("loads settings and saves a changed prefix", async () => {
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
   const reopenedPrefix = screen.getByLabelText("Prefix");
+  const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
   await user.clear(reopenedPrefix);
   await user.type(reopenedPrefix, "Ctrl+A");
+  await user.clear(paneTabShortcut);
+  await user.type(paneTabShortcut, "control+j");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/settings",
     expect.objectContaining({
       method: "PATCH",
-      body: JSON.stringify({ ...defaultSettings, prefix: "Ctrl+A" }),
+      body: JSON.stringify({
+        ...defaultSettings,
+        prefix: "Ctrl+A",
+        paneTabShortcut: "Ctrl+J",
+      }),
     }),
   );
 });

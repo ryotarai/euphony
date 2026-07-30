@@ -354,6 +354,7 @@ function SessionNavigationContent({
 export function SessionNavigation(props: SessionNavigationProps) {
   const settings = props.settings ?? {
     prefix: "Ctrl+B",
+    paneTabShortcut: "Meta+L",
     sidebarWidth: defaultSidebarWidth,
     sidebarCollapsed: false,
   };

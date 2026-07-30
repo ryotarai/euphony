@@ -71,6 +71,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			prefix TEXT NOT NULL,
+			pane_tab_shortcut TEXT NOT NULL DEFAULT 'Meta+L',
 			sidebar_width INTEGER NOT NULL,
 			sidebar_collapsed INTEGER NOT NULL
 		)`,
@@ -104,12 +105,23 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add agent transcript path: %w", err)
 		}
 	}
+	hasPaneTabShortcut, err := s.hasColumn(ctx, "settings", "pane_tab_shortcut")
+	if err != nil {
+		return err
+	}
+	if !hasPaneTabShortcut {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN pane_tab_shortcut TEXT NOT NULL DEFAULT 'Meta+L'",
+		); err != nil {
+			return fmt.Errorf("add pane tab shortcut: %w", err)
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE terminals
 		SET agent_status = 'waiting', needs_attention = 1
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 4"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 5"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -144,8 +156,9 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
 	var collapsed int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT prefix, sidebar_width, sidebar_collapsed FROM settings WHERE id = 1",
-	).Scan(&result.Prefix, &result.SidebarWidth, &collapsed)
+		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed
+		FROM settings WHERE id = 1`,
+	).Scan(&result.Prefix, &result.PaneTabShortcut, &result.SidebarWidth, &collapsed)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
 	}
@@ -159,8 +172,9 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 		collapsed = 1
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
-		SET prefix = ?, sidebar_width = ?, sidebar_collapsed = ?
-		WHERE id = 1`, settings.Prefix, settings.SidebarWidth, collapsed)
+		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?
+		WHERE id = 1`,
+		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
