@@ -59,7 +59,13 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-const builtInActivities = ["attention", "running", "waiting", "terminal"];
+const builtInActivities = [
+  "blocked",
+  "attention",
+  "running",
+  "waiting",
+  "terminal",
+];
 
 const activityOrder = new Map(
   builtInActivities.map((status, index) => [status, index]),

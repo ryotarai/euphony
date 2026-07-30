@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Always show the four built-in terminal activity groups in the left sidebar and render `No terminal` inside empty groups.
+**Goal:** Always show the five built-in terminal activity groups in the left sidebar and render `No terminal` inside empty groups.
 
-**Architecture:** Extend `SessionNavigation`'s activity ordering helper to seed the four built-in activities before appending session-defined values. Render one semantic empty-state line when a group contains no working-directory sections, while reusing the existing status checkbox and filter callback.
+**Architecture:** Extend `SessionNavigation`'s activity ordering helper to seed the five built-in activities before appending session-defined values. Render one semantic empty-state line when a group contains no working-directory sections, while reusing the existing status checkbox and filter callback.
 
 **Tech Stack:** React 19, TypeScript, Vitest, Testing Library, Playwright, shadcn sidebar primitives
 
 ## Global Constraints
 
-- Render built-in groups in this order: Need attention, Running, Waiting, Terminal.
+- Render built-in groups in this order: Blocked, Need attention, Running, Waiting, Terminal.
 - Keep each group's existing checkbox and count badge visible at zero sessions.
 - Display the exact copy `No terminal` once inside each empty group.
 - Preserve unknown session activity values and sort them after built-in groups.
@@ -53,6 +53,7 @@ test("shows built-in activity groups when they have no terminals", async () => {
   await screen.findByLabelText("session-1 terminal pane");
 
   for (const label of [
+    "Show all Blocked terminals",
     "Show all Need attention terminals",
     "Show all Running terminals",
     "Show all Waiting terminals",
@@ -60,7 +61,7 @@ test("shows built-in activity groups when they have no terminals", async () => {
   ]) {
     expect(screen.getByRole("checkbox", { name: label })).toBeVisible();
   }
-  expect(screen.getAllByText("No terminal")).toHaveLength(3);
+  expect(screen.getAllByText("No terminal")).toHaveLength(4);
 });
 ```
 
@@ -82,7 +83,13 @@ In `SessionNavigation.tsx`, define the canonical built-in activity array,
 derive ordering from it, and merge session activities into it:
 
 ```tsx
-const builtInActivities = ["attention", "running", "waiting", "terminal"];
+const builtInActivities = [
+  "blocked",
+  "attention",
+  "running",
+  "waiting",
+  "terminal",
+];
 
 const activityOrder = new Map(
   builtInActivities.map((status, index) => [status, index]),

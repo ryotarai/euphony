@@ -100,6 +100,7 @@ test("shows empty status groups with interactive checkboxes", async ({
   await page.goto("/?token=test-token");
 
   for (const label of [
+    "Show all Blocked terminals",
     "Show all Need attention terminals",
     "Show all Running terminals",
     "Show all Waiting terminals",
@@ -107,7 +108,7 @@ test("shows empty status groups with interactive checkboxes", async ({
   ]) {
     await expect(page.getByRole("checkbox", { name: label })).toBeVisible();
   }
-  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(3);
+  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(4);
   await page.screenshot({ path: testInfo.outputPath("empty-status-groups.png") });
 
   const running = page.getByRole("checkbox", {

@@ -9,10 +9,11 @@ that activity currently has no terminal sessions.
 
 The sidebar always renders these activity groups in this order:
 
-1. Need attention
-2. Running
-3. Waiting
-4. Terminal
+1. Blocked
+2. Need attention
+3. Running
+4. Waiting
+5. Terminal
 
 Each group keeps its existing checkbox and terminal count. When a group has no
 sessions, its count is `0` and its content area contains the text
@@ -47,8 +48,8 @@ The status checkbox, label, and zero-count badge retain their current layout.
 A React component test will load sessions representing only one built-in
 activity and verify that:
 
-- all four built-in activity headings and checkboxes are present;
-- the three empty groups each show `No terminal`;
+- all five built-in activity headings and checkboxes are present;
+- the four empty groups each show `No terminal`;
 - the populated group does not show an empty-state message;
 - the empty groups display a count of zero through the existing badge.
 
