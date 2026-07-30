@@ -713,9 +713,37 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
+test("shows recent Quick Actions first in a taller dialog", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Left");
+  const right = await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  const dialog = page.getByRole("dialog", { name: "Quick Actions" });
+  await expect(dialog).toBeVisible();
+  const initialBounds = await dialog.boundingBox();
+  expect(initialBounds?.height).toBeGreaterThan(500);
+
+  await page.getByRole("option", { name: /^Right/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("Meta+K");
+
+  const groups = page.locator("[cmdk-group]");
+  await expect(groups.first().locator("[cmdk-group-heading]")).toHaveText("Recent");
+  const recentRight = groups.first().getByRole("option", { name: /^Right/ });
+  await expect(recentRight).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("option", { name: /^Right/ })).toHaveCount(1);
+  expect(
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null"),
+    ),
+  ).toEqual([`session:${right.id}`]);
+});
+
 test("keeps the Quick Actions keyboard selection in the scroll viewport", async ({ page }) => {
   await clearSessions(page);
-  for (let index = 1; index <= 6; index += 1) {
+  for (let index = 1; index <= 12; index += 1) {
     await createSession(page, `Terminal ${index}`);
   }
 
@@ -726,11 +754,11 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
     commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
   ).toBe(true);
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 14; index += 1) {
     await page.keyboard.press("ArrowDown");
   }
 
-  const lastTerminal = page.getByRole("option", { name: /^Terminal 6/ });
+  const lastTerminal = page.getByRole("option", { name: /^Terminal 12/ });
   await expect(lastTerminal).toHaveAttribute("aria-selected", "true");
   await expect.poll(() =>
     lastTerminal.evaluate((element) => {
@@ -744,7 +772,7 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
   const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
   expect(scrolledDown).toBeGreaterThan(0);
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 14; index += 1) {
     await page.keyboard.press("ArrowUp");
   }
 

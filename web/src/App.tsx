@@ -58,6 +58,8 @@ import {
 import type { Session, Settings } from "./types";
 
 const tokenKey = "euphony.token";
+const recentQuickActionsKey = "euphony.recentQuickActions";
+const recentQuickActionsLimit = 5;
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 interface AppProps {
@@ -90,6 +92,17 @@ function historyLimitDraft(limit: number): string {
   return String(limit === 0 ? 1 : limit / bytesPerMiB);
 }
 
+function resolveRecentQuickActionValues(): string[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(recentQuickActionsKey) ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return [...new Set(stored.filter((value): value is string => typeof value === "string"))]
+      .slice(0, recentQuickActionsLimit);
+  } catch {
+    return [];
+  }
+}
+
 type FontSizeSetting = "interfaceFontSize" | "terminalFontSize" | "agentLogFontSize";
 
 function parseFontSize(value: string): number | null {
@@ -101,6 +114,17 @@ function sessionActivity(session: Session) {
   if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
+}
+
+function availableQuickActionValues(sessions: Session[]): Set<string> {
+  return new Set([
+    "new-terminal",
+    "attention-alerts",
+    ...sessions.flatMap((session) => [
+      `session:${session.id}`,
+      `status:${sessionActivity(session)}`,
+    ]),
+  ]);
 }
 
 function activityLabel(status: string) {
@@ -321,6 +345,9 @@ export function App({
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandValue, setCommandValue] = useState("new-terminal");
+  const [recentQuickActionValues, setRecentQuickActionValues] = useState(
+    resolveRecentQuickActionValues,
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
@@ -581,16 +608,46 @@ export function App({
   }, [api, sessions, focusedID]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(
+        recentQuickActionsKey,
+        JSON.stringify(recentQuickActionValues),
+      );
+    } catch {
+      // Keep the in-memory history when browser storage is unavailable.
+    }
+  }, [recentQuickActionValues]);
+
+  useEffect(() => {
+    if (!sessions) return;
+    const availableValues = availableQuickActionValues(sessions);
+    const availableRecentValues = recentQuickActionValues.filter((value) =>
+      availableValues.has(value),
+    );
+    if (
+      availableRecentValues.length === recentQuickActionValues.length &&
+      availableRecentValues.every((value, index) => value === recentQuickActionValues[index])
+    ) {
+      return;
+    }
+    setRecentQuickActionValues(availableRecentValues);
+  }, [recentQuickActionValues, sessions]);
+
+  useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
       event.preventDefault();
+      const availableValues = availableQuickActionValues(sessions ?? []);
       setCommandQuery("");
-      setCommandValue("new-terminal");
+      setCommandValue(
+        recentQuickActionValues.find((value) => availableValues.has(value)) ??
+          "new-terminal",
+      );
       setCommandOpen(true);
     };
     window.addEventListener("keydown", openCommands, { capture: true });
     return () => window.removeEventListener("keydown", openCommands, { capture: true });
-  }, []);
+  }, [recentQuickActionValues, sessions]);
 
   useEffect(() => {
     if (!commandOpen) return;
@@ -1256,16 +1313,47 @@ export function App({
     })),
   ];
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
-  const filteredQuickActions = quickActions.filter((action) =>
-    `${action.label} ${action.search}`.toLowerCase().includes(normalizedCommandQuery),
-  );
+  const quickActionGroupsForQuery = (query: string) => {
+    const matchingActions = quickActions.filter((action) =>
+      `${action.label} ${action.search}`.toLowerCase().includes(query),
+    );
+    if (query) {
+      return ["Actions", "Terminals"].map((heading) => ({
+        heading,
+        actions: matchingActions.filter((action) => action.group === heading),
+      }));
+    }
+
+    const recentActions = recentQuickActionValues
+      .map((value) => matchingActions.find((action) => action.value === value))
+      .filter((action): action is (typeof matchingActions)[number] => Boolean(action));
+    const recentValues = new Set(recentActions.map((action) => action.value));
+    return [
+      { heading: "Recent", actions: recentActions },
+      ...["Actions", "Terminals"].map((heading) => ({
+        heading,
+        actions: matchingActions.filter(
+          (action) => action.group === heading && !recentValues.has(action.value),
+        ),
+      })),
+    ];
+  };
+  const quickActionGroups = quickActionGroupsForQuery(normalizedCommandQuery);
+  const filteredQuickActions = quickActionGroups.flatMap((group) => group.actions);
+
+  const runQuickAction = (action: (typeof quickActions)[number]) => {
+    setRecentQuickActionValues((current) =>
+      [action.value, ...current.filter((value) => value !== action.value)]
+        .slice(0, recentQuickActionsLimit),
+    );
+    action.run();
+  };
 
   const updateCommandQuery = (query: string) => {
     setCommandQuery(query);
     const normalized = query.trim().toLowerCase();
-    const first = quickActions.find((action) =>
-      `${action.label} ${action.search}`.toLowerCase().includes(normalized),
-    );
+    const first = quickActionGroupsForQuery(normalized)
+      .flatMap((group) => group.actions)[0];
     setCommandValue(first?.value ?? "");
   };
 
@@ -1303,7 +1391,7 @@ export function App({
       );
       if (!selectedAction) return;
       event.preventDefault();
-      selectedAction.run();
+      runQuickAction(selectedAction);
     }
   };
 
@@ -1436,10 +1524,11 @@ export function App({
         onOpenChange={setCommandOpen}
         title="Quick Actions"
         description="Search for a terminal or action."
-        className="sm:max-w-xl"
+        className="top-[10vh] h-[min(40rem,80vh)] max-h-[calc(100vh-2rem)] sm:max-w-xl"
         initialFocus={commandInputRef}
       >
         <Command
+          className="min-h-0"
           value={commandValue}
           onValueChange={setCommandValue}
           shouldFilter={false}
@@ -1451,20 +1540,17 @@ export function App({
             onValueChange={updateCommandQuery}
             placeholder="Terminal or status"
           />
-          <CommandList ref={commandListRef}>
+          <CommandList ref={commandListRef} className="min-h-0 max-h-none flex-1">
             <CommandEmpty>No matching actions.</CommandEmpty>
-            {["Actions", "Terminals"].map((group) => {
-              const actions = filteredQuickActions.filter(
-                (action) => action.group === group,
-              );
+            {quickActionGroups.map(({ heading, actions }) => {
               if (actions.length === 0) return null;
               return (
-                <CommandGroup heading={group} key={group}>
+                <CommandGroup heading={heading} key={heading}>
                   {actions.map((action) => (
                     <CommandItem
                       key={action.value}
                       value={action.value}
-                      onSelect={action.run}
+                      onSelect={() => runQuickAction(action)}
                     >
                       <span className="quick-action-copy">
                         <span>{action.label}</span>
