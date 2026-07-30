@@ -203,6 +203,26 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
 });
 
+test("follows a focused terminal when polling identifies it as a Claude agent", async ({ page }) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  await createSession(page, "Second", "/tmp");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("checkbox", { name: "Show all Terminal terminals" }).click();
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
+  await page.getByLabel("First pane", { exact: true }).click();
+
+  await reportAgent(page, first.id, "claude", "Waiting for review");
+
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Second terminal", { exact: true })).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.getAll("terminal")).toEqual([first.id]);
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual([]);
+  expect(new URL(page.url()).searchParams.getAll("cwd")).toEqual([]);
+});
+
 test("inherits status filters into nested cwd controls and supports child overrides", async ({
   page,
 }, testInfo) => {
