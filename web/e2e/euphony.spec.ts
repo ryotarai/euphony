@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 
+const requestedPort = process.env.EUPHONY_E2E_PORT;
+const e2ePort = requestedPort && /^\d+$/.test(requestedPort) ? requestedPort : "18080";
+const claudeConfigDir = `/tmp/euphony-e2e-${e2ePort}-claude`;
+
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
     headers: {
@@ -77,6 +81,9 @@ function claudeTranscriptLine(index: number) {
   const table = index === 40
     ? "\n\n| Command | State | Artifact |\n| --- | --- | --- |\n| go test ./... | Passed | `very-wide-unbroken-table-value-that-stays-readable-with-horizontal-scrolling-0123456789` |"
     : "";
+  const diagram = index === 40
+    ? "\n\n```mermaid\nflowchart LR\n  Plan[Plan] --> Build[Build]\n  Build --> Verify[Verify]\n```"
+    : "";
   return JSON.stringify({
     type: "assistant",
     timestamp: `2026-07-30T01:${String(index).padStart(2, "0")}:00Z`,
@@ -84,7 +91,7 @@ function claudeTranscriptLine(index: number) {
       role: "assistant",
       content: [{
         type: "text",
-        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}`,
+        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}${diagram}`,
       }],
     },
   }) + "\n";
@@ -168,8 +175,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await clearSessions(page);
   const terminal = await createSession(page, "Log stream", "/tmp");
   const sessionID = `e2e-${terminal.id}`;
-  const transcriptPath = `/tmp/euphony-e2e-claude/projects/euphony/${sessionID}.jsonl`;
-  await mkdir("/tmp/euphony-e2e-claude/projects/euphony", { recursive: true });
+  const transcriptPath = `${claudeConfigDir}/projects/euphony/${sessionID}.jsonl`;
+  await mkdir(`${claudeConfigDir}/projects/euphony`, { recursive: true });
   await writeFile(
     transcriptPath,
     Array.from({ length: 40 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
@@ -205,6 +212,10 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   const tableScroll = page.locator(".agent-log-table-scroll");
   await expect(tableScroll).toHaveCSS("overflow-x", "auto");
   expect(await tableScroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const diagram = page.getByRole("figure", { name: "Mermaid diagram" });
+  await expect(diagram.locator("svg")).toBeVisible();
+  await expect(diagram).toHaveCSS("overflow-x", "auto");
+  await page.screenshot({ path: testInfo.outputPath("agent-log-mermaid.png") });
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
