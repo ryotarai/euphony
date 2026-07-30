@@ -769,6 +769,36 @@ test("inherits status filters into nested cwd controls and supports child overri
   await page.screenshot({ path: testInfo.outputPath("sidebar-settings.png") });
 });
 
+test("keeps terminal navigation rows compact", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Compact terminal", "/tmp");
+
+  await page.goto("/?token=test-token");
+  const status = page.locator(".status-heading").filter({
+    has: page.getByRole("button", { name: "Show only Terminal terminals" }),
+  });
+  const cwd = page.locator(".cwd-heading").filter({
+    has: page.getByRole("button", {
+      name: "Show only Terminal terminals in /tmp",
+    }),
+  });
+  const terminal = page.getByRole("button", {
+    name: "Select Compact terminal",
+  });
+
+  const [statusBox, cwdBox, terminalBox] = await Promise.all([
+    status.boundingBox(),
+    cwd.boundingBox(),
+    terminal.boundingBox(),
+  ]);
+  expect(statusBox).not.toBeNull();
+  expect(cwdBox).not.toBeNull();
+  expect(terminalBox).not.toBeNull();
+  expect(statusBox!.height).toBeLessThanOrEqual(24);
+  expect(cwdBox!.height).toBeLessThanOrEqual(26);
+  expect(terminalBox!.height).toBeLessThanOrEqual(32);
+});
+
 test("uses 0.5rem indentation for each sidebar hierarchy level", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Indented terminal", "/tmp");
