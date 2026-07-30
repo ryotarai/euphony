@@ -106,6 +106,47 @@ func TestReadAfterReturnsOnlyAppendedRecords(t *testing.T) {
 	}
 }
 
+func TestReadAfterDoesNotAdvancePastAnIncompleteJSONLRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	initial := `{"type":"assistant","message":{"role":"assistant","content":"First"}}` + "\n"
+	partial := `{"type":"assistant","message":{"role":"assistant","content":"Sec`
+	if err := os.WriteFile(path, []byte(initial+partial), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	defer file.Close()
+
+	incomplete, err := ReadAfter("claude", file, int64(len(initial)))
+	if err != nil {
+		t.Fatalf("incomplete ReadAfter() error = %v", err)
+	}
+	if len(incomplete.Entries) != 0 ||
+		incomplete.StartCursor != int64(len(initial)) ||
+		incomplete.EndCursor != int64(len(initial)) {
+		t.Fatalf("incomplete ReadAfter() = %#v", incomplete)
+	}
+
+	remainder := `ond"}}` + "\n"
+	if _, err := file.WriteAt(
+		[]byte(remainder),
+		int64(len(initial)+len(partial)),
+	); err != nil {
+		t.Fatalf("WriteAt() error = %v", err)
+	}
+	complete, err := ReadAfter("claude", file, incomplete.EndCursor)
+	if err != nil {
+		t.Fatalf("complete ReadAfter() error = %v", err)
+	}
+	if len(complete.Entries) != 1 ||
+		complete.Entries[0].Content != "Second" ||
+		complete.EndCursor != int64(len(initial)+len(partial)+len(remainder)) {
+		t.Fatalf("complete ReadAfter() = %#v", complete)
+	}
+}
+
 func TestCompactToolsCountsCallsAndDropsPayloadsAndResults(t *testing.T) {
 	entries := []Entry{
 		{ID: "1-0", Kind: "message", Content: "Before"},

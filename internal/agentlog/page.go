@@ -1,6 +1,7 @@
 package agentlog
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,12 @@ func ReadPage(
 	if before > info.Size() {
 		before = info.Size()
 	}
+	if before == info.Size() {
+		before, err = completeJSONLEnd(file, before)
+		if err != nil {
+			return Page{}, err
+		}
+	}
 	start, err := pageStart(file, before, recordLimit)
 	if err != nil {
 		return Page{}, err
@@ -65,9 +72,16 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 	if after > info.Size() {
 		return Page{}, ErrCursorBeyondEnd
 	}
+	end, err := completeJSONLEnd(file, info.Size())
+	if err != nil {
+		return Page{}, err
+	}
+	if after > end {
+		return Page{}, ErrCursorBeyondEnd
+	}
 	entries, err := ParseAt(
 		agent,
-		io.NewSectionReader(file, after, info.Size()-after),
+		io.NewSectionReader(file, after, end-after),
 		after,
 	)
 	if err != nil {
@@ -76,7 +90,7 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 	return Page{
 		Entries:     CompactTools(entries),
 		StartCursor: after,
-		EndCursor:   info.Size(),
+		EndCursor:   end,
 	}, nil
 }
 
@@ -141,4 +155,29 @@ func pageStart(file *os.File, before int64, recordLimit int) (int64, error) {
 		cursor = start
 	}
 	return 0, nil
+}
+
+func completeJSONLEnd(file *os.File, size int64) (int64, error) {
+	if size == 0 {
+		return 0, nil
+	}
+	last := []byte{0}
+	if _, err := file.ReadAt(last, size-1); err != nil {
+		return 0, fmt.Errorf("read transcript end: %w", err)
+	}
+	if last[0] == '\n' {
+		return size, nil
+	}
+	start, err := pageStart(file, size, 1)
+	if err != nil {
+		return 0, err
+	}
+	record := make([]byte, size-start)
+	if _, err := file.ReadAt(record, start); err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("read transcript record: %w", err)
+	}
+	if json.Valid(record) {
+		return size, nil
+	}
+	return start, nil
 }
