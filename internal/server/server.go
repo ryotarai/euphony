@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ryotarai/euphony/internal/agentlog"
+	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
 	webassets "github.com/ryotarai/euphony/web"
 )
@@ -26,6 +27,7 @@ type Config struct {
 type Server struct {
 	handler   http.Handler
 	sessions  *session.Manager
+	control   *control.Service
 	tickets   *ticketStore
 	agentLogs *agentlog.Resolver
 }
@@ -51,8 +53,14 @@ func New(config Config) (*Server, error) {
 		}
 	}
 	tickets := newTicketStore(time.Now)
+	controlService, err := control.New(sessionManager)
+	if err != nil {
+		_ = sessionManager.Close(context.Background())
+		return nil, err
+	}
 	server := &Server{
 		sessions:  sessionManager,
+		control:   controlService,
 		tickets:   tickets,
 		agentLogs: agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
 	}

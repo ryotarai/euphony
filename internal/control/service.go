@@ -1,0 +1,212 @@
+package control
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"sync"
+	"time"
+
+	"github.com/ryotarai/euphony/internal/selection"
+	"github.com/ryotarai/euphony/internal/session"
+)
+
+const defaultEventBufferSize = 128
+
+type Service struct {
+	sessions *session.Manager
+	events   *eventHub
+
+	mu        sync.RWMutex
+	selection selection.State
+	snapshot  selection.Snapshot
+}
+
+func New(manager *session.Manager) (*Service, error) {
+	state, found, err := manager.LoadSelection(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	terminals := projectTerminals(manager.List())
+	if !found {
+		if len(terminals) > 0 {
+			state.ManualTerminalIDs = []string{terminals[0].ID}
+			state.FocusedTerminalID = terminals[0].ID
+			state.Revision = 1
+		}
+	} else {
+		state, _ = selection.Reconcile(state, terminals)
+	}
+	if !found || state.Revision > 0 {
+		if err := manager.SaveSelection(context.Background(), state); err != nil {
+			return nil, err
+		}
+	}
+	service := &Service{
+		sessions:  manager,
+		events:    newEventHub(defaultEventBufferSize, time.Now),
+		selection: state,
+		snapshot:  selection.Resolve(state, terminals),
+	}
+	manager.SetChangeHandler(service.handleSessionChange)
+	service.reconcileFromSessions(nil)
+	return service, nil
+}
+
+func (s *Service) Selection() selection.Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneSnapshot(s.snapshot)
+}
+
+func (s *Service) ApplySelection(
+	ctx context.Context,
+	action selection.Action,
+) (selection.Snapshot, error) {
+	terminals := projectTerminals(s.sessions.List())
+	s.mu.Lock()
+	next, err := selection.Apply(s.selection, action, terminals)
+	if err != nil {
+		s.mu.Unlock()
+		return selection.Snapshot{}, err
+	}
+	if err := s.sessions.SaveSelection(ctx, next); err != nil {
+		s.mu.Unlock()
+		return selection.Snapshot{}, err
+	}
+	s.selection = next
+	s.snapshot = selection.Resolve(next, terminals)
+	snapshot := cloneSnapshot(s.snapshot)
+	s.mu.Unlock()
+	s.events.publish("selection.changed", snapshot)
+	return snapshot, nil
+}
+
+func (s *Service) SubscribeEvents(types []string) (<-chan Event, func()) {
+	return s.events.subscribe(types)
+}
+
+func (s *Service) handleSessionChange(change session.Change) {
+	s.reconcileFromSessions(&change)
+}
+
+func (s *Service) reconcileFromSessions(change *session.Change) {
+	terminals := projectTerminals(s.sessions.List())
+	s.mu.Lock()
+	previousSnapshot := s.snapshot
+	next := s.selection
+	var err error
+	if shouldPromoteFocusedAgent(previousSnapshot, change) {
+		next, err = selection.Apply(next, selection.Action{
+			Type:              selection.ActionPromoteFocusedAgent,
+			FocusedTerminalID: change.After.ID,
+		}, terminals)
+	} else {
+		var cleaned bool
+		next, cleaned = selection.Reconcile(next, terminals)
+		resolved := selection.Resolve(next, terminals)
+		if !cleaned && !snapshotsEqualIgnoringRevision(previousSnapshot, resolved) {
+			next.Revision++
+		}
+	}
+	if err != nil {
+		s.mu.Unlock()
+		return
+	}
+	nextSnapshot := selection.Resolve(next, terminals)
+	selectionChanged := !reflect.DeepEqual(previousSnapshot, nextSnapshot)
+	if selectionChanged {
+		if err := s.sessions.SaveSelection(context.Background(), next); err != nil {
+			s.mu.Unlock()
+			return
+		}
+		s.selection = next
+		s.snapshot = nextSnapshot
+	}
+	snapshot := cloneSnapshot(nextSnapshot)
+	s.mu.Unlock()
+
+	if change != nil {
+		s.publishSessionChange(*change)
+	}
+	if selectionChanged {
+		s.events.publish("selection.changed", snapshot)
+	}
+}
+
+func (s *Service) publishSessionChange(change session.Change) {
+	switch change.Kind {
+	case session.ChangeCreated:
+		s.events.publish("terminal.created", *change.After)
+	case session.ChangeUpdated:
+		s.events.publish("terminal.updated", *change.After)
+		if change.Before != nil && change.After != nil &&
+			(change.Before.Agent != change.After.Agent ||
+				change.Before.AgentStatus != change.After.AgentStatus ||
+				change.Before.AgentTitle != change.After.AgentTitle ||
+				change.Before.NeedsAttention != change.After.NeedsAttention) {
+			s.events.publish("agent.updated", *change.After)
+		}
+	case session.ChangeDeleted:
+		s.events.publish("terminal.deleted", map[string]string{"id": change.Before.ID})
+	}
+}
+
+func projectTerminals(metadata []session.Metadata) []selection.Terminal {
+	result := make([]selection.Terminal, 0, len(metadata))
+	for _, item := range metadata {
+		statuses := make([]string, 0, 2)
+		if item.NeedsAttention {
+			statuses = append(statuses, "attention")
+		}
+		if item.AgentStatus != "" {
+			statuses = append(statuses, item.AgentStatus)
+		} else if item.State == session.StateRunning {
+			statuses = append(statuses, "terminal")
+		} else {
+			statuses = append(statuses, string(item.State))
+		}
+		result = append(result, selection.Terminal{
+			ID:       item.ID,
+			CWD:      item.CWD,
+			Statuses: statuses,
+		})
+	}
+	return result
+}
+
+func shouldPromoteFocusedAgent(snapshot selection.Snapshot, change *session.Change) bool {
+	return change != nil &&
+		change.Before != nil &&
+		change.After != nil &&
+		change.Before.Agent == "" &&
+		change.After.Agent != "" &&
+		snapshot.FocusedTerminalID == change.After.ID
+}
+
+func snapshotsEqualIgnoringRevision(left, right selection.Snapshot) bool {
+	left.Revision = 0
+	right.Revision = 0
+	return reflect.DeepEqual(left, right)
+}
+
+func cloneSnapshot(snapshot selection.Snapshot) selection.Snapshot {
+	return selection.Snapshot{
+		TerminalIDs:       append([]string{}, snapshot.TerminalIDs...),
+		ManualTerminalIDs: append([]string{}, snapshot.ManualTerminalIDs...),
+		PinnedTerminalIDs: append([]string{}, snapshot.PinnedTerminalIDs...),
+		FocusedTerminalID: snapshot.FocusedTerminalID,
+		Filters: selection.Filters{
+			Statuses: append([]string{}, snapshot.Filters.Statuses...),
+			CWDs:     append([]selection.CWDFilter{}, snapshot.Filters.CWDs...),
+		},
+		Revision: snapshot.Revision,
+	}
+}
+
+func IsSelectionError(err error) bool {
+	return errors.Is(err, selection.ErrInvalidAction) ||
+		errors.Is(err, selection.ErrRevisionConflict) ||
+		errors.Is(err, selection.ErrTerminalNotFound) ||
+		errors.Is(err, selection.ErrTerminalNotSelected)
+}

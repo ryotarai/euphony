@@ -20,6 +20,20 @@ import (
 
 var ErrNotFound = errors.New("session not found")
 
+type ChangeKind string
+
+const (
+	ChangeCreated ChangeKind = "created"
+	ChangeUpdated ChangeKind = "updated"
+	ChangeDeleted ChangeKind = "deleted"
+)
+
+type Change struct {
+	Kind   ChangeKind
+	Before *Metadata
+	After  *Metadata
+}
+
 type Metadata struct {
 	ID                  string     `json:"id"`
 	Name                string     `json:"name"`
@@ -97,6 +111,10 @@ type Manager struct {
 	store    metadataStore
 	closing  bool
 	settings Settings
+	onChange func(Change)
+
+	workspaceSelection    selection.State
+	hasWorkspaceSelection bool
 }
 
 func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager, error) {
@@ -200,6 +218,8 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 		}
 	}
 	m.registerSession(id, item)
+	created := item.metadata
+	m.emitChange(Change{Kind: ChangeCreated, After: &created})
 
 	go item.session.pump()
 	go m.watch(item)
@@ -288,11 +308,12 @@ func (m *Manager) registerSession(id string, item *entry) {
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	item, ok := m.sessions[id]
 	if !ok {
+		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
+	before := item.metadata
 	item.metadata.Agent = strings.TrimSpace(update.Agent)
 	if resumeAgent := strings.TrimSpace(update.ResumeAgent); resumeAgent != "" {
 		item.metadata.ResumeAgent = resumeAgent
@@ -329,29 +350,42 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	}
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+			m.mu.Unlock()
 			return Metadata{}, err
 		}
 	}
-	return item.metadata, nil
+	after := item.metadata
+	m.mu.Unlock()
+	if before != after {
+		m.emitChange(Change{Kind: ChangeUpdated, Before: &before, After: &after})
+	}
+	return after, nil
 }
 
 func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	item, ok := m.sessions[id]
 	if !ok {
+		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
 	if !item.metadata.NeedsAttention {
-		return item.metadata, nil
+		metadata := item.metadata
+		m.mu.Unlock()
+		return metadata, nil
 	}
+	before := item.metadata
 	item.metadata.NeedsAttention = false
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+			m.mu.Unlock()
 			return Metadata{}, err
 		}
 	}
-	return item.metadata, nil
+	after := item.metadata
+	m.mu.Unlock()
+	m.emitChange(Change{Kind: ChangeUpdated, Before: &before, After: &after})
+	return after, nil
 }
 
 func (m *Manager) UpdateCWD(id, cwd string) (Metadata, error) {
@@ -391,30 +425,38 @@ func normalizeReportedCWD(cwd string) (string, error) {
 
 func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metadata, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	item, ok := m.sessions[id]
 	if !ok {
+		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
 	if item.metadata.CWD == cwd {
-		return item.metadata, nil
+		metadata := item.metadata
+		m.mu.Unlock()
+		return metadata, nil
 	}
 	if preserveEquivalentPath {
 		currentInfo, currentErr := os.Stat(item.metadata.CWD)
 		nextInfo, nextErr := os.Stat(cwd)
 		if currentErr == nil && nextErr == nil && os.SameFile(currentInfo, nextInfo) {
-			return item.metadata, nil
+			metadata := item.metadata
+			m.mu.Unlock()
+			return metadata, nil
 		}
 	}
+	before := item.metadata
 	next := item.metadata
 	next.CWD = cwd
 	next.RepoRoot = repositoryRoot(cwd)
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), next); err != nil {
+			m.mu.Unlock()
 			return Metadata{}, err
 		}
 	}
 	item.metadata = next
+	m.mu.Unlock()
+	m.emitChange(Change{Kind: ChangeUpdated, Before: &before, After: &next})
 	return next, nil
 }
 
@@ -460,6 +502,7 @@ func repositoryRoot(cwd string) string {
 func (m *Manager) watch(item *entry) {
 	_ = item.session.command.Wait()
 
+	var deleted *Metadata
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
 		if !m.closing {
@@ -467,9 +510,14 @@ func (m *Manager) watch(item *entry) {
 			if m.store != nil {
 				_ = m.store.Delete(context.Background(), item.metadata.ID)
 			}
+			before := item.metadata
+			deleted = &before
 		}
 	}
 	m.mu.Unlock()
+	if deleted != nil {
+		m.emitChange(Change{Kind: ChangeDeleted, Before: deleted})
+	}
 	close(item.session.waitDone)
 }
 
@@ -496,7 +544,7 @@ func (m *Manager) refreshCodexTitles() {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var changes []Change
 	for _, item := range m.sessions {
 		if item.metadata.Agent != "codex" || item.metadata.AgentSessionID == "" {
 			continue
@@ -505,10 +553,17 @@ func (m *Manager) refreshCodexTitles() {
 		if title == "" || title == item.metadata.AgentTitle {
 			continue
 		}
+		before := item.metadata
 		item.metadata.AgentTitle = title
 		if m.store != nil {
 			_ = m.store.Save(context.Background(), item.metadata)
 		}
+		after := item.metadata
+		changes = append(changes, Change{Kind: ChangeUpdated, Before: &before, After: &after})
+	}
+	m.mu.Unlock()
+	for _, change := range changes {
+		m.emitChange(change)
 	}
 }
 
@@ -536,21 +591,38 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 func (m *Manager) LoadSelection(ctx context.Context) (selection.State, bool, error) {
 	m.mu.RLock()
 	store := m.store
-	m.mu.RUnlock()
 	if store == nil {
-		return selection.State{}, false, nil
+		state := cloneSelectionState(m.workspaceSelection)
+		found := m.hasWorkspaceSelection
+		m.mu.RUnlock()
+		return state, found, nil
 	}
+	m.mu.RUnlock()
 	return store.LoadSelection(ctx)
 }
 
 func (m *Manager) SaveSelection(ctx context.Context, state selection.State) error {
-	m.mu.RLock()
+	m.mu.Lock()
 	store := m.store
-	m.mu.RUnlock()
 	if store == nil {
+		m.workspaceSelection = cloneSelectionState(state)
+		m.hasWorkspaceSelection = true
+		m.mu.Unlock()
 		return nil
 	}
+	m.mu.Unlock()
 	return store.SaveSelection(ctx, state)
+}
+
+func cloneSelectionState(state selection.State) selection.State {
+	return selection.State{
+		ManualTerminalIDs: append([]string{}, state.ManualTerminalIDs...),
+		PinnedTerminalIDs: append([]string{}, state.PinnedTerminalIDs...),
+		FocusedTerminalID: state.FocusedTerminalID,
+		StatusFilters:     append([]string{}, state.StatusFilters...),
+		CWDFilters:        append([]selection.CWDFilter{}, state.CWDFilters...),
+		Revision:          state.Revision,
+	}
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {
@@ -592,7 +664,24 @@ func (m *Manager) Delete(id string) error {
 		}
 	}
 	item.session.terminate()
+	before := item.metadata
+	m.emitChange(Change{Kind: ChangeDeleted, Before: &before})
 	return nil
+}
+
+func (m *Manager) SetChangeHandler(handler func(Change)) {
+	m.mu.Lock()
+	m.onChange = handler
+	m.mu.Unlock()
+}
+
+func (m *Manager) emitChange(change Change) {
+	m.mu.RLock()
+	handler := m.onChange
+	m.mu.RUnlock()
+	if handler != nil {
+		handler(change)
+	}
 }
 
 func (m *Manager) Close(ctx context.Context) error {

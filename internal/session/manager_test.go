@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ryotarai/euphony/internal/selection"
 )
 
 func TestCreateRejectsBlankName(t *testing.T) {
@@ -18,6 +21,30 @@ func TestCreateRejectsBlankName(t *testing.T) {
 
 	if _, err := manager.Create(context.Background(), "   "); err == nil {
 		t.Fatal("Create() error = nil, want validation error")
+	}
+}
+
+func TestInMemoryManagerRetainsSelectionState(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	want := selection.State{
+		ManualTerminalIDs: []string{"terminal"},
+		PinnedTerminalIDs: []string{},
+		FocusedTerminalID: "terminal",
+		StatusFilters:     []string{},
+		CWDFilters:        []selection.CWDFilter{},
+		Revision:          3,
+	}
+	if err := manager.SaveSelection(context.Background(), want); err != nil {
+		t.Fatalf("SaveSelection() error = %v", err)
+	}
+	got, found, err := manager.LoadSelection(context.Background())
+	if err != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadSelection() = %#v, %t, %v; want %#v", got, found, err, want)
+	}
+	got.ManualTerminalIDs[0] = "mutated"
+	again, _, _ := manager.LoadSelection(context.Background())
+	if again.ManualTerminalIDs[0] != "terminal" {
+		t.Fatalf("LoadSelection() returned aliased state: %#v", again)
 	}
 }
 
