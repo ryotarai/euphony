@@ -6,6 +6,7 @@ type Entry struct {
 	Role      string `json:"role,omitempty"`
 	Title     string `json:"title,omitempty"`
 	Content   string `json:"content,omitempty"`
+	ToolCalls int    `json:"toolCalls,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
 }
 

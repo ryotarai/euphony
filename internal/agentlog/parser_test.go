@@ -121,6 +121,28 @@ func TestParseReturnsAnEmptySliceForAnEmptyTranscript(t *testing.T) {
 	}
 }
 
+func TestParseAtUsesAbsoluteByteOffsetsForStableIDs(t *testing.T) {
+	first := `{"type":"assistant","message":{"role":"assistant","content":"First"}}` + "\n"
+	second := `{"type":"assistant","message":{"role":"assistant","content":"Second"}}`
+
+	got, err := ParseAt("claude", strings.NewReader(first+second), 42)
+	if err != nil {
+		t.Fatalf("ParseAt() error = %v", err)
+	}
+	want := []Entry{
+		{ID: "42-0", Kind: "message", Role: "assistant", Content: "First"},
+		{
+			ID:      strconv.FormatInt(42+int64(len(first)), 10) + "-0",
+			Kind:    "message",
+			Role:    "assistant",
+			Content: "Second",
+		},
+	}
+	if !entriesEqual(got, want) {
+		t.Fatalf("ParseAt() = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseDoesNotTruncateAssistantMessages(t *testing.T) {
 	content := strings.Repeat("x", maxEntryContentBytes+100)
 	input := `{"type":"assistant","message":{"role":"assistant","content":` +
