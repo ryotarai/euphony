@@ -25,21 +25,24 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+		var exit *exitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.code)
+		}
 		log.Fatal(err)
 	}
 }
 
-func run(args []string, stdin io.Reader, stdout io.Writer) error {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "setup":
 			return runSetup(stdout)
 		case "hook":
 			return runHook(args[1:], stdin)
-		default:
-			return fmt.Errorf("unknown command %q; use euphony setup or run euphony without arguments", args[0])
 		}
+		return runAutomation(args, stdin, stdout, stderr)
 	}
 	return runServer()
 }

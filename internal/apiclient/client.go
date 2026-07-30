@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/selection"
@@ -94,6 +95,21 @@ type WaitAgentRequest struct {
 	TimeoutMS int      `json:"timeoutMs,omitempty"`
 }
 
+type ReplaceSelectionRequest struct {
+	ManualTerminalIDs []string          `json:"manualTerminalIds"`
+	PinnedTerminalIDs []string          `json:"pinnedTerminalIds"`
+	FocusedTerminalID string            `json:"focusedTerminalId,omitempty"`
+	Filters           selection.Filters `json:"filters"`
+	ExpectedRevision  *uint64           `json:"expectedRevision,omitempty"`
+}
+
+type TerminalFrame struct {
+	Type       string `json:"type"`
+	DataBase64 string `json:"dataBase64,omitempty"`
+	ExitCode   *int   `json:"exitCode,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
 func New(config Config) (*Client, error) {
 	httpClient := config.HTTPClient
 	baseURL := strings.TrimRight(config.BaseURL, "/")
@@ -121,14 +137,16 @@ func New(config Config) (*Client, error) {
 }
 
 func NewDefault() (*Client, error) {
+	if baseURL := os.Getenv("EUPHONY_URL"); baseURL != "" {
+		return New(Config{BaseURL: baseURL, Token: os.Getenv("EUPHONY_TOKEN")})
+	}
 	socketPath, err := localapi.DefaultSocketPath()
 	if err == nil {
 		if info, statErr := os.Stat(socketPath); statErr == nil && info.Mode()&os.ModeSocket != 0 {
 			return New(Config{SocketPath: socketPath})
 		}
 	}
-	baseURL := os.Getenv("EUPHONY_URL")
-	return New(Config{BaseURL: baseURL, Token: os.Getenv("EUPHONY_TOKEN")})
+	return New(Config{Token: os.Getenv("EUPHONY_TOKEN")})
 }
 
 func (c *Client) Status(ctx context.Context) (Status, error) {
@@ -293,10 +311,10 @@ func (c *Client) Selection(ctx context.Context) (selection.Snapshot, error) {
 
 func (c *Client) ReplaceSelection(
 	ctx context.Context,
-	state selection.State,
+	request ReplaceSelectionRequest,
 ) (selection.Snapshot, error) {
 	var result selection.Snapshot
-	return result, c.request(ctx, http.MethodPut, "/api/v1/selection", state, &result)
+	return result, c.request(ctx, http.MethodPut, "/api/v1/selection", request, &result)
 }
 
 func (c *Client) ApplySelection(
@@ -317,6 +335,47 @@ func (c *Client) Events(ctx context.Context, types []string) (io.ReadCloser, err
 		path += "?" + encoded
 	}
 	return c.open(ctx, http.MethodGet, path, nil)
+}
+
+func (c *Client) TerminalStream(
+	ctx context.Context,
+	id, mode string,
+) (*websocket.Conn, error) {
+	var ticketResult struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := c.request(
+		ctx,
+		http.MethodPost,
+		terminalPath(id, "/tickets"),
+		map[string]string{"mode": mode},
+		&ticketResult,
+	); err != nil {
+		return nil, err
+	}
+	streamURL, err := url.Parse(c.baseURL + terminalPath(id, "/stream"))
+	if err != nil {
+		return nil, err
+	}
+	switch streamURL.Scheme {
+	case "http":
+		streamURL.Scheme = "ws"
+	case "https":
+		streamURL.Scheme = "wss"
+	}
+	query := streamURL.Query()
+	query.Set("ticket", ticketResult.Ticket)
+	streamURL.RawQuery = query.Encode()
+	connection, response, err := websocket.Dial(ctx, streamURL.String(), &websocket.DialOptions{
+		HTTPClient: c.http,
+	})
+	if err != nil {
+		if response != nil {
+			return nil, fmt.Errorf("open terminal stream (%s): %w", response.Status, err)
+		}
+		return nil, fmt.Errorf("open terminal stream: %w", err)
+	}
+	return connection, nil
 }
 
 func (c *Client) request(
