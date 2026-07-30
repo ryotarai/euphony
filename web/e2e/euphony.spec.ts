@@ -92,6 +92,39 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
+test("confirms before deleting a terminal", async ({ page }) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Disposable");
+  await page.goto("/?token=test-token");
+
+  await page.getByRole("button", { name: "Delete Disposable" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Delete terminal?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("“Disposable” will be stopped");
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delete Disposable" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Delete Disposable" }).click();
+  await page
+    .getByRole("dialog", { name: "Delete terminal?" })
+    .getByRole("button", { name: "Delete terminal" })
+    .click();
+
+  await expect(page.getByRole("button", { name: "Delete Disposable" })).toHaveCount(0);
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{ id: string }>;
+    return sessions.some((session) => session.id === terminal.id);
+  }).toBe(false);
+});
+
 test("shows a live agent transcript and releases follow when the reader scrolls away", async ({
   page,
 }, testInfo) => {

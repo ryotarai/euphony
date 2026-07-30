@@ -255,6 +255,7 @@ export function App({
   const [commandValue, setCommandValue] = useState("new-terminal");
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -821,6 +822,13 @@ export function App({
     }
   }
 
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    const item = pendingDelete;
+    setPendingDelete(null);
+    void deleteSession(item);
+  }
+
   async function persistSettings(next: Settings) {
     if (!api) return;
     const previous = settings;
@@ -1028,7 +1036,7 @@ export function App({
         onCwdFilter={updateCwdFilter}
         onCwdSelect={selectCwd}
         onCreate={() => void createSession()}
-        onDelete={(item) => void deleteSession(item)}
+        onDelete={setPendingDelete}
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
@@ -1191,6 +1199,35 @@ export function App({
               <Button type="submit">Create terminal</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete terminal?</DialogTitle>
+            <DialogDescription>
+              “{pendingDelete?.name}” will be stopped and removed from this workspace.
+              This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              autoFocus
+              onClick={() => setPendingDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={confirmDelete}>
+              Delete terminal
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
