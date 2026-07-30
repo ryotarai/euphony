@@ -784,6 +784,49 @@ func TestSubscriberBuffersLiveOutputWhileHistoryReplays(t *testing.T) {
 	}
 }
 
+func TestSubscriberDisconnectsWhenLiveOutputQueueExceedsLimit(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, output, lagged, unsubscribe := running.SubscribeWithStatus()
+	defer unsubscribe()
+
+	chunk := make([]byte, historyChunkSize)
+	for range 80 {
+		running.publish(chunk)
+	}
+
+	select {
+	case <-lagged:
+	case <-time.After(time.Second):
+		t.Fatal("lagged signal was not closed after the queue exceeded its limit")
+	}
+	select {
+	case _, ok := <-output:
+		if ok {
+			t.Fatal("output remained open after the subscriber fell behind")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("output did not close after the subscriber fell behind")
+	}
+}
+
+func TestUnsubscribeAbortsSubscriberAfterProcessFinishes(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, _, unsubscribe := running.Subscribe()
+	subscriber := running.subscribers[0]
+
+	running.outputMu.Lock()
+	delete(running.subscribers, 0)
+	subscriber.finish()
+	running.outputMu.Unlock()
+	unsubscribe()
+
+	subscriber.mu.Lock()
+	defer subscriber.mu.Unlock()
+	if !subscriber.aborted {
+		t.Fatal("subscriber was not aborted after it had been removed by process exit")
+	}
+}
+
 func TestRegisterSessionAppliesLatestHistoryLimit(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	settings := DefaultSettings()

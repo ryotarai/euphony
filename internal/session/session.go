@@ -35,41 +35,69 @@ type Session struct {
 	outputClosed   bool
 }
 
-const historyChunkSize = 32 * 1024
+const (
+	historyChunkSize       = 32 * 1024
+	maxLiveOutputQueueSize = 2 * 1024 * 1024
+)
 
 type outputSubscriber struct {
-	mu        sync.Mutex
-	queue     [][]byte
-	head      int
-	closed    bool
-	aborted   bool
-	notify    chan struct{}
-	abort     chan struct{}
-	output    chan []byte
-	abortOnce sync.Once
+	mu            sync.Mutex
+	queue         [][]byte
+	head          int
+	queuedBytes   int
+	maxQueueBytes int
+	closed        bool
+	aborted       bool
+	notify        chan struct{}
+	abort         chan struct{}
+	lagged        chan struct{}
+	output        chan []byte
+	abortOnce     sync.Once
+	laggedOnce    sync.Once
 }
 
-// outputSubscriber keeps the replay-to-live handoff lossless without blocking
-// the PTY reader while a client is still receiving its history snapshot.
-func newOutputSubscriber() *outputSubscriber {
+// outputSubscriber keeps the replay-to-live handoff lossless up to a bounded
+// high-water mark without blocking the PTY reader. Lagging clients reconnect
+// from a fresh history snapshot instead of growing the queue without limit.
+func newOutputSubscriber(maxQueueBytes int) *outputSubscriber {
 	subscriber := &outputSubscriber{
-		notify: make(chan struct{}, 1),
-		abort:  make(chan struct{}),
-		output: make(chan []byte, 64),
+		maxQueueBytes: maxQueueBytes,
+		notify:        make(chan struct{}, 1),
+		abort:         make(chan struct{}),
+		lagged:        make(chan struct{}),
+		output:        make(chan []byte),
 	}
 	go subscriber.run()
 	return subscriber
 }
 
-func (s *outputSubscriber) enqueue(data []byte) {
+func (s *outputSubscriber) enqueue(data []byte) bool {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return
+		return false
+	}
+	if s.queuedBytes+len(data) > s.maxQueueBytes {
+		s.closed = true
+		s.aborted = true
+		s.queue = nil
+		s.head = 0
+		s.queuedBytes = 0
+		s.mu.Unlock()
+		s.laggedOnce.Do(func() {
+			close(s.lagged)
+		})
+		s.abortOnce.Do(func() {
+			close(s.abort)
+		})
+		s.signal()
+		return false
 	}
 	s.queue = append(s.queue, data)
+	s.queuedBytes += len(data)
 	s.mu.Unlock()
 	s.signal()
+	return true
 }
 
 func (s *outputSubscriber) finish() {
@@ -85,6 +113,7 @@ func (s *outputSubscriber) abortOutput() {
 	s.aborted = true
 	s.queue = nil
 	s.head = 0
+	s.queuedBytes = 0
 	s.mu.Unlock()
 	s.abortOnce.Do(func() {
 		close(s.abort)
@@ -132,6 +161,7 @@ func (s *outputSubscriber) next() ([]byte, bool, bool) {
 		data := s.queue[s.head]
 		s.queue[s.head] = nil
 		s.head++
+		s.queuedBytes -= len(data)
 		if s.head == len(s.queue) {
 			s.queue = nil
 			s.head = 0
@@ -170,11 +200,16 @@ func (s *Session) WorkingDirectory() (string, error) {
 }
 
 func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {
+	history, output, _, unsubscribe := s.SubscribeWithStatus()
+	return history, output, unsubscribe
+}
+
+func (s *Session) SubscribeWithStatus() ([][]byte, <-chan []byte, <-chan struct{}, func()) {
 	s.outputMu.Lock()
 	history := append([][]byte(nil), s.history...)
 	id := s.nextSubscriber
 	s.nextSubscriber++
-	subscriber := newOutputSubscriber()
+	subscriber := newOutputSubscriber(maxLiveOutputQueueSize)
 	if s.outputClosed {
 		subscriber.finish()
 	} else {
@@ -186,14 +221,14 @@ func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {
 	unsubscribe := func() {
 		once.Do(func() {
 			s.outputMu.Lock()
-			if current, ok := s.subscribers[id]; ok {
+			if _, ok := s.subscribers[id]; ok {
 				delete(s.subscribers, id)
-				current.abortOutput()
 			}
 			s.outputMu.Unlock()
+			subscriber.abortOutput()
 		})
 	}
-	return history, subscriber.output, unsubscribe
+	return history, subscriber.output, subscriber.lagged, unsubscribe
 }
 
 func (s *Session) pump() {
@@ -227,8 +262,10 @@ func (s *Session) publish(data []byte) {
 		data = data[size:]
 	}
 	s.trimHistoryLocked()
-	for _, subscriber := range s.subscribers {
-		subscriber.enqueue(chunk)
+	for id, subscriber := range s.subscribers {
+		if !subscriber.enqueue(chunk) {
+			delete(s.subscribers, id)
+		}
 	}
 	s.outputMu.Unlock()
 }

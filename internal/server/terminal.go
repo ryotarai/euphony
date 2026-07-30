@@ -52,7 +52,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			cancelCWDRefresh()
 		}
 	}()
-	history, output, unsubscribe := terminal.Subscribe()
+	history, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
 	defer unsubscribe()
 	outputDone := make(chan struct{})
 	go func() {
@@ -71,6 +71,15 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			select {
 			case data, ok := <-output:
 				if !ok {
+					select {
+					case <-lagged:
+						_ = connection.Close(
+							websocket.StatusTryAgainLater,
+							"terminal output fell behind; reconnect",
+						)
+						return
+					default:
+					}
 					exitCode := s.sessionExitCode(id)
 					payload, _ := json.Marshal(serverMessage{Type: "exit", ExitCode: exitCode})
 					_ = connection.Write(ctx, websocket.MessageText, payload)
@@ -80,6 +89,12 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
 					return
 				}
+			case <-lagged:
+				_ = connection.Close(
+					websocket.StatusTryAgainLater,
+					"terminal output fell behind; reconnect",
+				)
+				return
 			case <-ctx.Done():
 				return
 			}

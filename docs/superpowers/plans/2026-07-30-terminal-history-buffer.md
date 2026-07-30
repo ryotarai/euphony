@@ -4,7 +4,7 @@
 
 **Goal:** Add a persistent terminal history size setting with finite MiB values and an unlimited mode, applied to server replay history and browser scrollback.
 
-**Architecture:** Extend the shared settings contract and SQLite schema with a byte limit where zero means unlimited. Give every server session a live-updatable chunked limit, replay bounded frames, and pass the same setting through React to an xterm.js driver whose finite scrollback is safely derived and updated in place.
+**Architecture:** Extend the shared settings contract and SQLite schema with a byte limit where zero means unlimited. Give every server session a live-updatable chunked limit, replay bounded frames with a 2 MiB high-water mark for lagging subscribers, and pass the same setting through React to an xterm.js driver whose finite scrollback is safely derived and updated in place.
 
 **Tech Stack:** Go, SQLite, React 19, TypeScript, xterm.js 6, Vitest, Testing Library, Playwright
 

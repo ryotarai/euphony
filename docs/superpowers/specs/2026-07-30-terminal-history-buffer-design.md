@@ -47,6 +47,14 @@ sends one bounded WebSocket message per history chunk followed by
 `history_end`, avoiding a second full-history allocation and a single
 multi-gigabyte JSON frame.
 
+Live output produced while a snapshot is being sent uses a per-subscriber FIFO
+so the replay-to-live handoff stays ordered. The FIFO has a 2 MiB high-water
+mark independent of the retained history setting. A client that falls behind
+that mark is closed with WebSocket `Try Again Later` instead of being reported
+as a process exit; reconnecting starts from a fresh history snapshot. This
+keeps slow or stalled clients from creating an unbounded server allocation,
+including when retained history is unlimited.
+
 ## Browser Scrollback
 
 `App` passes `terminalHistoryLimit` to every `TerminalView`. Because xterm.js
