@@ -13,7 +13,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "cd .. && make build && EUPHONY_DB=:memory: EUPHONY_TOKEN=test-token EUPHONY_ADDR=127.0.0.1:18080 bin/euphony",
+      "cd .. && make build && EUPHONY_DB=:memory: EUPHONY_TOKEN=test-token EUPHONY_ADDR=127.0.0.1:18080 CLAUDE_CONFIG_DIR=/tmp/euphony-e2e-claude CODEX_HOME=/tmp/euphony-e2e-codex bin/euphony",
     url: "http://127.0.0.1:18080/api/health",
     reuseExistingServer: false,
     timeout: 120_000,

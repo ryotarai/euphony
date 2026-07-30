@@ -118,6 +118,14 @@ function focusTerminal(terminal: TerminalDriver) {
   if (!modalOpen) terminal.focus();
 }
 
+export function fitTerminalIfVisible(
+  host: HTMLElement,
+  terminal: Pick<TerminalDriver, "fit">,
+) {
+  if (host.hidden || host.closest("[hidden]")) return;
+  terminal.fit();
+}
+
 export function TerminalView({
   session,
   api,
@@ -205,7 +213,7 @@ export function TerminalView({
           .catch(() => undefined);
       }, 150);
     });
-    const fit = () => terminal.fit();
+    const fit = () => fitTerminalIfVisible(host, terminal);
     window.addEventListener("resize", fit);
     const resizeObserver = typeof ResizeObserver === "undefined"
       ? undefined
@@ -225,7 +233,7 @@ export function TerminalView({
         connectionSocket.addEventListener("open", () => {
           if (!active) return;
           setConnection("connected");
-          terminal.fit();
+          fitTerminalIfVisible(host, terminal);
           sendResize(terminal.cols, terminal.rows);
           if (activeRef.current) focusTerminal(terminal);
         });
@@ -289,7 +297,11 @@ export function TerminalView({
   }, [active]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => terminalRef.current?.fit(), 50);
+    const timer = window.setTimeout(() => {
+      const host = hostRef.current;
+      const terminal = terminalRef.current;
+      if (host && terminal) fitTerminalIfVisible(host, terminal);
+    }, 50);
     return () => window.clearTimeout(timer);
   }, [layoutVersion]);
 

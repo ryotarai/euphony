@@ -7,23 +7,27 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ryotarai/euphony/internal/agentlog"
 	"github.com/ryotarai/euphony/internal/session"
 	webassets "github.com/ryotarai/euphony/web"
 )
 
 type Config struct {
-	Token             string
-	Shell             string
-	HookURL           string
-	DatabasePath      string
-	CodexSessionIndex string
-	Assets            fs.FS
+	Token              string
+	Shell              string
+	HookURL            string
+	DatabasePath       string
+	CodexSessionIndex  string
+	CodexSessionsRoot  string
+	ClaudeProjectsRoot string
+	Assets             fs.FS
 }
 
 type Server struct {
-	handler  http.Handler
-	sessions *session.Manager
-	tickets  *ticketStore
+	handler   http.Handler
+	sessions  *session.Manager
+	tickets   *ticketStore
+	agentLogs *agentlog.Resolver
 }
 
 func New(config Config) (*Server, error) {
@@ -47,7 +51,11 @@ func New(config Config) (*Server, error) {
 		}
 	}
 	tickets := newTicketStore(time.Now)
-	server := &Server{sessions: sessionManager, tickets: tickets}
+	server := &Server{
+		sessions:  sessionManager,
+		tickets:   tickets,
+		agentLogs: agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
+	}
 
 	public := http.NewServeMux()
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -61,6 +69,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
 	protected.HandleFunc("POST /api/sessions/{id}/acknowledge-attention", server.acknowledgeAttention)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
+	protected.HandleFunc("GET /api/sessions/{id}/agent-log", server.agentLog)
 	protected.HandleFunc("POST /api/hooks/terminal", server.updateTerminalHook)
 	protected.HandleFunc("GET /api/settings", server.getSettings)
 	protected.HandleFunc("PATCH /api/settings", server.updateSettings)

@@ -20,21 +20,22 @@ import (
 var ErrNotFound = errors.New("session not found")
 
 type Metadata struct {
-	ID             string     `json:"id"`
-	Name           string     `json:"name"`
-	State          State      `json:"state"`
-	CWD            string     `json:"cwd"`
-	RepoRoot       string     `json:"repoRoot"`
-	Agent          string     `json:"agent,omitempty"`
-	AgentStatus    string     `json:"agentStatus,omitempty"`
-	NeedsAttention bool       `json:"needsAttention,omitempty"`
-	AgentTitle     string     `json:"agentTitle,omitempty"`
-	AgentSessionID string     `json:"-"`
-	ResumeAgent    string     `json:"-"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	ExitedAt       *time.Time `json:"exitedAt,omitempty"`
-	ExitCode       *int       `json:"exitCode,omitempty"`
-	Message        string     `json:"message,omitempty"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	State               State      `json:"state"`
+	CWD                 string     `json:"cwd"`
+	RepoRoot            string     `json:"repoRoot"`
+	Agent               string     `json:"agent,omitempty"`
+	AgentStatus         string     `json:"agentStatus,omitempty"`
+	NeedsAttention      bool       `json:"needsAttention,omitempty"`
+	AgentTitle          string     `json:"agentTitle,omitempty"`
+	AgentSessionID      string     `json:"-"`
+	AgentTranscriptPath string     `json:"-"`
+	ResumeAgent         string     `json:"-"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	ExitedAt            *time.Time `json:"exitedAt,omitempty"`
+	ExitCode            *int       `json:"exitCode,omitempty"`
+	Message             string     `json:"message,omitempty"`
 }
 
 type HookConfig struct {
@@ -47,6 +48,7 @@ type AgentUpdate struct {
 	Agent          string
 	ResumeAgent    string
 	AgentSessionID string
+	TranscriptPath string
 	Status         string
 	Title          string
 	CWD            string
@@ -274,6 +276,9 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	}
 	if sessionID := strings.TrimSpace(update.AgentSessionID); sessionID != "" {
 		item.metadata.AgentSessionID = sessionID
+	}
+	if transcriptPath := strings.TrimSpace(update.TranscriptPath); transcriptPath != "" {
+		item.metadata.AgentTranscriptPath = transcriptPath
 	}
 	nextStatus := strings.TrimSpace(update.Status)
 	if item.metadata.AgentStatus == "running" && nextStatus == "waiting" {
@@ -503,6 +508,16 @@ func (m *Manager) Get(id string) (*Session, bool) {
 		return nil, false
 	}
 	return item.session, true
+}
+
+func (m *Manager) Metadata(id string) (Metadata, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	item, ok := m.sessions[id]
+	if !ok {
+		return Metadata{}, false
+	}
+	return item.metadata, true
 }
 
 func (m *Manager) Delete(id string) error {

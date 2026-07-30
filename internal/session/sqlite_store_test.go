@@ -64,10 +64,11 @@ func TestSQLiteStorePersistsTerminalMetadata(t *testing.T) {
 	want := Metadata{
 		ID: "terminal-1", Name: "Terminal", State: StateExited, CWD: "/repo",
 		Agent: "codex", ResumeAgent: "codex", AgentStatus: "waiting", AgentTitle: "SQLite",
-		NeedsAttention: true,
-		AgentSessionID: "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
-		CreatedAt:      time.Date(2026, 7, 28, 1, 2, 3, 4, time.UTC),
-		ExitedAt:       &exitedAt, ExitCode: &exitCode, Message: "done",
+		NeedsAttention:      true,
+		AgentSessionID:      "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
+		AgentTranscriptPath: "/home/me/.codex/sessions/2026/07/30/rollout-session.jsonl",
+		CreatedAt:           time.Date(2026, 7, 28, 1, 2, 3, 4, time.UTC),
+		ExitedAt:            &exitedAt, ExitCode: &exitCode, Message: "done",
 	}
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -139,6 +140,7 @@ func metadataEqual(left, right Metadata) bool {
 		left.AgentStatus == right.AgentStatus && left.AgentTitle == right.AgentTitle &&
 		left.NeedsAttention == right.NeedsAttention &&
 		left.AgentSessionID == right.AgentSessionID &&
+		left.AgentTranscriptPath == right.AgentTranscriptPath &&
 		left.CreatedAt.Equal(right.CreatedAt) &&
 		timesEqual(left.ExitedAt, right.ExitedAt) &&
 		intsEqual(left.ExitCode, right.ExitCode) && left.Message == right.Message

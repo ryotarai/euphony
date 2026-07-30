@@ -116,7 +116,8 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 
 	updated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
 		Agent: "codex", AgentSessionID: "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
-		Status: "running", Title: "Implement v0.2", CWD: "/workspace/euphony",
+		TranscriptPath: "/home/me/.codex/sessions/2026/07/30/rollout-session.jsonl",
+		Status:         "running", Title: "Implement v0.2", CWD: "/workspace/euphony",
 	})
 	if err != nil {
 		t.Fatalf("UpdateAgent() error = %v", err)
@@ -124,8 +125,34 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	if updated.Agent != "codex" || updated.AgentStatus != "running" ||
 		updated.AgentTitle != "Implement v0.2" ||
 		updated.AgentSessionID != "019c43d4-95d9-7af0-92c4-d9f670ccaa32" ||
+		updated.AgentTranscriptPath != "/home/me/.codex/sessions/2026/07/30/rollout-session.jsonl" ||
 		updated.CWD != "/workspace/euphony" {
 		t.Fatalf("updated metadata = %#v", updated)
+	}
+}
+
+func TestMetadataReturnsHiddenAgentLinkage(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	_, err = manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "claude", AgentSessionID: "session-1",
+		TranscriptPath: "/home/me/.claude/projects/repo/session-1.jsonl",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	got, ok := manager.Metadata(created.ID)
+	if !ok || got.AgentSessionID != "session-1" ||
+		got.AgentTranscriptPath != "/home/me/.claude/projects/repo/session-1.jsonl" {
+		t.Fatalf("Metadata() = %#v, %v", got, ok)
+	}
+	if _, ok := manager.Metadata("missing"); ok {
+		t.Fatal("Metadata(missing) ok = true, want false")
 	}
 }
 

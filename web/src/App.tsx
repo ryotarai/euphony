@@ -14,6 +14,7 @@ import {
 } from "./components/SessionNavigation";
 import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
 import { TerminalView, type ConnectionState } from "./components/TerminalView";
+import { TerminalPane } from "./components/TerminalPane";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -1007,14 +1008,22 @@ export function App({
                 aria-label={`${pane.name} pane`}
                 onMouseDown={() => focusPane(pane.id)}
               >
-                {renderTerminal(
-                  pane,
-                  api,
-                  focusedID === pane.id,
-                  panes.length,
-                  handleConnectionChange,
-                  reconnectSignals[pane.id] ?? 0,
-                )}
+                <TerminalPane
+                  session={pane}
+                  api={api}
+                  active={focusedID === pane.id}
+                  layoutVersion={panes.length}
+                  renderTerminal={(paneLayoutVersion, terminalActive) =>
+                    renderTerminal(
+                      pane,
+                      api,
+                      terminalActive,
+                      paneLayoutVersion,
+                      handleConnectionChange,
+                      reconnectSignals[pane.id] ?? 0,
+                    )
+                  }
+                />
               </div>
           ))
         ) : (

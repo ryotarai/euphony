@@ -1,6 +1,11 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { TerminalView, type TerminalDriver, type WebSocketLike } from "./TerminalView";
+import {
+  fitTerminalIfVisible,
+  TerminalView,
+  type TerminalDriver,
+  type WebSocketLike,
+} from "./TerminalView";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
@@ -41,6 +46,22 @@ class FakeSocket extends EventTarget implements WebSocketLike {
     this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
   }
 }
+
+test("does not fit xterm while its mounted tab panel is hidden", () => {
+  const panel = document.createElement("div");
+  const host = document.createElement("div");
+  panel.append(host);
+  document.body.append(panel);
+  const terminal = { fit: vi.fn() };
+
+  panel.hidden = true;
+  fitTerminalIfVisible(host, terminal);
+  expect(terminal.fit).not.toHaveBeenCalled();
+
+  panel.hidden = false;
+  fitTerminalIfVisible(host, terminal);
+  expect(terminal.fit).toHaveBeenCalledTimes(1);
+});
 
 test("gets a ticket before connecting and relays terminal traffic", async () => {
   const socket = new FakeSocket();
