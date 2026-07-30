@@ -57,6 +57,7 @@ async function replaceSharedSelection(
       pinnedTerminalIds: [],
       ...(focusedTerminalID ? { focusedTerminalId: focusedTerminalID } : {}),
       filters: { statuses: [], cwds: [] },
+      pinnedFilters: { statuses: [], cwds: [] },
       expectedRevision: current.result.revision,
     },
   });
@@ -555,7 +556,8 @@ test("pins a terminal checkbox until that checkbox is clicked", async ({ page })
   });
   await leftCheckbox.click({ modifiers: ["Shift"] });
   await expect(leftCheckbox).toHaveAttribute("data-pinned", "true");
-  await expect(page.locator(".pane-checkbox-pin")).toBeVisible();
+  await expect(leftCheckbox).toHaveCSS("background-color", "rgb(245, 158, 11)");
+  await expect(page.locator(".pane-checkbox-pin")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Select Right" }).click();
 
@@ -577,6 +579,73 @@ test("pins a terminal checkbox until that checkbox is clicked", async ({ page })
   parameters = new URL(page.url()).searchParams;
   expect(parameters.getAll("terminal")).toEqual([right.id]);
   expect(parameters.getAll("pin")).toEqual([]);
+});
+
+test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
+  await clearSessions(page);
+  const runningACwd = `/tmp/euphony-e2e-${e2ePort}-running-a`;
+  const runningBCwd = `/tmp/euphony-e2e-${e2ePort}-running-b`;
+  await mkdir(runningACwd, { recursive: true });
+  await mkdir(runningBCwd, { recursive: true });
+  const runningA = await createSession(page, "Running A", runningACwd);
+  const runningB = await createSession(page, "Running B", runningBCwd);
+  const waiting = await createSession(page, "Waiting", "/tmp");
+  await reportAgent(page, waiting.id, "codex", "Waiting", "waiting");
+  await replaceSharedSelection(page, [runningA.id], runningA.id);
+  await page.goto("/?token=test-token");
+
+  const terminalStatus = page.getByRole("checkbox", {
+    name: "Show all Terminal terminals",
+  });
+  await terminalStatus.click({ modifiers: ["Shift"] });
+  await expect(terminalStatus).toHaveAttribute("data-pinned", "true");
+  await expect(terminalStatus).toHaveCSS(
+    "background-color",
+    "rgb(245, 158, 11)",
+  );
+  await page.getByRole("button", { name: "Select Waiting" }).click();
+
+  await expect(page.getByLabel("Running A pane", { exact: true })).toHaveCount(1);
+  await expect(page.getByLabel("Running B pane", { exact: true })).toHaveCount(1);
+  await expect(page.getByLabel("Waiting pane", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.getAll("pin-status")).toEqual([
+    "terminal",
+  ]);
+  const pinnedStatusResponse = await page.request.get("/api/v1/selection", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const pinnedStatusSelection = await pinnedStatusResponse.json() as {
+    result: {
+      pinnedFilters: {
+        statuses: string[];
+        cwds: Array<{ status: string; cwd: string }>;
+      };
+    };
+  };
+  expect(pinnedStatusSelection.result.pinnedFilters.statuses).toEqual([
+    "terminal",
+  ]);
+
+  await terminalStatus.click();
+  await expect(terminalStatus).not.toHaveAttribute("data-pinned");
+  const runningACwdCheckbox = page.getByRole("checkbox", {
+    name: `Include all terminals in ${runningACwd}`,
+  });
+  await runningACwdCheckbox.click({ modifiers: ["Shift"] });
+  await expect(runningACwdCheckbox).toHaveAttribute("data-pinned", "true");
+  await expect(runningACwdCheckbox).toHaveCSS(
+    "background-color",
+    "rgb(245, 158, 11)",
+  );
+  await page.getByRole("button", { name: "Select Waiting" }).click();
+
+  await expect(page.getByLabel("Running A pane", { exact: true })).toHaveCount(1);
+  await expect(page.getByLabel("Running B pane", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Waiting pane", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.getAll("pin-cwd")).toEqual([
+    `terminal\u0000${runningACwd}`,
+  ]);
+  await expect(page.locator(".pane-checkbox-pin")).toHaveCount(0);
 });
 
 test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
