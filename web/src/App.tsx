@@ -57,6 +57,7 @@ import {
 } from "@/components/ui/input-group";
 import type {
   CwdSelectionFilter,
+  ReplaceSelectionRequest,
   SelectionSnapshot,
   Session,
   Settings,
@@ -364,7 +365,8 @@ export function App({
   const selectionRevisionRef = useRef<number | null>(null);
   const selectionServerSignatureRef = useRef("");
   const selectionSyncReadyRef = useRef(false);
-  const selectionWriteSequenceRef = useRef(0);
+  const selectionPendingRequestRef = useRef<ReplaceSelectionRequest | null>(null);
+  const selectionWriteActiveRef = useRef(false);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const previewSettings = useMemo(() => {
     if (!settingsOpen) return settings;
@@ -425,6 +427,67 @@ export function App({
       nextCwdFilters,
       mode,
     );
+  }
+
+  function recordServerSelection(snapshot: SelectionSnapshot) {
+    selectionRevisionRef.current = snapshot.revision;
+    selectionServerSignatureRef.current = selectionSourceSignature(
+      snapshot.manualTerminalIds,
+      snapshot.pinnedTerminalIds,
+      snapshot.focusedTerminalId,
+      snapshot.filters.statuses,
+      snapshot.filters.cwds,
+    );
+  }
+
+  async function flushSelectionWrites() {
+    if (!api || selectionWriteActiveRef.current) return;
+    selectionWriteActiveRef.current = true;
+    try {
+      while (selectionPendingRequestRef.current) {
+        const request = selectionPendingRequestRef.current;
+        selectionPendingRequestRef.current = null;
+        try {
+          const snapshot = await api.replaceSelection({
+            ...request,
+            ...(selectionRevisionRef.current === null
+              ? {}
+              : { expectedRevision: selectionRevisionRef.current }),
+          });
+          if (selectionPendingRequestRef.current) {
+            recordServerSelection(snapshot);
+          } else {
+            applyServerSelection(snapshot);
+          }
+        } catch (error) {
+          if (error instanceof ApiError && error.code === "selection_conflict") {
+            try {
+              const snapshot = await api.getSelection();
+              if (selectionPendingRequestRef.current) {
+                recordServerSelection(snapshot);
+              } else {
+                applyServerSelection(snapshot);
+              }
+              continue;
+            } catch {
+              setRequestError("The shared selection could not be refreshed.");
+              break;
+            }
+          }
+          setRequestError(
+            error instanceof Error
+              ? error.message
+              : "The shared selection could not be updated.",
+          );
+          break;
+        }
+      }
+    } finally {
+      selectionWriteActiveRef.current = false;
+      if (selectionPendingRequestRef.current) {
+        void flushSelectionWrites();
+      }
+    }
   }
 
   useEffect(() => {
@@ -574,36 +637,20 @@ export function App({
       statusFilters,
       cwdFilterValues,
     );
-    if (signature === selectionServerSignatureRef.current) return;
+    if (
+      signature === selectionServerSignatureRef.current &&
+      !selectionWriteActiveRef.current
+    ) {
+      return;
+    }
 
-    const sequence = ++selectionWriteSequenceRef.current;
-    api.replaceSelection({
+    selectionPendingRequestRef.current = {
       manualTerminalIds,
       pinnedTerminalIds: pinnedIDs,
       ...(focusedID ? { focusedTerminalId: focusedID } : {}),
       filters: { statuses: statusFilters, cwds: cwdFilterValues },
-      ...(selectionRevisionRef.current === null
-        ? {}
-        : { expectedRevision: selectionRevisionRef.current }),
-    }).then((snapshot) => {
-      if (sequence !== selectionWriteSequenceRef.current) return;
-      applyServerSelection(snapshot);
-    }).catch(async (error: unknown) => {
-      if (sequence !== selectionWriteSequenceRef.current) return;
-      if (error instanceof ApiError && error.code === "selection_conflict") {
-        try {
-          applyServerSelection(await api.getSelection());
-        } catch {
-          setRequestError("The shared selection could not be refreshed.");
-        }
-        return;
-      }
-      setRequestError(
-        error instanceof Error
-          ? error.message
-          : "The shared selection could not be updated.",
-      );
-    });
+    };
+    void flushSelectionWrites();
   }, [
     api,
     syncSelection,

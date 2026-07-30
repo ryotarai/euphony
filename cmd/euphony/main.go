@@ -133,7 +133,7 @@ func runServer() error {
 		ClaudeProjectsRoot: claudeProjectsRoot,
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	socketPath, err := localapi.DefaultSocketPath()
 	if err != nil {
@@ -173,12 +173,12 @@ func runServer() error {
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 
+	var serveErr error
 	select {
 	case err := <-result:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) {
+			serveErr = err
 		}
-		return err
 	case <-signals:
 		log.Print("Shutting down Euphony")
 	}
@@ -188,6 +188,9 @@ func runServer() error {
 	shutdownErr := httpServer.Shutdown(ctx)
 	unixShutdownErr := unixServer.Shutdown(ctx)
 	sessionErr := srv.Close(ctx)
+	if serveErr != nil {
+		return serveErr
+	}
 	if shutdownErr != nil {
 		return shutdownErr
 	}

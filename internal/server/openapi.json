@@ -5,10 +5,16 @@
     "version": "v1",
     "description": "Terminal-first automation API exposed over TCP and a local Unix socket."
   },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "paths": {
     "/api/v1/status": {
       "get": {
         "operationId": "getStatus",
+        "security": [],
         "responses": {
           "200": {
             "description": "Server status",
@@ -26,6 +32,7 @@
     "/api/v1/schema": {
       "get": {
         "operationId": "getSchema",
+        "security": [],
         "responses": {
           "200": {
             "description": "Raw OpenAPI 3.1 document",
@@ -292,6 +299,7 @@
       ],
       "get": {
         "operationId": "streamTerminal",
+        "security": [],
         "x-euphony-websocket": {
           "serverFrame": {
             "$ref": "#/components/schemas/TerminalFrame"

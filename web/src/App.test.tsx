@@ -132,6 +132,82 @@ test("uses the server selection as authoritative and persists browser changes", 
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
+test("serializes rapid shared-selection writes and rebases the latest state", async () => {
+  let releaseFirstWrite: (() => void) | undefined;
+  const firstWriteGate = new Promise<void>((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  const writes: Array<{
+    manualTerminalIds: string[];
+    focusedTerminalId: string;
+    expectedRevision: number;
+  }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: ["session-1"],
+          manualTerminalIds: ["session-1"],
+          pinnedTerminalIds: [],
+          focusedTerminalId: "session-1",
+          filters: { statuses: [], cwds: [] },
+          revision: 7,
+        },
+      });
+    }
+    if (input === "/api/v1/selection" && init?.method === "PUT") {
+      const request = JSON.parse(String(init.body)) as {
+        manualTerminalIds: string[];
+        focusedTerminalId: string;
+        expectedRevision: number;
+      };
+      writes.push(request);
+      if (writes.length === 1) await firstWriteGate;
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: request.manualTerminalIds,
+          manualTerminalIds: request.manualTerminalIds,
+          pinnedTerminalIds: [],
+          focusedTerminalId: request.focusedTerminalId,
+          filters: { statuses: [], cwds: [] },
+          revision: 7 + writes.length,
+        },
+      });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByText("session-1");
+
+  await user.click(screen.getByRole("button", { name: "Select Claude" }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "Select Codex" }));
+  expect(writes).toHaveLength(1);
+  releaseFirstWrite?.();
+
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(writes.map((request) => ({
+    ids: request.manualTerminalIds,
+    focus: request.focusedTerminalId,
+    revision: request.expectedRevision,
+  }))).toEqual([
+    { ids: ["session-2"], focus: "session-2", revision: 7 },
+    { ids: ["session-1"], focus: "session-1", revision: 8 },
+  ]);
+});
+
 test("detects only new transitions into attention", () => {
   const attention = { ...runningSession, needsAttention: true };
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);

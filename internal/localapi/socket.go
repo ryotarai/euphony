@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -67,6 +68,10 @@ func prepareSocketPath(path string) error {
 	if dialErr == nil {
 		_ = connection.Close()
 		return fmt.Errorf("Euphony is already listening on %q", path)
+	}
+	if !errors.Is(dialErr, syscall.ECONNREFUSED) &&
+		!errors.Is(dialErr, syscall.ENOENT) {
+		return fmt.Errorf("probe existing Unix socket: %w", dialErr)
 	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove stale Unix socket: %w", err)

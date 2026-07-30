@@ -8,6 +8,7 @@ api_address="${EUPHONY_ADDR:-127.0.0.1:8080}"
 api_url="${EUPHONY_DEV_API_URL:-http://$api_address}"
 vite_host="${EUPHONY_DEV_HOST:-127.0.0.1}"
 vite_port="${EUPHONY_DEV_PORT:-5173}"
+socket_path="${EUPHONY_SOCKET:-$repo_root/tmp/euphony-dev-$vite_port.sock}"
 api_pid=""
 
 cleanup() {
@@ -37,6 +38,7 @@ echo "Starting Euphony API at http://$api_address"
   cd "$repo_root"
   export EUPHONY_TOKEN="$token"
   export EUPHONY_ADDR="$api_address"
+  export EUPHONY_SOCKET="$socket_path"
   exec go run ./cmd/euphony
 ) &
 api_pid=$!
