@@ -31,6 +31,7 @@ type State struct {
 	FocusedTerminalID string      `json:"focusedTerminalId,omitempty"`
 	StatusFilters     []string    `json:"statusFilters"`
 	CWDFilters        []CWDFilter `json:"cwdFilters"`
+	PinnedFilters     Filters     `json:"pinnedFilters"`
 	Revision          uint64      `json:"revision"`
 }
 
@@ -40,6 +41,7 @@ type Snapshot struct {
 	PinnedTerminalIDs []string `json:"pinnedTerminalIds"`
 	FocusedTerminalID string   `json:"focusedTerminalId,omitempty"`
 	Filters           Filters  `json:"filters"`
+	PinnedFilters     Filters  `json:"pinnedFilters"`
 	Revision          uint64   `json:"revision"`
 }
 
@@ -69,5 +71,7 @@ type Action struct {
 	FocusedTerminalID string      `json:"focusedTerminalId,omitempty"`
 	Statuses          []string    `json:"statuses,omitempty"`
 	CWDFilters        []CWDFilter `json:"cwdFilters,omitempty"`
+	PinnedStatuses    []string    `json:"pinnedStatuses,omitempty"`
+	PinnedCWDFilters  []CWDFilter `json:"pinnedCwdFilters,omitempty"`
 	ExpectedRevision  *uint64     `json:"expectedRevision,omitempty"`
 }
