@@ -185,8 +185,83 @@ func TestSQLiteStorePersistsSelection(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 7 {
-		t.Fatalf("user_version = %d, want 7", version)
+	if version != 8 {
+		t.Fatalf("user_version = %d, want 8", version)
+	}
+}
+
+func TestSQLiteStorePersistsPinnedFilters(t *testing.T) {
+	store, err := OpenSQLiteStore(filepath.Join(t.TempDir(), "euphony.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	want := selection.State{
+		StatusFilters: []string{"waiting"},
+		CWDFilters: []selection.CWDFilter{
+			{Status: "running", CWD: "/repo"},
+		},
+		PinnedFilters: selection.Filters{
+			Statuses: []string{"waiting"},
+			CWDs: []selection.CWDFilter{
+				{Status: "running", CWD: "/repo"},
+			},
+		},
+		Revision: 12,
+	}
+
+	if err := store.SaveSelection(context.Background(), want); err != nil {
+		t.Fatalf("SaveSelection() error = %v", err)
+	}
+	got, found, err := store.LoadSelection(context.Background())
+	if err != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadSelection() = %#v, %t, %v; want %#v", got, found, err, want)
+	}
+}
+
+func TestSQLiteStoreMigratesPinnedFiltersForLegacySelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-selection.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE selection (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		manual_terminal_ids TEXT NOT NULL,
+		pinned_terminal_ids TEXT NOT NULL,
+		focused_terminal_id TEXT NOT NULL,
+		status_filters TEXT NOT NULL,
+		cwd_filters TEXT NOT NULL,
+		revision INTEGER NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy selection schema: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO selection (
+		id, manual_terminal_ids, pinned_terminal_ids, focused_terminal_id,
+		status_filters, cwd_filters, revision
+	) VALUES (1, '[]', '[]', '', '["waiting"]', '[]', 3)`)
+	if err != nil {
+		t.Fatalf("insert legacy selection: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	state, found, err := store.LoadSelection(context.Background())
+	if err != nil || !found {
+		t.Fatalf("LoadSelection() = %#v, %t, %v", state, found, err)
+	}
+	if state.PinnedFilters.Statuses == nil ||
+		state.PinnedFilters.CWDs == nil ||
+		len(state.PinnedFilters.Statuses) != 0 ||
+		len(state.PinnedFilters.CWDs) != 0 {
+		t.Fatalf("PinnedFilters = %#v, want empty arrays", state.PinnedFilters)
 	}
 }
 

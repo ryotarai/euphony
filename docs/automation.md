@@ -143,6 +143,10 @@ euphony selection filter cwd set|add|remove STATUS=CWD...
     "statuses": ["blocked"],
     "cwds": [{"status": "running", "cwd": "/repo"}]
   },
+  "pinnedFilters": {
+    "statuses": ["blocked"],
+    "cwds": []
+  },
   "expectedRevision": 42
 }
 ```

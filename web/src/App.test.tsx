@@ -81,6 +81,7 @@ test("uses the server selection as authoritative and persists browser changes", 
           pinnedTerminalIds: string[];
           focusedTerminalId: string;
           filters: { statuses: string[]; cwds: unknown[] };
+          pinnedFilters: { statuses: string[]; cwds: unknown[] };
           expectedRevision: number;
         };
         return jsonResponse({
@@ -91,6 +92,7 @@ test("uses the server selection as authoritative and persists browser changes", 
             pinnedTerminalIds: request.pinnedTerminalIds,
             focusedTerminalId: request.focusedTerminalId,
             filters: request.filters,
+            pinnedFilters: request.pinnedFilters,
             revision: 8,
           },
         });
@@ -128,6 +130,7 @@ test("uses the server selection as authoritative and persists browser changes", 
       pinnedTerminalIds: [],
       focusedTerminalId: "session-2",
       filters: { statuses: [], cwds: [] },
+      pinnedFilters: { statuses: [], cwds: [] },
       expectedRevision: 7,
     });
   });
@@ -1339,6 +1342,146 @@ test("restores URL pins into terminal selection", async () => {
     "session-2",
     "session-1",
   ]);
+});
+
+test("keeps a Shift-pinned status filter across terminal row replacement", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  render(
+    <App syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+    { shiftKey: true },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }));
+
+  expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("session-2 terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("session-3 terminal pane")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("data-pinned", "true");
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("pin-status")).toEqual(["running"]);
+  expect(parameters.getAll("status")).toContain("running");
+});
+
+test("keeps a Shift-pinned cwd filter across status label replacement", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  render(
+    <App syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+    { shiftKey: true },
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Show only Waiting terminals" }),
+  );
+
+  expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("session-2 terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+  ).toHaveAttribute("data-pinned", "true");
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("pin-cwd")).toEqual([
+    "running\u0000/workspace/euphony",
+  ]);
+});
+
+test("decomposes and reconsolidates a pinned status through cwd checks", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, thirdRunningSession]),
+  );
+  render(
+    <App syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+    { shiftKey: true },
+  );
+  const apiCwd = screen.getByRole("checkbox", {
+    name: "Include all terminals in /workspace/api",
+  });
+  fireEvent.click(apiCwd);
+
+  let parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("pin-status")).toEqual([]);
+  expect(parameters.getAll("pin-cwd")).toEqual([
+    "running\u0000/workspace/euphony",
+  ]);
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(apiCwd).not.toBeChecked();
+
+  fireEvent.click(apiCwd);
+
+  parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("pin-status")).toEqual(["running"]);
+  expect(parameters.getAll("pin-cwd")).toEqual([]);
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("data-pinned", "true");
+});
+
+test("restores pinned filters from URL state", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/?pin-status=waiting&pin-cwd=running%00%2Fworkspace%2Feuphony",
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("session-2 terminal pane")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Waiting terminals" }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in /workspace/euphony",
+    }),
+  ).toHaveAttribute("data-pinned", "true");
 });
 
 test("pane rail checkboxes remove selected terminals and allow an empty workspace", async () => {

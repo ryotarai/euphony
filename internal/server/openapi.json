@@ -798,6 +798,9 @@
           "filters": {
             "$ref": "#/components/schemas/SelectionFilters"
           },
+          "pinnedFilters": {
+            "$ref": "#/components/schemas/SelectionFilters"
+          },
           "expectedRevision": {
             "type": "integer",
             "minimum": 0
@@ -1253,6 +1256,7 @@
           "manualTerminalIds",
           "pinnedTerminalIds",
           "filters",
+          "pinnedFilters",
           "revision"
         ],
         "properties": {
@@ -1278,6 +1282,9 @@
             "type": "string"
           },
           "filters": {
+            "$ref": "#/components/schemas/SelectionFilters"
+          },
+          "pinnedFilters": {
             "$ref": "#/components/schemas/SelectionFilters"
           },
           "revision": {

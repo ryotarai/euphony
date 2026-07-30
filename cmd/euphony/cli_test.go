@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -195,5 +197,42 @@ func TestAutomationCLIRoutesAgentAndSelectionCommands(t *testing.T) {
 	cwd := filters[0].(map[string]any)
 	if cwd["status"] != "running" || cwd["cwd"] != "/repo with space" {
 		t.Fatalf("cwd filter = %#v", cwd)
+	}
+}
+
+func TestAutomationCLIReplacesPinnedFilters(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		requests <- body
+		_, _ = io.WriteString(w,
+			`{"ok":true,"result":{"terminalIds":[],"manualTerminalIds":[],"pinnedTerminalIds":[],"filters":{"statuses":[],"cwds":[]},"pinnedFilters":{"statuses":["waiting"],"cwds":[]},"revision":2}}`)
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("EUPHONY_URL", api.URL)
+	t.Setenv("EUPHONY_SOCKET", t.TempDir()+"/missing.sock")
+	var stdout, stderr bytes.Buffer
+	input := `{
+		"manualTerminalIds": [],
+		"pinnedTerminalIds": [],
+		"filters": {"statuses":["waiting"],"cwds":[]},
+		"pinnedFilters": {"statuses":["waiting"],"cwds":[]}
+	}`
+
+	if err := run(
+		[]string{"selection", "replace"},
+		strings.NewReader(input),
+		&stdout,
+		&stderr,
+	); err != nil {
+		t.Fatalf("selection replace run() error = %v, stderr = %s", err, stderr.String())
+	}
+	request := <-requests
+	pinned, ok := request["pinnedFilters"].(map[string]any)
+	if !ok || !reflect.DeepEqual(pinned["statuses"], []any{"waiting"}) {
+		t.Fatalf("pinnedFilters = %#v", request["pinnedFilters"])
 	}
 }

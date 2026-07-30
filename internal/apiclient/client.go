@@ -100,6 +100,7 @@ type ReplaceSelectionRequest struct {
 	PinnedTerminalIDs []string          `json:"pinnedTerminalIds"`
 	FocusedTerminalID string            `json:"focusedTerminalId,omitempty"`
 	Filters           selection.Filters `json:"filters"`
+	PinnedFilters     selection.Filters `json:"pinnedFilters"`
 	ExpectedRevision  *uint64           `json:"expectedRevision,omitempty"`
 }
 

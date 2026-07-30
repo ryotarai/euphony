@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useState } from "react";
-import { PinIcon, PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
+import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
 import { Badge } from "@/components/ui/badge";
@@ -36,11 +36,13 @@ interface SessionNavigationProps {
   selectedIDs: string[];
   pinnedIDs?: string[];
   statusFilters: string[];
+  pinnedStatusFilters?: string[];
   onSelect(id: string, multiple: boolean, pin?: boolean): void;
-  onStatusFilter(status: string, checked: boolean): void;
+  onStatusFilter(status: string, checked: boolean, pin?: boolean): void;
   onStatusSelect?(status: string): void;
   cwdFilters?: string[];
-  onCwdFilter?(status: string, cwd: string, checked: boolean): void;
+  pinnedCwdFilters?: string[];
+  onCwdFilter?(status: string, cwd: string, checked: boolean, pin?: boolean): void;
   onCwdSelect?(status: string, cwd: string): void;
   onCreate(): void;
   onDelete(session: Session): void;
@@ -110,6 +112,7 @@ function SessionList(props: SessionNavigationProps) {
         );
         const cwds = [...new Set(statusSessions.map((session) => session.cwd))];
         const statusSelected = props.statusFilters.includes(status);
+        const statusPinned = props.pinnedStatusFilters?.includes(status) ?? false;
         const statusHasSelectedCwd = props.cwdFilters?.some((filter) =>
           filter.startsWith(`${status}\u0000`)
         ) ?? false;
@@ -120,9 +123,19 @@ function SessionList(props: SessionNavigationProps) {
                 aria-label={`Show all ${statusLabel(status)} terminals`}
                 checked={statusSelected}
                 indeterminate={!statusSelected && statusHasSelectedCwd}
-                onCheckedChange={(checked) =>
-                  props.onStatusFilter(status, checked === true)
+                data-pinned={statusPinned || undefined}
+                title={
+                  statusPinned
+                    ? "Pinned — click to remove"
+                    : "Shift-click to pin"
                 }
+                onClick={(event) => {
+                  if (event.shiftKey) {
+                    props.onStatusFilter(status, true, true);
+                  } else {
+                    props.onStatusFilter(status, !statusSelected);
+                  }
+                }}
               />
               <button
                 className="status-select"
@@ -142,18 +155,31 @@ function SessionList(props: SessionNavigationProps) {
                   (session) => session.cwd === cwd,
                 );
                 const filterKey = cwdFilterKey(status, cwd);
+                const cwdSelected =
+                  statusSelected ||
+                  (props.cwdFilters?.includes(filterKey) ?? false);
+                const cwdPinned =
+                  statusPinned ||
+                  (props.pinnedCwdFilters?.includes(filterKey) ?? false);
                 return (
                   <SidebarGroup className="cwd-group" key={cwd}>
                     <SidebarGroupLabel className="cwd-heading" title={cwd}>
                       <Checkbox
                         aria-label={`Include all terminals in ${displayPath(cwd)}`}
-                        checked={
-                          statusSelected ||
-                          (props.cwdFilters?.includes(filterKey) ?? false)
+                        checked={cwdSelected}
+                        data-pinned={cwdPinned || undefined}
+                        title={
+                          cwdPinned
+                            ? "Pinned — click to remove"
+                            : "Shift-click to pin"
                         }
-                        onCheckedChange={(checked) =>
-                          props.onCwdFilter?.(status, cwd, checked === true)
-                        }
+                        onClick={(event) => {
+                          if (event.shiftKey) {
+                            props.onCwdFilter?.(status, cwd, true, true);
+                          } else {
+                            props.onCwdFilter?.(status, cwd, !cwdSelected);
+                          }
+                        }}
                       />
                       <button
                         className="cwd-select"
@@ -192,12 +218,6 @@ function SessionList(props: SessionNavigationProps) {
                                   selectSession(session.id, true, event.shiftKey)
                                 }
                               />
-                              {pinned && (
-                                <PinIcon
-                                  className="pane-checkbox-pin"
-                                  aria-hidden="true"
-                                />
-                              )}
                               <SidebarMenuButton
                                 className="session-select"
                                 size="lg"

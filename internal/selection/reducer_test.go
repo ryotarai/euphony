@@ -260,6 +260,74 @@ func TestReplaceStateAtomicallySetsEverySelectionSource(t *testing.T) {
 	}
 }
 
+func TestPinnedFiltersRemainDynamicAcrossManualReplacement(t *testing.T) {
+	terminals := []Terminal{
+		{ID: "running-a", CWD: "/repo/a", Statuses: []string{"running"}},
+		{ID: "waiting", CWD: "/repo", Statuses: []string{"waiting"}},
+	}
+
+	state, err := Apply(State{}, Action{
+		Type:             ActionReplaceState,
+		TerminalIDs:      []string{"waiting"},
+		Statuses:         []string{"running"},
+		PinnedStatuses:   []string{"running"},
+		PinnedCWDFilters: []CWDFilter{},
+	}, terminals)
+	if err != nil {
+		t.Fatalf("Apply(replace state) error = %v", err)
+	}
+	state, err = Apply(state, Action{
+		Type:              ActionReplace,
+		TerminalIDs:       []string{"waiting"},
+		FocusedTerminalID: "waiting",
+	}, terminals)
+	if err != nil {
+		t.Fatalf("Apply(replace) error = %v", err)
+	}
+
+	terminals = append(terminals,
+		Terminal{ID: "running-b", CWD: "/repo/b", Statuses: []string{"running"}})
+	snapshot := Resolve(state, terminals)
+	if !reflect.DeepEqual(snapshot.TerminalIDs,
+		[]string{"running-a", "waiting", "running-b"}) {
+		t.Fatalf("TerminalIDs = %#v", snapshot.TerminalIDs)
+	}
+	if !reflect.DeepEqual(snapshot.Filters.Statuses, []string{"running"}) ||
+		!reflect.DeepEqual(snapshot.PinnedFilters.Statuses, []string{"running"}) ||
+		snapshot.PinnedFilters.CWDs == nil {
+		t.Fatalf("pinned filters = %#v, active filters = %#v",
+			snapshot.PinnedFilters, snapshot.Filters)
+	}
+}
+
+func TestPinnedFilterRemovalDecomposesStatusIntoPinnedSiblingCWDs(t *testing.T) {
+	terminals := []Terminal{
+		{ID: "a", CWD: "/repo/a", Statuses: []string{"running"}},
+		{ID: "b", CWD: "/repo/b", Statuses: []string{"running"}},
+		{ID: "c", CWD: "/repo/b", Statuses: []string{"running"}},
+	}
+	state := State{
+		StatusFilters: []string{"running"},
+		PinnedFilters: Filters{Statuses: []string{"running"}},
+	}
+
+	state, err := Apply(state, Action{
+		Type:        ActionRemove,
+		TerminalIDs: []string{"a"},
+	}, terminals)
+	if err != nil {
+		t.Fatalf("Apply(remove) error = %v", err)
+	}
+
+	want := []CWDFilter{{Status: "running", CWD: "/repo/b"}}
+	if len(state.StatusFilters) != 0 ||
+		len(state.PinnedFilters.Statuses) != 0 ||
+		!reflect.DeepEqual(state.CWDFilters, want) ||
+		!reflect.DeepEqual(state.PinnedFilters.CWDs, want) {
+		t.Fatalf("decomposed state = %#v, want pinned cwd %#v", state, want)
+	}
+}
+
 func TestFilterActionsSetAddAndRemoveStatusAndCWDSelectors(t *testing.T) {
 	terminals := []Terminal{
 		{ID: "a", CWD: "/repo/a", Statuses: []string{"running"}},

@@ -49,6 +49,7 @@ export interface SelectionSnapshot {
   pinnedTerminalIds: string[];
   focusedTerminalId?: string;
   filters: SelectionFilters;
+  pinnedFilters?: SelectionFilters;
   revision: number;
 }
 
@@ -57,6 +58,7 @@ export interface ReplaceSelectionRequest {
   pinnedTerminalIds: string[];
   focusedTerminalId?: string;
   filters: SelectionFilters;
+  pinnedFilters?: SelectionFilters;
   expectedRevision?: number;
 }
 

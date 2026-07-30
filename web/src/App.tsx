@@ -183,6 +183,8 @@ function selectionSourceSignature(
   focusedTerminalId: string | null | undefined,
   statuses: string[],
   cwds: CwdSelectionFilter[],
+  pinnedStatuses: string[] = [],
+  pinnedCwds: CwdSelectionFilter[] = [],
 ) {
   return JSON.stringify({
     manualTerminalIds,
@@ -190,6 +192,8 @@ function selectionSourceSignature(
     focusedTerminalId: focusedTerminalId ?? "",
     statuses,
     cwds,
+    pinnedStatuses,
+    pinnedCwds,
   });
 }
 
@@ -270,6 +274,8 @@ function workspaceFromURL(sessions: Session[]): {
   focusedID: string | null;
   statusFilters: string[];
   cwdFilters: string[];
+  pinnedStatusFilters: string[];
+  pinnedCwdFilters: string[];
 } {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
@@ -286,22 +292,32 @@ function workspaceFromURL(sessions: Session[]): {
   ];
   if (selectedIDs.length === 0 && sessions[0]) selectedIDs = [sessions[0].id];
   const focus = parameters.get("focus");
+  const pinnedStatusFilters = [...new Set(parameters.getAll("pin-status"))];
+  const pinnedCwdFilters = [...new Set(parameters.getAll("pin-cwd"))];
   return {
     selectedIDs,
     pinnedIDs,
     focusedID: focus && selectedIDs.includes(focus) ? focus : selectedIDs[0] ?? null,
-    statusFilters: parameters.getAll("status"),
-    cwdFilters: parameters.getAll("cwd"),
+    statusFilters: [
+      ...new Set([...parameters.getAll("status"), ...pinnedStatusFilters]),
+    ],
+    cwdFilters: [
+      ...new Set([...parameters.getAll("cwd"), ...pinnedCwdFilters]),
+    ],
+    pinnedStatusFilters,
+    pinnedCwdFilters,
   };
 }
 
-function writeWorkspaceToURL(
+function writeWorkspaceURL(
   selectedIDs: string[],
   pinnedIDs: string[],
   focusedID: string | null,
   statusFilters: string[],
   cwdFilters: string[],
   mode: "push" | "replace" = "push",
+  pinnedStatusFilters: string[] = [],
+  pinnedCwdFilters: string[] = [],
 ) {
   const parameters = new URLSearchParams(window.location.search);
   parameters.delete("session");
@@ -310,10 +326,14 @@ function writeWorkspaceToURL(
   parameters.delete("pin");
   parameters.delete("status");
   parameters.delete("cwd");
+  parameters.delete("pin-status");
+  parameters.delete("pin-cwd");
   selectedIDs.forEach((id) => parameters.append("terminal", id));
   pinnedIDs.forEach((id) => parameters.append("pin", id));
   statusFilters.forEach((status) => parameters.append("status", status));
   cwdFilters.forEach((filter) => parameters.append("cwd", filter));
+  pinnedStatusFilters.forEach((status) => parameters.append("pin-status", status));
+  pinnedCwdFilters.forEach((filter) => parameters.append("pin-cwd", filter));
   if (focusedID) parameters.set("focus", focusedID);
   else parameters.delete("focus");
   const query = parameters.toString();
@@ -357,6 +377,8 @@ export function App({
   const [focusedID, setFocusedID] = useState<string | null>(null);
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [cwdFilters, setCwdFilters] = useState<string[]>([]);
+  const [pinnedStatusFilters, setPinnedStatusFilters] = useState<string[]>([]);
+  const [pinnedCwdFilters, setPinnedCwdFilters] = useState<string[]>([]);
   const [authError, setAuthError] = useState(false);
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
@@ -402,6 +424,7 @@ export function App({
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
   const manualSelectedIDsRef = useRef<Set<string>>(new Set());
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
+  const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
@@ -418,6 +441,27 @@ export function App({
   const selectionLocalVersionRef = useRef(0);
   const selectionSyncedLocalVersionRef = useRef(0);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  function writeWorkspaceToURL(
+    nextSelectedIDs: string[],
+    nextPinnedIDs: string[],
+    nextFocusedID: string | null,
+    nextStatusFilters: string[],
+    nextCwdFilters: string[],
+    mode: "push" | "replace" = "push",
+    nextPinnedStatusFilters: string[] = pinnedStatusFilters,
+    nextPinnedCwdFilters: string[] = pinnedCwdFilters,
+  ) {
+    writeWorkspaceURL(
+      nextSelectedIDs,
+      nextPinnedIDs,
+      nextFocusedID,
+      nextStatusFilters,
+      nextCwdFilters,
+      mode,
+      nextPinnedStatusFilters,
+      nextPinnedCwdFilters,
+    );
+  }
   const previewSettings = useMemo(() => {
     if (!settingsOpen) return settings;
     return {
@@ -470,6 +514,10 @@ export function App({
     const nextCwdFilters = snapshot.filters.cwds.map((filter) =>
       cwdFilterKey(filter.status, filter.cwd)
     );
+    const nextPinnedStatusFilters = snapshot.pinnedFilters?.statuses ?? [];
+    const nextPinnedCwdFilters = (snapshot.pinnedFilters?.cwds ?? []).map(
+      (filter) => cwdFilterKey(filter.status, filter.cwd),
+    );
     filterSelectedIDsRef.current = new Set(
       snapshot.terminalIds.filter(
         (id) =>
@@ -483,6 +531,11 @@ export function App({
         .map((filter) => filter.status)
         .filter((status) => !nextStatusFilters.includes(status)),
     );
+    decomposedPinnedStatusFiltersRef.current = new Set(
+      (snapshot.pinnedFilters?.cwds ?? [])
+        .map((filter) => filter.status)
+        .filter((status) => !nextPinnedStatusFilters.includes(status)),
+    );
     selectionRevisionRef.current = snapshot.revision;
     selectionServerSignatureRef.current = selectionSourceSignature(
       snapshot.manualTerminalIds,
@@ -490,12 +543,16 @@ export function App({
       snapshot.focusedTerminalId,
       snapshot.filters.statuses,
       snapshot.filters.cwds,
+      nextPinnedStatusFilters,
+      snapshot.pinnedFilters?.cwds ?? [],
     );
     setSelectedIDs(snapshot.terminalIds);
     setPinnedIDs(snapshot.pinnedTerminalIds);
     setFocusedID(snapshot.focusedTerminalId ?? null);
     setStatusFilters(nextStatusFilters);
     setCwdFilters(nextCwdFilters);
+    setPinnedStatusFilters(nextPinnedStatusFilters);
+    setPinnedCwdFilters(nextPinnedCwdFilters);
     writeWorkspaceToURL(
       snapshot.terminalIds,
       snapshot.pinnedTerminalIds,
@@ -503,6 +560,8 @@ export function App({
       nextStatusFilters,
       nextCwdFilters,
       mode,
+      nextPinnedStatusFilters,
+      nextPinnedCwdFilters,
     );
   }
 
@@ -514,6 +573,8 @@ export function App({
       snapshot.focusedTerminalId,
       snapshot.filters.statuses,
       snapshot.filters.cwds,
+      snapshot.pinnedFilters?.statuses ?? [],
+      snapshot.pinnedFilters?.cwds ?? [],
     );
   }
 
@@ -659,6 +720,7 @@ export function App({
               pinnedTerminalIds: [],
               focusedTerminalId: items[0].id,
               filters: { statuses: [], cwds: [] },
+              pinnedFilters: { statuses: [], cwds: [] },
               expectedRevision: selection.revision,
             });
           }
@@ -675,6 +737,17 @@ export function App({
         setFocusedID(workspace.focusedID);
         setStatusFilters(workspace.statusFilters);
         setCwdFilters(workspace.cwdFilters);
+        setPinnedStatusFilters(workspace.pinnedStatusFilters);
+        setPinnedCwdFilters(workspace.pinnedCwdFilters);
+        decomposedPinnedStatusFiltersRef.current = new Set(
+          workspace.pinnedCwdFilters
+            .map(parseCwdFilter)
+            .filter((filter): filter is CwdSelectionFilter => filter !== null)
+            .map((filter) => filter.status)
+            .filter((status) =>
+              !workspace.pinnedStatusFilters.includes(status)
+            ),
+        );
         writeWorkspaceToURL(
           workspace.selectedIDs,
           workspace.pinnedIDs,
@@ -682,6 +755,8 @@ export function App({
           workspace.statusFilters,
           workspace.cwdFilters,
           "replace",
+          workspace.pinnedStatusFilters,
+          workspace.pinnedCwdFilters,
         );
       })
       .catch((error: unknown) => {
@@ -801,6 +876,9 @@ export function App({
     const cwdFilterValues = cwdFilters
       .map(parseCwdFilter)
       .filter((filter): filter is CwdSelectionFilter => filter !== null);
+    const pinnedCwdFilterValues = pinnedCwdFilters
+      .map(parseCwdFilter)
+      .filter((filter): filter is CwdSelectionFilter => filter !== null);
     const manualTerminalIds = selectedIDs.filter(
       (id) =>
         !filterSelectedIDsRef.current.has(id) &&
@@ -815,6 +893,8 @@ export function App({
       focusedID,
       statusFilters,
       cwdFilterValues,
+      pinnedStatusFilters,
+      pinnedCwdFilterValues,
     );
     if (
       signature === selectionServerSignatureRef.current &&
@@ -831,6 +911,10 @@ export function App({
         pinnedTerminalIds: pinnedIDs,
         ...(focusedID ? { focusedTerminalId: focusedID } : {}),
         filters: { statuses: statusFilters, cwds: cwdFilterValues },
+        pinnedFilters: {
+          statuses: pinnedStatusFilters,
+          cwds: pinnedCwdFilterValues,
+        },
       },
       localVersion: selectionLocalVersionRef.current,
     };
@@ -843,6 +927,8 @@ export function App({
     focusedID,
     statusFilters,
     cwdFilters,
+    pinnedStatusFilters,
+    pinnedCwdFilters,
   ]);
 
   useEffect(() => {
@@ -900,9 +986,19 @@ export function App({
       if (promotedID) {
         filterSelectedIDsRef.current.clear();
         decomposedStatusFiltersRef.current.clear();
+        const pinnedFilterMatches = (sessions ?? [])
+          .filter((session) =>
+            matchesWorkspaceFilter(
+              session,
+              pinnedStatusFilters,
+              pinnedCwdFilters,
+            )
+          )
+          .map((session) => session.id);
         const next = [
           ...new Set([
             ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+            ...pinnedFilterMatches,
             promotedID,
             ...attentionIDs,
           ]),
@@ -910,9 +1006,19 @@ export function App({
         markLocalSelectionMutation();
         setSelectedIDs(next);
         setFocusedID(promotedID);
-        setStatusFilters([]);
-        setCwdFilters([]);
-        writeWorkspaceToURL(next, pinnedIDs, promotedID, [], [], "replace");
+        setStatusFilters(pinnedStatusFilters);
+        setCwdFilters(pinnedCwdFilters);
+        filterSelectedIDsRef.current = new Set(
+          pinnedFilterMatches.filter((id) => !pinnedIDs.includes(id)),
+        );
+        writeWorkspaceToURL(
+          next,
+          pinnedIDs,
+          promotedID,
+          pinnedStatusFilters,
+          pinnedCwdFilters,
+          "replace",
+        );
         return;
       }
       if (attentionIDs.length === 0) return;
@@ -941,18 +1047,38 @@ export function App({
     if (promotedID) {
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
+      const pinnedFilterMatches = (sessions ?? [])
+        .filter((session) =>
+          matchesWorkspaceFilter(
+            session,
+            pinnedStatusFilters,
+            pinnedCwdFilters,
+          )
+        )
+        .map((session) => session.id);
       const next = [
         ...new Set([
           ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+          ...pinnedFilterMatches,
           promotedID,
           ...attentionIDs,
         ]),
       ];
       setSelectedIDs(next);
       setFocusedID(promotedID);
-      setStatusFilters([]);
-      setCwdFilters([]);
-      writeWorkspaceToURL(next, pinnedIDs, promotedID, [], [], "replace");
+      setStatusFilters(pinnedStatusFilters);
+      setCwdFilters(pinnedCwdFilters);
+      filterSelectedIDsRef.current = new Set(
+        pinnedFilterMatches.filter((id) => !pinnedIDs.includes(id)),
+      );
+      writeWorkspaceToURL(
+        next,
+        pinnedIDs,
+        promotedID,
+        pinnedStatusFilters,
+        pinnedCwdFilters,
+        "replace",
+      );
       return;
     }
 
@@ -1000,6 +1126,8 @@ export function App({
     syncSelection,
     statusFilters,
     cwdFilters,
+    pinnedStatusFilters,
+    pinnedCwdFilters,
     selectedIDs,
     pinnedIDs,
     focusedID,
@@ -1111,6 +1239,8 @@ export function App({
           statusFilters,
           cwdFilters,
           "replace",
+          pinnedStatusFilters,
+          pinnedCwdFilters,
         );
         return;
       }
@@ -1122,6 +1252,15 @@ export function App({
       setFocusedID(workspace.focusedID);
       setStatusFilters(workspace.statusFilters);
       setCwdFilters(workspace.cwdFilters);
+      setPinnedStatusFilters(workspace.pinnedStatusFilters);
+      setPinnedCwdFilters(workspace.pinnedCwdFilters);
+      decomposedPinnedStatusFiltersRef.current = new Set(
+        workspace.pinnedCwdFilters
+          .map(parseCwdFilter)
+          .filter((filter): filter is CwdSelectionFilter => filter !== null)
+          .map((filter) => filter.status)
+          .filter((status) => !workspace.pinnedStatusFilters.includes(status)),
+      );
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -1133,6 +1272,8 @@ export function App({
     focusedID,
     statusFilters,
     cwdFilters,
+    pinnedStatusFilters,
+    pinnedCwdFilters,
   ]);
 
   useEffect(() => {
@@ -1227,15 +1368,27 @@ export function App({
 
     let nextIDs: string[];
     if (!multiple) {
+      const pinnedFilterMatches = (sessions ?? [])
+        .filter((session) =>
+          matchesWorkspaceFilter(
+            session,
+            pinnedStatusFilters,
+            pinnedCwdFilters,
+          )
+        )
+        .map((session) => session.id);
       nextIDs = [
         ...new Set([
           ...selectedIDs.filter((item) => nextPinnedIDs.includes(item)),
+          ...pinnedFilterMatches,
           id,
         ]),
       ];
-      setStatusFilters([]);
-      setCwdFilters([]);
-      filterSelectedIDsRef.current.clear();
+      setStatusFilters(pinnedStatusFilters);
+      setCwdFilters(pinnedCwdFilters);
+      filterSelectedIDsRef.current = new Set(
+        pinnedFilterMatches.filter((item) => !nextPinnedIDs.includes(item)),
+      );
       decomposedStatusFiltersRef.current.clear();
     } else if (selectedIDs.includes(id)) {
       const availableSessions = sessions ?? [];
@@ -1247,8 +1400,18 @@ export function App({
       if (session && (statusOwnsSession || cwdOwnsSession)) {
         const nextStatusFilters = statusFilters.filter((item) => item !== status);
         let nextCwdFilters = cwdFilters.filter((item) => item !== key);
+        const statusWasPinned = pinnedStatusFilters.includes(status);
+        const nextPinnedStatusFilters = pinnedStatusFilters.filter(
+          (item) => item !== status,
+        );
+        let nextPinnedCwdFilters = pinnedCwdFilters.filter(
+          (item) => item !== key,
+        );
         if (statusOwnsSession) {
           decomposedStatusFiltersRef.current.add(status);
+          if (statusWasPinned) {
+            decomposedPinnedStatusFiltersRef.current.add(status);
+          }
           const siblingCwdFilters = [
             ...new Set(
               availableSessions
@@ -1266,6 +1429,14 @@ export function App({
             ),
             ...siblingCwdFilters,
           ];
+          if (statusWasPinned) {
+            nextPinnedCwdFilters = [
+              ...pinnedCwdFilters.filter(
+                (filter) => !cwdFilterBelongsToStatus(filter, status),
+              ),
+              ...siblingCwdFilters,
+            ];
+          }
         }
         const matching = availableSessions
           .filter((item) =>
@@ -1288,6 +1459,8 @@ export function App({
             : nextIDs[0] ?? null;
         setStatusFilters(nextStatusFilters);
         setCwdFilters(nextCwdFilters);
+        setPinnedStatusFilters(nextPinnedStatusFilters);
+        setPinnedCwdFilters(nextPinnedCwdFilters);
         setSelectedIDs(nextIDs);
         setFocusedID(nextFocus);
         writeWorkspaceToURL(
@@ -1296,6 +1469,9 @@ export function App({
           nextFocus,
           nextStatusFilters,
           nextCwdFilters,
+          "push",
+          nextPinnedStatusFilters,
+          nextPinnedCwdFilters,
         );
         return;
       }
@@ -1317,19 +1493,42 @@ export function App({
       nextIDs,
       nextPinnedIDs,
       nextFocus,
-      multiple ? statusFilters : [],
-      multiple ? cwdFilters : [],
+      multiple ? statusFilters : pinnedStatusFilters,
+      multiple ? cwdFilters : pinnedCwdFilters,
+      "push",
+      pinnedStatusFilters,
+      pinnedCwdFilters,
     );
   }
 
   function updateWorkspaceFilters(
     nextStatusFilters: string[],
     nextCwdFilters: string[],
+    nextPinnedStatusFilters = pinnedStatusFilters,
+    nextPinnedCwdFilters = pinnedCwdFilters,
   ) {
     markLocalSelectionMutation();
+    const normalizedPinnedStatusFilters = [...new Set(nextPinnedStatusFilters)];
+    const normalizedPinnedCwdFilters = [
+      ...new Set(nextPinnedCwdFilters),
+    ].filter((filter) => {
+      const parsed = parseCwdFilter(filter);
+      return parsed &&
+        !normalizedPinnedStatusFilters.includes(parsed.status);
+    });
+    const normalizedStatusFilters = [
+      ...new Set([...nextStatusFilters, ...normalizedPinnedStatusFilters]),
+    ];
+    const normalizedCwdFilters = [
+      ...new Set([...nextCwdFilters, ...normalizedPinnedCwdFilters]),
+    ];
     const matching = sessions
       ?.filter((session) =>
-        matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
+        matchesWorkspaceFilter(
+          session,
+          normalizedStatusFilters,
+          normalizedCwdFilters,
+        )
       )
       .map((session) => session.id) ?? [];
     const base = selectedIDs.filter(
@@ -1344,38 +1543,69 @@ export function App({
     const nextFocus = focusedID && nextIDs.includes(focusedID)
       ? focusedID
       : nextIDs[0] ?? null;
-    setStatusFilters(nextStatusFilters);
-    setCwdFilters(nextCwdFilters);
+    setStatusFilters(normalizedStatusFilters);
+    setCwdFilters(normalizedCwdFilters);
+    setPinnedStatusFilters(normalizedPinnedStatusFilters);
+    setPinnedCwdFilters(normalizedPinnedCwdFilters);
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
       nextIDs,
       pinnedIDs,
       nextFocus,
-      nextStatusFilters,
-      nextCwdFilters,
+      normalizedStatusFilters,
+      normalizedCwdFilters,
+      "push",
+      normalizedPinnedStatusFilters,
+      normalizedPinnedCwdFilters,
     );
   }
 
-  function updateStatusFilter(status: string, checked: boolean) {
+  function updateStatusFilter(
+    status: string,
+    checked: boolean,
+    pin?: boolean,
+  ) {
     decomposedStatusFiltersRef.current.delete(status);
+    decomposedPinnedStatusFiltersRef.current.delete(status);
+    const nextPinnedStatusFilters =
+      checked && pin
+        ? [...new Set([...pinnedStatusFilters, status])]
+        : checked
+          ? pinnedStatusFilters
+          : pinnedStatusFilters.filter((item) => item !== status);
     const nextStatusFilters = checked
       ? [...new Set([...statusFilters, status])]
       : statusFilters.filter((item) => item !== status);
     const nextCwdFilters = cwdFilters.filter(
       (filter) => !cwdFilterBelongsToStatus(filter, status),
     );
-    updateWorkspaceFilters(nextStatusFilters, nextCwdFilters);
+    const nextPinnedCwdFilters = (checked && !pin)
+      ? pinnedCwdFilters
+      : pinnedCwdFilters.filter(
+        (filter) => !cwdFilterBelongsToStatus(filter, status),
+      );
+    updateWorkspaceFilters(
+      nextStatusFilters,
+      nextCwdFilters,
+      nextPinnedStatusFilters,
+      nextPinnedCwdFilters,
+    );
   }
 
   function updateCwdFilter(
     status: string,
     cwd: string,
     checked: boolean,
+    pin?: boolean,
   ) {
     const key = cwdFilterKey(status, cwd);
     if (!checked && statusFilters.includes(status)) {
       decomposedStatusFiltersRef.current.add(status);
+      const parentPinned = pinnedStatusFilters.includes(status);
+      if (parentPinned) {
+        decomposedPinnedStatusFiltersRef.current.add(status);
+      }
       const siblingCwdFilters = [
         ...new Set(
           (sessions ?? [])
@@ -1394,12 +1624,25 @@ export function App({
           ),
           ...siblingCwdFilters,
         ],
+        pinnedStatusFilters.filter((item) => item !== status),
+        [
+          ...pinnedCwdFilters.filter(
+            (filter) => !cwdFilterBelongsToStatus(filter, status),
+          ),
+          ...(parentPinned ? siblingCwdFilters : []),
+        ],
       );
       return;
     }
     const nextFilters = checked
       ? [...new Set([...cwdFilters, key])]
       : cwdFilters.filter((item) => item !== key);
+    const nextPinnedFilters = checked &&
+        (pin || decomposedPinnedStatusFiltersRef.current.has(status))
+      ? [...new Set([...pinnedCwdFilters, key])]
+      : checked
+        ? pinnedCwdFilters
+        : pinnedCwdFilters.filter((item) => item !== key);
     const existingStatusCwdFilters = cwdFilters.filter((filter) =>
       cwdFilterBelongsToStatus(filter, status)
     );
@@ -1418,50 +1661,53 @@ export function App({
       ) &&
       currentStatusCwdFilters.every((filter) => nextFilters.includes(filter))
     ) {
+      const consolidatePinned =
+        decomposedPinnedStatusFiltersRef.current.has(status) &&
+        currentStatusCwdFilters.every((filter) =>
+          nextPinnedFilters.includes(filter)
+        );
       decomposedStatusFiltersRef.current.delete(status);
+      if (consolidatePinned) {
+        decomposedPinnedStatusFiltersRef.current.delete(status);
+      }
       updateWorkspaceFilters(
         [...new Set([...statusFilters, status])],
         nextFilters.filter(
           (filter) => !cwdFilterBelongsToStatus(filter, status),
         ),
+        consolidatePinned
+          ? [...new Set([...pinnedStatusFilters, status])]
+          : pinnedStatusFilters,
+        nextPinnedFilters.filter(
+          (filter) =>
+            !consolidatePinned ||
+            !cwdFilterBelongsToStatus(filter, status),
+        ),
       );
       return;
     }
-    updateWorkspaceFilters(statusFilters, nextFilters);
+    updateWorkspaceFilters(
+      statusFilters,
+      nextFilters,
+      pinnedStatusFilters,
+      nextPinnedFilters,
+    );
   }
 
   function selectStatus(status: string) {
-    const matching = sessions
+    const directMatches = sessions
       ?.filter((session) => sessionActivity(session) === status)
       .map((session) => session.id) ?? [];
-    if (matching.length === 0) return;
-    markLocalSelectionMutation();
-    const nextIDs = [
-      ...new Set([
-        ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
-        ...matching,
-      ]),
+    if (directMatches.length === 0) return;
+    const nextStatusFilters = [
+      ...new Set([...pinnedStatusFilters, status]),
     ];
-    decomposedStatusFiltersRef.current.clear();
-    const nextFocus = matching[0];
-    setStatusFilters([status]);
-    setCwdFilters([]);
-    filterSelectedIDsRef.current = new Set(
-      matching.filter((id) => !pinnedIDs.includes(id)),
-    );
-    setSelectedIDs(nextIDs);
-    setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, pinnedIDs, nextFocus, [status], []);
-  }
-
-  function selectCwd(status: string, cwd: string) {
+    const nextCwdFilters = [...pinnedCwdFilters];
     const matching = sessions
-      ?.filter(
-        (session) =>
-          sessionActivity(session) === status && session.cwd === cwd,
+      ?.filter((session) =>
+        matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
       )
       .map((session) => session.id) ?? [];
-    if (matching.length === 0) return;
     markLocalSelectionMutation();
     const nextIDs = [
       ...new Set([
@@ -1470,16 +1716,63 @@ export function App({
       ]),
     ];
     decomposedStatusFiltersRef.current.clear();
-    const nextFocus = matching[0];
-    const nextCwdFilters = [cwdFilterKey(status, cwd)];
-    setStatusFilters([]);
+    const nextFocus = directMatches[0];
+    setStatusFilters(nextStatusFilters);
     setCwdFilters(nextCwdFilters);
     filterSelectedIDsRef.current = new Set(
       matching.filter((id) => !pinnedIDs.includes(id)),
     );
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, pinnedIDs, nextFocus, [], nextCwdFilters);
+    writeWorkspaceToURL(
+      nextIDs,
+      pinnedIDs,
+      nextFocus,
+      nextStatusFilters,
+      nextCwdFilters,
+    );
+  }
+
+  function selectCwd(status: string, cwd: string) {
+    const directMatches = sessions
+      ?.filter(
+        (session) =>
+          sessionActivity(session) === status && session.cwd === cwd,
+      )
+      .map((session) => session.id) ?? [];
+    if (directMatches.length === 0) return;
+    const nextStatusFilters = [...pinnedStatusFilters];
+    const nextCwdFilters = [
+      ...new Set([...pinnedCwdFilters, cwdFilterKey(status, cwd)]),
+    ];
+    const matching = sessions
+      ?.filter((session) =>
+        matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
+      )
+      .map((session) => session.id) ?? [];
+    markLocalSelectionMutation();
+    const nextIDs = [
+      ...new Set([
+        ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+        ...matching,
+      ]),
+    ];
+    decomposedStatusFiltersRef.current.clear();
+    const nextFocus = directMatches[0];
+    setStatusFilters(nextStatusFilters);
+    setCwdFilters(nextCwdFilters);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
+    setSelectedIDs(nextIDs);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(
+      nextIDs,
+      pinnedIDs,
+      nextFocus,
+      nextStatusFilters,
+      nextCwdFilters,
+    );
   }
 
   function focusPane(id: string) {
@@ -1549,16 +1842,31 @@ export function App({
         : [
             ...new Set([
               ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+              ...(sessions ?? [])
+                .filter((session) =>
+                  matchesWorkspaceFilter(
+                    session,
+                    pinnedStatusFilters,
+                    pinnedCwdFilters,
+                  )
+                )
+                .map((session) => session.id),
               created.id,
             ]),
           ];
       setSelectedIDs(nextIDs);
       setFocusedID(created.id);
-      setStatusFilters([]);
-      setCwdFilters([]);
+      setStatusFilters(split ? statusFilters : pinnedStatusFilters);
+      setCwdFilters(split ? cwdFilters : pinnedCwdFilters);
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
-      writeWorkspaceToURL(nextIDs, pinnedIDs, created.id, [], []);
+      writeWorkspaceToURL(
+        nextIDs,
+        pinnedIDs,
+        created.id,
+        split ? statusFilters : pinnedStatusFilters,
+        split ? cwdFilters : pinnedCwdFilters,
+      );
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -1914,7 +2222,9 @@ export function App({
         selectedIDs={selectedIDs}
         pinnedIDs={pinnedIDs}
         statusFilters={statusFilters}
+        pinnedStatusFilters={pinnedStatusFilters}
         cwdFilters={cwdFilters}
+        pinnedCwdFilters={pinnedCwdFilters}
         onSelect={(id, multiple, pin) =>
           selectSession(id, multiple, false, pin)
         }

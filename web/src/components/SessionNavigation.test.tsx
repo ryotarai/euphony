@@ -255,6 +255,43 @@ test("forwards Shift-clicks on terminal checkboxes as pin requests", () => {
   expect(onSelect).toHaveBeenCalledWith("three", true, true);
 });
 
+test("forwards Shift-clicks on selected status and cwd checkboxes as pin requests", () => {
+  const onStatusFilter = vi.fn();
+  const onCwdFilter = vi.fn();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={["running"]}
+      cwdFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={onStatusFilter}
+      onCwdFilter={onCwdFilter}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+    { shiftKey: true },
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in ~/work/euphony",
+    }),
+    { shiftKey: true },
+  );
+
+  expect(onStatusFilter).toHaveBeenCalledWith("running", true, true);
+  expect(onCwdFilter).toHaveBeenCalledWith(
+    "running",
+    "/Users/ryotarai/work/euphony",
+    true,
+    true,
+  );
+});
+
 test("marks pinned terminal checkboxes and explains direct removal", () => {
   render(
     <SessionNavigation
@@ -273,6 +310,37 @@ test("marks pinned terminal checkboxes and explains direct removal", () => {
     screen.getByRole("checkbox", { name: "Include Terminal in split" }),
   ).toHaveAttribute("data-pinned", "true");
   expect(screen.getByTitle("Pinned — click to remove")).toBeVisible();
+});
+
+test("marks pinned status and inherited cwd checkboxes without a pin icon", () => {
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={["running"]}
+      pinnedStatusFilters={["running"]}
+      cwdFilters={[]}
+      pinnedCwdFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCwdFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Include all terminals in ~/work/euphony",
+    }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(
+    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
+  ).not.toHaveAttribute("data-pinned");
+  expect(document.querySelector(".pane-checkbox-pin")).not.toBeInTheDocument();
 });
 
 test("inherits status selection into cwd controls and marks partial selection", () => {
