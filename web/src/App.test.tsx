@@ -700,6 +700,17 @@ test("a status selection checks its cwd groups and allows one cwd to be excluded
   expect(parameters.getAll("cwd")).toEqual([
     "running\u0000/workspace/euphony",
   ]);
+
+  fireEvent.click(apiCwd);
+
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(apiCwd).toBeChecked();
+  expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
+  const restoredParameters = new URLSearchParams(window.location.search);
+  expect(restoredParameters.getAll("status")).toEqual(["running"]);
+  expect(restoredParameters.getAll("cwd")).toEqual([]);
 });
 
 test("unchecking a terminal releases its ancestor status filter", async () => {

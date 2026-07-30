@@ -549,6 +549,29 @@ export function App({
     const nextFilters = checked
       ? [...new Set([...cwdFilters, key])]
       : cwdFilters.filter((item) => item !== key);
+    const existingStatusCwdFilters = cwdFilters.filter((filter) =>
+      cwdFilterBelongsToStatus(filter, status)
+    );
+    const currentStatusCwdFilters = [
+      ...new Set(
+        (sessions ?? [])
+          .filter((session) => sessionActivity(session) === status)
+          .map((session) => cwdFilterKey(status, session.cwd)),
+      ),
+    ];
+    if (
+      checked &&
+      existingStatusCwdFilters.length > 0 &&
+      currentStatusCwdFilters.every((filter) => nextFilters.includes(filter))
+    ) {
+      updateWorkspaceFilters(
+        [...new Set([...statusFilters, status])],
+        nextFilters.filter(
+          (filter) => !cwdFilterBelongsToStatus(filter, status),
+        ),
+      );
+      return;
+    }
     updateWorkspaceFilters(statusFilters, nextFilters);
   }
 

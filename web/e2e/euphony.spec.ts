@@ -243,8 +243,22 @@ test("inherits status filters into nested cwd controls and supports child overri
   await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Var terminal terminal", { exact: true })).toHaveCount(0);
 
+  await varCwd.click();
+  await expect(status).toBeChecked();
+  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
+
+  await page.getByRole("checkbox", {
+    name: "Include Tmp terminal in split",
+  }).click();
+  await expect(status).toHaveAttribute("aria-checked", "mixed");
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
+  await page.waitForTimeout(1_800);
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
+
   await page.getByRole("button", {
-    name: "Show only Terminal terminals in /var",
+    name: /Show only Terminal terminals in \/(?:private\/)?var$/,
   }).click();
   await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
