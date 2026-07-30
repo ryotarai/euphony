@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -107,6 +108,90 @@ func TestInterruptTerminalWritesOnLag(t *testing.T) {
 	case <-writeContext.Done():
 	case <-time.After(time.Second):
 		t.Fatal("lagged subscriber did not cancel an in-progress history write")
+	}
+}
+
+func TestMonitorTerminalWebSocketRepeatsSuccessfulPings(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pings := make(chan struct{}, 2)
+	done := make(chan error, 1)
+	go func() {
+		done <- monitorTerminalWebSocket(ctx, 10*time.Millisecond, time.Second, func(pingCtx context.Context) error {
+			select {
+			case pings <- struct{}{}:
+				return nil
+			case <-pingCtx.Done():
+				return pingCtx.Err()
+			}
+		})
+	}()
+
+	for range 2 {
+		select {
+		case <-pings:
+		case <-time.After(time.Second):
+			t.Fatal("successful Ping did not repeat")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("monitorTerminalWebSocket() error = %v, want nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop after parent cancellation")
+	}
+}
+
+func TestMonitorTerminalWebSocketReturnsPingError(t *testing.T) {
+	want := errors.New("Pong not received")
+	err := monitorTerminalWebSocket(t.Context(), 10*time.Millisecond, time.Second, func(context.Context) error {
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("monitorTerminalWebSocket() error = %v, want %v", err, want)
+	}
+}
+
+func TestMonitorTerminalWebSocketReturnsPingTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := monitorTerminalWebSocket(ctx, 10*time.Millisecond, 10*time.Millisecond, func(pingCtx context.Context) error {
+		<-pingCtx.Done()
+		return pingCtx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("monitorTerminalWebSocket() error = %v, want %v", err, context.DeadlineExceeded)
+	}
+}
+
+func TestMonitorTerminalWebSocketStopsWithoutErrorWhenParentIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	pingStarted := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- monitorTerminalWebSocket(ctx, 10*time.Millisecond, time.Second, func(pingCtx context.Context) error {
+			close(pingStarted)
+			<-pingCtx.Done()
+			return pingCtx.Err()
+		})
+	}()
+
+	select {
+	case <-pingStarted:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not start Ping")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("monitorTerminalWebSocket() error = %v, want nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop after parent cancellation")
 	}
 }
 
