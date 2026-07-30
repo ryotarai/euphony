@@ -6,7 +6,7 @@ const e2ePort = requestedPort && /^\d+$/.test(requestedPort) ? requestedPort : "
 const claudeConfigDir = `/tmp/euphony-e2e-${e2ePort}-claude`;
 
 async function clearSessions(page: Page) {
-  await page.request.patch("/api/settings", {
+  const settingsResponse = await page.request.patch("/api/settings", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -25,6 +25,7 @@ async function clearSessions(page: Page) {
       autoSelectAttention: true,
     },
   });
+  expect(settingsResponse.ok()).toBe(true);
   const existing = await page.request.get("/api/sessions", {
     headers: { Authorization: "Bearer test-token" },
   });
