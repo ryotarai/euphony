@@ -48,7 +48,11 @@ async function reportAgent(
       cwd: "/Users/ryotarai/work/euphony",
     },
   });
-  expect(response.ok()).toBe(true);
+  if (!response.ok()) {
+    throw new Error(
+      `Agent report failed (${response.status()}): ${await response.text()}`,
+    );
+  }
 }
 
 async function createSession(
