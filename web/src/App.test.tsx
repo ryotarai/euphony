@@ -538,52 +538,55 @@ test("a checked activity group removes a terminal after its status changes", asy
   vi.useRealTimers();
 });
 
-test("a focused terminal stays selected when polling identifies it as an agent", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const otherTerminal = {
-    ...plainTerminalSession,
-    id: "session-other",
-  };
-  const fetchMock = vi.spyOn(globalThis, "fetch");
-  fetchMock
-    .mockImplementationOnce(() => jsonResponse([plainTerminalSession, otherTerminal]))
-    .mockImplementation(() =>
-      jsonResponse([
-        {
-          ...plainTerminalSession,
-          agent: "claude",
-          agentStatus: "waiting",
-          agentTitle: "Claude Code",
-        },
-        otherTerminal,
-      ]),
+test.each(["claude", "codex"] as const)(
+  "a focused terminal stays selected when polling identifies it as the %s agent",
+  async (agent) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const otherTerminal = {
+      ...plainTerminalSession,
+      id: "session-other",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() => jsonResponse([plainTerminalSession, otherTerminal]))
+      .mockImplementation(() =>
+        jsonResponse([
+          {
+            ...plainTerminalSession,
+            agent,
+            agentStatus: "waiting",
+            agentTitle: `${agent} Code`,
+          },
+          otherTerminal,
+        ]),
+      );
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      />,
     );
-  render(
-    <App
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
-    />,
-  );
 
-  await screen.findByLabelText("session-plain terminal pane");
-  fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: "Include all terminals in /workspace/shell",
-    }),
-  );
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1500);
-  });
+    await screen.findByLabelText("session-plain terminal pane");
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Include all terminals in /workspace/shell",
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
 
-  expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
-  expect(screen.queryByLabelText("session-other terminal pane")).not.toBeInTheDocument();
-  expect(new URLSearchParams(location.search).getAll("terminal")).toEqual(["session-plain"]);
-  expect(new URLSearchParams(location.search).getAll("status")).toEqual([]);
-  expect(new URLSearchParams(location.search).getAll("cwd")).toEqual([]);
-  expect(new URLSearchParams(location.search).get("focus")).toBe("session-plain");
-  vi.useRealTimers();
-});
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.queryByLabelText("session-other terminal pane")).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).getAll("terminal")).toEqual(["session-plain"]);
+    expect(new URLSearchParams(location.search).getAll("status")).toEqual([]);
+    expect(new URLSearchParams(location.search).getAll("cwd")).toEqual([]);
+    expect(new URLSearchParams(location.search).get("focus")).toBe("session-plain");
+    vi.useRealTimers();
+  },
+);
 
 test("a checked status and cwd group dynamically follows matching terminals", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
