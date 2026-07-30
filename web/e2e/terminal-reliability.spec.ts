@@ -48,6 +48,34 @@ async function createSession(page: Page, name: string): Promise<{ id: string }> 
   return response.json();
 }
 
+async function replaceSharedSelection(
+  page: Page,
+  terminalID: string,
+) {
+  const currentResponse = await page.request.get("/api/v1/selection", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(currentResponse.ok()).toBe(true);
+  const current = await currentResponse.json() as {
+    result: { revision: number };
+  };
+  const response = await page.request.put("/api/v1/selection", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: {
+      manualTerminalIds: [terminalID],
+      pinnedTerminalIds: [],
+      focusedTerminalId: terminalID,
+      filters: { statuses: [], cwds: [] },
+      pinnedFilters: { statuses: [], cwds: [] },
+      expectedRevision: current.result.revision,
+    },
+  });
+  expect(response.ok()).toBe(true);
+}
+
 async function readTerminalHistory(page: Page, sessionID: string): Promise<string> {
   return page.evaluate(async ({ id }) => {
     const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/tickets`, {
@@ -92,6 +120,15 @@ function visibleTerminalText(history: string): string {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 }
 
+async function terminalGrid(page: Page) {
+  return page.locator(".terminal-view").evaluate((view) => ({
+    localCols: Number(view.getAttribute("data-local-cols")),
+    localRows: Number(view.getAttribute("data-local-rows")),
+    sharedCols: Number(view.getAttribute("data-shared-cols")),
+    sharedRows: Number(view.getAttribute("data-shared-rows")),
+  }));
+}
+
 test("renders a visible terminal cursor without an idle animation", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Static cursor");
@@ -107,6 +144,88 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
   await expect(cursor).toBeVisible();
   await expect(cursor).toHaveClass(/xterm-cursor-bar/);
   await expect(cursor).not.toHaveClass(/xterm-cursor-blink/);
+});
+
+test("shares the smallest terminal size across differently sized browsers", async ({
+  browser,
+  page,
+}) => {
+  await clearSessions(page);
+  const sharedTerminal = await createSession(page, "Shared terminal");
+  await replaceSharedSelection(page, sharedTerminal.id);
+
+  const smallContext = await browser.newContext({
+    viewport: { width: 900, height: 600 },
+  });
+  const largeContext = await browser.newContext({
+    viewport: { width: 1400, height: 900 },
+  });
+  const smallPage = await smallContext.newPage();
+  const largePage = await largeContext.newPage();
+  try {
+    await Promise.all([
+      smallPage.goto("/?token=test-token"),
+      largePage.goto("/?token=test-token"),
+    ]);
+    for (const attachedPage of [smallPage, largePage]) {
+      await expect(attachedPage.locator(".terminal-view")).toHaveAttribute(
+        "data-connection",
+        "connected",
+      );
+      await expect(attachedPage.locator(".terminal-view")).toHaveAttribute(
+        "data-shared-cols",
+        /^\d+$/,
+      );
+      await expect(attachedPage.locator(".terminal-view")).toHaveAttribute(
+        "data-shared-rows",
+        /^\d+$/,
+      );
+    }
+
+    await expect.poll(async () => {
+      const [small, large] = await Promise.all([
+        terminalGrid(smallPage),
+        terminalGrid(largePage),
+      ]);
+      const expectedCols = Math.min(small.localCols, large.localCols);
+      const expectedRows = Math.min(small.localRows, large.localRows);
+      return (
+        small.sharedCols === expectedCols &&
+        large.sharedCols === expectedCols &&
+        small.sharedRows === expectedRows &&
+        large.sharedRows === expectedRows
+      );
+    }).toBe(true);
+
+    const [smallGrid, largeGrid] = await Promise.all([
+      terminalGrid(smallPage),
+      terminalGrid(largePage),
+    ]);
+    expect(largeGrid.localCols).toBeGreaterThan(smallGrid.localCols);
+    expect(largeGrid.localRows).toBeGreaterThan(smallGrid.localRows);
+    await expect(
+      largePage.locator(
+        ".terminal-size-padding-right, .terminal-size-padding-bottom",
+      ),
+    ).not.toHaveCount(0);
+
+    await smallContext.close();
+    await expect.poll(async () => {
+      const grid = await terminalGrid(largePage);
+      return (
+        grid.sharedCols === grid.localCols &&
+        grid.sharedRows === grid.localRows
+      );
+    }).toBe(true);
+    await expect(
+      largePage.locator(
+        ".terminal-size-padding-right, .terminal-size-padding-bottom",
+      ),
+    ).toHaveCount(0);
+  } finally {
+    await smallContext.close().catch(() => undefined);
+    await largeContext.close();
+  }
 });
 
 test("keeps a running Claude terminal fitted across repeated pane changes", async ({ page }) => {
