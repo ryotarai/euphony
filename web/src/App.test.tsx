@@ -713,6 +713,42 @@ test("a status selection checks its cwd groups and allows one cwd to be excluded
   expect(restoredParameters.getAll("cwd")).toEqual([]);
 });
 
+test("rechecking the only cwd restores its parent status as a dynamic filter", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementation(() => jsonResponse([runningSession, thirdRunningSession]));
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  const cwd = screen.getByRole("checkbox", {
+    name: "Include all terminals in /workspace/euphony",
+  });
+  fireEvent.click(cwd);
+  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+
+  fireEvent.click(cwd);
+  expect(
+    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(new URLSearchParams(window.location.search).getAll("status")).toEqual([
+    "running",
+  ]);
+  expect(new URLSearchParams(window.location.search).getAll("cwd")).toEqual([]);
+
+  await vi.advanceTimersByTimeAsync(1_500);
+  expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
+  vi.useRealTimers();
+});
+
 test("unchecking a terminal releases its ancestor status filter", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, thirdRunningSession]),

@@ -213,6 +213,7 @@ export function App({
   const commandInputRef = useRef<HTMLInputElement>(null);
   const prefixActiveRef = useRef(false);
   const filterSelectedIDsRef = useRef<Set<string>>(new Set());
+  const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
@@ -346,6 +347,7 @@ export function App({
     const restore = () => {
       const workspace = workspaceFromURL(sessions);
       filterSelectedIDsRef.current.clear();
+      decomposedStatusFiltersRef.current.clear();
       setSelectedIDs(workspace.selectedIDs);
       setFocusedID(workspace.focusedID);
       setStatusFilters(workspace.statusFilters);
@@ -409,6 +411,7 @@ export function App({
       setStatusFilters([]);
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
+      decomposedStatusFiltersRef.current.clear();
     } else if (selectedIDs.includes(id)) {
       const availableSessions = sessions ?? [];
       const session = availableSessions.find((item) => item.id === id);
@@ -420,6 +423,7 @@ export function App({
         const nextStatusFilters = statusFilters.filter((item) => item !== status);
         let nextCwdFilters = cwdFilters.filter((item) => item !== key);
         if (statusOwnsSession) {
+          decomposedStatusFiltersRef.current.add(status);
           const siblingCwdFilters = [
             ...new Set(
               availableSessions
@@ -509,6 +513,7 @@ export function App({
   }
 
   function updateStatusFilter(status: string, checked: boolean) {
+    decomposedStatusFiltersRef.current.delete(status);
     const nextStatusFilters = checked
       ? [...new Set([...statusFilters, status])]
       : statusFilters.filter((item) => item !== status);
@@ -525,6 +530,7 @@ export function App({
   ) {
     const key = cwdFilterKey(status, cwd);
     if (!checked && statusFilters.includes(status)) {
+      decomposedStatusFiltersRef.current.add(status);
       const siblingCwdFilters = [
         ...new Set(
           (sessions ?? [])
@@ -561,9 +567,13 @@ export function App({
     ];
     if (
       checked &&
-      existingStatusCwdFilters.length > 0 &&
+      (
+        existingStatusCwdFilters.length > 0 ||
+        decomposedStatusFiltersRef.current.has(status)
+      ) &&
       currentStatusCwdFilters.every((filter) => nextFilters.includes(filter))
     ) {
+      decomposedStatusFiltersRef.current.delete(status);
       updateWorkspaceFilters(
         [...new Set([...statusFilters, status])],
         nextFilters.filter(
@@ -580,6 +590,7 @@ export function App({
       ?.filter((session) => sessionActivity(session) === status)
       .map((session) => session.id) ?? [];
     if (nextIDs.length === 0) return;
+    decomposedStatusFiltersRef.current.clear();
     const nextFocus = nextIDs[0];
     setStatusFilters([status]);
     setCwdFilters([]);
@@ -597,6 +608,7 @@ export function App({
       )
       .map((session) => session.id) ?? [];
     if (nextIDs.length === 0) return;
+    decomposedStatusFiltersRef.current.clear();
     const nextFocus = nextIDs[0];
     const nextCwdFilters = [cwdFilterKey(status, cwd)];
     setStatusFilters([]);
@@ -632,6 +644,7 @@ export function App({
       setStatusFilters([]);
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
+      decomposedStatusFiltersRef.current.clear();
       writeWorkspaceToURL(nextIDs, created.id, [], []);
       setRequestError("");
     } catch (error) {
