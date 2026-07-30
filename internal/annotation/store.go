@@ -46,12 +46,11 @@ type Result struct {
 }
 
 type entry struct {
-	session     Session
-	done        chan struct{}
-	result      *Result
-	canceled    bool
-	waitStarted bool
-	waiting     int
+	session  Session
+	done     chan struct{}
+	result   *Result
+	canceled bool
+	waiting  int
 }
 
 type Store struct {
@@ -118,7 +117,6 @@ func (s *Store) Wait(ctx context.Context, id string) (Result, error) {
 		s.mu.Unlock()
 		return Result{}, ErrNotFound
 	}
-	item.waitStarted = true
 	item.waiting++
 	done := item.done
 	s.mu.Unlock()
@@ -182,7 +180,7 @@ func (s *Store) Cancel(id string) (Session, error) {
 	item.canceled = true
 	delete(s.byTerminal, item.session.TerminalID)
 	close(item.done)
-	if item.waitStarted && item.waiting == 0 {
+	if item.waiting == 0 {
 		delete(s.entries, id)
 	}
 	return item.session, nil

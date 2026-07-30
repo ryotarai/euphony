@@ -126,6 +126,7 @@ func TestStoreCancelWakesWaiterAndAllowsAnotherAnnotation(t *testing.T) {
 		_, waitErr := store.Wait(context.Background(), session.ID)
 		waited <- waitErr
 	}()
+	waitForStoreWaiter(t, store, session.ID)
 
 	canceled, err := store.Cancel(session.ID)
 	if err != nil || canceled.ID != session.ID {
@@ -182,5 +183,41 @@ func TestStoreCancelRemovesEntryAfterWaitContextIsCanceled(t *testing.T) {
 	}
 	if _, found := store.entries[session.ID]; found {
 		t.Fatal("canceled entry remains after its waiter exited")
+	}
+}
+
+func TestStoreCancelWithoutAWaiterRemovesEntry(t *testing.T) {
+	store := NewStore(time.Now, func() string { return "annotation-1" })
+	session, err := store.Create("terminal-1", "review.md", FormatMarkdown, "Review")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Cancel(session.ID); err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if _, found := store.entries[session.ID]; found {
+		t.Fatal("canceled entry remains when no waiter was active")
+	}
+}
+
+func waitForStoreWaiter(t *testing.T, store *Store, id string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		store.mu.Lock()
+		item := store.entries[id]
+		waiting := 0
+		if item != nil {
+			waiting = item.waiting
+		}
+		store.mu.Unlock()
+		if waiting > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Wait() did not register a waiter")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
