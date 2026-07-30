@@ -1455,7 +1455,12 @@
           "role": {"type": "string"},
           "title": {"type": "string"},
           "content": {"type": "string"},
+          "callId": {"type": "string"},
           "toolCalls": {"type": "integer", "minimum": 1},
+          "entries": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/AgentTranscriptEntry"}
+          },
           "timestamp": {"type": "string"}
         },
         "additionalProperties": false

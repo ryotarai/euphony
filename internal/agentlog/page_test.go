@@ -256,32 +256,31 @@ func TestCompleteJSONLEndBoundsANewlineFreeOversizedRecord(t *testing.T) {
 	}
 }
 
-func TestCompactToolsCountsCallsAndDropsPayloadsAndResults(t *testing.T) {
+func TestCompactToolsPreservesConsecutiveToolDetails(t *testing.T) {
 	entries := []Entry{
-		{ID: "1-0", Kind: "message", Content: "Before"},
-		{ID: "2-0", Kind: "tool", Title: "exec", Content: "secret argument", Timestamp: "t1"},
-		{ID: "3-0", Kind: "tool_result", Title: "exec", Content: "secret result"},
-		{ID: "4-0", Kind: "tool", Title: "read", Content: "secret path"},
-		{ID: "5-0", Kind: "tool_result", Title: "read", Content: "secret file"},
-		{ID: "6-0", Kind: "tool", Title: "test", Content: "secret command"},
-		{ID: "7-0", Kind: "tool_result", Title: "test", Content: "secret output"},
-		{ID: "8-0", Kind: "message", Content: "After"},
+		{ID: "2-0", Kind: "tool", CallID: "call-1", Title: "exec", Content: `{"command":"go test"}`},
+		{ID: "3-0", Kind: "tool_result", CallID: "call-1", Title: "exec", Content: "ok"},
 	}
 
 	got := CompactTools(entries)
 	want := []Entry{
-		{ID: "1-0", Kind: "message", Content: "Before"},
-		{ID: "2-0", Kind: "tool_group", ToolCalls: 3, Timestamp: "t1"},
-		{ID: "8-0", Kind: "message", Content: "After"},
+		{
+			ID: "2-0", Kind: "tool_group", ToolCalls: 1,
+			Entries: entries,
+		},
 	}
 	if !entriesEqual(got, want) {
 		t.Fatalf("CompactTools() = %#v, want %#v", got, want)
 	}
+}
 
-	resultOnly := CompactTools([]Entry{
-		{ID: "9-0", Kind: "tool_result", Content: "not returned"},
-	})
-	if len(resultOnly) != 0 {
-		t.Fatalf("result-only CompactTools() = %#v, want empty", resultOnly)
+func TestCompactToolsPreservesAResultOnlyPageFragment(t *testing.T) {
+	result := Entry{ID: "9-0", Kind: "tool_result", CallID: "call-1", Title: "exec", Content: "not returned"}
+	got := CompactTools([]Entry{result})
+	want := []Entry{{
+		ID: "9-0", Kind: "tool_group", Entries: []Entry{result},
+	}}
+	if !entriesEqual(got, want) {
+		t.Fatalf("result-only CompactTools() = %#v, want %#v", got, want)
 	}
 }

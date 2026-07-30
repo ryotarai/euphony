@@ -1,6 +1,7 @@
 package agentlog
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,8 +22,8 @@ func TestParseClaudeTranscriptNormalizesMessagesAndTools(t *testing.T) {
 		{ID: "1-0", Kind: "message", Role: "user", Content: "Ship it", Timestamp: "2026-07-30T01:02:03Z"},
 		{ID: "2-0", Kind: "thinking", Role: "assistant", Content: "Checking the suite", Timestamp: "2026-07-30T01:02:04Z"},
 		{ID: "2-1", Kind: "message", Role: "assistant", Content: "Running tests.", Timestamp: "2026-07-30T01:02:04Z"},
-		{ID: "2-2", Kind: "tool", Title: "Bash", Content: "{\n  \"command\": \"go test ./...\"\n}", Timestamp: "2026-07-30T01:02:04Z"},
-		{ID: "3-0", Kind: "tool_result", Title: "Bash", Content: "ok", Timestamp: "2026-07-30T01:02:05Z"},
+		{ID: "2-2", Kind: "tool", CallID: "tool-1", Title: "Bash", Content: "{\n  \"command\": \"go test ./...\"\n}", Timestamp: "2026-07-30T01:02:04Z"},
+		{ID: "3-0", Kind: "tool_result", CallID: "tool-1", Title: "Bash", Content: "ok", Timestamp: "2026-07-30T01:02:05Z"},
 	}
 	if !entriesEqual(got, want) {
 		t.Fatalf("Parse() = %#v, want %#v", got, want)
@@ -46,8 +47,8 @@ func TestParseCodexTranscriptNormalizesMessagesAndTools(t *testing.T) {
 	want := []Entry{
 		{ID: "2-0", Kind: "message", Role: "user", Content: "Ship it", Timestamp: "2026-07-30T01:02:03Z"},
 		{ID: "3-0", Kind: "thinking", Role: "assistant", Content: "Checking the suite", Timestamp: "2026-07-30T01:02:04Z"},
-		{ID: "4-0", Kind: "tool", Title: "exec_command", Content: "{\n  \"cmd\": \"go test ./...\"\n}", Timestamp: "2026-07-30T01:02:05Z"},
-		{ID: "5-0", Kind: "tool_result", Title: "exec_command", Content: "ok", Timestamp: "2026-07-30T01:02:06Z"},
+		{ID: "4-0", Kind: "tool", CallID: "call-1", Title: "exec_command", Content: "{\n  \"cmd\": \"go test ./...\"\n}", Timestamp: "2026-07-30T01:02:05Z"},
+		{ID: "5-0", Kind: "tool_result", CallID: "call-1", Title: "exec_command", Content: "ok", Timestamp: "2026-07-30T01:02:06Z"},
 		{ID: "6-0", Kind: "message", Role: "assistant", Content: "Done.", Timestamp: "2026-07-30T01:02:07Z"},
 	}
 	if !entriesEqual(got, want) {
@@ -162,7 +163,7 @@ func entriesEqual(left, right []Entry) bool {
 		return false
 	}
 	for index := range left {
-		if left[index] != right[index] {
+		if !reflect.DeepEqual(left[index], right[index]) {
 			return false
 		}
 	}

@@ -123,7 +123,7 @@ func CompactTools(entries []Entry) []Entry {
 	compacted := make([]Entry, 0, len(entries))
 	var group Entry
 	flush := func() {
-		if group.ToolCalls > 0 {
+		if len(group.Entries) > 0 {
 			compacted = append(compacted, group)
 		}
 		group = Entry{}
@@ -134,17 +134,17 @@ func CompactTools(entries []Entry) []Entry {
 			compacted = append(compacted, entry)
 			continue
 		}
-		if entry.Kind != "tool" {
-			continue
-		}
-		if group.ToolCalls == 0 {
+		if len(group.Entries) == 0 {
 			group = Entry{
 				ID:        entry.ID,
 				Kind:      "tool_group",
 				Timestamp: entry.Timestamp,
 			}
 		}
-		group.ToolCalls++
+		group.Entries = append(group.Entries, entry)
+		if entry.Kind == "tool" {
+			group.ToolCalls++
+		}
 	}
 	flush()
 	return compacted
