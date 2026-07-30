@@ -80,6 +80,45 @@ test("keeps an independent selected source for each pane instance", async () => 
   expect(screen.getAllByRole("tab", { name: "Terminal" })[1]).toHaveAttribute("data-active");
 });
 
+test("shows attention in the pane rail only for flagged sessions", () => {
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: null, etag: "" }),
+  } as unknown as ApiClient;
+  render(
+    <>
+      <TerminalPane
+        session={{ ...session, needsAttention: true }}
+        api={api}
+        active
+        layoutVersion={2}
+        tabShortcut="Meta+L"
+        onDeselect={() => undefined}
+        renderTerminal={() => <div>attention terminal</div>}
+      />
+      <TerminalPane
+        session={{ ...session, id: "terminal-2", name: "Terminal two" }}
+        api={api}
+        active={false}
+        layoutVersion={2}
+        tabShortcut="Meta+L"
+        onDeselect={() => undefined}
+        renderTerminal={() => <div>regular terminal</div>}
+      />
+    </>,
+  );
+
+  const attentionStatus = screen.getByRole("status", {
+    name: "Needs attention",
+  });
+  const attentionDot = attentionStatus.querySelector(".attention-dot");
+  expect(attentionStatus).toHaveClass("pane-attention-indicator");
+  expect(attentionDot).toBeVisible();
+  expect(attentionDot).toHaveAttribute("aria-hidden", "true");
+  expect(
+    screen.getAllByRole("status", { name: "Needs attention" }),
+  ).toHaveLength(1);
+});
+
 test("refreshes a visible log even when its pane is not focused", async () => {
   const user = userEvent.setup();
   const getAgentLog = vi.fn().mockResolvedValue({ log: null, etag: "" });

@@ -82,6 +82,15 @@ export function TerminalPane({
           </TabsTrigger>
         </TabsList>
         <div className="terminal-tab-meta">
+          {session.needsAttention && (
+            <span
+              className="pane-attention-indicator"
+              role="status"
+              aria-label="Needs attention"
+            >
+              <span className="attention-dot" aria-hidden="true" />
+            </span>
+          )}
           <span className="terminal-tab-source" aria-hidden="true">
             {source === "terminal" ? "Terminal" : `${agentLabel} log`}
           </span>

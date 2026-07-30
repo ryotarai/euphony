@@ -1910,6 +1910,12 @@ input {
   gap: 0.5rem;
 }
 
+.pane-attention-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .terminal-tab-selection {
   width: 0.875rem;
   height: 0.875rem;
