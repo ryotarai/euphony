@@ -1,4 +1,4 @@
-import type { ApiErrorBody, Session, Settings } from "./types";
+import type { AgentLogResult, AgentTranscript, ApiErrorBody, Session, Settings } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -39,6 +39,28 @@ export class ApiClient {
     return this.request(`/api/sessions/${encodeURIComponent(id)}/tickets`, { method: "POST" });
   }
 
+  async getAgentLog(id: string, etag?: string): Promise<AgentLogResult> {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(id)}/agent-log`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...(etag ? { "If-None-Match": etag } : {}),
+        },
+      },
+    );
+    if (response.status === 304) {
+      return { log: null, etag: response.headers.get("ETag") ?? etag ?? "" };
+    }
+    if (!response.ok) {
+      throw await this.apiError(response);
+    }
+    return {
+      log: (await response.json()) as AgentTranscript,
+      etag: response.headers.get("ETag") ?? "",
+    };
+  }
+
   getSettings(): Promise<Settings> {
     return this.request("/api/settings");
   }
@@ -60,17 +82,21 @@ export class ApiClient {
       },
     });
     if (!response.ok) {
-      let body: ApiErrorBody = { code: "request_failed", message: "The request failed." };
-      try {
-        body = (await response.json()) as ApiErrorBody;
-      } catch {
-        // Keep the stable fallback for non-JSON proxy and network responses.
-      }
-      throw new ApiError(response.status, body.code, body.message);
+      throw await this.apiError(response);
     }
     if (response.status === 204) {
       return undefined as T;
     }
     return (await response.json()) as T;
+  }
+
+  private async apiError(response: Response): Promise<ApiError> {
+    let body: ApiErrorBody = { code: "request_failed", message: "The request failed." };
+    try {
+      body = (await response.json()) as ApiErrorBody;
+    } catch {
+      // Keep the stable fallback for non-JSON proxy and network responses.
+    }
+    return new ApiError(response.status, body.code, body.message);
   }
 }

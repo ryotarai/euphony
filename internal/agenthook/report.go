@@ -22,10 +22,11 @@ func Report(ctx context.Context, config Config, input io.Reader) error {
 		return nil
 	}
 	var event struct {
-		CWD          string `json:"cwd"`
-		SessionID    string `json:"session_id"`
-		SessionTitle string `json:"session_title"`
-		Title        string `json:"title"`
+		CWD            string `json:"cwd"`
+		SessionID      string `json:"session_id"`
+		SessionTitle   string `json:"session_title"`
+		Title          string `json:"title"`
+		TranscriptPath string `json:"transcript_path"`
 	}
 	_ = json.NewDecoder(io.LimitReader(input, 1<<20)).Decode(&event)
 	title := event.SessionTitle
@@ -43,13 +44,14 @@ func Report(ctx context.Context, config Config, input io.Reader) error {
 		title = ""
 	}
 	payload, err := json.Marshal(map[string]string{
-		"terminalId":     config.TerminalID,
-		"agent":          agent,
-		"resumeAgent":    config.Agent,
-		"agentSessionId": event.SessionID,
-		"status":         status,
-		"title":          title,
-		"cwd":            event.CWD,
+		"terminalId":          config.TerminalID,
+		"agent":               agent,
+		"resumeAgent":         config.Agent,
+		"agentSessionId":      event.SessionID,
+		"agentTranscriptPath": event.TranscriptPath,
+		"status":              status,
+		"title":               title,
+		"cwd":                 event.CWD,
 	})
 	if err != nil {
 		return err

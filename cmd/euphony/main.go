@@ -94,8 +94,9 @@ func runServer() error {
 	}
 	databasePath := os.Getenv("EUPHONY_DB")
 	codexDirectory := os.Getenv("CODEX_HOME")
+	claudeDirectory := os.Getenv("CLAUDE_CONFIG_DIR")
 	var home string
-	if databasePath == "" || codexDirectory == "" {
+	if databasePath == "" || codexDirectory == "" || claudeDirectory == "" {
 		var err error
 		home, err = os.UserHomeDir()
 		if err != nil {
@@ -108,16 +109,24 @@ func runServer() error {
 	if codexDirectory == "" {
 		codexDirectory = filepath.Join(home, ".codex")
 	}
+	if claudeDirectory == "" {
+		claudeDirectory = filepath.Join(home, ".claude")
+	}
+	codexSessionsRoot, claudeProjectsRoot := agentLogRoots(
+		home, codexDirectory, claudeDirectory,
+	)
 	token, generatedToken, err := resolveToken(os.Getenv("EUPHONY_TOKEN"))
 	if err != nil {
 		return err
 	}
 	srv, err := server.New(server.Config{
-		Token:             token,
-		Shell:             os.Getenv("SHELL"),
-		HookURL:           "http://" + address + "/api/hooks/terminal",
-		DatabasePath:      databasePath,
-		CodexSessionIndex: filepath.Join(codexDirectory, "session_index.jsonl"),
+		Token:              token,
+		Shell:              os.Getenv("SHELL"),
+		HookURL:            "http://" + address + "/api/hooks/terminal",
+		DatabasePath:       databasePath,
+		CodexSessionIndex:  filepath.Join(codexDirectory, "session_index.jsonl"),
+		CodexSessionsRoot:  codexSessionsRoot,
+		ClaudeProjectsRoot: claudeProjectsRoot,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -162,6 +171,16 @@ func runServer() error {
 		return shutdownErr
 	}
 	return sessionErr
+}
+
+func agentLogRoots(home, codexDirectory, claudeDirectory string) (string, string) {
+	if codexDirectory == "" {
+		codexDirectory = filepath.Join(home, ".codex")
+	}
+	if claudeDirectory == "" {
+		claudeDirectory = filepath.Join(home, ".claude")
+	}
+	return filepath.Join(codexDirectory, "sessions"), filepath.Join(claudeDirectory, "projects")
 }
 
 func resolveToken(configured string) (string, bool, error) {

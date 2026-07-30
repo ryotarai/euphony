@@ -12,13 +12,14 @@ import (
 
 func (s *Server) updateTerminalHook(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		TerminalID     string `json:"terminalId"`
-		Agent          string `json:"agent"`
-		ResumeAgent    string `json:"resumeAgent"`
-		AgentSessionID string `json:"agentSessionId"`
-		Status         string `json:"status"`
-		Title          string `json:"title"`
-		CWD            string `json:"cwd"`
+		TerminalID          string `json:"terminalId"`
+		Agent               string `json:"agent"`
+		ResumeAgent         string `json:"resumeAgent"`
+		AgentSessionID      string `json:"agentSessionId"`
+		AgentTranscriptPath string `json:"agentTranscriptPath"`
+		Status              string `json:"status"`
+		Title               string `json:"title"`
+		CWD                 string `json:"cwd"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -26,6 +27,7 @@ func (s *Server) updateTerminalHook(w http.ResponseWriter, r *http.Request) {
 		strings.TrimSpace(request.TerminalID) == "" ||
 		len(request.Agent) > 40 || len(request.ResumeAgent) > 40 ||
 		len(request.AgentSessionID) > 200 || len(request.Status) > 40 ||
+		len(request.AgentTranscriptPath) > 8192 ||
 		len(request.Title) > 240 || len(request.CWD) > 4096 {
 		writeError(w, http.StatusBadRequest, "invalid_hook", "Provide valid terminal activity.")
 		return
@@ -33,7 +35,8 @@ func (s *Server) updateTerminalHook(w http.ResponseWriter, r *http.Request) {
 	metadata, err := s.sessions.UpdateAgent(request.TerminalID, session.AgentUpdate{
 		Agent: request.Agent, ResumeAgent: request.ResumeAgent,
 		AgentSessionID: request.AgentSessionID, Status: request.Status,
-		Title: request.Title, CWD: request.CWD,
+		TranscriptPath: request.AgentTranscriptPath,
+		Title:          request.Title, CWD: request.CWD,
 	})
 	if errors.Is(err, session.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")

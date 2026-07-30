@@ -102,7 +102,7 @@ func TestTerminalHookUpdatesSessionMetadata(t *testing.T) {
 	decodeResponse(t, created, &metadata)
 
 	hook := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
-		`{"terminalId":"`+metadata.ID+`","agent":"claude","status":"waiting","title":"Review changes","cwd":"/repo"}`)
+		`{"terminalId":"`+metadata.ID+`","agent":"claude","agentSessionId":"agent-1","agentTranscriptPath":"/home/me/.claude/projects/repo/agent-1.jsonl","status":"waiting","title":"Review changes","cwd":"/repo"}`)
 	if hook.Code != http.StatusOK {
 		t.Fatalf("POST hook status = %d, body = %s", hook.Code, hook.Body.String())
 	}
@@ -114,6 +114,11 @@ func TestTerminalHookUpdatesSessionMetadata(t *testing.T) {
 		sessions[0].AgentStatus != "waiting" || sessions[0].AgentTitle != "Review changes" ||
 		sessions[0].CWD != "/repo" {
 		t.Fatalf("sessions after hook = %#v", sessions)
+	}
+	stored := srv.sessions.List()
+	if len(stored) != 1 ||
+		stored[0].AgentTranscriptPath != "/home/me/.claude/projects/repo/agent-1.jsonl" {
+		t.Fatalf("stored sessions after hook = %#v", stored)
 	}
 }
 

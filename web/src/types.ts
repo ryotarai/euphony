@@ -26,3 +26,25 @@ export interface Settings {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
 }
+
+export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";
+
+export interface AgentLogEntry {
+  id: string;
+  kind: AgentLogEntryKind;
+  role?: "user" | "assistant";
+  title?: string;
+  content?: string;
+  timestamp?: string;
+}
+
+export interface AgentTranscript {
+  agent: "claude" | "codex";
+  sessionId: string;
+  entries: AgentLogEntry[];
+}
+
+export interface AgentLogResult {
+  log: AgentTranscript | null;
+  etag: string;
+}

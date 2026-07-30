@@ -75,6 +75,13 @@ async function readTerminalHistory(page: Page, sessionID: string): Promise<strin
   }, { id: sessionID });
 }
 
+function visibleTerminalText(history: string): string {
+  return history
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+}
+
 test("keeps a running Claude terminal fitted across repeated pane changes", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
@@ -123,8 +130,10 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   await page.keyboard.type("claude");
   await page.keyboard.press("Enter");
   await expect
-    .poll(() => readTerminalHistory(page, claude.id), { timeout: 15_000 })
-    .toMatch(/Claude Code|Not logged in|Welcome back/i);
+    .poll(async () => visibleTerminalText(await readTerminalHistory(page, claude.id)), {
+      timeout: 15_000,
+    })
+    .toMatch(/Claude\s*Code|Not\s*logged\s*in|Welcome\s*back/i);
 
   const leftCheckbox = page.getByRole("checkbox", { name: "Include Left in split" });
   for (let iteration = 0; iteration < 30; iteration += 1) {

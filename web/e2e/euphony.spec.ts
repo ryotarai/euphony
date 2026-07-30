@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 
 async function clearSessions(page: Page) {
   await page.request.patch("/api/settings", {
@@ -57,6 +58,21 @@ async function createSession(
   return response.json();
 }
 
+function claudeTranscriptLine(index: number) {
+  const label = `Agent log entry ${String(index).padStart(2, "0")}`;
+  return JSON.stringify({
+    type: "assistant",
+    timestamp: `2026-07-30T01:${String(index).padStart(2, "0")}:00Z`,
+    message: {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}`,
+      }],
+    },
+  }) + "\n";
+}
+
 test("opens from a development token URL and immediately scrubs it", async ({ page }) => {
   await clearSessions(page);
   await page.goto("/?token=test-token");
@@ -65,6 +81,73 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   await expect(page.getByLabel("Access token")).toHaveCount(0);
   expect(new URL(page.url()).searchParams.has("token")).toBe(false);
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
+});
+
+test("shows a live agent transcript and releases follow when the reader scrolls away", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Log stream", "/tmp");
+  const sessionID = `e2e-${terminal.id}`;
+  const transcriptPath = `/tmp/euphony-e2e-claude/projects/euphony/${sessionID}.jsonl`;
+  await mkdir("/tmp/euphony-e2e-claude/projects/euphony", { recursive: true });
+  await writeFile(
+    transcriptPath,
+    Array.from({ length: 40 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
+  );
+  const hook = await page.request.post("/api/hooks/terminal", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: {
+      terminalId: terminal.id,
+      agent: "claude",
+      agentSessionId: sessionID,
+      agentTranscriptPath: transcriptPath,
+      status: "waiting",
+      title: "Live transcript",
+      cwd: "/tmp",
+    },
+  });
+  expect(hook.ok()).toBe(true);
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("tab", { name: "Agent log" }).click();
+  const viewport = page.locator('[data-slot="message-scroller-viewport"]');
+  await expect(page.getByRole("heading", { name: "Agent log entry 40" })).toBeVisible();
+  await expect.poll(() => viewport.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 4,
+  )).toBe(true);
+
+  await appendFile(transcriptPath, claudeTranscriptLine(41));
+  await expect(page.getByRole("heading", { name: "Agent log entry 41" })).toBeVisible();
+  await expect.poll(() => viewport.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 4,
+  )).toBe(true);
+
+  await viewport.hover();
+  await page.mouse.wheel(0, -20_000);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(20);
+  const readingPosition = await viewport.evaluate((element) => element.scrollTop);
+
+  await appendFile(transcriptPath, claudeTranscriptLine(42));
+  await expect(page.getByRole("heading", { name: "Agent log entry 42" })).toBeAttached();
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(
+    readingPosition + 2,
+  );
+
+  await page.getByRole("button", { name: "Scroll to end" }).click();
+  await expect.poll(() => viewport.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 4,
+  )).toBe(true);
+
+  await appendFile(transcriptPath, claudeTranscriptLine(43));
+  await expect(page.getByRole("heading", { name: "Agent log entry 43" })).toBeVisible();
+  await expect.poll(() => viewport.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 4,
+  )).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("agent-log-tab.png") });
 });
 
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"path/filepath"
 	"testing"
 )
 
@@ -42,5 +43,21 @@ func TestBrowserURLIncludesEscapedToken(t *testing.T) {
 	}
 	if got := parsed.Query().Get("token"); got != "a token&value" {
 		t.Fatalf("browserURL() token = %q, want escaped token", got)
+	}
+}
+
+func TestAgentLogRootsRespectConfiguredAgentHomes(t *testing.T) {
+	codex, claude := agentLogRoots(
+		"/home/me", "/profiles/codex", "/profiles/claude",
+	)
+	if codex != filepath.Join("/profiles/codex", "sessions") ||
+		claude != filepath.Join("/profiles/claude", "projects") {
+		t.Fatalf("agentLogRoots() = %q, %q", codex, claude)
+	}
+
+	codex, claude = agentLogRoots("/home/me", "", "")
+	if codex != filepath.Join("/home/me", ".codex", "sessions") ||
+		claude != filepath.Join("/home/me", ".claude", "projects") {
+		t.Fatalf("default agentLogRoots() = %q, %q", codex, claude)
 	}
 }

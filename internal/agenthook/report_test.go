@@ -28,7 +28,7 @@ func TestReportTranslatesAgentHookInputToTerminalActivity(t *testing.T) {
 		TerminalID: "terminal-123",
 		Agent:      "claude",
 		Status:     "running",
-	}, strings.NewReader(`{"cwd":"/repo","session_id":"agent-1","session_title":"Fix setup"}`))
+	}, strings.NewReader(`{"cwd":"/repo","session_id":"agent-1","session_title":"Fix setup","transcript_path":"/home/me/.claude/projects/repo/agent-1.jsonl"}`))
 	if err != nil {
 		t.Fatalf("Report() error = %v", err)
 	}
@@ -36,12 +36,13 @@ func TestReportTranslatesAgentHookInputToTerminalActivity(t *testing.T) {
 		t.Fatalf("Authorization = %q", authorization)
 	}
 	want := map[string]string{
-		"terminalId":     "terminal-123",
-		"agent":          "claude",
-		"agentSessionId": "agent-1",
-		"status":         "running",
-		"title":          "Fix setup",
-		"cwd":            "/repo",
+		"terminalId":          "terminal-123",
+		"agent":               "claude",
+		"agentSessionId":      "agent-1",
+		"agentTranscriptPath": "/home/me/.claude/projects/repo/agent-1.jsonl",
+		"status":              "running",
+		"title":               "Fix setup",
+		"cwd":                 "/repo",
 	}
 	for key, value := range want {
 		if payload[key] != value {
