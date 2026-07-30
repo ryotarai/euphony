@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -69,6 +70,16 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	go func() {
+		if err := monitorTerminalWebSocket(
+			ctx,
+			15*time.Second,
+			5*time.Second,
+			connection.Ping,
+		); err != nil && !errors.Is(err, context.Canceled) {
+			cancel()
+		}
+	}()
 	var cancelCWDRefresh context.CancelFunc
 	defer func() {
 		if cancelCWDRefresh != nil {
@@ -253,6 +264,33 @@ func marshalTerminalFrame(message serverMessage, v1 bool) []byte {
 		Rows:       message.Rows,
 	})
 	return payload
+}
+
+func monitorTerminalWebSocket(
+	ctx context.Context,
+	interval time.Duration,
+	timeout time.Duration,
+	ping func(context.Context) error,
+) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+
+		pingContext, cancel := context.WithTimeout(ctx, timeout)
+		err := ping(pingContext)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 func interruptTerminalWritesOnLag(

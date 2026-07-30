@@ -80,6 +80,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			sidebar_collapsed INTEGER NOT NULL,
 			interface_font_size INTEGER NOT NULL DEFAULT 16,
 			terminal_font_size INTEGER NOT NULL DEFAULT 14,
+			terminal_font_family TEXT NOT NULL DEFAULT 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
 			agent_log_font_size INTEGER NOT NULL DEFAULT 14,
 			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576,
 			auto_select_attention INTEGER NOT NULL DEFAULT 1
@@ -156,6 +157,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE settings ADD COLUMN auto_select_attention INTEGER NOT NULL DEFAULT 1",
 		); err != nil {
 			return fmt.Errorf("add auto-select attention setting: %w", err)
+		}
+	}
+	hasTerminalFontFamily, err := s.hasColumn(ctx, "settings", "terminal_font_family")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalFontFamily {
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE settings ADD COLUMN terminal_font_family TEXT NOT NULL DEFAULT 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace'`,
+		); err != nil {
+			return fmt.Errorf("add terminal font family setting: %w", err)
 		}
 	}
 	for _, column := range []struct {
@@ -242,7 +254,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var collapsed, autoSelectAttention int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
-			interface_font_size, terminal_font_size, agent_log_font_size,
+			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
 			terminal_history_limit, auto_select_attention
 		FROM settings WHERE id = 1`,
 	).Scan(
@@ -252,6 +264,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&collapsed,
 		&result.InterfaceFontSize,
 		&result.TerminalFontSize,
+		&result.TerminalFontFamily,
 		&result.AgentLogFontSize,
 		&result.TerminalHistoryLimit,
 		&autoSelectAttention,
@@ -275,11 +288,12 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
-			interface_font_size = ?, terminal_font_size = ?, agent_log_font_size = ?,
+			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
 			terminal_history_limit = ?, auto_select_attention = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
-		settings.InterfaceFontSize, settings.TerminalFontSize, settings.AgentLogFontSize,
+		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
+		settings.AgentLogFontSize,
 		settings.TerminalHistoryLimit, autoSelectAttention)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)

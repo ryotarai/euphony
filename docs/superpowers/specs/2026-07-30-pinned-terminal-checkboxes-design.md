@@ -3,16 +3,17 @@
 ## Goal
 
 Allow a terminal pane to remain selected when other terminals or dynamic
-filters are selected. A user pins a terminal by Shift-clicking its unchecked
-sidebar checkbox and removes the pin only by clicking that checkbox again.
+filters are selected. A user pins a terminal by Alt-clicking (Option-clicking
+on macOS) its unchecked sidebar checkbox and removes the pin only by clicking
+that checkbox again.
 
 ## Interaction
 
 - Clicking an unselected terminal checkbox keeps the existing multi-select
   behavior.
-- Shift-clicking an unselected terminal checkbox selects and pins that
+- Alt-clicking an unselected terminal checkbox selects and pins that
   terminal.
-- Shift-clicking a selected but unpinned terminal checkbox pins it without
+- Alt-clicking a selected but unpinned terminal checkbox pins it without
   deselecting it.
 - Clicking a pinned terminal checkbox directly removes both its pin and its
   selection, including when it is the last selected pane.
@@ -33,10 +34,10 @@ focus, and the URL. Dynamic-filter ownership never claims a pinned ID, so
 removing a filter cannot remove a pinned pane.
 
 `SessionNavigation` receives `pinnedIDs` and reports a checkbox interaction
-with its Shift modifier. It renders pinned checkbox state through a
+with its Alt modifier. It renders pinned checkbox state through a
 `data-pinned` attribute and a small `PinIcon` that does not replace the
 checkbox's checked indicator. The existing selection label remains stable for
-assistive technology, while a title explains the Shift-click gesture and the
+assistive technology, while a title explains the Option-click gesture and the
 direct removal action.
 
 ## Visual Direction
@@ -58,9 +59,9 @@ decorative component.
 
 ## Verification
 
-- Component tests verify Shift modifier forwarding and the pinned visual state.
+- Component tests verify Alt modifier forwarding and the pinned visual state.
 - App tests verify pin creation, preservation across replacement selection,
   direct removal, and URL restoration.
-- Playwright verifies the user-visible Shift-click flow against the running
+- Playwright verifies the user-visible Alt-click flow against the running
   application.
 - The complete unit test suite, typecheck, and production build must pass.

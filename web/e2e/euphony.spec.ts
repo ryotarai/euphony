@@ -13,7 +13,7 @@ async function runGit(repo: string, ...args: string[]) {
 }
 
 async function clearSessions(page: Page) {
-  await page.request.patch("/api/settings", {
+  const settingsResponse = await page.request.patch("/api/settings", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -25,11 +25,14 @@ async function clearSessions(page: Page) {
       sidebarCollapsed: false,
       interfaceFontSize: 16,
       terminalFontSize: 14,
+      terminalFontFamily:
+        'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
       autoSelectAttention: true,
     },
   });
+  expect(settingsResponse.ok()).toBe(true);
   const existing = await page.request.get("/api/sessions", {
     headers: { Authorization: "Bearer test-token" },
   });
@@ -651,7 +654,7 @@ test("pins a terminal checkbox until that checkbox is clicked", async ({ page })
   const leftCheckbox = page.getByRole("checkbox", {
     name: "Include Left in split",
   });
-  await leftCheckbox.click({ modifiers: ["Shift"] });
+  await leftCheckbox.click({ modifiers: ["Alt"] });
   await expect(leftCheckbox).toHaveAttribute("data-pinned", "true");
   await expect(leftCheckbox).toHaveCSS("background-color", "rgb(245, 158, 11)");
   await expect(page.locator(".pane-checkbox-pin")).toHaveCount(0);
@@ -694,7 +697,7 @@ test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
   const terminalStatus = page.getByRole("checkbox", {
     name: "Show all Terminal terminals",
   });
-  await terminalStatus.click({ modifiers: ["Shift"] });
+  await terminalStatus.click({ modifiers: ["Alt"] });
   await expect(terminalStatus).toHaveAttribute("data-pinned", "true");
   await expect(terminalStatus).toHaveCSS(
     "background-color",
@@ -728,7 +731,7 @@ test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
   const runningACwdCheckbox = page.getByRole("checkbox", {
     name: `Include all terminals in ${runningACwd}`,
   });
-  await runningACwdCheckbox.click({ modifiers: ["Shift"] });
+  await runningACwdCheckbox.click({ modifiers: ["Alt"] });
   await expect(runningACwdCheckbox).toHaveAttribute("data-pinned", "true");
   await expect(runningACwdCheckbox).toHaveCSS(
     "background-color",
@@ -990,6 +993,18 @@ test("uses a flush black workspace with only a divider between panes", async ({ 
     borderLeft: "1px",
   });
   expect(layout.dividerDelta).toBeLessThanOrEqual(0.5);
+});
+
+test("opens Quick Actions with Command-K but not Control-K", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Terminal");
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Control+K");
+  await expect(page.getByRole("dialog", { name: "Quick Actions" })).toHaveCount(0);
+
+  await page.keyboard.press("Meta+K");
+  await expect(page.getByRole("dialog", { name: "Quick Actions" })).toBeVisible();
 });
 
 test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async ({ page }) => {
@@ -1262,6 +1277,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("History buffer").fill("8");
   await settingsDialog.getByLabel("Interface").fill("18");
   await settingsDialog.getByLabel("Terminal", { exact: true }).fill("17");
+  await settingsDialog.getByLabel("Terminal font").fill('"Courier New", monospace');
   await settingsDialog.getByLabel("Agent log").fill("16");
   const autoSelectAttention = settingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
@@ -1270,6 +1286,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await autoSelectAttention.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
+  await expect(page.locator(".xterm-rows").first()).toHaveCSS(
+    "font-family",
+    '"Courier New", monospace',
+  );
   await expect(page.locator(".agent-log-view").first()).toHaveCSS(
     "--agent-log-font-size",
     "16px",
@@ -1282,6 +1302,9 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(savedSettingsDialog.getByLabel("History buffer")).toHaveValue("8");
   await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
   await expect(savedSettingsDialog.getByLabel("Terminal", { exact: true })).toHaveValue("17");
+  await expect(savedSettingsDialog.getByLabel("Terminal font")).toHaveValue(
+    '"Courier New", monospace',
+  );
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
   await expect(savedSettingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",

@@ -21,6 +21,12 @@ interface AnnotationViewProps {
   onCompleted(): void;
 }
 
+interface PendingSelection {
+  anchor: AnnotationSelectionAnchor;
+  left: number;
+  top: number;
+}
+
 const forbiddenHTMLTags = [
   "script",
   "style",
@@ -51,8 +57,11 @@ export function AnnotationView({
   api,
   onCompleted,
 }: AnnotationViewProps) {
+  const readerRef = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLElement>(null);
   const selectionEditorRef = useRef<HTMLTextAreaElement>(null);
+  const [pendingSelection, setPendingSelection] =
+    useState<PendingSelection | null>(null);
   const [selectionDraft, setSelectionDraft] =
     useState<AnnotationSelectionAnchor | null>(null);
   const [selectionBody, setSelectionBody] = useState("");
@@ -60,6 +69,7 @@ export function AnnotationView({
   const [comments, setComments] = useState<AnnotationComment[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const commentCount = comments.length + (globalBody.trim() ? 1 : 0);
   const sanitizedHTML = useMemo(
     () => DOMPurify.sanitize(annotation.content, {
       FORBID_TAGS: forbiddenHTMLTags,
@@ -90,13 +100,54 @@ export function AnnotationView({
 
   const captureSelection = () => {
     const root = documentRef.current;
+    const reader = readerRef.current;
     const selection = window.getSelection();
-    if (!root || !selection) return;
+    if (!root || !reader || !selection) return;
     const anchor = selectionAnchor(root, selection);
-    if (!anchor) return;
-    setSelectionDraft(anchor);
+    if (!anchor) {
+      setPendingSelection(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const rectangles =
+      typeof range.getClientRects === "function"
+        ? Array.from(range.getClientRects())
+        : [];
+    const selectionRect =
+      rectangles.at(-1) ??
+      (typeof range.getBoundingClientRect === "function"
+        ? range.getBoundingClientRect()
+        : root.getBoundingClientRect());
+    const readerRect = reader.getBoundingClientRect();
+    const inset = 8;
+    const actionWidth = 96;
+    const actionHeight = 32;
+    setPendingSelection({
+      anchor,
+      left: Math.max(
+        inset,
+        Math.min(
+          selectionRect.right - readerRect.left + inset,
+          Math.max(inset, readerRect.width - actionWidth - inset),
+        ),
+      ),
+      top: Math.max(
+        inset,
+        Math.min(
+          selectionRect.bottom - readerRect.top + inset,
+          Math.max(inset, readerRect.height - actionHeight - inset),
+        ),
+      ),
+    });
+    setSelectionDraft(null);
     setSelectionBody("");
     setError("");
+  };
+
+  const openSelectionEditor = () => {
+    if (!pendingSelection) return;
+    setSelectionDraft(pendingSelection.anchor);
+    setPendingSelection(null);
   };
 
   const addSelectionComment = () => {
@@ -117,18 +168,16 @@ export function AnnotationView({
     window.getSelection()?.removeAllRanges();
   };
 
-  const addGlobalComment = () => {
-    const body = globalBody.trim();
-    if (!body) return;
-    setComments((current) => [...current, { kind: "global", body }]);
-    setGlobalBody("");
-  };
-
   const sendComments = async () => {
     setSubmitting(true);
     setError("");
     try {
-      await api.completeAnnotation(annotation.id, comments);
+      const submittedComments: AnnotationComment[] = [...comments];
+      const globalComment = globalBody.trim();
+      if (globalComment) {
+        submittedComments.push({ kind: "global", body: globalComment });
+      }
+      await api.completeAnnotation(annotation.id, submittedComments);
       onCompleted();
     } catch {
       setError("Comments could not be sent. Try again.");
@@ -142,7 +191,7 @@ export function AnnotationView({
       className="annotation-view"
       aria-label={`Annotation: ${annotation.filename}`}
     >
-      <div className="annotation-reader">
+      <div ref={readerRef} className="annotation-reader">
         <header className="annotation-document-header">
           <span>Review document</span>
           <strong>{annotation.filename}</strong>
@@ -152,6 +201,7 @@ export function AnnotationView({
             ref={documentRef}
             className="annotation-document annotation-markdown"
             onMouseUp={captureSelection}
+            onScroll={() => setPendingSelection(null)}
           >
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {annotation.content}
@@ -162,15 +212,31 @@ export function AnnotationView({
             ref={documentRef}
             className="annotation-document annotation-html"
             onMouseUp={captureSelection}
+            onScroll={() => setPendingSelection(null)}
             dangerouslySetInnerHTML={{ __html: sanitizedHTML }}
           />
+        )}
+        {pendingSelection && (
+          <Button
+            type="button"
+            size="sm"
+            className="annotation-selection-action"
+            style={{
+              left: pendingSelection.left,
+              top: pendingSelection.top,
+            }}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={openSelectionEditor}
+          >
+            Comment
+          </Button>
         )}
       </div>
 
       <aside className="annotation-comments" aria-label="Comments">
         <header className="annotation-comments-header">
           <span>Review notes</span>
-          <strong>{comments.length}</strong>
+          <strong>{commentCount}</strong>
         </header>
         <div className="annotation-comment-scroll">
           {selectionDraft && (
@@ -248,16 +314,6 @@ export function AnnotationView({
                 onChange={(event) => setGlobalBody(event.target.value)}
               />
             </Field>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={submitting || !globalBody.trim()}
-              onClick={addGlobalComment}
-            >
-              <MessageSquarePlusIcon data-icon="inline-start" aria-hidden="true" />
-              Add global comment
-            </Button>
           </FieldGroup>
         </div>
         <footer className="annotation-submit">
@@ -267,9 +323,9 @@ export function AnnotationView({
             {submitting ? "Sending…" : "Send comments"}
           </Button>
           <span>
-            {comments.length === 0
+            {commentCount === 0
               ? "Send with no notes to approve."
-              : `${comments.length} ${comments.length === 1 ? "comment" : "comments"} ready`}
+              : `${commentCount} ${commentCount === 1 ? "comment" : "comments"} ready`}
           </span>
         </footer>
       </aside>

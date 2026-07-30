@@ -112,7 +112,7 @@ test("updates scrollback without reconnecting the terminal", async () => {
   expect(createSocket).toHaveBeenCalledTimes(1);
 });
 
-test("creates and recreates xterm with the configured font size", async () => {
+test("creates and recreates xterm with the configured font", async () => {
   const socket = new FakeSocket();
   const terminal: TerminalDriver = {
     open: () => undefined,
@@ -126,7 +126,7 @@ test("creates and recreates xterm with the configured font size", async () => {
     onResize: () => () => undefined,
     dispose: () => undefined,
   };
-  const receivedFontSizes: number[] = [];
+  const receivedFonts: Array<[string, number]> = [];
   const api = {
     createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
   } as unknown as ApiClient;
@@ -134,31 +134,38 @@ test("creates and recreates xterm with the configured font size", async () => {
     <TerminalView
       session={runningSession}
       api={api}
+      fontFamily="JetBrains Mono, monospace"
       fontSize={18}
-      createTerminal={(fontSize) => {
-        receivedFontSizes.push(fontSize);
+      createTerminal={(fontFamily, fontSize) => {
+        receivedFonts.push([fontFamily, fontSize]);
         return terminal;
       }}
       createSocket={() => socket}
     />,
   );
 
-  expect(receivedFontSizes).toEqual([18]);
+  expect(receivedFonts).toEqual([["JetBrains Mono, monospace", 18]]);
 
   rerender(
     <TerminalView
       session={runningSession}
       api={api}
+      fontFamily="Iosevka, monospace"
       fontSize={20}
-      createTerminal={(fontSize) => {
-        receivedFontSizes.push(fontSize);
+      createTerminal={(fontFamily, fontSize) => {
+        receivedFonts.push([fontFamily, fontSize]);
         return terminal;
       }}
       createSocket={() => socket}
     />,
   );
 
-  await waitFor(() => expect(receivedFontSizes).toEqual([18, 20]));
+  await waitFor(() =>
+    expect(receivedFonts).toEqual([
+      ["JetBrains Mono, monospace", 18],
+      ["Iosevka, monospace", 20],
+    ]),
+  );
 });
 
 test("gets a ticket before connecting and relays terminal traffic", async () => {

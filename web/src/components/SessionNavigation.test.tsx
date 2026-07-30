@@ -24,6 +24,8 @@ const settings: Settings = {
   sidebarCollapsed: false,
   interfaceFontSize: 16,
   terminalFontSize: 14,
+  terminalFontFamily:
+    'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,
@@ -233,7 +235,7 @@ test("groups terminals by status then cwd and exposes group selection controls",
   expect(onSelect).toHaveBeenCalledWith("three", true, false);
 });
 
-test("forwards Shift-clicks on terminal checkboxes as pin requests", () => {
+test("forwards Alt-clicks, but not Shift-clicks, on terminal checkboxes as pin requests", () => {
   const onSelect = vi.fn();
   render(
     <SessionNavigation
@@ -247,15 +249,22 @@ test("forwards Shift-clicks on terminal checkboxes as pin requests", () => {
     />,
   );
 
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
-    { shiftKey: true },
-  );
+  const terminalCheckbox = screen.getByRole("checkbox", {
+    name: "Include Terminal in split",
+  });
+  expect(terminalCheckbox).toHaveAttribute("title", "Option-click to pin");
+
+  fireEvent.click(terminalCheckbox, { altKey: true });
 
   expect(onSelect).toHaveBeenCalledWith("three", true, true);
+
+  onSelect.mockClear();
+  fireEvent.click(terminalCheckbox, { shiftKey: true });
+
+  expect(onSelect).toHaveBeenCalledWith("three", true, false);
 });
 
-test("forwards Shift-clicks on selected status and cwd checkboxes as pin requests", () => {
+test("forwards Alt-clicks on selected status and cwd checkboxes as pin requests", () => {
   const onStatusFilter = vi.fn();
   const onCwdFilter = vi.fn();
   render(
@@ -274,13 +283,13 @@ test("forwards Shift-clicks on selected status and cwd checkboxes as pin request
 
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Show all Running terminals" }),
-    { shiftKey: true },
+    { altKey: true },
   );
   fireEvent.click(
     screen.getByRole("checkbox", {
       name: "Include all terminals in ~/work/euphony",
     }),
-    { shiftKey: true },
+    { altKey: true },
   );
 
   expect(onStatusFilter).toHaveBeenCalledWith("running", true, true);

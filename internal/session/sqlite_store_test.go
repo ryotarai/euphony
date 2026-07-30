@@ -114,6 +114,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
 		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed ||
 		defaults.InterfaceFontSize != 16 || defaults.TerminalFontSize != 14 ||
+		defaults.TerminalFontFamily != DefaultTerminalFontFamily ||
 		defaults.AgentLogFontSize != 14 || defaults.TerminalHistoryLimit != 1048576 ||
 		!defaults.AutoSelectAttention {
 		t.Fatalf("default settings = %#v", defaults)
@@ -122,6 +123,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
+		TerminalFontFamily:   "JetBrains Mono, monospace",
 		TerminalHistoryLimit: 0, AutoSelectAttention: false,
 	}
 	if err := store.SaveSettings(context.Background(), want); err != nil {
@@ -302,6 +304,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
+		TerminalFontFamily:   DefaultTerminalFontFamily,
 		TerminalHistoryLimit: 1048576, AutoSelectAttention: true,
 	}
 	if got != want {

@@ -231,12 +231,19 @@ test("reviews annotations from the blocking CLI over Unix and TCP", async ({
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
+  await expect(
+    page.getByRole("textbox", { name: "Comment on selection" }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("annotation-selection-action.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Comment", exact: true }).click();
   await page.getByRole("textbox", { name: "Comment on selection" })
     .fill("Make the rollout criteria concrete.");
   await page.getByRole("button", { name: "Add selection comment" }).click();
   await page.getByRole("textbox", { name: "Global comment" })
     .fill("Ready after that change.");
-  await page.getByRole("button", { name: "Add global comment" }).click();
   await page.screenshot({
     path: testInfo.outputPath("annotation-review.png"),
     fullPage: true,
@@ -269,7 +276,6 @@ test("reviews annotations from the blocking CLI over Unix and TCP", async ({
   expect(await page.evaluate(() => "hacked" in window)).toBe(false);
   await page.getByRole("textbox", { name: "Global comment" })
     .fill("HTML looks safe.");
-  await page.getByRole("button", { name: "Add global comment" }).click();
   await page.getByRole("button", { name: "Send comments" }).click();
 
   const htmlOutput = await html.completed;

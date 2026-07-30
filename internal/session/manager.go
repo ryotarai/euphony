@@ -78,12 +78,14 @@ type Settings struct {
 	SidebarCollapsed     bool   `json:"sidebarCollapsed"`
 	InterfaceFontSize    int    `json:"interfaceFontSize"`
 	TerminalFontSize     int    `json:"terminalFontSize"`
+	TerminalFontFamily   string `json:"terminalFontFamily"`
 	AgentLogFontSize     int    `json:"agentLogFontSize"`
 	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
 	AutoSelectAttention  bool   `json:"autoSelectAttention"`
 }
 
 const (
+	DefaultTerminalFontFamily   = `Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace`
 	DefaultTerminalHistoryLimit = 1024 * 1024
 	MinTerminalHistoryLimit     = 1024 * 1024
 	MaxTerminalHistoryLimit     = 4095 * 1024 * 1024
@@ -96,6 +98,7 @@ func DefaultSettings() Settings {
 		SidebarWidth:         304,
 		InterfaceFontSize:    16,
 		TerminalFontSize:     14,
+		TerminalFontFamily:   DefaultTerminalFontFamily,
 		AgentLogFontSize:     14,
 		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
 		AutoSelectAttention:  true,

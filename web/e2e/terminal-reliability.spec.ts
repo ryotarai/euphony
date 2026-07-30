@@ -15,7 +15,7 @@ type ClientSizeMessage = {
 };
 
 async function clearSessions(page: Page) {
-  await page.request.patch("/api/settings", {
+  const settingsResponse = await page.request.patch("/api/settings", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -27,11 +27,14 @@ async function clearSessions(page: Page) {
       sidebarCollapsed: false,
       interfaceFontSize: 16,
       terminalFontSize: 14,
+      terminalFontFamily:
+        'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
       autoSelectAttention: true,
     },
   });
+  expect(settingsResponse.ok()).toBe(true);
   const existing = await page.request.get("/api/sessions", {
     headers: { Authorization: "Bearer test-token" },
   });
