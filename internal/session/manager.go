@@ -311,7 +311,8 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		item.metadata.AgentTranscriptPath = transcriptPath
 	}
 	nextStatus := strings.TrimSpace(update.Status)
-	if item.metadata.AgentStatus == "running" && nextStatus == "waiting" {
+	if (item.metadata.AgentStatus == "running" && nextStatus == "waiting") ||
+		(item.metadata.AgentStatus != "blocked" && nextStatus == "blocked") {
 		item.metadata.NeedsAttention = true
 	}
 	item.metadata.AgentStatus = nextStatus

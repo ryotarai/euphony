@@ -277,6 +277,43 @@ func TestUpdateAgentMarksRunningToWaitingAsNeedingAttention(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentMarksEnteringBlockedAsNeedingAttention(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", Status: "blocked", Title: "Request permission",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(blocked) error = %v", err)
+	}
+	if updated.AgentStatus != "blocked" || !updated.NeedsAttention {
+		t.Fatalf("updated metadata = %#v, want blocked with attention", updated)
+	}
+
+	acknowledged, err := manager.AcknowledgeAttention(metadata.ID)
+	if err != nil {
+		t.Fatalf("AcknowledgeAttention() error = %v", err)
+	}
+	if acknowledged.NeedsAttention {
+		t.Fatal("NeedsAttention = true after acknowledgement, want false")
+	}
+
+	repeated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", Status: "blocked",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(blocked again) error = %v", err)
+	}
+	if repeated.NeedsAttention {
+		t.Fatal("NeedsAttention = true for repeated blocked status, want false")
+	}
+}
+
 func TestAcknowledgeAttentionClearsFlagAndPreservesCurrentStatus(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

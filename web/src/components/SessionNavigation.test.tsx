@@ -375,14 +375,25 @@ test("groups terminals by their exact cwd within each ordered status", () => {
   expect(statusNames).toEqual([
     "Blocked",
     "~/work/euphony",
-    "Need attention",
-    "/workspace/project/tmp/worktrees/fix",
     "Running",
     "~/work/euphony",
     "Waiting",
+    "/workspace/project/tmp/worktrees/fix",
     "~/work/euphony",
     "Terminal",
   ]);
+  const attentionButton = screen.getByRole("button", {
+    name: "Select Needs review",
+  });
+  const attentionDot = attentionButton.querySelector(".attention-dot");
+  expect(attentionDot).toBeVisible();
+  expect(attentionDot).toHaveAttribute("aria-hidden", "true");
+  expect(attentionButton).toHaveAccessibleDescription("Needs attention");
+  expect(screen.getByRole("button", { name: "Select Waiting" }))
+    .not.toHaveAccessibleDescription("Needs attention");
+  expect(
+    screen.queryByRole("checkbox", { name: "Show all Need attention terminals" }),
+  ).not.toBeInTheDocument();
 });
 
 test("collapses and restores the desktop sidebar", async () => {
