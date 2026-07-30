@@ -64,4 +64,3 @@ the subject of the control.
 - Agent-log tests prove the configured CSS variable is applied.
 - Playwright verifies persistence across reload and captures the dialog at
   desktop and mobile widths.
-

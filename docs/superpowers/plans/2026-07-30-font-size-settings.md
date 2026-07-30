@@ -260,4 +260,3 @@ remain associated with their inputs, and the font-size row stacks on mobile.
 git add web/e2e/euphony.spec.ts
 git commit -m "test: cover font size settings"
 ```
-
