@@ -93,6 +93,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			focused_terminal_id TEXT NOT NULL,
 			status_filters TEXT NOT NULL,
 			cwd_filters TEXT NOT NULL,
+			pinned_status_filters TEXT NOT NULL DEFAULT '[]',
+			pinned_cwd_filters TEXT NOT NULL DEFAULT '[]',
 			revision INTEGER NOT NULL
 		)`,
 	}
@@ -180,12 +182,31 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add %s setting: %w", column.name, err)
 		}
 	}
+	for _, column := range []string{
+		"pinned_status_filters",
+		"pinned_cwd_filters",
+	} {
+		exists, err := s.hasColumn(ctx, "selection", column)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		statement := fmt.Sprintf(
+			"ALTER TABLE selection ADD COLUMN %s TEXT NOT NULL DEFAULT '[]'",
+			column,
+		)
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("add %s selection field: %w", column, err)
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE terminals
 		SET agent_status = 'waiting', needs_attention = 1
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 7"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 8"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -269,14 +290,18 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 func (s *SQLiteStore) LoadSelection(ctx context.Context) (selection.State, bool, error) {
 	var result selection.State
 	var manualJSON, pinnedJSON, statusesJSON, cwdJSON string
+	var pinnedStatusesJSON, pinnedCWDJSON string
 	err := s.db.QueryRowContext(ctx, `SELECT manual_terminal_ids, pinned_terminal_ids,
-		focused_terminal_id, status_filters, cwd_filters, revision
+		focused_terminal_id, status_filters, cwd_filters,
+		pinned_status_filters, pinned_cwd_filters, revision
 		FROM selection WHERE id = 1`).Scan(
 		&manualJSON,
 		&pinnedJSON,
 		&result.FocusedTerminalID,
 		&statusesJSON,
 		&cwdJSON,
+		&pinnedStatusesJSON,
+		&pinnedCWDJSON,
 		&result.Revision,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -294,6 +319,10 @@ func (s *SQLiteStore) LoadSelection(ctx context.Context) (selection.State, bool,
 		{name: "pinned terminal IDs", data: pinnedJSON, target: &result.PinnedTerminalIDs},
 		{name: "status filters", data: statusesJSON, target: &result.StatusFilters},
 		{name: "cwd filters", data: cwdJSON, target: &result.CWDFilters},
+		{name: "pinned status filters", data: pinnedStatusesJSON,
+			target: &result.PinnedFilters.Statuses},
+		{name: "pinned cwd filters", data: pinnedCWDJSON,
+			target: &result.PinnedFilters.CWDs},
 	} {
 		if err := json.Unmarshal([]byte(item.data), item.target); err != nil {
 			return selection.State{}, false,
@@ -320,19 +349,31 @@ func (s *SQLiteStore) SaveSelection(ctx context.Context, state selection.State) 
 	if err != nil {
 		return fmt.Errorf("encode cwd filters: %w", err)
 	}
+	pinnedStatusesJSON, err := json.Marshal(state.PinnedFilters.Statuses)
+	if err != nil {
+		return fmt.Errorf("encode pinned status filters: %w", err)
+	}
+	pinnedCWDJSON, err := json.Marshal(state.PinnedFilters.CWDs)
+	if err != nil {
+		return fmt.Errorf("encode pinned cwd filters: %w", err)
+	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO selection (
 		id, manual_terminal_ids, pinned_terminal_ids, focused_terminal_id,
-		status_filters, cwd_filters, revision
-	) VALUES (1, ?, ?, ?, ?, ?, ?)
+		status_filters, cwd_filters, pinned_status_filters, pinned_cwd_filters,
+		revision
+	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		manual_terminal_ids=excluded.manual_terminal_ids,
 		pinned_terminal_ids=excluded.pinned_terminal_ids,
 		focused_terminal_id=excluded.focused_terminal_id,
 		status_filters=excluded.status_filters,
 		cwd_filters=excluded.cwd_filters,
+		pinned_status_filters=excluded.pinned_status_filters,
+		pinned_cwd_filters=excluded.pinned_cwd_filters,
 		revision=excluded.revision`,
 		string(manualJSON), string(pinnedJSON), state.FocusedTerminalID,
-		string(statusesJSON), string(cwdJSON), state.Revision)
+		string(statusesJSON), string(cwdJSON), string(pinnedStatusesJSON),
+		string(pinnedCWDJSON), state.Revision)
 	if err != nil {
 		return fmt.Errorf("save selection: %w", err)
 	}

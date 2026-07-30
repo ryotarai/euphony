@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -101,5 +102,45 @@ func TestV1SelectionPutReplacesAllSourcesWithRevisionCheck(t *testing.T) {
 	stale := performRequest(t, srv, http.MethodPut, "/api/v1/selection", string(body))
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("stale PUT status = %d, body = %s", stale.Code, stale.Body.String())
+	}
+}
+
+func TestV1SelectionPutPersistsPinnedFilters(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	body := `{
+		"manualTerminalIds": [],
+		"pinnedTerminalIds": [],
+		"filters": {
+			"statuses": ["waiting"],
+			"cwds": [{"status":"running","cwd":"/repo"}]
+		},
+		"pinnedFilters": {
+			"statuses": ["waiting"],
+			"cwds": [{"status":"running","cwd":"/repo"}]
+		}
+	}`
+	response := performRequest(t, srv, http.MethodPut, "/api/v1/selection", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PUT selection status = %d, body = %s",
+			response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Result selection.Snapshot `json:"result"`
+	}
+	decodeResponse(t, response, &envelope)
+	want := selection.Filters{
+		Statuses: []string{"waiting"},
+		CWDs: []selection.CWDFilter{
+			{Status: "running", CWD: "/repo"},
+		},
+	}
+	if !reflect.DeepEqual(envelope.Result.PinnedFilters, want) {
+		t.Fatalf("PinnedFilters = %#v, want %#v",
+			envelope.Result.PinnedFilters, want)
 	}
 }

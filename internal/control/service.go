@@ -227,6 +227,10 @@ func cloneSnapshot(snapshot selection.Snapshot) selection.Snapshot {
 			Statuses: append([]string{}, snapshot.Filters.Statuses...),
 			CWDs:     append([]selection.CWDFilter{}, snapshot.Filters.CWDs...),
 		},
+		PinnedFilters: selection.Filters{
+			Statuses: append([]string{}, snapshot.PinnedFilters.Statuses...),
+			CWDs:     append([]selection.CWDFilter{}, snapshot.PinnedFilters.CWDs...),
+		},
 		Revision: snapshot.Revision,
 	}
 }

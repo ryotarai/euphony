@@ -17,6 +17,7 @@ func (s *Server) v1ReplaceSelection(w http.ResponseWriter, r *http.Request) {
 		PinnedTerminalIDs []string          `json:"pinnedTerminalIds"`
 		FocusedTerminalID string            `json:"focusedTerminalId"`
 		Filters           selection.Filters `json:"filters"`
+		PinnedFilters     selection.Filters `json:"pinnedFilters"`
 		ExpectedRevision  *uint64           `json:"expectedRevision"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
@@ -30,6 +31,8 @@ func (s *Server) v1ReplaceSelection(w http.ResponseWriter, r *http.Request) {
 		FocusedTerminalID: request.FocusedTerminalID,
 		Statuses:          request.Filters.Statuses,
 		CWDFilters:        request.Filters.CWDs,
+		PinnedStatuses:    request.PinnedFilters.Statuses,
+		PinnedCWDFilters:  request.PinnedFilters.CWDs,
 		ExpectedRevision:  request.ExpectedRevision,
 	})
 	if err != nil {
