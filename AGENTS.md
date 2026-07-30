@@ -27,6 +27,8 @@
   and remove panes as sessions enter or leave the checked group.
 - Reflect checked parent filters in child controls, and release or decompose an
   active parent filter when a child is unchecked.
+- Support pinning at terminal, cwd, and status checkbox levels, and represent
+  pins with an amber checkbox state instead of a separate pin glyph.
 - When a focused selected plain terminal becomes an identified agent session,
   clear group filters and other pane selections, then follow that session.
 - Model unread attention independently from the agent's current status; never
