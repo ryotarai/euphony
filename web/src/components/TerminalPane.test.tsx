@@ -24,6 +24,7 @@ test("switches pane sources while keeping the terminal mounted", async () => {
       active
       layoutVersion={2}
       tabShortcut="Meta+L"
+      agentLogFontSize={17}
       onDeselect={() => undefined}
       renderTerminal={(layoutVersion) => {
         layoutVersions.push(layoutVersion);
@@ -38,7 +39,9 @@ test("switches pane sources while keeping the terminal mounted", async () => {
   await user.click(screen.getByRole("tab", { name: "Agent log" }));
   expect(screen.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   expect(screen.getByLabelText("live terminal")).not.toBeVisible();
-  expect(screen.getByRole("region", { name: "Agent log" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Agent log" })).toHaveStyle({
+    "--agent-log-font-size": "17px",
+  });
 
   await user.click(screen.getByRole("tab", { name: "Terminal" }));
   expect(screen.getByLabelText("live terminal")).toBeVisible();

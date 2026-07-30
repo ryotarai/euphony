@@ -19,6 +19,9 @@ async function clearSessions(page: Page) {
       paneTabShortcut: "Meta+L",
       sidebarWidth: 304,
       sidebarCollapsed: false,
+      interfaceFontSize: 16,
+      terminalFontSize: 14,
+      agentLogFontSize: 14,
     },
   });
   const existing = await page.request.get("/api/sessions", {

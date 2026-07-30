@@ -63,6 +63,55 @@ test("does not fit xterm while its mounted tab panel is hidden", () => {
   expect(terminal.fit).toHaveBeenCalledTimes(1);
 });
 
+test("creates and recreates xterm with the configured font size", async () => {
+  const socket = new FakeSocket();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const receivedFontSizes: number[] = [];
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
+  } as unknown as ApiClient;
+  const { rerender } = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      fontSize={18}
+      createTerminal={(fontSize) => {
+        receivedFontSizes.push(fontSize);
+        return terminal;
+      }}
+      createSocket={() => socket}
+    />,
+  );
+
+  expect(receivedFontSizes).toEqual([18]);
+
+  rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      fontSize={20}
+      createTerminal={(fontSize) => {
+        receivedFontSizes.push(fontSize);
+        return terminal;
+      }}
+      createSocket={() => socket}
+    />,
+  );
+
+  await waitFor(() => expect(receivedFontSizes).toEqual([18, 20]));
+});
+
 test("gets a ticket before connecting and relays terminal traffic", async () => {
   const socket = new FakeSocket();
   const writes: Array<string | Uint8Array> = [];

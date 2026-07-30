@@ -22,6 +22,9 @@ const settings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 304,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
 };
 
 const sessions: Session[] = [
@@ -116,6 +119,31 @@ test("selecting a mobile session closes the drawer", async () => {
   await user.click(within(drawer).getByRole("button", { name: "Select Claude" }));
 
   expect(onSelect).toHaveBeenCalledWith("two", false);
+  expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
+});
+
+test("opening settings from mobile closes the terminal drawer", async () => {
+  useMobileViewport();
+  const onOpenSettings = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenSettings={onOpenSettings}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Open terminal menu" }));
+  const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
+  await user.click(within(drawer).getByRole("button", { name: "Open settings" }));
+
+  expect(onOpenSettings).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 

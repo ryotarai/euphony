@@ -1,5 +1,6 @@
 import {
   FormEvent,
+  type CSSProperties,
   type ReactNode,
   useCallback,
   useEffect,
@@ -61,6 +62,7 @@ interface AppProps {
     layoutVersion: number,
     onConnectionChange: (sessionID: string, state: ConnectionState) => void,
     reconnectSignal: number,
+    fontSize: number,
   ) => ReactNode;
 }
 
@@ -69,7 +71,17 @@ const defaultSettings: Settings = {
   paneTabShortcut: "Meta+L",
   sidebarWidth: 256,
   sidebarCollapsed: false,
+  interfaceFontSize: 16,
+  terminalFontSize: 14,
+  agentLogFontSize: 14,
 };
+
+type FontSizeSetting = "interfaceFontSize" | "terminalFontSize" | "agentLogFontSize";
+
+function parseFontSize(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 10 && parsed <= 24 ? parsed : null;
+}
 
 function sessionActivity(session: Session) {
   if (session.needsAttention) return "attention";
@@ -219,6 +231,7 @@ export function App({
     layoutVersion,
     onConnectionChange,
     reconnectSignal,
+    fontSize,
   ) => (
     <TerminalView
       key={session.id}
@@ -228,6 +241,7 @@ export function App({
       layoutVersion={layoutVersion}
       onConnectionChange={onConnectionChange}
       reconnectSignal={reconnectSignal}
+      fontSize={fontSize}
     />
   ),
 }: AppProps) {
@@ -246,8 +260,13 @@ export function App({
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
   );
+  const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
+    interfaceFontSize: String(settings.interfaceFontSize),
+    terminalFontSize: String(settings.terminalFontSize),
+    agentLogFontSize: String(settings.agentLogFontSize),
+  });
   const [settingsError, setSettingsError] = useState<{
-    field: "prefix" | "paneTabShortcut";
+    field: "prefix" | "paneTabShortcut" | FontSizeSetting;
     message: string;
   } | null>(null);
   const [prefixActive, setPrefixActive] = useState(false);
@@ -269,11 +288,31 @@ export function App({
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const previewSettings = useMemo(() => {
+    if (!settingsOpen) return settings;
+    return {
+      ...settings,
+      interfaceFontSize:
+        parseFontSize(fontSizeDrafts.interfaceFontSize) ?? settings.interfaceFontSize,
+      terminalFontSize:
+        parseFontSize(fontSizeDrafts.terminalFontSize) ?? settings.terminalFontSize,
+      agentLogFontSize:
+        parseFontSize(fontSizeDrafts.agentLogFontSize) ?? settings.agentLogFontSize,
+    };
+  }, [fontSizeDrafts, settings, settingsOpen]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
       current[sessionID] === state ? current : { ...current, [sessionID]: state },
     );
   }, []);
+
+  useEffect(() => {
+    const previous = document.documentElement.style.fontSize;
+    document.documentElement.style.fontSize = `${previewSettings.interfaceFontSize}px`;
+    return () => {
+      document.documentElement.style.fontSize = previous;
+    };
+  }, [previewSettings.interfaceFontSize]);
 
   useEffect(() => {
     if (!api || initialSettings) return;
@@ -858,6 +897,11 @@ export function App({
   function openSettings() {
     setPrefixDraft(settings.prefix);
     setPaneTabShortcutDraft(settings.paneTabShortcut);
+    setFontSizeDrafts({
+      interfaceFontSize: String(settings.interfaceFontSize),
+      terminalFontSize: String(settings.terminalFontSize),
+      agentLogFontSize: String(settings.agentLogFontSize),
+    });
     setSettingsError(null);
     setSettingsOpen(true);
   }
@@ -887,7 +931,29 @@ export function App({
       });
       return;
     }
-    await persistSettings({ ...settings, prefix, paneTabShortcut });
+    const fontSizes = {
+      interfaceFontSize: parseFontSize(fontSizeDrafts.interfaceFontSize),
+      terminalFontSize: parseFontSize(fontSizeDrafts.terminalFontSize),
+      agentLogFontSize: parseFontSize(fontSizeDrafts.agentLogFontSize),
+    };
+    const invalidFontSize = (
+      Object.entries(fontSizes) as Array<[FontSizeSetting, number | null]>
+    ).find(([, value]) => value === null);
+    if (invalidFontSize) {
+      setSettingsError({
+        field: invalidFontSize[0],
+        message: "Choose a whole number from 10 to 24.",
+      });
+      return;
+    }
+    await persistSettings({
+      ...settings,
+      prefix,
+      paneTabShortcut,
+      interfaceFontSize: fontSizes.interfaceFontSize!,
+      terminalFontSize: fontSizes.terminalFontSize!,
+      agentLogFontSize: fontSizes.agentLogFontSize!,
+    });
     setSettingsOpen(false);
   }
 
@@ -1039,7 +1105,12 @@ export function App({
   };
 
   return (
-    <main className="workspace">
+    <main
+      className="workspace"
+      style={{
+        "--interface-font-size": `${previewSettings.interfaceFontSize}px`,
+      } as CSSProperties}
+    >
       <SessionNavigation
         sessions={sessions}
         selectedIDs={selectedIDs}
@@ -1106,6 +1177,7 @@ export function App({
                   active={focusedID === pane.id}
                   layoutVersion={panes.length}
                   tabShortcut={settings.paneTabShortcut}
+                  agentLogFontSize={previewSettings.agentLogFontSize}
                   onDeselect={() => selectSession(pane.id, true, true)}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
@@ -1115,6 +1187,7 @@ export function App({
                       paneLayoutVersion,
                       handleConnectionChange,
                       reconnectSignals[pane.id] ?? 0,
+                      previewSettings.terminalFontSize,
                     )
                   }
                 />
@@ -1246,15 +1319,16 @@ export function App({
         </DialogContent>
       </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure terminal workspace shortcuts.
+              Configure workspace shortcuts and text sizing.
             </DialogDescription>
           </DialogHeader>
           <form
             className="settings-form"
+            noValidate
             onSubmit={(event) => void saveSettings(event)}
           >
             <FieldGroup>
@@ -1289,6 +1363,47 @@ export function App({
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>
+              <section className="font-size-section" aria-labelledby="font-size-heading">
+                <div className="settings-section-heading">
+                  <h3 id="font-size-heading">Font sizes</h3>
+                  <span>10–24 px</span>
+                </div>
+                <div className="font-size-fields">
+                  {([
+                    ["interfaceFontSize", "Interface"],
+                    ["terminalFontSize", "Terminal"],
+                    ["agentLogFontSize", "Agent log"],
+                  ] as const).map(([field, label]) => (
+                    <Field key={field} data-invalid={settingsError?.field === field}>
+                      <FieldLabel htmlFor={field}>{label}</FieldLabel>
+                      <div className="font-size-input">
+                        <Input
+                          id={field}
+                          name={field}
+                          type="number"
+                          min={10}
+                          max={24}
+                          step={1}
+                          inputMode="numeric"
+                          value={fontSizeDrafts[field]}
+                          onChange={(event) => {
+                            setFontSizeDrafts((current) => ({
+                              ...current,
+                              [field]: event.target.value,
+                            }));
+                            if (settingsError?.field === field) setSettingsError(null);
+                          }}
+                          aria-invalid={settingsError?.field === field}
+                        />
+                        <span aria-hidden="true">px</span>
+                      </div>
+                      {settingsError?.field === field && (
+                        <FieldError>{settingsError.message}</FieldError>
+                      )}
+                    </Field>
+                  ))}
+                </div>
+              </section>
             </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>

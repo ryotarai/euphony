@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ApiClient } from "../api";
@@ -25,6 +25,7 @@ interface AgentLogViewProps {
   session: Session;
   api: ApiClient;
   active: boolean;
+  fontSize?: number;
 }
 
 function errorCode(error: unknown): string {
@@ -146,7 +147,7 @@ function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
   );
 }
 
-export function AgentLogView({ session, api, active }: AgentLogViewProps) {
+export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogViewProps) {
   const [log, setLog] = useState<AgentTranscript | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -202,7 +203,12 @@ export function AgentLogView({ session, api, active }: AgentLogViewProps) {
   }, [active, api, session.agent, session.id]);
 
   return (
-    <section className="agent-log-view" role="region" aria-label="Agent log">
+    <section
+      className="agent-log-view"
+      role="region"
+      aria-label="Agent log"
+      style={{ "--agent-log-font-size": `${fontSize}px` } as CSSProperties}
+    >
       {log ? (
         <TranscriptView transcript={log} />
       ) : loading ? (

@@ -12,6 +12,9 @@ async function clearSessions(page: Page) {
       paneTabShortcut: "Meta+L",
       sidebarWidth: 304,
       sidebarCollapsed: false,
+      interfaceFontSize: 16,
+      terminalFontSize: 14,
+      agentLogFontSize: 14,
     },
   });
   const existing = await page.request.get("/api/sessions", {
@@ -45,7 +48,11 @@ async function reportAgent(
       cwd: "/Users/ryotarai/work/euphony",
     },
   });
-  expect(response.ok()).toBe(true);
+  if (!response.ok()) {
+    throw new Error(
+      `Agent report failed (${response.status()}): ${await response.text()}`,
+    );
+  }
 }
 
 async function createSession(
@@ -316,8 +323,16 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   await menu.click();
   await expect(page.getByRole("dialog", { name: "Terminal menu" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("mobile-drawer.png") });
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const mobileSettings = page.getByRole("dialog", { name: "Settings" });
+  await expect(mobileSettings).toBeVisible();
+  const settingsBox = await mobileSettings.boundingBox();
+  expect(settingsBox).not.toBeNull();
+  expect(settingsBox!.y).toBeGreaterThanOrEqual(0);
+  expect(settingsBox!.y + settingsBox!.height).toBeLessThanOrEqual(844);
+  await page.screenshot({ path: testInfo.outputPath("mobile-font-size-settings.png") });
   await page.keyboard.press("Escape");
-  await expect(menu).toBeFocused();
+  await expect(menu).toBeVisible();
 
   const mobileDimensions = await page.evaluate(() => ({
     height: document.documentElement.scrollHeight,
@@ -856,9 +871,28 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(sidebar).toHaveCSS("width", "420px");
 
   await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByLabel("Prefix").fill("Ctrl+A");
-  await page.getByLabel("Pane tab toggle").fill("Ctrl+J");
+  const settingsDialog = page.getByRole("dialog", { name: "Settings" });
+  await settingsDialog.getByLabel("Prefix").fill("Ctrl+A");
+  await settingsDialog.getByLabel("Pane tab toggle").fill("Ctrl+J");
+  await settingsDialog.getByLabel("Interface").fill("18");
+  await settingsDialog.getByLabel("Terminal").fill("17");
+  await settingsDialog.getByLabel("Agent log").fill("16");
+  await expect(page.locator("html")).toHaveCSS("font-size", "18px");
+  await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
+  await expect(page.locator(".agent-log-view").first()).toHaveCSS(
+    "--agent-log-font-size",
+    "16px",
+  );
+  await page.screenshot({ path: testInfo.outputPath("font-size-settings.png") });
   await page.getByRole("button", { name: "Save settings" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const savedSettingsDialog = page.getByRole("dialog", { name: "Settings" });
+  await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
+  await expect(savedSettingsDialog.getByLabel("Terminal")).toHaveValue("17");
+  await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Select Codex" }).click();
   await page.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");

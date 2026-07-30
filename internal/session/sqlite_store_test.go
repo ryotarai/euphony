@@ -109,12 +109,15 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
-		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed {
+		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed ||
+		defaults.InterfaceFontSize != 16 || defaults.TerminalFontSize != 14 ||
+		defaults.AgentLogFontSize != 14 {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 	want := Settings{
 		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
 		SidebarWidth: 420, SidebarCollapsed: true,
+		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 	}
 	if err := store.SaveSettings(context.Background(), want); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
@@ -173,6 +176,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 	want := Settings{
 		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L",
 		SidebarWidth: 420, SidebarCollapsed: true,
+		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)
