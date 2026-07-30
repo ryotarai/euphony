@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ryotarai/euphony/internal/session"
 )
@@ -25,13 +26,16 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		SidebarCollapsed     bool     `json:"sidebarCollapsed"`
 		InterfaceFontSize    float64  `json:"interfaceFontSize"`
 		TerminalFontSize     float64  `json:"terminalFontSize"`
+		TerminalFontFamily   string   `json:"terminalFontFamily"`
 		AgentLogFontSize     float64  `json:"agentLogFontSize"`
 		TerminalHistoryLimit *float64 `json:"terminalHistoryLimit"`
 		AutoSelectAttention  *bool    `json:"autoSelectAttention"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil || ensureJSONEnd(decoder) != nil ||
+	decodeErr := decoder.Decode(&input)
+	terminalFontFamily := strings.TrimSpace(input.TerminalFontFamily)
+	if decodeErr != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
 		!prefixPattern.MatchString(input.PaneTabShortcut) ||
 		shortcutsEqual(input.Prefix, input.PaneTabShortcut) ||
@@ -40,6 +44,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validFontSize(input.InterfaceFontSize) ||
 		!validFontSize(input.TerminalFontSize) ||
 		!validFontSize(input.AgentLogFontSize) ||
+		terminalFontFamily == "" || utf8.RuneCountInString(terminalFontFamily) > 256 ||
 		!validTerminalHistoryLimit(input.TerminalHistoryLimit) ||
 		input.AutoSelectAttention == nil {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
@@ -52,6 +57,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		SidebarCollapsed:     input.SidebarCollapsed,
 		InterfaceFontSize:    int(input.InterfaceFontSize),
 		TerminalFontSize:     int(input.TerminalFontSize),
+		TerminalFontFamily:   terminalFontFamily,
 		AgentLogFontSize:     int(input.AgentLogFontSize),
 		TerminalHistoryLimit: int(*input.TerminalHistoryLimit),
 		AutoSelectAttention:  *input.AutoSelectAttention,
