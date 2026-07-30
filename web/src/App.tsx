@@ -536,7 +536,10 @@ export function App({
         ];
         if (nextIDs.length === 0 && !allowEmpty) nextIDs = [id];
         filterSelectedIDsRef.current = new Set(matching);
-        const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+        const nextFocus =
+          focusedID && nextIDs.includes(focusedID)
+            ? focusedID
+            : nextIDs[0] ?? null;
         setStatusFilters(nextStatusFilters);
         setCwdFilters(nextCwdFilters);
         setSelectedIDs(nextIDs);
@@ -555,7 +558,12 @@ export function App({
     } else {
       nextIDs = [...selectedIDs, id];
     }
-    const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+    const nextFocus =
+      multiple && selectedIDs.includes(id)
+        ? focusedID && nextIDs.includes(focusedID)
+          ? focusedID
+          : nextIDs[0] ?? null
+        : id;
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
