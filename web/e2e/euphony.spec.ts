@@ -433,6 +433,7 @@ test("browses Git changes inside a terminal pane", async ({ page }, testInfo) =>
     await runGit(repo, "init", "-b", "main");
     await runGit(repo, "config", "user.name", "Euphony Test");
     await runGit(repo, "config", "user.email", "euphony@example.test");
+    await runGit(repo, "config", "commit.gpgsign", "false");
     await mkdir(`${repo}/src`, { recursive: true });
     await writeFile(`${repo}/src/app.ts`, "export const state = 'before';\n");
     await runGit(repo, "add", "src/app.ts");

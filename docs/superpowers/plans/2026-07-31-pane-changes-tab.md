@@ -15,6 +15,8 @@
 - Retain the selected changed file across refreshes when it still exists.
 - Limit retained Git output and report truncation visibly.
 - Poll only while the Changes source is visible.
+- Treat every status-derived filename as a literal Git pathspec.
+- Schedule refreshes serially after the previous Git request completes.
 
 ---
 

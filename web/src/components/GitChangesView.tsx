@@ -81,6 +81,7 @@ export function GitChangesView({
   useEffect(() => {
     if (!active) return;
     let current = true;
+    let refreshTimer: number | undefined;
     const load = async () => {
       if (!snapshot) setLoading(true);
       try {
@@ -105,14 +106,16 @@ export function GitChangesView({
         }
         setError(nextError);
       } finally {
-        if (current) setLoading(false);
+        if (current) {
+          setLoading(false);
+          refreshTimer = window.setTimeout(() => void load(), refreshInterval);
+        }
       }
     };
     void load();
-    const interval = window.setInterval(() => void load(), refreshInterval);
     return () => {
       current = false;
-      window.clearInterval(interval);
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
     };
   }, [active, api, selectedPath, session.id]);
 
@@ -121,6 +124,7 @@ export function GitChangesView({
     [selectedPath, snapshot],
   );
   const repositoryMissing = errorCode(error) === "git_repository_not_found";
+  const partialStats = Boolean(snapshot?.truncated || snapshot?.statsTruncated);
 
   return (
     <section
@@ -192,9 +196,13 @@ export function GitChangesView({
                     ↑{snapshot.ahead} ↓{snapshot.behind}
                   </span>
                 )}
-                <span>{snapshot.files.length} files</span>
-                <span className="git-additions">+{snapshot.additions}</span>
-                <span className="git-deletions">−{snapshot.deletions}</span>
+                <span>{snapshot.files.length}{snapshot.truncated ? "+" : ""} files</span>
+                <span className="git-additions">
+                  {partialStats ? "≥+" : "+"}{snapshot.additions}
+                </span>
+                <span className="git-deletions">
+                  {partialStats ? "≥−" : "−"}{snapshot.deletions}
+                </span>
               </div>
             </header>
             <nav className="git-file-list" aria-label="Changed files">
@@ -250,8 +258,10 @@ export function GitChangesView({
                 <div className="git-diff-scroll">
                   {selectedFile.binary ? (
                     <p className="git-diff-message">Binary file changed.</p>
-                  ) : selectedFile.hunks.length === 0 ? (
+                  ) : !selectedFile.patchLoaded ? (
                     <p className="git-diff-message">Loading diff…</p>
+                  ) : selectedFile.hunks.length === 0 ? (
+                    <p className="git-diff-message">No textual changes.</p>
                   ) : (
                     <div className="git-diff-table" role="table">
                       {selectedFile.hunks.map((hunk, hunkIndex) => (

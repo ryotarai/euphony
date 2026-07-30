@@ -200,6 +200,7 @@ func createGitChangesRepository(t *testing.T) string {
 	runGitChangesGit(t, repo, "init", "-b", "main")
 	runGitChangesGit(t, repo, "config", "user.name", "Euphony Test")
 	runGitChangesGit(t, repo, "config", "user.email", "euphony@example.test")
+	runGitChangesGit(t, repo, "config", "commit.gpgsign", "false")
 	return repo
 }
 

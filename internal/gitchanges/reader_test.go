@@ -140,12 +140,93 @@ func TestReadTruncatesLargePatches(t *testing.T) {
 	}
 }
 
+func TestReadTreatsPathspecMagicAsALiteralFilename(t *testing.T) {
+	repo := newRepository(t)
+	writeFile(t, repo, ":(glob)**.txt", "magic baseline\n")
+	writeFile(t, repo, "ordinary.txt", "ordinary baseline\n")
+	runGit(t, repo, "add", "--", ":(glob)**.txt", "ordinary.txt")
+	runGit(t, repo, "commit", "-m", "baseline")
+	writeFile(t, repo, ":(glob)**.txt", "magic changed\n")
+	writeFile(t, repo, "ordinary.txt", "ordinary changed\n")
+
+	snapshot, err := gitchanges.ReadSelected(
+		context.Background(),
+		repo,
+		":(glob)**.txt",
+	)
+	if err != nil {
+		t.Fatalf("ReadSelected() error = %v", err)
+	}
+	magic := fileByPath(t, snapshot, ":(glob)**.txt")
+	if !magic.PatchLoaded || len(magic.Hunks) != 1 {
+		t.Fatalf("magic file patch = %#v", magic)
+	}
+	for _, hunk := range magic.Hunks {
+		for _, line := range hunk.Lines {
+			if strings.Contains(line.Content, "ordinary") {
+				t.Fatalf("magic pathspec included ordinary.txt: %#v", magic.Hunks)
+			}
+		}
+	}
+	ordinary := fileByPath(t, snapshot, "ordinary.txt")
+	if ordinary.PatchLoaded || len(ordinary.Hunks) != 0 {
+		t.Fatalf("unselected ordinary file loaded a patch: %#v", ordinary)
+	}
+}
+
+func TestReadSelectedMarksEmptyUntrackedPatchAsLoaded(t *testing.T) {
+	repo := newRepository(t)
+	writeFile(t, repo, "empty.txt", "")
+
+	snapshot, err := gitchanges.ReadSelected(
+		context.Background(),
+		repo,
+		"empty.txt",
+	)
+	if err != nil {
+		t.Fatalf("ReadSelected() error = %v", err)
+	}
+	empty := fileByPath(t, snapshot, "empty.txt")
+	if !empty.PatchLoaded || len(empty.Hunks) != 0 {
+		t.Fatalf("empty file = %#v, want loaded patch without hunks", empty)
+	}
+}
+
+func TestReadSummaryBoundsLargeUntrackedStats(t *testing.T) {
+	repo := newRepository(t)
+	path := filepath.Join(repo, "huge.txt")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := file.Truncate(2 * 1024 * 1024); err != nil {
+		file.Close()
+		t.Fatalf("Truncate() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	snapshot, err := gitchanges.ReadSummary(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("ReadSummary() error = %v", err)
+	}
+	huge := fileByPath(t, snapshot, "huge.txt")
+	if !huge.StatsTruncated || !snapshot.StatsTruncated {
+		t.Fatalf("large untracked stats were not bounded: %#v", snapshot)
+	}
+	if huge.Additions != 0 {
+		t.Fatalf("Additions = %d, want unknown zero", huge.Additions)
+	}
+}
+
 func newRepository(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	runGit(t, repo, "init", "-b", "main")
 	runGit(t, repo, "config", "user.name", "Euphony Test")
 	runGit(t, repo, "config", "user.email", "euphony@example.test")
+	runGit(t, repo, "config", "commit.gpgsign", "false")
 	return repo
 }
 

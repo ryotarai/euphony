@@ -8,26 +8,29 @@ var (
 )
 
 type Snapshot struct {
-	RepoRoot  string `json:"repoRoot"`
-	Branch    string `json:"branch"`
-	Upstream  string `json:"upstream,omitempty"`
-	Ahead     int    `json:"ahead"`
-	Behind    int    `json:"behind"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Truncated bool   `json:"truncated,omitempty"`
-	Files     []File `json:"files"`
+	RepoRoot       string `json:"repoRoot"`
+	Branch         string `json:"branch"`
+	Upstream       string `json:"upstream,omitempty"`
+	Ahead          int    `json:"ahead"`
+	Behind         int    `json:"behind"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	Truncated      bool   `json:"truncated,omitempty"`
+	StatsTruncated bool   `json:"statsTruncated,omitempty"`
+	Files          []File `json:"files"`
 }
 
 type File struct {
-	Path         string `json:"path"`
-	PreviousPath string `json:"previousPath,omitempty"`
-	Status       string `json:"status"`
-	Additions    int    `json:"additions"`
-	Deletions    int    `json:"deletions"`
-	Binary       bool   `json:"binary,omitempty"`
-	Truncated    bool   `json:"truncated,omitempty"`
-	Hunks        []Hunk `json:"hunks"`
+	Path           string `json:"path"`
+	PreviousPath   string `json:"previousPath,omitempty"`
+	Status         string `json:"status"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	Binary         bool   `json:"binary,omitempty"`
+	Truncated      bool   `json:"truncated,omitempty"`
+	StatsTruncated bool   `json:"statsTruncated,omitempty"`
+	PatchLoaded    bool   `json:"patchLoaded,omitempty"`
+	Hunks          []Hunk `json:"hunks"`
 }
 
 type Hunk struct {

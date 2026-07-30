@@ -1,9 +1,13 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import { ApiError, type ApiClient } from "../api";
 import type { GitChangesSnapshot, Session } from "../types";
 import { GitChangesView } from "./GitChangesView";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const session: Session = {
   id: "terminal-1",
@@ -47,6 +51,7 @@ function detailed(path: string): GitChangesSnapshot {
       file.path === path
         ? {
             ...file,
+            patchLoaded: true,
             hunks: [{
               header: "@@ -1,2 +1,3 @@",
               oldStart: 1,
@@ -144,4 +149,55 @@ test("shows clean and non-repository guidance", async () => {
   rerender(<GitChangesView session={session} api={plainAPI} active />);
   expect(await screen.findByText("No Git repository")).toBeVisible();
   expect(screen.getByText(/Start this terminal inside a Git worktree/)).toBeVisible();
+});
+
+test("does not overlap slow refresh requests", async () => {
+  vi.useFakeTimers();
+  let resolveRequest: ((snapshot: GitChangesSnapshot) => void) | undefined;
+  const api = changesAPI(() => new Promise((resolve) => {
+    resolveRequest = resolve;
+  }));
+  render(<GitChangesView session={session} api={api} active />);
+
+  expect(api.getGitChanges).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(6_000);
+  });
+  expect(api.getGitChanges).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveRequest?.({ ...summary, additions: 0, deletions: 0, files: [] });
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_999);
+  });
+  expect(api.getGitChanges).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
+  expect(api.getGitChanges).toHaveBeenCalledTimes(2);
+});
+
+test("distinguishes loaded empty patches and partial totals", async () => {
+  const partial: GitChangesSnapshot = {
+    ...summary,
+    truncated: true,
+    statsTruncated: true,
+    files: [{
+      path: "empty.txt",
+      status: "untracked",
+      additions: 0,
+      deletions: 0,
+      patchLoaded: true,
+      hunks: [],
+    }],
+  };
+  const api = changesAPI(async () => partial);
+  render(<GitChangesView session={session} api={api} active />);
+
+  expect(await screen.findByText("No textual changes.")).toBeVisible();
+  expect(screen.getByText("1+ files")).toBeVisible();
+  expect(screen.getByText("≥+3")).toBeVisible();
+  expect(screen.getByText("≥−1")).toBeVisible();
 });

@@ -161,6 +161,8 @@ export interface GitChangedFile {
   deletions: number;
   binary?: boolean;
   truncated?: boolean;
+  statsTruncated?: boolean;
+  patchLoaded?: boolean;
   hunks: GitDiffHunk[];
 }
 
@@ -173,5 +175,6 @@ export interface GitChangesSnapshot {
   additions: number;
   deletions: number;
   truncated?: boolean;
+  statsTruncated?: boolean;
   files: GitChangedFile[];
 }

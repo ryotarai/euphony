@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	maxChangedFiles = 200
-	maxPatchBytes   = 1024 * 1024
-	maxStatusBytes  = 4 * 1024 * 1024
+	maxChangedFiles        = 200
+	maxPatchBytes          = 1024 * 1024
+	maxStatusBytes         = 4 * 1024 * 1024
+	maxUntrackedStatsBytes = 1024 * 1024
 )
 
 var hunkHeaderPattern = regexp.MustCompile(
@@ -90,6 +91,9 @@ func read(
 		file := &snapshot.Files[index]
 		if file.Status == "untracked" {
 			countUntracked(root, file)
+			if file.StatsTruncated {
+				snapshot.StatsTruncated = true
+			}
 		}
 		snapshot.Additions += file.Additions
 		snapshot.Deletions += file.Deletions
@@ -342,6 +346,10 @@ func countUntracked(root string, file *File) {
 		file.Binary = true
 		return
 	}
+	if info.Size() > maxUntrackedStatsBytes {
+		file.StatsTruncated = true
+		return
+	}
 	input, err := os.Open(path)
 	if err != nil {
 		return
@@ -409,6 +417,7 @@ func populatePatch(
 	if err != nil {
 		return err
 	}
+	file.PatchLoaded = true
 	file.Truncated = truncated
 	file.Hunks = parsePatch(output)
 	if bytes.Contains(output, []byte("Binary files ")) ||
@@ -488,7 +497,17 @@ func runGit(
 	acceptDifference bool,
 	args ...string,
 ) ([]byte, bool, error) {
-	commandArgs := append([]string{"-c", "core.quotePath=false", "-C", root}, args...)
+	commandArgs := append(
+		[]string{
+			"--no-optional-locks",
+			"--literal-pathspecs",
+			"-c",
+			"core.quotePath=false",
+			"-C",
+			root,
+		},
+		args...,
+	)
 	command := exec.CommandContext(ctx, "git", commandArgs...)
 	stdout := &boundedBuffer{max: maxBytes}
 	stderr := &boundedBuffer{max: 16 * 1024}

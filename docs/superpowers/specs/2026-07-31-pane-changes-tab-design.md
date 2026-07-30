@@ -29,13 +29,18 @@ status records with NUL delimiters, then asks Git for the selected path's
 unified patch. The package converts patches into transport-safe files, hunks,
 and lines rather than exposing arbitrary command output to the browser.
 
+Every Git process uses `--literal-pathspecs` so status-derived filenames can
+never be reinterpreted as pathspec magic, plus `--no-optional-locks` so polling
+does not refresh or lock the repository index.
+
 The reader caps the number of returned files and bytes retained from each Git
 command. Oversized patches remain selectable and show a visible truncation
 state. Untracked files are diffed against `/dev/null` through `git diff
 --no-index`; paths come only from Git status output and are passed as separate
 process arguments. Summary refreshes do not load patches. A `path` query loads
 one patch only after the reader confirms that the path is present in the
-current porcelain status.
+current porcelain status. Summary line counting reads at most 1 MiB from an
+untracked file; larger files mark their statistics as partial.
 
 ### HTTP API
 
@@ -66,7 +71,9 @@ path, while switching to or from Changes does not alter the PTY capacity claim.
 `GitChangesView` polls every two seconds only while active. Its initial request
 loads the summary; subsequent requests include the selected path and load that
 file's patch. It retains the selected path across refreshes when that path still
-exists and otherwise selects the first changed file.
+exists and otherwise selects the first changed file. The next refresh is
+scheduled two seconds after the previous request completes, so slow Git reads
+cannot overlap or overwrite newer snapshots.
 
 ## Visual Direction
 
@@ -95,6 +102,10 @@ navigator becomes a short horizontal header region above the diff.
 - A clean worktree explains that there are no local changes.
 - A non-repository terminal explains that Changes requires a Git worktree.
 - Refresh failures keep the last snapshot visible and show a concise status.
+- File or statistics limits are labeled as partial with a `+` file count and
+  lower-bound addition/deletion totals.
+- A loaded patch without textual hunks says `No textual changes` instead of
+  remaining in a loading state.
 - The file collection is an accessible list; each file is a button whose
   selected state is exposed with `aria-current`.
 - The diff is a table-like region with a descriptive label, and color is never
