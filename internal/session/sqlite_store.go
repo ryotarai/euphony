@@ -76,7 +76,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			sidebar_collapsed INTEGER NOT NULL,
 			interface_font_size INTEGER NOT NULL DEFAULT 16,
 			terminal_font_size INTEGER NOT NULL DEFAULT 14,
-			agent_log_font_size INTEGER NOT NULL DEFAULT 14
+			agent_log_font_size INTEGER NOT NULL DEFAULT 14,
+			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -119,6 +120,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add pane tab shortcut: %w", err)
 		}
 	}
+	hasTerminalHistoryLimit, err := s.hasColumn(ctx, "settings", "terminal_history_limit")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalHistoryLimit {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN terminal_history_limit INTEGER NOT NULL DEFAULT 1048576",
+		); err != nil {
+			return fmt.Errorf("add terminal history limit: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name         string
 		defaultValue int
@@ -148,7 +160,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 5"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 6"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -184,7 +196,8 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var collapsed int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
-			interface_font_size, terminal_font_size, agent_log_font_size
+			interface_font_size, terminal_font_size, agent_log_font_size,
+			terminal_history_limit
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -194,6 +207,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&result.InterfaceFontSize,
 		&result.TerminalFontSize,
 		&result.AgentLogFontSize,
+		&result.TerminalHistoryLimit,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
@@ -209,10 +223,12 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
-			interface_font_size = ?, terminal_font_size = ?, agent_log_font_size = ?
+			interface_font_size = ?, terminal_font_size = ?, agent_log_font_size = ?,
+			terminal_history_limit = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
-		settings.InterfaceFontSize, settings.TerminalFontSize, settings.AgentLogFontSize)
+		settings.InterfaceFontSize, settings.TerminalFontSize, settings.AgentLogFontSize,
+		settings.TerminalHistoryLimit)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}

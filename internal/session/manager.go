@@ -55,19 +55,31 @@ type AgentUpdate struct {
 }
 
 type Settings struct {
-	Prefix            string `json:"prefix"`
-	PaneTabShortcut   string `json:"paneTabShortcut"`
-	SidebarWidth      int    `json:"sidebarWidth"`
-	SidebarCollapsed  bool   `json:"sidebarCollapsed"`
-	InterfaceFontSize int    `json:"interfaceFontSize"`
-	TerminalFontSize  int    `json:"terminalFontSize"`
-	AgentLogFontSize  int    `json:"agentLogFontSize"`
+	Prefix               string `json:"prefix"`
+	PaneTabShortcut      string `json:"paneTabShortcut"`
+	SidebarWidth         int    `json:"sidebarWidth"`
+	SidebarCollapsed     bool   `json:"sidebarCollapsed"`
+	InterfaceFontSize    int    `json:"interfaceFontSize"`
+	TerminalFontSize     int    `json:"terminalFontSize"`
+	AgentLogFontSize     int    `json:"agentLogFontSize"`
+	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
 }
+
+const (
+	DefaultTerminalHistoryLimit = 1024 * 1024
+	MinTerminalHistoryLimit     = 1024 * 1024
+	MaxTerminalHistoryLimit     = 4095 * 1024 * 1024
+)
 
 func DefaultSettings() Settings {
 	return Settings{
-		Prefix: "Ctrl+B", PaneTabShortcut: "Meta+L", SidebarWidth: 304,
-		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
+		Prefix:               "Ctrl+B",
+		PaneTabShortcut:      "Meta+L",
+		SidebarWidth:         304,
+		InterfaceFontSize:    16,
+		TerminalFontSize:     14,
+		AgentLogFontSize:     14,
+		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
 	}
 }
 
@@ -186,9 +198,7 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 			return Metadata{}, err
 		}
 	}
-	m.mu.Lock()
-	m.sessions[id] = item
-	m.mu.Unlock()
+	m.registerSession(id, item)
 
 	go item.session.pump()
 	go m.watch(item)
@@ -219,7 +229,7 @@ func (m *Manager) restore(metadata Metadata) error {
 		item.session.terminate()
 		return err
 	}
-	m.sessions[metadata.ID] = item
+	m.registerSession(metadata.ID, item)
 	go item.session.pump()
 	go m.watch(item)
 	return nil
@@ -263,9 +273,16 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 			terminal:    terminal,
 			waitDone:    make(chan struct{}),
 			pumpDone:    make(chan struct{}),
-			subscribers: make(map[uint64]chan []byte),
+			subscribers: make(map[uint64]*outputSubscriber),
 		},
 	}, nil
+}
+
+func (m *Manager) registerSession(id string, item *entry) {
+	m.mu.Lock()
+	item.session.setHistoryLimit(m.settings.TerminalHistoryLimit)
+	m.sessions[id] = item
+	m.mu.Unlock()
 }
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
@@ -508,6 +525,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 		}
 	}
 	m.settings = settings
+	for _, item := range m.sessions {
+		item.session.setHistoryLimit(settings.TerminalHistoryLimit)
+	}
 	return nil
 }
 

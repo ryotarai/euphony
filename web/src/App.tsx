@@ -48,10 +48,18 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import type { Session, Settings } from "./types";
 
 const tokenKey = "euphony.token";
+const bytesPerMiB = 1024 * 1024;
+const maxHistoryMiB = 4095;
 interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
@@ -63,6 +71,7 @@ interface AppProps {
     onConnectionChange: (sessionID: string, state: ConnectionState) => void,
     reconnectSignal: number,
     fontSize: number,
+    terminalHistoryLimit: number,
   ) => ReactNode;
 }
 
@@ -74,7 +83,12 @@ const defaultSettings: Settings = {
   interfaceFontSize: 16,
   terminalFontSize: 14,
   agentLogFontSize: 14,
+  terminalHistoryLimit: bytesPerMiB,
 };
+
+function historyLimitDraft(limit: number): string {
+  return String(limit === 0 ? 1 : limit / bytesPerMiB);
+}
 
 type FontSizeSetting = "interfaceFontSize" | "terminalFontSize" | "agentLogFontSize";
 
@@ -257,6 +271,7 @@ export function App({
     onConnectionChange,
     reconnectSignal,
     fontSize,
+    terminalHistoryLimit,
   ) => (
     <TerminalView
       key={session.id}
@@ -267,6 +282,7 @@ export function App({
       onConnectionChange={onConnectionChange}
       reconnectSignal={reconnectSignal}
       fontSize={fontSize}
+      terminalHistoryLimit={terminalHistoryLimit}
     />
   ),
 }: AppProps) {
@@ -286,13 +302,19 @@ export function App({
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
   );
+  const [terminalHistoryLimitDraft, setTerminalHistoryLimitDraft] = useState(
+    historyLimitDraft(settings.terminalHistoryLimit),
+  );
+  const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
+    settings.terminalHistoryLimit === 0,
+  );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
     terminalFontSize: String(settings.terminalFontSize),
     agentLogFontSize: String(settings.agentLogFontSize),
   });
   const [settingsError, setSettingsError] = useState<{
-    field: "prefix" | "paneTabShortcut" | FontSizeSetting;
+    field: "prefix" | "paneTabShortcut" | "terminalHistoryLimit" | FontSizeSetting;
     message: string;
   } | null>(null);
   const [prefixActive, setPrefixActive] = useState(false);
@@ -347,6 +369,9 @@ export function App({
       if (!active) return;
       setSettings(loaded);
       setPrefixDraft(loaded.prefix);
+      setPaneTabShortcutDraft(loaded.paneTabShortcut);
+      setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
+      setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -1066,6 +1091,8 @@ export function App({
   function openSettings() {
     setPrefixDraft(settings.prefix);
     setPaneTabShortcutDraft(settings.paneTabShortcut);
+    setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
+    setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -1100,6 +1127,22 @@ export function App({
       });
       return;
     }
+    const terminalHistoryMiB = Number(terminalHistoryLimitDraft);
+    if (
+      !unlimitedTerminalHistory &&
+      (!Number.isInteger(terminalHistoryMiB) ||
+        terminalHistoryMiB < 1 ||
+        terminalHistoryMiB > maxHistoryMiB)
+    ) {
+      setSettingsError({
+        field: "terminalHistoryLimit",
+        message: "Enter a whole number from 1 to 4095 MiB.",
+      });
+      return;
+    }
+    const terminalHistoryLimit = unlimitedTerminalHistory
+      ? 0
+      : terminalHistoryMiB * bytesPerMiB;
     const fontSizes = {
       interfaceFontSize: parseFontSize(fontSizeDrafts.interfaceFontSize),
       terminalFontSize: parseFontSize(fontSizeDrafts.terminalFontSize),
@@ -1122,6 +1165,7 @@ export function App({
       interfaceFontSize: fontSizes.interfaceFontSize!,
       terminalFontSize: fontSizes.terminalFontSize!,
       agentLogFontSize: fontSizes.agentLogFontSize!,
+      terminalHistoryLimit,
     });
     setSettingsOpen(false);
   }
@@ -1360,6 +1404,7 @@ export function App({
                       handleConnectionChange,
                       reconnectSignals[pane.id] ?? 0,
                       previewSettings.terminalFontSize,
+                      settings.terminalHistoryLimit,
                     )
                   }
                 />
@@ -1495,7 +1540,7 @@ export function App({
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure workspace shortcuts and text sizing.
+              Configure workspace shortcuts, text sizing, and terminal history.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1532,6 +1577,43 @@ export function App({
                   Switch the focused pane between Terminal and Agent log.
                 </FieldDescription>
                 {settingsError?.field === "paneTabShortcut" && (
+                  <FieldError>{settingsError.message}</FieldError>
+                )}
+              </Field>
+              <Field data-invalid={settingsError?.field === "terminalHistoryLimit"}>
+                <FieldLabel htmlFor="terminal-history-limit">
+                  History buffer
+                </FieldLabel>
+                <InputGroup>
+                  <InputGroupInput
+                    id="terminal-history-limit"
+                    type="number"
+                    min={1}
+                    max={maxHistoryMiB}
+                    step={1}
+                    value={terminalHistoryLimitDraft}
+                    onChange={(event) => setTerminalHistoryLimitDraft(event.target.value)}
+                    disabled={unlimitedTerminalHistory}
+                    aria-invalid={settingsError?.field === "terminalHistoryLimit"}
+                  />
+                  <InputGroupAddon align="inline-end">MiB</InputGroupAddon>
+                </InputGroup>
+                <Field orientation="horizontal">
+                  <FieldLabel htmlFor="unlimited-terminal-history">
+                    Unlimited history
+                  </FieldLabel>
+                  <Checkbox
+                    id="unlimited-terminal-history"
+                    checked={unlimitedTerminalHistory}
+                    onCheckedChange={(checked) =>
+                      setUnlimitedTerminalHistory(Boolean(checked))}
+                  />
+                </Field>
+                <FieldDescription>
+                  Controls retained reconnect output and scrollback capacity.
+                  Large or unlimited histories can increase memory use.
+                </FieldDescription>
+                {settingsError?.field === "terminalHistoryLimit" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>

@@ -390,6 +390,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     interfaceFontSize: 16,
     terminalFontSize: 14,
     agentLogFontSize: 14,
+    terminalHistoryLimit: 1024 * 1024,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

@@ -29,6 +29,7 @@ export interface Settings {
   interfaceFontSize: number;
   terminalFontSize: number;
   agentLogFontSize: number;
+  terminalHistoryLimit: number;
 }
 
 export type AgentLogEntryKind = "message" | "thinking" | "tool" | "tool_result";

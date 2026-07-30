@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   fitTerminalIfVisible,
+  terminalScrollback,
   TerminalView,
   type TerminalDriver,
   type WebSocketLike,
@@ -61,6 +62,51 @@ test("does not fit xterm while its mounted tab panel is hidden", () => {
   panel.hidden = false;
   fitTerminalIfVisible(host, terminal);
   expect(terminal.fit).toHaveBeenCalledTimes(1);
+});
+
+test("maps finite and unlimited history limits to xterm scrollback rows", () => {
+  expect(terminalScrollback(1024 * 1024)).toBe(8192);
+  expect(terminalScrollback(4095 * 1024 * 1024)).toBe(100000);
+  expect(terminalScrollback(0)).toBe(4294967295);
+});
+
+test("updates scrollback without reconnecting the terminal", async () => {
+  const socket = new FakeSocket();
+  const setScrollback = vi.fn();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    setScrollback,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const createSocket = vi.fn(() => socket);
+  const props = {
+    session: runningSession,
+    api,
+    createTerminal: () => terminal,
+    createSocket,
+  };
+
+  const { rerender } = render(
+    <TerminalView {...props} terminalHistoryLimit={1024 * 1024} />,
+  );
+  await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(1));
+  setScrollback.mockClear();
+
+  rerender(<TerminalView {...props} terminalHistoryLimit={0} />);
+
+  expect(setScrollback).toHaveBeenCalledWith(4294967295);
+  expect(createSocket).toHaveBeenCalledTimes(1);
 });
 
 test("creates and recreates xterm with the configured font size", async () => {
@@ -251,7 +297,10 @@ test("does not report a stale working directory from replayed history", async ()
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => socket.receive({ type: "history", data: encodeTerminalData("stale title") }));
+  act(() => {
+    socket.receive({ type: "history", data: encodeTerminalData("stale title") });
+    socket.receive({ type: "history_end" });
+  });
   expect(socket.sent).toEqual([]);
 
   act(() => socket.receive({ type: "output", data: encodeTerminalData("current title") }));
@@ -590,7 +639,10 @@ test("does not send terminal query responses generated while replaying history",
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => socket.receive({ type: "history", data: encodeTerminalData("query") }));
+  act(() => {
+    socket.receive({ type: "history", data: encodeTerminalData("query") });
+    socket.receive({ type: "history_end" });
+  });
   expect(writes).toEqual(["query"]);
   expect(socket.sent).toEqual([]);
 
@@ -603,11 +655,11 @@ test("does not send terminal query responses generated while replaying history",
 test("keeps replay-generated terminal replies suppressed until the write completes", async () => {
   const socket = new FakeSocket();
   let onData: ((data: string) => void) | undefined;
-  let finishWrite: (() => void) | undefined;
+  const finishWrites: Array<() => void> = [];
   const terminal: TerminalDriver = {
     open: () => undefined,
     write: (_data, callback) => {
-      finishWrite = callback;
+      if (callback) finishWrites.push(callback);
     },
     focus: () => undefined,
     fit: () => undefined,
@@ -634,13 +686,21 @@ test("keeps replay-generated terminal replies suppressed until the write complet
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
   act(() => {
-    socket.receive({ type: "history", data: encodeTerminalData("\u001b[c") });
+    socket.receive({ type: "history", data: encodeTerminalData("first \u001b[c") });
+    socket.receive({ type: "history", data: encodeTerminalData("second \u001b[c") });
+    socket.receive({ type: "history_end" });
     onData?.("\u001b[?1;2c");
   });
   expect(socket.sent).toEqual([]);
 
   act(() => {
-    finishWrite?.();
+    finishWrites[0]?.();
+    onData?.("\u001b[?1;2c");
+  });
+  expect(socket.sent).toEqual([]);
+
+  act(() => {
+    finishWrites[1]?.();
     onData?.("pwd\r");
   });
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([

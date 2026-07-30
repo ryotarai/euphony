@@ -135,6 +135,7 @@ make test
 
 ## Current boundaries
 
-Browser disconnects do not terminate PTY processes. Terminal scrollback is not
-persisted across server restarts. Multi-user accounts and file management are
-not implemented.
+Browser disconnects do not terminate PTY processes. The in-memory terminal
+history buffer is configurable in Settings from 1–4095 MiB or Unlimited, but
+scrollback is not persisted across server restarts. Multi-user accounts and
+file management are not implemented.

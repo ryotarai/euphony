@@ -15,6 +15,8 @@
   them back to the base branch automatically unless the user asks otherwise.
 - Run end-to-end servers with an isolated test database so persisted local
   sessions cannot leak into browser tests.
+- When coding agents run in parallel, give each agent an isolated database and
+  dedicated network ports for development and verification.
 - Preserve arbitrary terminal byte streams across JSON boundaries with a
   lossless encoding such as base64; never stringify independent PTY chunks.
 - Run end-to-end tests that mutate shared server state with one worker, or give
