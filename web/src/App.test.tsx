@@ -450,6 +450,128 @@ test("command-click selects multiple terminal panes and stores them in the URL",
   });
 });
 
+test("pane rail checkboxes remove selected terminals and allow an empty workspace", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), {
+    metaKey: true,
+  });
+  await screen.findByLabelText("Claude terminal pane");
+
+  await user.click(screen.getByRole("checkbox", { name: "Deselect Claude" }));
+
+  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  let parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual(["session-1"]);
+  expect(parameters.get("focus")).toBe("session-1");
+
+  await user.click(screen.getByRole("checkbox", { name: "Deselect Codex" }));
+
+  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByText("No signal yet.")).toBeVisible();
+  parameters = new URLSearchParams(window.location.search);
+  expect(parameters.getAll("terminal")).toEqual([]);
+  expect(parameters.has("focus")).toBe(false);
+});
+
+test("deselecting an unfocused pane preserves the current focus", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), {
+    metaKey: true,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Select Terminal" }), {
+    metaKey: true,
+  });
+  expect(screen.getByLabelText("Terminal pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("checkbox", {
+    name: "Deselect Claude",
+    hidden: true,
+  }));
+
+  expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Terminal pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  expect(new URLSearchParams(window.location.search).get("focus")).toBe(
+    "session-3",
+  );
+});
+
+test("deselecting a filter-owned unfocused pane preserves the current focus", async () => {
+  const fourthRunningSession = {
+    ...thirdRunningSession,
+    id: "session-4",
+    name: "Fourth",
+    cwd: "/workspace/fourth",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([
+      runningSession,
+      thirdRunningSession,
+      fourthRunningSession,
+    ]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", {
+    name: "Show all Running terminals",
+  }));
+  fireEvent.mouseDown(screen.getByLabelText("Fourth pane"));
+  expect(screen.getByLabelText("Fourth pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("checkbox", {
+    name: "Deselect Terminal",
+    hidden: true,
+  }));
+
+  expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Fourth pane")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  expect(new URLSearchParams(window.location.search).get("focus")).toBe(
+    "session-4",
+  );
+});
+
 test("passes the pane count to terminals when the topology changes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),

@@ -493,7 +493,7 @@ export function App({
     };
   }, [focusedID, selectedIDs, sessions, settings.prefix]);
 
-  function selectSession(id: string, multiple: boolean) {
+  function selectSession(id: string, multiple: boolean, allowEmpty = false) {
     let nextIDs: string[];
     if (!multiple) {
       nextIDs = [id];
@@ -542,9 +542,12 @@ export function App({
             ...matching,
           ]),
         ];
-        if (nextIDs.length === 0) nextIDs = [id];
+        if (nextIDs.length === 0 && !allowEmpty) nextIDs = [id];
         filterSelectedIDsRef.current = new Set(matching);
-        const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+        const nextFocus =
+          focusedID && nextIDs.includes(focusedID)
+            ? focusedID
+            : nextIDs[0] ?? null;
         setStatusFilters(nextStatusFilters);
         setCwdFilters(nextCwdFilters);
         setSelectedIDs(nextIDs);
@@ -557,13 +560,18 @@ export function App({
         );
         return;
       }
-      nextIDs = selectedIDs.length === 1
+      nextIDs = selectedIDs.length === 1 && !allowEmpty
         ? selectedIDs
         : selectedIDs.filter((item) => item !== id);
     } else {
       nextIDs = [...selectedIDs, id];
     }
-    const nextFocus = nextIDs.includes(id) ? id : nextIDs[0] ?? null;
+    const nextFocus =
+      multiple && selectedIDs.includes(id)
+        ? focusedID && nextIDs.includes(focusedID)
+          ? focusedID
+          : nextIDs[0] ?? null
+        : id;
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
@@ -1020,6 +1028,7 @@ export function App({
                   api={api}
                   active={focusedID === pane.id}
                   layoutVersion={panes.length}
+                  onDeselect={() => selectSession(pane.id, true, true)}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
                       pane,
