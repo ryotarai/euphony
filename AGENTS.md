@@ -29,3 +29,5 @@
   clear group filters and other pane selections, then follow that session.
 - Model unread attention independently from the agent's current status; never
   replace statuses such as `waiting` or `running` with an attention status.
+- Give rendered Markdown tables explicit cell padding and borders so dense
+  transcript data remains legible.

@@ -1938,9 +1938,16 @@ input {
   border-left: 1px solid #525252;
 }
 
-.agent-log-markdown table {
-  width: 100%;
+.agent-log-table-scroll {
+  max-width: 100%;
   margin: 0.9em 0;
+  overflow-x: auto;
+}
+
+.agent-log-markdown table {
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
   border-collapse: collapse;
   font-size: 0.82rem;
 }
@@ -1951,6 +1958,11 @@ input {
   border: 1px solid #343434;
   text-align: left;
   vertical-align: top;
+}
+
+.agent-log-markdown th code,
+.agent-log-markdown td code {
+  white-space: nowrap;
 }
 
 .agent-log-markdown th {

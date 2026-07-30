@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ApiClient } from "../api";
 import type { AgentLogEntry, AgentTranscript, Session } from "../types";
@@ -36,6 +36,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The agent log could not be refreshed.";
 }
 
+const markdownComponents: Components = {
+  table: ({ node: _node, ...props }) => (
+    <div
+      className="agent-log-table-scroll"
+      role="region"
+      aria-label="Scrollable table"
+      tabIndex={0}
+    >
+      <table {...props} />
+    </div>
+  ),
+};
+
 function entryTime(timestamp?: string): string {
   if (!timestamp) return "";
   const parsed = new Date(timestamp);
@@ -50,7 +63,9 @@ function entryTime(timestamp?: string): string {
 function Markdown({ children }: { children: string }) {
   return (
     <div className="agent-log-markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {children}
+      </ReactMarkdown>
     </div>
   );
 }

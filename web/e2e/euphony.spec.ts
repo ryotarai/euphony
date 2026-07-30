@@ -66,7 +66,7 @@ async function createSession(
 function claudeTranscriptLine(index: number) {
   const label = `Agent log entry ${String(index).padStart(2, "0")}`;
   const table = index === 40
-    ? "\n\n| Command | State |\n| --- | --- |\n| go test ./... | Passed |"
+    ? "\n\n| Command | State | Artifact |\n| --- | --- | --- |\n| go test ./... | Passed | `very-wide-unbroken-table-value-that-stays-readable-with-horizontal-scrolling-0123456789` |"
     : "";
   return JSON.stringify({
     type: "assistant",
@@ -131,6 +131,9 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await expect(tableCell).toHaveCSS("border-top-style", "solid");
   await expect(tableCell).toHaveCSS("padding-top", "8px");
   await expect(tableCell).toHaveCSS("padding-left", "10.4px");
+  const tableScroll = page.locator(".agent-log-table-scroll");
+  await expect(tableScroll).toHaveCSS("overflow-x", "auto");
+  expect(await tableScroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);

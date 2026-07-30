@@ -6,6 +6,8 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/ryotarai/euphony/internal/session"
 )
@@ -28,6 +30,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if err := decoder.Decode(&input); err != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
 		!prefixPattern.MatchString(input.PaneTabShortcut) ||
+		shortcutsEqual(input.Prefix, input.PaneTabShortcut) ||
 		math.IsNaN(input.SidebarWidth) || math.IsInf(input.SidebarWidth, 0) ||
 		input.SidebarWidth < 180 || input.SidebarWidth > 600 {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
@@ -44,4 +47,15 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func shortcutsEqual(left, right string) bool {
+	identity := func(value string) string {
+		parts := strings.Split(strings.ToLower(value), "+")
+		key := parts[len(parts)-1]
+		modifiers := parts[:len(parts)-1]
+		sort.Strings(modifiers)
+		return strings.Join(modifiers, "+") + "+" + key
+	}
+	return identity(left) == identity(right)
 }

@@ -38,6 +38,20 @@ export function matchesPrefix(event: KeyboardEvent, prefix: string): boolean {
   );
 }
 
+export function shortcutsEqual(left: string, right: string): boolean {
+  const leftParts = normalizePrefix(left).split("+");
+  const rightParts = normalizePrefix(right).split("+");
+  const leftKey = leftParts.pop()?.toLowerCase();
+  const rightKey = rightParts.pop()?.toLowerCase();
+  if (!leftKey || !rightKey || leftKey !== rightKey) return false;
+  const leftModifiers = new Set(leftParts);
+  const rightModifiers = new Set(rightParts);
+  return (
+    leftModifiers.size === rightModifiers.size &&
+    [...leftModifiers].every((modifier) => rightModifiers.has(modifier))
+  );
+}
+
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.closest(".terminal-host")) return false;

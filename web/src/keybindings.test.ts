@@ -1,4 +1,9 @@
-import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
+import {
+  isEditableTarget,
+  matchesPrefix,
+  normalizePrefix,
+  shortcutsEqual,
+} from "./keybindings";
 
 test("matches the default Ctrl+B prefix case-insensitively", () => {
   expect(matchesPrefix(new KeyboardEvent("keydown", { key: "b", ctrlKey: true }), "Ctrl+B")).toBe(true);
@@ -17,6 +22,12 @@ test("matches configurable modifier combinations exactly", () => {
     matchesPrefix(new KeyboardEvent("keydown", { key: "k", metaKey: true }), "Meta+Shift+K"),
   ).toBe(false);
   expect(normalizePrefix(" control + a ")).toBe("Ctrl+A");
+});
+
+test("detects semantically duplicate shortcuts regardless of modifier order", () => {
+  expect(shortcutsEqual("Ctrl+Shift+J", "Shift+Control+J")).toBe(true);
+  expect(shortcutsEqual("Meta+L", "Ctrl+L")).toBe(false);
+  expect(shortcutsEqual("Ctrl+J", "Ctrl+K")).toBe(false);
 });
 
 test("detects editable keyboard targets", () => {

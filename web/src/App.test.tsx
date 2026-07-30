@@ -1092,3 +1092,36 @@ test("loads settings and saves changed workspace shortcuts", async () => {
     }),
   );
 });
+
+test("rejects a pane tab shortcut that duplicates the prefix", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={{
+        ...defaultSettings,
+        prefix: "Ctrl+Shift+J",
+      }}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
+  await user.clear(paneTabShortcut);
+  await user.type(paneTabShortcut, "Shift+Ctrl+J");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose a different shortcut from Prefix.",
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  expect(
+    fetchMock.mock.calls.some(([input, init]) =>
+      input === "/api/settings" && init?.method === "PATCH"),
+  ).toBe(false);
+});

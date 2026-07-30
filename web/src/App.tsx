@@ -12,7 +12,12 @@ import {
   cwdFilterKey,
   SessionNavigation,
 } from "./components/SessionNavigation";
-import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
+import {
+  isEditableTarget,
+  matchesPrefix,
+  normalizePrefix,
+  shortcutsEqual,
+} from "./keybindings";
 import { TerminalView, type ConnectionState } from "./components/TerminalView";
 import { TerminalPane } from "./components/TerminalPane";
 import { PaneCarousel } from "./components/PaneCarousel";
@@ -820,6 +825,13 @@ export function App({
       setSettingsError({
         field: "paneTabShortcut",
         message: "Use modifiers and one key, for example Meta+L.",
+      });
+      return;
+    }
+    if (shortcutsEqual(prefix, paneTabShortcut)) {
+      setSettingsError({
+        field: "paneTabShortcut",
+        message: "Choose a different shortcut from Prefix.",
       });
       return;
     }
