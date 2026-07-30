@@ -50,19 +50,16 @@ interface SessionNavigationProps {
 }
 
 function activity(session: Session) {
-  if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
 }
 
 function statusLabel(status: string) {
-  if (status === "attention") return "Need attention";
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 const builtInActivities = [
   "blocked",
-  "attention",
   "running",
   "waiting",
   "terminal",
@@ -172,6 +169,9 @@ function SessionList(props: SessionNavigationProps) {
                           const icon = agentIcon(session);
                           const selected = props.selectedIDs.includes(session.id);
                           const pinned = props.pinnedIDs?.includes(session.id) ?? false;
+                          const attentionDescriptionID = session.needsAttention
+                            ? `attention-${session.id}`
+                            : undefined;
                           return (
                             <SidebarMenuItem
                               className="session-channel"
@@ -205,6 +205,7 @@ function SessionList(props: SessionNavigationProps) {
                                 aria-label={`Select ${session.name}`}
                                 aria-pressed={selected}
                                 aria-current={selected ? "true" : undefined}
+                                aria-describedby={attentionDescriptionID}
                                 title={session.cwd}
                                 onClick={(event) =>
                                   selectSession(
@@ -213,6 +214,20 @@ function SessionList(props: SessionNavigationProps) {
                                   )
                                 }
                               >
+                                {session.needsAttention && (
+                                  <>
+                                    <span
+                                      className="attention-dot"
+                                      aria-hidden="true"
+                                    />
+                                    <span
+                                      className="sr-only"
+                                      id={attentionDescriptionID}
+                                    >
+                                      Needs attention
+                                    </span>
+                                  </>
+                                )}
                                 {icon && (
                                   <img
                                     className="session-agent-icon"

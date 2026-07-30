@@ -61,7 +61,7 @@ const tokenKey = "euphony.token";
 const recentQuickActionsKey = "euphony.recentQuickActions";
 const recentQuickActionsLimit = 5;
 const quickActionStatuses = [
-  "attention",
+  "blocked",
   "running",
   "waiting",
   "terminal",
@@ -117,7 +117,6 @@ function parseFontSize(value: string): number | null {
 }
 
 function sessionActivity(session: Session) {
-  if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
 }
@@ -136,7 +135,6 @@ function availableQuickActionValues(sessions: Session[]): Set<string> {
 }
 
 function activityLabel(status: string) {
-  if (status === "attention") return "Need attention";
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
@@ -146,12 +144,8 @@ function matchesWorkspaceFilter(
   cwdFilters: string[],
 ) {
   const statuses = [sessionActivity(session)];
-  if (
-    session.needsAttention &&
-    session.agentStatus &&
-    !statuses.includes(session.agentStatus)
-  ) {
-    statuses.push(session.agentStatus);
+  if (session.needsAttention) {
+    statuses.push("attention");
   }
   return statuses.some(
     (status) =>

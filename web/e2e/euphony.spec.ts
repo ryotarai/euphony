@@ -109,14 +109,16 @@ test("shows empty status groups with interactive checkboxes", async ({
 
   for (const label of [
     "Show all Blocked terminals",
-    "Show all Need attention terminals",
     "Show all Running terminals",
     "Show all Waiting terminals",
     "Show all Terminal terminals",
   ]) {
     await expect(page.getByRole("checkbox", { name: label })).toBeVisible();
   }
-  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(4);
+  await expect(
+    page.getByRole("checkbox", { name: "Show all Need attention terminals" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(3);
   await page.screenshot({ path: testInfo.outputPath("empty-status-groups.png") });
 
   const running = page.getByRole("checkbox", {
@@ -127,6 +129,31 @@ test("shows empty status groups with interactive checkboxes", async ({
   await expect(running).toBeChecked();
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["running"]);
   await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
+});
+
+test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Focused");
+  const blocked = await createSession(page, "Permission request");
+  await reportAgent(page, blocked.id, "codex", "Permission request", "running");
+  await page.goto("/?token=test-token");
+
+  await reportAgent(page, blocked.id, "codex", "Permission request", "blocked");
+
+  const blockedButton = page.getByRole("button", {
+    name: "Select Permission request",
+  });
+  const attentionDot = blockedButton.locator(".attention-dot");
+  await expect(blockedButton).toHaveAccessibleDescription("Needs attention");
+  await expect(attentionDot).toBeVisible();
+  await expect(attentionDot).toHaveAttribute("aria-hidden", "true");
+  await expect(attentionDot).toHaveCSS("width", "6px");
+  await expect(attentionDot).toHaveCSS("height", "6px");
+  await expect(attentionDot).toHaveCSS("border-radius", "50%");
+  await expect(attentionDot).toHaveCSS("background-color", "rgb(56, 189, 248)");
+  await expect(
+    page.getByRole("checkbox", { name: "Show all Need attention terminals" }),
+  ).toHaveCount(0);
 });
 
 test("confirms before deleting a terminal", async ({ page }) => {
