@@ -172,6 +172,102 @@ func TestTerminalWebSocketStreamsPTY(t *testing.T) {
 	}
 }
 
+func TestTerminalWebSocketsShareSmallestSize(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Shared size"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	large := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer large.CloseNow()
+	small := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer small.CloseNow()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	readTerminalMessage(t, ctx, large, "history_end")
+	readTerminalMessage(t, ctx, small, "history_end")
+
+	writeTerminalResize(t, ctx, large, 120, 40)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 120, 40)
+
+	writeTerminalResize(t, ctx, small, 80, 24)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 80, 24)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, small, "resize"), 80, 24)
+
+	if err := small.Close(websocket.StatusNormalClosure, "smaller browser closed"); err != nil {
+		t.Fatalf("small Close() error = %v", err)
+	}
+	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 120, 40)
+}
+
+func writeTerminalResize(
+	t *testing.T,
+	ctx context.Context,
+	connection *websocket.Conn,
+	cols, rows uint16,
+) {
+	t.Helper()
+	payload, err := json.Marshal(clientMessage{Type: "resize", Cols: cols, Rows: rows})
+	if err != nil {
+		t.Fatalf("encode resize: %v", err)
+	}
+	if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+		t.Fatalf("Write(resize %dx%d) error = %v", cols, rows, err)
+	}
+}
+
+func readTerminalMessage(
+	t *testing.T,
+	ctx context.Context,
+	connection *websocket.Conn,
+	messageType string,
+) struct {
+	Type string `json:"type"`
+	Cols uint16 `json:"cols"`
+	Rows uint16 `json:"rows"`
+} {
+	t.Helper()
+	for {
+		_, payload, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("Read(%s) error = %v", messageType, err)
+		}
+		var message struct {
+			Type string `json:"type"`
+			Cols uint16 `json:"cols"`
+			Rows uint16 `json:"rows"`
+		}
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("decode %s message: %v", messageType, err)
+		}
+		if message.Type == messageType {
+			return message
+		}
+	}
+}
+
+func assertTerminalResize(
+	t *testing.T,
+	message struct {
+		Type string `json:"type"`
+		Cols uint16 `json:"cols"`
+		Rows uint16 `json:"rows"`
+	},
+	cols, rows uint16,
+) {
+	t.Helper()
+	if message.Cols != cols || message.Rows != rows {
+		t.Fatalf("resize = %dx%d, want %dx%d", message.Cols, message.Rows, cols, rows)
+	}
+}
+
 func TestTerminalWebSocketUpdatesCurrentWorkingDirectory(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

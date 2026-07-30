@@ -24,6 +24,8 @@ type serverMessage struct {
 	Data     []byte `json:"data,omitempty"`
 	ExitCode *int   `json:"exitCode,omitempty"`
 	Message  string `json:"message,omitempty"`
+	Cols     uint16 `json:"cols,omitempty"`
+	Rows     uint16 `json:"rows,omitempty"`
 }
 
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +77,16 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 	}()
 	history, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
 	defer unsubscribe()
+	var reportSize func(uint16, uint16) error
+	var sizeUpdates <-chan terminalDimensions
+	if !ticket.readOnly {
+		var unsubscribeSize func()
+		reportSize, sizeUpdates, unsubscribeSize = s.terminalSizes.subscribe(
+			id,
+			terminal.Resize,
+		)
+		defer unsubscribeSize()
+	}
 	outputDone := make(chan struct{})
 	go func() {
 		defer close(outputDone)
@@ -102,6 +114,19 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 		}
 		for {
 			select {
+			case dimensions := <-sizeUpdates:
+				payload := marshalTerminalFrame(serverMessage{
+					Type: "resize",
+					Cols: dimensions.Cols,
+					Rows: dimensions.Rows,
+				}, v1)
+				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+					return
+				}
+				continue
+			default:
+			}
+			select {
 			case data, ok := <-output:
 				if !ok {
 					select {
@@ -115,6 +140,15 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 					return
 				}
 				payload := marshalTerminalFrame(serverMessage{Type: "output", Data: data}, v1)
+				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+					return
+				}
+			case dimensions := <-sizeUpdates:
+				payload := marshalTerminalFrame(serverMessage{
+					Type: "resize",
+					Cols: dimensions.Cols,
+					Rows: dimensions.Rows,
+				}, v1)
 				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 					return
 				}
@@ -164,7 +198,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 					go s.refreshCWDWhileCommandSettles(refreshContext, id)
 				}
 			case "resize":
-				if err := terminal.Resize(message.Cols, message.Rows); err != nil {
+				if reportSize == nil || reportSize(message.Cols, message.Rows) != nil {
 					invalidMessages++
 				}
 			case "cwd":
@@ -198,11 +232,15 @@ func marshalTerminalFrame(message serverMessage, v1 bool) []byte {
 		DataBase64 string `json:"dataBase64,omitempty"`
 		ExitCode   *int   `json:"exitCode,omitempty"`
 		Message    string `json:"message,omitempty"`
+		Cols       uint16 `json:"cols,omitempty"`
+		Rows       uint16 `json:"rows,omitempty"`
 	}{
 		Type:       message.Type,
 		DataBase64: base64.RawStdEncoding.EncodeToString(message.Data),
 		ExitCode:   message.ExitCode,
 		Message:    message.Message,
+		Cols:       message.Cols,
+		Rows:       message.Rows,
 	})
 	return payload
 }

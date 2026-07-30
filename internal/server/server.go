@@ -25,11 +25,12 @@ type Config struct {
 }
 
 type Server struct {
-	handler   http.Handler
-	sessions  *session.Manager
-	control   *control.Service
-	tickets   *ticketStore
-	agentLogs *agentlog.Resolver
+	handler       http.Handler
+	sessions      *session.Manager
+	control       *control.Service
+	tickets       *ticketStore
+	terminalSizes *terminalSizeCoordinator
+	agentLogs     *agentlog.Resolver
 }
 
 func New(config Config) (*Server, error) {
@@ -59,10 +60,11 @@ func New(config Config) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		sessions:  sessionManager,
-		control:   controlService,
-		tickets:   tickets,
-		agentLogs: agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
+		sessions:      sessionManager,
+		control:       controlService,
+		tickets:       tickets,
+		terminalSizes: newTerminalSizeCoordinator(),
+		agentLogs:     agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
 	}
 
 	public := http.NewServeMux()
