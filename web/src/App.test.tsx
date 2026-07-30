@@ -52,18 +52,18 @@ const plainTerminalSession: Session = {
 };
 
 test("detects only new transitions into attention", () => {
-  const attention = { ...runningSession, agentStatus: "attention" };
+  const attention = { ...runningSession, needsAttention: true };
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);
   expect(attentionTransitions([attention], [attention])).toEqual([]);
 });
 
 test("acknowledges a need-attention terminal when it receives focus", async () => {
-  const attention = { ...secondRunningSession, agentStatus: "attention" };
+  const attention = { ...secondRunningSession, needsAttention: true };
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession, attention]))
     .mockImplementationOnce(() =>
-      jsonResponse({ ...attention, agentStatus: "waiting" }),
+      jsonResponse({ ...attention, needsAttention: false }),
     );
   const user = userEvent.setup();
   render(

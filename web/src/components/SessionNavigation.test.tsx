@@ -268,7 +268,8 @@ test("groups terminals by their exact cwd within each ordered status", () => {
       name: "Needs review",
       cwd: "/workspace/project/tmp/worktrees/fix",
       repoRoot: "/workspace/project",
-      agentStatus: "attention",
+      agentStatus: "waiting",
+      needsAttention: true,
     },
     {
       ...sessions[0],

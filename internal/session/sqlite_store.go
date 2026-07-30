@@ -59,6 +59,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			agent TEXT NOT NULL DEFAULT '',
 			resume_agent TEXT NOT NULL DEFAULT '',
 			agent_status TEXT NOT NULL DEFAULT '',
+			needs_attention INTEGER NOT NULL DEFAULT 0,
 			agent_title TEXT NOT NULL DEFAULT '',
 			agent_session_id TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
@@ -74,14 +75,57 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
-		"PRAGMA user_version = 2",
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate SQLite database: %w", err)
 		}
 	}
+	hasNeedsAttention, err := s.hasColumn(ctx, "terminals", "needs_attention")
+	if err != nil {
+		return err
+	}
+	if !hasNeedsAttention {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE terminals ADD COLUMN needs_attention INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add terminal attention flag: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE terminals
+		SET agent_status = 'waiting', needs_attention = 1
+		WHERE agent_status = 'attention'`); err != nil {
+		return fmt.Errorf("migrate terminal attention status: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
 	return nil
+}
+
+func (s *SQLiteStore) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(
+			&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey,
+		); err != nil {
+			return false, fmt.Errorf("scan %s schema: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	return false, nil
 }
 
 func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
@@ -113,7 +157,8 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 
 func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, state, cwd, agent, resume_agent,
-		agent_status, agent_title, agent_session_id, created_at, exited_at, exit_code, message
+		agent_status, needs_attention, agent_title, agent_session_id,
+		created_at, exited_at, exit_code, message
 		FROM terminals ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("load terminals: %w", err)
@@ -125,11 +170,14 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 		var createdAt string
 		var exitedAt sql.NullString
 		var exitCode sql.NullInt64
+		var needsAttention int
 		if err := rows.Scan(&item.ID, &item.Name, &item.State, &item.CWD, &item.Agent,
-			&item.ResumeAgent, &item.AgentStatus, &item.AgentTitle, &item.AgentSessionID,
+			&item.ResumeAgent, &item.AgentStatus, &needsAttention,
+			&item.AgentTitle, &item.AgentSessionID,
 			&createdAt, &exitedAt, &exitCode, &item.Message); err != nil {
 			return nil, fmt.Errorf("scan terminal: %w", err)
 		}
+		item.NeedsAttention = needsAttention != 0
 		item.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse terminal creation time: %w", err)
@@ -163,17 +211,18 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 		exitCode = *item.ExitCode
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO terminals (
-		id, name, state, cwd, agent, resume_agent, agent_status, agent_title,
-		agent_session_id, created_at, exited_at, exit_code, message
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		id, name, state, cwd, agent, resume_agent, agent_status, needs_attention,
+		agent_title, agent_session_id, created_at, exited_at, exit_code, message
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name, state=excluded.state, cwd=excluded.cwd, agent=excluded.agent,
 		resume_agent=excluded.resume_agent, agent_status=excluded.agent_status,
+		needs_attention=excluded.needs_attention,
 		agent_title=excluded.agent_title, agent_session_id=excluded.agent_session_id,
 		created_at=excluded.created_at, exited_at=excluded.exited_at,
 		exit_code=excluded.exit_code, message=excluded.message`,
 		item.ID, item.Name, item.State, item.CWD, item.Agent, item.ResumeAgent,
-		item.AgentStatus, item.AgentTitle, item.AgentSessionID,
+		item.AgentStatus, item.NeedsAttention, item.AgentTitle, item.AgentSessionID,
 		item.CreatedAt.Format(time.RFC3339Nano), exitedAt, exitCode, item.Message)
 	if err != nil {
 		return fmt.Errorf("save terminal: %w", err)

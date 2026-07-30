@@ -56,6 +56,7 @@ const defaultSettings: Settings = {
 };
 
 function sessionActivity(session: Session) {
+  if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
 }
@@ -82,11 +83,13 @@ function cwdFilterBelongsToStatus(filter: string, status: string) {
 }
 
 export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
-  const previousActivity = new Map(previous.map((session) => [session.id, sessionActivity(session)]));
+  const previousAttention = new Map(
+    previous.map((session) => [session.id, Boolean(session.needsAttention)]),
+  );
   return next.filter(
     (session) =>
-      sessionActivity(session) === "attention" &&
-      previousActivity.get(session.id) !== "attention",
+      session.needsAttention &&
+      !previousAttention.get(session.id),
   );
 }
 
@@ -368,7 +371,7 @@ export function App({
     const focused = sessions.find((session) => session.id === focusedID);
     if (
       !focused ||
-      sessionActivity(focused) !== "attention" ||
+      !focused.needsAttention ||
       pendingAttentionAcknowledgementsRef.current.has(focusedID)
     ) {
       return;
@@ -378,14 +381,14 @@ export function App({
       setSessions((current) =>
         current?.map((session) =>
           session.id === acknowledged.id &&
-          sessionActivity(session) === "attention"
+          session.needsAttention
             ? acknowledged
             : session
         ) ?? current
       );
       previousSessionsRef.current = previousSessionsRef.current.map((session) =>
         session.id === acknowledged.id &&
-        sessionActivity(session) === "attention"
+        session.needsAttention
           ? acknowledged
           : session
       );

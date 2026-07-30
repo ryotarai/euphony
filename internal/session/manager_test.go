@@ -197,7 +197,7 @@ func TestRefreshCWDPreservesEquivalentLogicalPath(t *testing.T) {
 	}
 }
 
-func TestUpdateAgentPromotesRunningToAttentionAndPreservesTitle(t *testing.T) {
+func TestUpdateAgentMarksRunningToWaitingAsNeedingAttention(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	metadata, err := manager.Create(context.Background(), "Terminal")
@@ -216,15 +216,18 @@ func TestUpdateAgentPromotesRunningToAttentionAndPreservesTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateAgent(waiting) error = %v", err)
 	}
-	if updated.AgentStatus != "attention" {
-		t.Fatalf("AgentStatus = %q, want attention", updated.AgentStatus)
+	if updated.AgentStatus != "waiting" {
+		t.Fatalf("AgentStatus = %q, want waiting", updated.AgentStatus)
+	}
+	if !updated.NeedsAttention {
+		t.Fatal("NeedsAttention = false, want true")
 	}
 	if updated.AgentTitle != "Fix terminal rendering" {
 		t.Fatalf("AgentTitle = %q, want preserved title", updated.AgentTitle)
 	}
 }
 
-func TestAcknowledgeAttentionRestoresWaitingAndPreservesCurrentStatus(t *testing.T) {
+func TestAcknowledgeAttentionClearsFlagAndPreservesCurrentStatus(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	metadata, err := manager.Create(context.Background(), "Terminal")
@@ -249,11 +252,28 @@ func TestAcknowledgeAttentionRestoresWaitingAndPreservesCurrentStatus(t *testing
 	if acknowledged.AgentStatus != "waiting" {
 		t.Fatalf("AgentStatus = %q, want waiting", acknowledged.AgentStatus)
 	}
+	if acknowledged.NeedsAttention {
+		t.Fatal("NeedsAttention = true, want false")
+	}
 
 	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
 		Agent: "claude", Status: "running",
 	}); err != nil {
 		t.Fatalf("UpdateAgent(running again) error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(waiting again) error = %v", err)
+	}
+	current, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "running",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(running after attention) error = %v", err)
+	}
+	if current.AgentStatus != "running" || !current.NeedsAttention {
+		t.Fatalf("current metadata = %#v, want running with attention", current)
 	}
 	acknowledged, err = manager.AcknowledgeAttention(metadata.ID)
 	if err != nil {
@@ -261,6 +281,9 @@ func TestAcknowledgeAttentionRestoresWaitingAndPreservesCurrentStatus(t *testing
 	}
 	if acknowledged.AgentStatus != "running" {
 		t.Fatalf("AgentStatus = %q, want running", acknowledged.AgentStatus)
+	}
+	if acknowledged.NeedsAttention {
+		t.Fatal("NeedsAttention = true, want false")
 	}
 }
 

@@ -129,8 +129,13 @@ func TestAcknowledgeAttention(t *testing.T) {
 	decodeResponse(t, created, &metadata)
 	performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
 		`{"terminalId":"`+metadata.ID+`","agent":"claude","status":"running"}`)
-	performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+	waiting := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
 		`{"terminalId":"`+metadata.ID+`","agent":"claude","status":"waiting"}`)
+	var attention session.Metadata
+	decodeResponse(t, waiting, &attention)
+	if attention.AgentStatus != "waiting" || !attention.NeedsAttention {
+		t.Fatalf("hook metadata = %#v, want waiting with attention", attention)
+	}
 
 	response := performRequest(t, srv, http.MethodPost,
 		"/api/sessions/"+metadata.ID+"/acknowledge-attention", "")
@@ -142,6 +147,9 @@ func TestAcknowledgeAttention(t *testing.T) {
 	decodeResponse(t, response, &acknowledged)
 	if acknowledged.AgentStatus != "waiting" {
 		t.Fatalf("AgentStatus = %q, want waiting", acknowledged.AgentStatus)
+	}
+	if acknowledged.NeedsAttention {
+		t.Fatal("NeedsAttention = true, want false")
 	}
 }
 
