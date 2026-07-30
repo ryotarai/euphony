@@ -799,10 +799,6 @@ input {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .terminal-stage[data-multiple="true"] .terminal-pane:not([data-active="true"]) {
-    display: none;
-  }
-
   .terminal-pane + .terminal-pane {
     border-left: 0;
   }
@@ -1542,6 +1538,24 @@ input:focus-visible,
   gap: 0;
 }
 
+.pane-carousel {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane-carousel-track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--pane-width);
+  width: 100%;
+  height: 100%;
+  transform: translateX(var(--pane-translate));
+  transition: transform 160ms ease-out;
+}
+
 .terminal-pane,
 .terminal-pane[data-active="true"] {
   background: #050505;
@@ -1550,8 +1564,42 @@ input:focus-visible,
   box-shadow: none;
 }
 
+.terminal-pane[data-visible="false"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .terminal-pane + .terminal-pane {
   border-left: 1px solid var(--border);
+}
+
+.pane-carousel-control {
+  position: absolute;
+  z-index: 7;
+  top: 50%;
+  width: 2rem;
+  height: 2.75rem;
+  padding: 0;
+  color: #d4d4d4;
+  background: rgb(11 13 15 / 92%);
+  border-color: #404040;
+  border-radius: 0.25rem;
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 38%);
+  transform: translateY(-50%);
+}
+
+.pane-carousel-control:hover {
+  color: #f5f5f5;
+  background: #171717;
+  border-color: #737373;
+}
+
+.pane-carousel-control-previous {
+  left: 0.4rem;
+}
+
+.pane-carousel-control-next {
+  right: 0.4rem;
 }
 
 .terminal-view {
@@ -1999,6 +2047,10 @@ input {
 
 @media (prefers-reduced-motion: reduce) {
   .agent-log-detail > summary::before {
+    transition: none;
+  }
+
+  .pane-carousel-track {
     transition: none;
   }
 }

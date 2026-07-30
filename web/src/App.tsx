@@ -15,6 +15,7 @@ import {
 import { isEditableTarget, matchesPrefix, normalizePrefix } from "./keybindings";
 import { TerminalView, type ConnectionState } from "./components/TerminalView";
 import { TerminalPane } from "./components/TerminalPane";
+import { PaneCarousel } from "./components/PaneCarousel";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -965,7 +966,6 @@ export function App({
       <section
         className="terminal-stage"
         data-multiple={panes.length > 1}
-        style={{ gridTemplateColumns: `repeat(${Math.max(panes.length, 1)}, minmax(0, 1fr))` }}
       >
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
@@ -1000,14 +1000,13 @@ export function App({
           </div>
         ) : null}
         {panes.length > 0 && api ? (
-          panes.map((pane) => (
-              <div
-                key={pane.id}
-                className="terminal-pane"
-                data-active={focusedID === pane.id}
-                aria-label={`${pane.name} pane`}
-                onMouseDown={() => focusPane(pane.id)}
-              >
+          <PaneCarousel
+            focusedID={focusedID}
+            onFocus={focusPane}
+            panes={panes.map((pane) => ({
+              id: pane.id,
+              label: `${pane.name} pane`,
+              content: (
                 <TerminalPane
                   session={pane}
                   api={api}
@@ -1024,8 +1023,9 @@ export function App({
                     )
                   }
                 />
-              </div>
-          ))
+              ),
+            }))}
+          />
         ) : (
           <div className="empty-state">
             <p>No signal yet.</p>
