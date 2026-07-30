@@ -102,6 +102,8 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
 
   const cursor = page.locator(".xterm-cursor");
   await expect(cursor).toHaveCount(1);
+  await expect(cursor).toBeVisible();
+  await expect(cursor).toHaveClass(/xterm-cursor-bar/);
   await expect(cursor).not.toHaveClass(/xterm-cursor-blink/);
 });
 

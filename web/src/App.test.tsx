@@ -933,7 +933,7 @@ test("a checked activity group removes a terminal after its status changes", asy
 test("does not render terminal panes again for an unchanged polling response", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       jsonResponse([{ ...runningSession }]),
     );
     let renders = 0;
@@ -956,6 +956,9 @@ test("does not render terminal panes again for an unchanged polling response", a
       await vi.advanceTimersByTimeAsync(1500);
     });
 
+    expect(
+      fetchMock.mock.calls.filter(([input]) => input === "/api/sessions"),
+    ).toHaveLength(2);
     expect(renders).toBe(1);
   } finally {
     vi.useRealTimers();
