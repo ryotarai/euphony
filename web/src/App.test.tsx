@@ -538,6 +538,52 @@ test("a checked activity group removes a terminal after its status changes", asy
   vi.useRealTimers();
 });
 
+test("keeps the agent log selected when a focused agent starts waiting", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const waitingSession = {
+    ...runningSession,
+    agentStatus: "waiting",
+    needsAttention: true,
+  };
+  let sessionRequests = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (String(input).endsWith("/agent-log")) {
+      return jsonResponse({
+        agent: "codex",
+        sessionId: "agent-session-1",
+        entries: [],
+      });
+    }
+    if (String(input).endsWith("/acknowledge-attention") && init?.method === "POST") {
+      return jsonResponse({ ...waitingSession, needsAttention: false });
+    }
+    sessionRequests += 1;
+    return jsonResponse(
+      sessionRequests === 1
+        ? [runningSession, secondRunningSession]
+        : [waitingSession, secondRunningSession],
+    );
+  });
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show all Waiting terminals" }));
+  fireEvent.click(screen.getAllByRole("tab", { name: "Agent log" })[0]);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+
+  expect(screen.getAllByRole("tab", { name: "Agent log" })[0]).toHaveAttribute("data-active");
+  vi.useRealTimers();
+});
+
 test.each(["claude", "codex"] as const)(
   "a focused terminal stays selected when polling identifies it as the %s agent",
   async (agent) => {

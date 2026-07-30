@@ -25,6 +25,7 @@ async function reportAgent(
   terminalID: string,
   agent: "codex" | "claude",
   title: string,
+  status = "waiting",
 ) {
   const response = await page.request.post("/api/hooks/terminal", {
     headers: {
@@ -34,7 +35,7 @@ async function reportAgent(
     data: {
       terminalId: terminalID,
       agent,
-      status: "waiting",
+      status,
       title,
       cwd: "/Users/ryotarai/work/euphony",
     },
@@ -148,6 +149,44 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("agent-log-tab.png") });
+});
+
+test("keeps the agent log open when a filtered running agent starts waiting", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  const second = await createSession(page, "Second", "/tmp");
+  await reportAgent(page, first.id, "codex", "Running task", "running");
+  await reportAgent(page, second.id, "claude", "Waiting task");
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("checkbox", { name: "Show all Running terminals" }).click();
+  await page.getByRole("checkbox", { name: "Show all Waiting terminals" }).click();
+  const firstPane = page.getByLabel("First pane", { exact: true });
+  await firstPane.getByRole("tab", { name: "Agent log" }).click();
+
+  await reportAgent(page, first.id, "codex", "Waiting for input");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{
+      id: string;
+      agentStatus?: string;
+      needsAttention?: boolean;
+    }>;
+    const updated = sessions.find((session) => session.id === first.id);
+    return {
+      agentStatus: updated?.agentStatus,
+      needsAttention: Boolean(updated?.needsAttention),
+    };
+  }).toEqual({ agentStatus: "waiting", needsAttention: false });
+
+  await expect(firstPane).toHaveAttribute("data-active", "true");
+  await expect(firstPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
+    "data-active",
+  );
 });
 
 test("runs a terminal and adapts the workspace to mobile", async ({ page }, testInfo) => {
