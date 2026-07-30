@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ryotarai/euphony/internal/agentlog"
+	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
 	webassets "github.com/ryotarai/euphony/web"
@@ -25,11 +27,12 @@ type Config struct {
 }
 
 type Server struct {
-	handler   http.Handler
-	sessions  *session.Manager
-	control   *control.Service
-	tickets   *ticketStore
-	agentLogs *agentlog.Resolver
+	handler     http.Handler
+	sessions    *session.Manager
+	control     *control.Service
+	tickets     *ticketStore
+	agentLogs   *agentlog.Resolver
+	annotations *annotation.Store
 }
 
 func New(config Config) (*Server, error) {
@@ -59,10 +62,11 @@ func New(config Config) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		sessions:  sessionManager,
-		control:   controlService,
-		tickets:   tickets,
-		agentLogs: agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
+		sessions:    sessionManager,
+		control:     controlService,
+		tickets:     tickets,
+		agentLogs:   agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
+		annotations: annotation.NewStore(time.Now, uuid.NewString),
 	}
 
 	public := http.NewServeMux()
@@ -85,6 +89,11 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/v1/terminals/{id}/run", server.v1RunTerminal)
 	protected.HandleFunc("POST /api/v1/terminals/{id}/wait-output", server.v1WaitTerminalOutput)
 	protected.HandleFunc("POST /api/v1/terminals/{id}/tickets", server.v1CreateTerminalTicket)
+	protected.HandleFunc("GET /api/v1/terminals/{id}/annotation", server.v1CurrentAnnotation)
+	protected.HandleFunc("POST /api/v1/annotations", server.v1CreateAnnotation)
+	protected.HandleFunc("GET /api/v1/annotations/{id}/wait", server.v1WaitAnnotation)
+	protected.HandleFunc("POST /api/v1/annotations/{id}/complete", server.v1CompleteAnnotation)
+	protected.HandleFunc("DELETE /api/v1/annotations/{id}", server.v1CancelAnnotation)
 	protected.HandleFunc("GET /api/v1/agents", server.v1ListAgents)
 	protected.HandleFunc("GET /api/v1/agents/{id}", server.v1GetAgent)
 	protected.HandleFunc("POST /api/v1/agents/{id}/start", server.v1StartAgent)
