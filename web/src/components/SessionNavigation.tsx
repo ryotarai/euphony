@@ -60,15 +60,20 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-const activityOrder = new Map([
-  ["attention", 0],
-  ["running", 1],
-  ["waiting", 2],
-  ["terminal", 3],
-]);
+const builtInActivities = [
+  "blocked",
+  "attention",
+  "running",
+  "waiting",
+  "terminal",
+];
+
+const activityOrder = new Map(
+  builtInActivities.map((status, index) => [status, index]),
+);
 
 function orderedActivities(sessions: Session[]) {
-  return [...new Set(sessions.map(activity))].sort(
+  return [...new Set([...builtInActivities, ...sessions.map(activity)])].sort(
     (left, right) =>
       (activityOrder.get(left) ?? 100) - (activityOrder.get(right) ?? 100) ||
       left.localeCompare(right),
@@ -132,6 +137,9 @@ function SessionList(props: SessionNavigationProps) {
               </button>
             </SidebarGroupLabel>
             <SidebarGroupContent>
+              {statusSessions.length === 0 && (
+                <p className="status-empty">No terminal</p>
+              )}
               {cwds.map((cwd) => {
                 const cwdSessions = statusSessions.filter(
                   (session) => session.cwd === cwd,
