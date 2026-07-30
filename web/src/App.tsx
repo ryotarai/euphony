@@ -73,10 +73,18 @@ function matchesWorkspaceFilter(
   statusFilters: string[],
   cwdFilters: string[],
 ) {
-  const status = sessionActivity(session);
-  return (
-    statusFilters.includes(status) ||
-    cwdFilters.includes(cwdFilterKey(status, session.cwd))
+  const statuses = [sessionActivity(session)];
+  if (
+    session.needsAttention &&
+    session.agentStatus &&
+    !statuses.includes(session.agentStatus)
+  ) {
+    statuses.push(session.agentStatus);
+  }
+  return statuses.some(
+    (status) =>
+      statusFilters.includes(status) ||
+      cwdFilters.includes(cwdFilterKey(status, session.cwd)),
   );
 }
 

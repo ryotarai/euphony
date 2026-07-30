@@ -4,15 +4,15 @@
 
 **Goal:** Preserve each pane's selected source across transient removal and re-addition caused by agent status filters.
 
-**Architecture:** Move source selection ownership from `TerminalPane` to an App-level record keyed by session ID. Keep terminal fit bookkeeping inside `TerminalPane` and report only validated user source changes to App.
+**Architecture:** Treat unread attention as an overlay during dynamic filter matching: an attention session matches both Attention and its actual agent lifecycle status. This prevents a spurious pane removal and preserves the mounted pane's focus and local source state.
 
 **Tech Stack:** React 19, TypeScript, Vitest, Testing Library.
 
 ## Global Constraints
 
 - Status filter membership remains dynamic.
-- Terminal and agent-log components are not kept mounted solely to preserve tab selection.
-- New sessions default to the Terminal source.
+- Intentional lifecycle status changes continue to update dynamic filter membership.
+- Attention does not replace `running` or `waiting` during filter matching.
 - No visual styling changes.
 
 ---
@@ -21,14 +21,14 @@
 
 **Files:**
 - Modify: `web/src/App.tsx`
-- Modify: `web/src/components/TerminalPane.tsx`
 - Test: `web/src/App.test.tsx`
+- Test: `web/e2e/euphony.spec.ts`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
-- `TerminalPane` consumes `source: PaneSource`.
-- `TerminalPane` consumes `onSourceChange(source: PaneSource): void`.
-- `App` stores source selections as `Record<string, PaneSource>`.
+- `matchesWorkspaceFilter` consumes one session and active status/CWD filters.
+- An attention session matches its primary Attention activity and its actual
+  `agentStatus`.
 
 - [x] **Step 1: Write the failing integration test**
 
@@ -47,25 +47,17 @@ npm test -- --run src/App.test.tsx -t "keeps the agent log selected"
 
 Expected: FAIL because the re-added `TerminalPane` defaults to Terminal.
 
-- [ ] **Step 3: Make `TerminalPane` controlled**
+- [x] **Step 3: Match attention independently from lifecycle status**
 
-Export `PaneSource`, add `source` and `onSourceChange` props, remove its local
-source state, and call `onSourceChange` after validating a requested tab value.
-Retain the local `fitVersion` increment when switching from Agent log to
-Terminal.
+Extend `matchesWorkspaceFilter` so a session with `needsAttention` also matches
+its non-empty `agentStatus`. Do not change `TerminalPane` state ownership.
 
-- [ ] **Step 4: Store source selections in `App`**
-
-Add an App-level source record and a callback that updates one session entry.
-Pass `paneSources[pane.id] ?? "terminal"` and the session-specific callback to
-each `TerminalPane`.
-
-- [ ] **Step 5: Record the reusable interaction rule**
+- [x] **Step 4: Record the reusable interaction rule**
 
 Add an instruction that agent lifecycle changes must not reset a pane's
 user-selected Terminal or Agent log source.
 
-- [ ] **Step 6: Verify the regression and Web suite**
+- [x] **Step 5: Verify the regression and Web suite**
 
 Run:
 
@@ -75,14 +67,14 @@ npm test -- --run src/App.test.tsx -t "keeps the agent log selected"
 npm test -- --run
 npm run typecheck
 npm run build
+npm run e2e
 ```
 
 Expected: all commands pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add AGENTS.md docs/superpowers/specs/2026-07-30-preserve-agent-log-tab-design.md docs/superpowers/plans/2026-07-30-preserve-agent-log-tab.md web/src/App.tsx web/src/App.test.tsx web/src/components/TerminalPane.tsx
+git add AGENTS.md docs/superpowers/specs/2026-07-30-preserve-agent-log-tab-design.md docs/superpowers/plans/2026-07-30-preserve-agent-log-tab.md web/src/App.tsx web/src/App.test.tsx web/e2e/euphony.spec.ts
 git commit -m "fix: preserve agent log tab across status changes"
 ```
-
