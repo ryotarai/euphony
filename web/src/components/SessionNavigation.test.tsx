@@ -200,7 +200,49 @@ test("groups terminals by status then cwd and exposes group selection controls",
   const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal in split" });
   expect(terminalCheckbox).not.toBeChecked();
   await user.click(terminalCheckbox);
-  expect(onSelect).toHaveBeenCalledWith("three", true);
+  expect(onSelect).toHaveBeenCalledWith("three", true, false);
+});
+
+test("forwards Shift-clicks on terminal checkboxes as pin requests", () => {
+  const onSelect = vi.fn();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={onSelect}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
+    { shiftKey: true },
+  );
+
+  expect(onSelect).toHaveBeenCalledWith("three", true, true);
+});
+
+test("marks pinned terminal checkboxes and explains direct removal", () => {
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one", "three"]}
+      pinnedIDs={["three"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(
+    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
+  ).toHaveAttribute("data-pinned", "true");
+  expect(screen.getByTitle("Pinned — click to remove")).toBeVisible();
 });
 
 test("inherits status selection into cwd controls and marks partial selection", () => {

@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useState } from "react";
-import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
+import { PinIcon, PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
 import { Badge } from "@/components/ui/badge";
@@ -34,8 +34,9 @@ function normalizeSidebarWidth(width: number): number {
 interface SessionNavigationProps {
   sessions: Session[];
   selectedIDs: string[];
+  pinnedIDs?: string[];
   statusFilters: string[];
-  onSelect(id: string, multiple: boolean): void;
+  onSelect(id: string, multiple: boolean, pin?: boolean): void;
   onStatusFilter(status: string, checked: boolean): void;
   onStatusSelect?(status: string): void;
   cwdFilters?: string[];
@@ -93,8 +94,9 @@ function agentIcon(session: Session) {
 function SessionList(props: SessionNavigationProps) {
   const { isMobile, setOpenMobile } = useSidebar();
 
-  const selectSession = (id: string, multiple: boolean) => {
-    props.onSelect(id, multiple);
+  const selectSession = (id: string, multiple: boolean, pin?: boolean) => {
+    if (pin === undefined) props.onSelect(id, multiple);
+    else props.onSelect(id, multiple, pin);
     if (isMobile && !multiple) setOpenMobile(false);
   };
 
@@ -161,6 +163,7 @@ function SessionList(props: SessionNavigationProps) {
                         {cwdSessions.map((session) => {
                           const icon = agentIcon(session);
                           const selected = props.selectedIDs.includes(session.id);
+                          const pinned = props.pinnedIDs?.includes(session.id) ?? false;
                           return (
                             <SidebarMenuItem
                               className="session-channel"
@@ -171,8 +174,22 @@ function SessionList(props: SessionNavigationProps) {
                                 className="pane-checkbox"
                                 aria-label={`Include ${session.name} in split`}
                                 checked={selected}
-                                onCheckedChange={() => selectSession(session.id, true)}
+                                data-pinned={pinned || undefined}
+                                title={
+                                  pinned
+                                    ? "Pinned — click to remove"
+                                    : "Shift-click to pin"
+                                }
+                                onClick={(event) =>
+                                  selectSession(session.id, true, event.shiftKey)
+                                }
                               />
+                              {pinned && (
+                                <PinIcon
+                                  className="pane-checkbox-pin"
+                                  aria-hidden="true"
+                                />
+                              )}
                               <SidebarMenuButton
                                 className="session-select"
                                 size="lg"

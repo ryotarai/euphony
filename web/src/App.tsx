@@ -164,6 +164,7 @@ function resolveInitialToken(explicitToken?: string): string {
 
 function workspaceFromURL(sessions: Session[]): {
   selectedIDs: string[];
+  pinnedIDs: string[];
   focusedID: string | null;
   statusFilters: string[];
   cwdFilters: string[];
@@ -171,14 +172,21 @@ function workspaceFromURL(sessions: Session[]): {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
   let selectedIDs = parameters.getAll("terminal").filter((id) => available.has(id));
+  const pinnedIDs = [
+    ...new Set(parameters.getAll("pin").filter((id) => available.has(id))),
+  ];
   if (selectedIDs.length === 0) {
     selectedIDs = [parameters.get("session"), parameters.get("split")]
       .filter((id): id is string => Boolean(id && available.has(id)));
   }
+  selectedIDs = [
+    ...new Set([...selectedIDs, ...pinnedIDs]),
+  ];
   if (selectedIDs.length === 0 && sessions[0]) selectedIDs = [sessions[0].id];
   const focus = parameters.get("focus");
   return {
     selectedIDs,
+    pinnedIDs,
     focusedID: focus && selectedIDs.includes(focus) ? focus : selectedIDs[0] ?? null,
     statusFilters: parameters.getAll("status"),
     cwdFilters: parameters.getAll("cwd"),
@@ -187,6 +195,7 @@ function workspaceFromURL(sessions: Session[]): {
 
 function writeWorkspaceToURL(
   selectedIDs: string[],
+  pinnedIDs: string[],
   focusedID: string | null,
   statusFilters: string[],
   cwdFilters: string[],
@@ -196,9 +205,11 @@ function writeWorkspaceToURL(
   parameters.delete("session");
   parameters.delete("split");
   parameters.delete("terminal");
+  parameters.delete("pin");
   parameters.delete("status");
   parameters.delete("cwd");
   selectedIDs.forEach((id) => parameters.append("terminal", id));
+  pinnedIDs.forEach((id) => parameters.append("pin", id));
   statusFilters.forEach((status) => parameters.append("status", status));
   cwdFilters.forEach((filter) => parameters.append("cwd", filter));
   if (focusedID) parameters.set("focus", focusedID);
@@ -234,6 +245,7 @@ export function App({
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [pinnedIDs, setPinnedIDs] = useState<string[]>([]);
   const [focusedID, setFocusedID] = useState<string | null>(null);
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [cwdFilters, setCwdFilters] = useState<string[]>([]);
@@ -308,11 +320,13 @@ export function App({
         previousSessionsRef.current = items;
         const workspace = workspaceFromURL(items);
         setSelectedIDs(workspace.selectedIDs);
+        setPinnedIDs(workspace.pinnedIDs);
         setFocusedID(workspace.focusedID);
         setStatusFilters(workspace.statusFilters);
         setCwdFilters(workspace.cwdFilters);
         writeWorkspaceToURL(
           workspace.selectedIDs,
+          workspace.pinnedIDs,
           workspace.focusedID,
           workspace.statusFilters,
           workspace.cwdFilters,
@@ -359,6 +373,41 @@ export function App({
   }, [api, sessions !== null]);
 
   useEffect(() => {
+    if (!sessions) return;
+    const available = new Set(sessions.map((session) => session.id));
+    const removed =
+      selectedIDs.some((id) => !available.has(id)) ||
+      pinnedIDs.some((id) => !available.has(id));
+    if (!removed) return;
+
+    let nextIDs = selectedIDs.filter((id) => available.has(id));
+    if (nextIDs.length === 0 && sessions[0]) nextIDs = [sessions[0].id];
+    const nextPinnedIDs = pinnedIDs.filter((id) => available.has(id));
+    const nextFocus =
+      focusedID && nextIDs.includes(focusedID)
+        ? focusedID
+        : nextIDs[0] ?? null;
+    setSelectedIDs(nextIDs);
+    setPinnedIDs(nextPinnedIDs);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(
+      nextIDs,
+      nextPinnedIDs,
+      nextFocus,
+      statusFilters,
+      cwdFilters,
+      "replace",
+    );
+  }, [
+    sessions,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+    statusFilters,
+    cwdFilters,
+  ]);
+
+  useEffect(() => {
     const promotedID =
       focusedID &&
       selectedIDs.includes(focusedID) &&
@@ -370,11 +419,17 @@ export function App({
     if (promotedID) {
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
-      setSelectedIDs([promotedID]);
+      const next = [
+        ...new Set([
+          ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+          promotedID,
+        ]),
+      ];
+      setSelectedIDs(next);
       setFocusedID(promotedID);
       setStatusFilters([]);
       setCwdFilters([]);
-      writeWorkspaceToURL([promotedID], promotedID, [], [], "replace");
+      writeWorkspaceToURL(next, pinnedIDs, promotedID, [], [], "replace");
       return;
     }
 
@@ -387,14 +442,23 @@ export function App({
       ...selectedIDs.filter((id) => !previousMatches.has(id)),
       ...matches,
     ].filter((id, index, values) => values.indexOf(id) === index);
-    filterSelectedIDsRef.current = new Set(matches);
+    filterSelectedIDsRef.current = new Set(
+      matches.filter((id) => !pinnedIDs.includes(id)),
+    );
     if (next.join("\0") !== selectedIDs.join("\0")) {
       setSelectedIDs(next);
       const nextFocus = focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
       setFocusedID(nextFocus);
-      writeWorkspaceToURL(next, nextFocus, statusFilters, cwdFilters, "replace");
+      writeWorkspaceToURL(
+        next,
+        pinnedIDs,
+        nextFocus,
+        statusFilters,
+        cwdFilters,
+        "replace",
+      );
     }
-  }, [sessions, statusFilters, cwdFilters, selectedIDs, focusedID]);
+  }, [sessions, statusFilters, cwdFilters, selectedIDs, pinnedIDs, focusedID]);
 
   useEffect(() => {
     if (!api || !sessions || !focusedID) return;
@@ -458,6 +522,7 @@ export function App({
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
       setSelectedIDs(workspace.selectedIDs);
+      setPinnedIDs(workspace.pinnedIDs);
       setFocusedID(workspace.focusedID);
       setStatusFilters(workspace.statusFilters);
       setCwdFilters(workspace.cwdFilters);
@@ -513,10 +578,45 @@ export function App({
     };
   }, [focusedID, selectedIDs, sessions, settings.prefix]);
 
-  function selectSession(id: string, multiple: boolean, allowEmpty = false) {
+  function selectSession(
+    id: string,
+    multiple: boolean,
+    allowEmpty = false,
+    checkboxPin?: boolean,
+  ) {
+    let nextPinnedIDs = pinnedIDs;
+    const pinned = pinnedIDs.includes(id);
+    if (checkboxPin !== undefined && pinned) {
+      nextPinnedIDs = pinnedIDs.filter((item) => item !== id);
+      setPinnedIDs(nextPinnedIDs);
+      allowEmpty = true;
+    } else if (checkboxPin === true) {
+      nextPinnedIDs = [...new Set([...pinnedIDs, id])];
+      const nextIDs = selectedIDs.includes(id)
+        ? selectedIDs
+        : [...selectedIDs, id];
+      filterSelectedIDsRef.current.delete(id);
+      setPinnedIDs(nextPinnedIDs);
+      setSelectedIDs(nextIDs);
+      setFocusedID(id);
+      writeWorkspaceToURL(
+        nextIDs,
+        nextPinnedIDs,
+        id,
+        statusFilters,
+        cwdFilters,
+      );
+      return;
+    }
+
     let nextIDs: string[];
     if (!multiple) {
-      nextIDs = [id];
+      nextIDs = [
+        ...new Set([
+          ...selectedIDs.filter((item) => nextPinnedIDs.includes(item)),
+          id,
+        ]),
+      ];
       setStatusFilters([]);
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
@@ -563,7 +663,9 @@ export function App({
           ]),
         ];
         if (nextIDs.length === 0 && !allowEmpty) nextIDs = [id];
-        filterSelectedIDsRef.current = new Set(matching);
+        filterSelectedIDsRef.current = new Set(
+          matching.filter((item) => !nextPinnedIDs.includes(item)),
+        );
         const nextFocus =
           focusedID && nextIDs.includes(focusedID)
             ? focusedID
@@ -574,6 +676,7 @@ export function App({
         setFocusedID(nextFocus);
         writeWorkspaceToURL(
           nextIDs,
+          nextPinnedIDs,
           nextFocus,
           nextStatusFilters,
           nextCwdFilters,
@@ -596,6 +699,7 @@ export function App({
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
       nextIDs,
+      nextPinnedIDs,
       nextFocus,
       multiple ? statusFilters : [],
       multiple ? cwdFilters : [],
@@ -611,9 +715,15 @@ export function App({
         matchesWorkspaceFilter(session, nextStatusFilters, nextCwdFilters)
       )
       .map((session) => session.id) ?? [];
-    const base = selectedIDs.filter((id) => !filterSelectedIDsRef.current.has(id));
+    const base = selectedIDs.filter(
+      (id) =>
+        pinnedIDs.includes(id) ||
+        !filterSelectedIDsRef.current.has(id),
+    );
     const nextIDs = [...new Set([...base, ...matching])];
-    filterSelectedIDsRef.current = new Set(matching);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
     const nextFocus = focusedID && nextIDs.includes(focusedID)
       ? focusedID
       : nextIDs[0] ?? null;
@@ -623,6 +733,7 @@ export function App({
     setFocusedID(nextFocus);
     writeWorkspaceToURL(
       nextIDs,
+      pinnedIDs,
       nextFocus,
       nextStatusFilters,
       nextCwdFilters,
@@ -703,42 +814,58 @@ export function App({
   }
 
   function selectStatus(status: string) {
-    const nextIDs = sessions
+    const matching = sessions
       ?.filter((session) => sessionActivity(session) === status)
       .map((session) => session.id) ?? [];
-    if (nextIDs.length === 0) return;
+    if (matching.length === 0) return;
+    const nextIDs = [
+      ...new Set([
+        ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+        ...matching,
+      ]),
+    ];
     decomposedStatusFiltersRef.current.clear();
-    const nextFocus = nextIDs[0];
+    const nextFocus = matching[0];
     setStatusFilters([status]);
     setCwdFilters([]);
-    filterSelectedIDsRef.current = new Set(nextIDs);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, [status], []);
+    writeWorkspaceToURL(nextIDs, pinnedIDs, nextFocus, [status], []);
   }
 
   function selectCwd(status: string, cwd: string) {
-    const nextIDs = sessions
+    const matching = sessions
       ?.filter(
         (session) =>
           sessionActivity(session) === status && session.cwd === cwd,
       )
       .map((session) => session.id) ?? [];
-    if (nextIDs.length === 0) return;
+    if (matching.length === 0) return;
+    const nextIDs = [
+      ...new Set([
+        ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+        ...matching,
+      ]),
+    ];
     decomposedStatusFiltersRef.current.clear();
-    const nextFocus = nextIDs[0];
+    const nextFocus = matching[0];
     const nextCwdFilters = [cwdFilterKey(status, cwd)];
     setStatusFilters([]);
     setCwdFilters(nextCwdFilters);
-    filterSelectedIDsRef.current = new Set(nextIDs);
+    filterSelectedIDsRef.current = new Set(
+      matching.filter((id) => !pinnedIDs.includes(id)),
+    );
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
-    writeWorkspaceToURL(nextIDs, nextFocus, [], nextCwdFilters);
+    writeWorkspaceToURL(nextIDs, pinnedIDs, nextFocus, [], nextCwdFilters);
   }
 
   function focusPane(id: string) {
     setFocusedID(id);
-    writeWorkspaceToURL(selectedIDs, id, statusFilters, cwdFilters);
+    writeWorkspaceToURL(selectedIDs, pinnedIDs, id, statusFilters, cwdFilters);
   }
 
   function authenticate(event: FormEvent) {
@@ -771,14 +898,21 @@ export function App({
         created = await api.createSession("Terminal");
       }
       setSessions((current) => [...(current ?? []), created]);
-      const nextIDs = split ? [...selectedIDs, created.id] : [created.id];
+      const nextIDs = split
+        ? [...selectedIDs, created.id]
+        : [
+            ...new Set([
+              ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
+              created.id,
+            ]),
+          ];
       setSelectedIDs(nextIDs);
       setFocusedID(created.id);
       setStatusFilters([]);
       setCwdFilters([]);
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
-      writeWorkspaceToURL(nextIDs, created.id, [], []);
+      writeWorkspaceToURL(nextIDs, pinnedIDs, created.id, [], []);
       setRequestError("");
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
@@ -814,9 +948,17 @@ export function App({
       let nextIDs = selectedIDs.filter((id) => id !== item.id);
       if (nextIDs.length === 0 && remaining[0]) nextIDs = [remaining[0].id];
       const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;
+      const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
       setSelectedIDs(nextIDs);
+      setPinnedIDs(nextPinnedIDs);
       setFocusedID(nextFocus);
-      writeWorkspaceToURL(nextIDs, nextFocus, statusFilters, cwdFilters);
+      writeWorkspaceToURL(
+        nextIDs,
+        nextPinnedIDs,
+        nextFocus,
+        statusFilters,
+        cwdFilters,
+      );
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
     }
@@ -1028,9 +1170,12 @@ export function App({
       <SessionNavigation
         sessions={sessions}
         selectedIDs={selectedIDs}
+        pinnedIDs={pinnedIDs}
         statusFilters={statusFilters}
         cwdFilters={cwdFilters}
-        onSelect={selectSession}
+        onSelect={(id, multiple, pin) =>
+          selectSession(id, multiple, false, pin)
+        }
         onStatusFilter={updateStatusFilter}
         onStatusSelect={selectStatus}
         onCwdFilter={updateCwdFilter}
@@ -1091,7 +1236,7 @@ export function App({
                   active={focusedID === pane.id}
                   layoutVersion={panes.length}
                   tabShortcut={settings.paneTabShortcut}
-                  onDeselect={() => selectSession(pane.id, true, true)}
+                  onDeselect={() => selectSession(pane.id, true, true, false)}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
                       pane,

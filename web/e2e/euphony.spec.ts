@@ -376,6 +376,41 @@ test("keeps a selected split checkbox visibly checked", async ({ page }) => {
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
 });
 
+test("pins a terminal checkbox until that checkbox is clicked", async ({ page }) => {
+  await clearSessions(page);
+  const left = await createSession(page, "Left");
+  const right = await createSession(page, "Right");
+
+  await page.goto("/?token=test-token");
+  const leftCheckbox = page.getByRole("checkbox", {
+    name: "Include Left in split",
+  });
+  await leftCheckbox.click({ modifiers: ["Shift"] });
+  await expect(leftCheckbox).toHaveAttribute("data-pinned", "true");
+  await expect(page.locator(".pane-checkbox-pin")).toBeVisible();
+
+  await page.getByRole("button", { name: "Select Right" }).click();
+
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  let parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([left.id, right.id]);
+  expect(parameters.getAll("pin")).toEqual([left.id]);
+
+  await page.reload();
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: "Include Left in split" })
+    .click();
+
+  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([right.id]);
+  expect(parameters.getAll("pin")).toEqual([]);
+});
+
 test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
   await clearSessions(page);
   const left = await createSession(page, "Left", "/private/tmp");
