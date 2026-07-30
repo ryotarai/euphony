@@ -60,4 +60,3 @@ enumerable keys, or primitive values as changes.
   terminals, filters, attention, and agent launches still update the UI.
 - Run the complete Go, Vitest, TypeScript, build, and focused Playwright
   verification before merging.
-

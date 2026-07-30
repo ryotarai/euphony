@@ -217,4 +217,3 @@ git commit -m "perf: reduce idle terminal rendering"
 
 Merge the verified branch into the current base branch, resolving only
 overlapping changes in the files listed above.
-
