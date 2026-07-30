@@ -463,6 +463,48 @@ test("browses Git changes inside a terminal pane", async ({ page }, testInfo) =>
   }
 });
 
+test("browses workspace files inside a terminal pane", async ({ page }, testInfo) => {
+  await clearSessions(page);
+  const repo = await mkdtemp(`/tmp/euphony-e2e-${e2ePort}-files-`);
+  try {
+    await runGit(repo, "init", "-b", "main");
+    await mkdir(`${repo}/docs`, { recursive: true });
+    await writeFile(`${repo}/README.md`, "# Workspace\n");
+    await writeFile(`${repo}/docs/User Guide.md`, "first\nsecond\n");
+
+    await createSession(page, "File browser", repo);
+    await page.goto("/?token=test-token");
+    const pane = page.getByLabel("File browser pane", { exact: true });
+    await pane.getByRole("tab", { name: "Files" }).click();
+
+    await expect(pane.getByRole("navigation", {
+      name: "Workspace files",
+    })).toBeVisible();
+    await pane.getByRole("button", { name: "Expand docs" }).click();
+    await pane.getByRole("button", { name: "Open docs/User Guide.md" }).click();
+    await expect(pane.getByRole("heading", { name: "User Guide.md" })).toBeVisible();
+    await expect(pane.getByRole("table", {
+      name: "Contents of docs/User Guide.md",
+    })).toContainText("second");
+
+    await pane.getByRole("searchbox", { name: "Filter workspace files" })
+      .fill("readme");
+    await pane.getByRole("button", {
+      name: "Open search result README.md",
+    }).click();
+    await expect(pane.getByRole("heading", { name: "README.md" })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("workspace-files-tab.png") });
+
+    await page.setViewportSize({ width: 640, height: 720 });
+    const navigator = await pane.locator(".workspace-file-navigator").boundingBox();
+    const viewer = await pane.locator(".workspace-file-viewer").boundingBox();
+    expect(navigator?.y).toBeLessThan(viewer?.y ?? 0);
+  } finally {
+    await clearSessions(page);
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("auto-selects an attention terminal without moving focus", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First", "/tmp");
@@ -1257,6 +1299,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.keyboard.press("Meta+L");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   await page.keyboard.press("Meta+L");
+  await expect(page.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
+  await page.keyboard.press("Meta+L");
+  await expect(page.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
+  await page.keyboard.press("Meta+L");
   await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
 
   const sidebar = page.locator(".desktop-sidebar");
@@ -1324,6 +1370,8 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
+  await page.keyboard.press("Control+J");
+  await expect(page.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+A");

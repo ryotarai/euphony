@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   FileClockIcon,
+  FolderTreeIcon,
   GitCompareArrowsIcon,
   MessageSquareTextIcon,
   TerminalSquareIcon,
@@ -11,6 +12,7 @@ import type { AnnotationSession, Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
 import { AnnotationView } from "./AnnotationView";
 import { GitChangesView } from "./GitChangesView";
+import { WorkspaceFilesView } from "./WorkspaceFilesView";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -27,7 +29,7 @@ interface TerminalPaneProps {
   renderTerminal(layoutVersion: number, active: boolean, sourceVisible: boolean): ReactNode;
 }
 
-type PaneSource = "terminal" | "agent-log" | "changes" | "annotation";
+type PaneSource = "terminal" | "agent-log" | "changes" | "files" | "annotation";
 
 export function TerminalPane({
   session,
@@ -51,6 +53,7 @@ export function TerminalPane({
       next !== "terminal" &&
       next !== "agent-log" &&
       next !== "changes" &&
+      next !== "files" &&
       next !== "annotation"
     ) return;
     if (next === "annotation" && !annotation) return;
@@ -94,8 +97,8 @@ export function TerminalPane({
       event.preventDefault();
       event.stopPropagation();
       const sources: PaneSource[] = annotation
-        ? ["terminal", "agent-log", "changes", "annotation"]
-        : ["terminal", "agent-log", "changes"];
+        ? ["terminal", "agent-log", "changes", "files", "annotation"]
+        : ["terminal", "agent-log", "changes", "files"];
       const index = sources.indexOf(source);
       changeSource(sources[(index + 1) % sources.length]);
     };
@@ -133,6 +136,13 @@ export function TerminalPane({
           >
             <GitCompareArrowsIcon aria-hidden="true" />
           </TabsTrigger>
+          <TabsTrigger
+            value="files"
+            aria-label="Files"
+            title={`Files (${tabShortcut})`}
+          >
+            <FolderTreeIcon aria-hidden="true" />
+          </TabsTrigger>
           {annotation && (
             <TabsTrigger
               value="annotation"
@@ -160,7 +170,9 @@ export function TerminalPane({
                 ? `${agentLabel} log`
                 : source === "changes"
                   ? "Git changes"
-                  : annotation?.filename ?? "Annotation"}
+                  : source === "files"
+                    ? "Workspace files"
+                    : annotation?.filename ?? "Annotation"}
           </span>
           <Checkbox
             className="terminal-tab-selection"
@@ -205,6 +217,17 @@ export function TerminalPane({
           session={session}
           api={api}
           active={source === "changes"}
+        />
+      </TabsContent>
+      <TabsContent
+        className="terminal-tab-content"
+        value="files"
+        keepMounted
+      >
+        <WorkspaceFilesView
+          session={session}
+          api={api}
+          active={source === "files"}
         />
       </TabsContent>
       {annotation && (

@@ -26,6 +26,17 @@ function paneAPI(overrides: Partial<ApiClient> = {}): ApiClient {
       deletions: 0,
       files: [],
     }),
+    getWorkspaceDirectory: vi.fn().mockResolvedValue({
+      root: "/repo",
+      path: "",
+      entries: [],
+    }),
+    searchWorkspace: vi.fn().mockResolvedValue({
+      root: "/repo",
+      query: "",
+      matches: [],
+    }),
+    getWorkspaceFile: vi.fn(),
     getCurrentAnnotation: vi.fn().mockResolvedValue(null),
     completeAnnotation: vi.fn().mockResolvedValue({
       annotationId: "annotation-1",
@@ -70,6 +81,11 @@ test("switches pane sources while keeping the terminal mounted", async () => {
   await user.click(screen.getByRole("tab", { name: "Changes" }));
   expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
   expect(await screen.findByRole("region", { name: "Git changes" })).toBeVisible();
+  expect(screen.getByLabelText("live terminal")).not.toBeVisible();
+
+  await user.click(screen.getByRole("tab", { name: "Files" }));
+  expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
+  expect(await screen.findByRole("region", { name: "Workspace files" })).toBeVisible();
   expect(screen.getByLabelText("live terminal")).not.toBeVisible();
 
   await user.click(screen.getByRole("tab", { name: "Terminal" }));
@@ -184,6 +200,9 @@ test("toggles the active pane source with its configured shortcut", () => {
 
   fireEvent.keyDown(window, { key: "l", metaKey: true });
   expect(screen.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
+
+  fireEvent.keyDown(window, { key: "l", metaKey: true });
+  expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
 
   fireEvent.keyDown(window, { key: "l", metaKey: true });
   expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
