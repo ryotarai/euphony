@@ -464,6 +464,34 @@ test("inherits status filters into nested cwd controls and supports child overri
   await page.screenshot({ path: testInfo.outputPath("sidebar-settings.png") });
 });
 
+test("uses 0.5rem indentation for each sidebar hierarchy level", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Indented terminal", "/tmp");
+
+  await page.goto("/?token=test-token");
+  const statusX = (
+    await page.getByRole("checkbox", {
+      name: "Show all Terminal terminals",
+    }).boundingBox()
+  )?.x;
+  const cwdX = (
+    await page.getByRole("checkbox", {
+      name: "Include all terminals in /tmp",
+    }).boundingBox()
+  )?.x;
+  const terminalX = (
+    await page.getByRole("checkbox", {
+      name: "Include Indented terminal in split",
+    }).boundingBox()
+  )?.x;
+
+  expect(statusX).toBeDefined();
+  expect(cwdX).toBeDefined();
+  expect(terminalX).toBeDefined();
+  expect(cwdX! - statusX!).toBe(8);
+  expect(terminalX! - cwdX!).toBe(8);
+});
+
 test("uses a flush black workspace with only a divider between panes", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Left");
