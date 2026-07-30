@@ -34,6 +34,23 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   value: vi.fn(),
 });
 
+Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+  configurable: true,
+  value: function scrollTo(
+    this: HTMLElement,
+    optionsOrX?: ScrollToOptions | number,
+    y?: number,
+  ) {
+    if (typeof optionsOrX === "number") {
+      this.scrollLeft = optionsOrX;
+      this.scrollTop = y ?? 0;
+      return;
+    }
+    if (optionsOrX?.left !== undefined) this.scrollLeft = optionsOrX.left;
+    if (optionsOrX?.top !== undefined) this.scrollTop = optionsOrX.top;
+  },
+});
+
 afterEach(() => {
   cleanup();
   sessionStorage.clear();

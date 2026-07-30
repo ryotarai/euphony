@@ -114,7 +114,6 @@ test("parses split NDJSON event chunks without losing records", async () => {
 
   expect(events).toEqual(["terminal.created", "selection.changed"]);
 });
-
 test("reads and completes a terminal annotation through v1", async () => {
   const annotation: AnnotationSession = {
     id: "annotation-1",
@@ -163,6 +162,56 @@ test("reads and completes a terminal annotation through v1", async () => {
     expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ comments }),
+    }),
+  );
+});
+
+test("requests older and appended agent log pages with cursors", async () => {
+  const transcript = {
+    agent: "codex",
+    sessionId: "session-1",
+    entries: [],
+    startCursor: "100",
+    endCursor: "200",
+    nextCursor: "100",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify(transcript), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ETag: 'W/"older"' },
+    }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({
+      ...transcript,
+      startCursor: "200",
+      endCursor: "220",
+      nextCursor: undefined,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ETag: 'W/"newer"' },
+    }));
+  const api = new ApiClient("token");
+
+  await api.getAgentLog("terminal/one", { before: "100" });
+  await api.getAgentLog("terminal/one", {
+    after: "200",
+    etag: 'W/"older"',
+  });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/sessions/terminal%2Fone/agent-log?before=100",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions/terminal%2Fone/agent-log?after=200",
+    expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "If-None-Match": 'W/"older"',
+      }),
     }),
   );
 });

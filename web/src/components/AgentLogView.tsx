@@ -1,10 +1,12 @@
 import {
   isValidElement,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -124,9 +126,31 @@ function DetailEntry({ entry }: { entry: AgentLogEntry }) {
   );
 }
 
-function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
+function ToolGroupEntry({ entry }: { entry: AgentLogEntry }) {
+  const count = entry.toolCalls ?? 0;
+  return (
+    <div className="agent-log-tool-group" data-kind="tool_group">
+      <span>{count} tool {count === 1 ? "call" : "calls"}</span>
+      {entry.timestamp && <time dateTime={entry.timestamp}>{entryTime(entry.timestamp)}</time>}
+    </div>
+  );
+}
+
+interface TranscriptViewProps {
+  transcript: AgentTranscript;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  viewportRef: RefObject<HTMLDivElement | null>;
+}
+
+function TranscriptView({
+  transcript,
+  loadingMore,
+  onLoadMore,
+  viewportRef,
+}: TranscriptViewProps) {
   const entries = transcript.entries ?? [];
-  if (entries.length === 0) {
+  if (entries.length === 0 && !transcript.nextCursor) {
     return (
       <Empty className="agent-log-empty">
         <EmptyHeader>
@@ -146,8 +170,15 @@ function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
       defaultScrollPosition="end"
     >
       <MessageScroller className="agent-log-scroller">
-        <MessageScrollerViewport aria-label="Agent log">
+        <MessageScrollerViewport aria-label="Agent log" ref={viewportRef}>
           <MessageScrollerContent aria-label={`${transcript.agent} transcript`}>
+            {transcript.nextCursor && (
+              <div className="agent-log-load-more">
+                <button type="button" onClick={onLoadMore} disabled={loadingMore}>
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            )}
             {entries.map((entry) => (
               <MessageScrollerItem
                 key={entry.id}
@@ -156,6 +187,8 @@ function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
               >
                 {entry.kind === "message" ? (
                   <MessageEntry entry={entry} />
+                ) : entry.kind === "tool_group" ? (
+                  <ToolGroupEntry entry={entry} />
                 ) : (
                   <DetailEntry entry={entry} />
                 )}
@@ -169,12 +202,39 @@ function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
   );
 }
 
+function mergeAdjacentToolGroups(entries: AgentLogEntry[]): AgentLogEntry[] {
+  const merged: AgentLogEntry[] = [];
+  for (const entry of entries) {
+    const previous = merged[merged.length - 1];
+    if (entry.kind === "tool_group" && previous?.kind === "tool_group") {
+      merged[merged.length - 1] = {
+        ...previous,
+        toolCalls: (previous.toolCalls ?? 0) + (entry.toolCalls ?? 0),
+      };
+      continue;
+    }
+    merged.push(entry);
+  }
+  return merged;
+}
+
 export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogViewProps) {
   const [log, setLog] = useState<AgentTranscript | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
   const etagRef = useRef("");
+  const endCursorRef = useRef("");
+  const loadMoreGenerationRef = useRef(0);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const prependAdjustmentRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
+  const sessionKey = `${session.id}\u0000${session.agent ?? ""}`;
+  const sessionKeyRef = useRef(sessionKey);
+  sessionKeyRef.current = sessionKey;
   const linkedAgent = session.agent === "claude"
     ? "Claude"
     : session.agent === "codex"
@@ -187,7 +247,23 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     setLoading(true);
     setUnavailable(false);
     setError("");
+    setLoadingMore(false);
+    endCursorRef.current = "";
+    loadMoreGenerationRef.current++;
+    prependAdjustmentRef.current = null;
   }, [session.id, session.agent]);
+
+  useLayoutEffect(() => {
+    const adjustment = prependAdjustmentRef.current;
+    const viewport = viewportRef.current;
+    if (!adjustment || !viewport) return;
+    const frame = window.requestAnimationFrame(() => {
+      viewport.scrollTop =
+        adjustment.scrollTop + viewport.scrollHeight - adjustment.scrollHeight;
+      prependAdjustmentRef.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [log?.startCursor]);
 
   useEffect(() => {
     if (!active) return;
@@ -197,10 +273,38 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
       if (refreshing) return;
       refreshing = true;
       try {
-        const result = await api.getAgentLog(session.id, etagRef.current || undefined);
+        const after = endCursorRef.current;
+        const request = etagRef.current || after
+          ? {
+              ...(etagRef.current ? { etag: etagRef.current } : {}),
+              ...(after ? { after } : {}),
+            }
+          : undefined;
+        const result = await api.getAgentLog(session.id, request);
         if (!current) return;
         etagRef.current = result.etag;
-        if (result.log) setLog(result.log);
+        if (result.log) {
+          const nextLog = result.log;
+          setLog((currentLog) => {
+            if (
+              !currentLog ||
+              currentLog.sessionId !== nextLog.sessionId ||
+              (after && nextLog.startCursor !== after)
+            ) {
+              return nextLog;
+            }
+            if (!after) return nextLog;
+            return {
+              ...currentLog,
+              entries: mergeAdjacentToolGroups([
+                ...(currentLog.entries ?? []),
+                ...(nextLog.entries ?? []),
+              ]),
+              endCursor: nextLog.endCursor,
+            };
+          });
+          endCursorRef.current = nextLog.endCursor ?? "";
+        }
         setUnavailable(false);
         setError("");
       } catch (refreshError) {
@@ -224,6 +328,71 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     };
   }, [active, api, session.agent, session.id]);
 
+  const loadMore = async () => {
+    const before = log?.nextCursor;
+    if (!before || loadingMore) return;
+    const requestSessionKey = sessionKey;
+    const requestTranscriptID = log.sessionId;
+    const requestGeneration = ++loadMoreGenerationRef.current;
+    const viewport = viewportRef.current;
+    if (viewport) {
+      prependAdjustmentRef.current = {
+        scrollHeight: viewport.scrollHeight,
+        scrollTop: viewport.scrollTop,
+      };
+    }
+    setLoadingMore(true);
+    try {
+      const result = await api.getAgentLog(session.id, { before });
+      if (
+        sessionKeyRef.current !== requestSessionKey ||
+        loadMoreGenerationRef.current !== requestGeneration
+      ) {
+        return;
+      }
+      if (!result.log) {
+        prependAdjustmentRef.current = null;
+        return;
+      }
+      const olderLog = result.log;
+      setLog((currentLog) => {
+        if (
+          !currentLog ||
+          currentLog.sessionId !== requestTranscriptID ||
+          olderLog.sessionId !== requestTranscriptID
+        ) {
+          prependAdjustmentRef.current = null;
+          return currentLog;
+        }
+        return {
+          ...currentLog,
+          entries: mergeAdjacentToolGroups([
+            ...(olderLog.entries ?? []),
+            ...(currentLog.entries ?? []),
+          ]),
+          startCursor: olderLog.startCursor,
+          nextCursor: olderLog.nextCursor,
+        };
+      });
+    } catch (loadError) {
+      if (
+        sessionKeyRef.current !== requestSessionKey ||
+        loadMoreGenerationRef.current !== requestGeneration
+      ) {
+        return;
+      }
+      prependAdjustmentRef.current = null;
+      setError(errorMessage(loadError));
+    } finally {
+      if (
+        sessionKeyRef.current === requestSessionKey &&
+        loadMoreGenerationRef.current === requestGeneration
+      ) {
+        setLoadingMore(false);
+      }
+    }
+  };
+
   return (
     <section
       className="agent-log-view"
@@ -232,7 +401,12 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
       style={{ "--agent-log-font-size": `${fontSize}px` } as CSSProperties}
     >
       {log ? (
-        <TranscriptView transcript={log} />
+        <TranscriptView
+          transcript={log}
+          loadingMore={loadingMore}
+          onLoadMore={() => void loadMore()}
+          viewportRef={viewportRef}
+        />
       ) : loading ? (
         <div className="agent-log-loading" aria-label="Loading agent log">
           <Skeleton />

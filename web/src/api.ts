@@ -1,5 +1,6 @@
 import type {
   AgentLogResult,
+  AgentLogRequest,
   AgentTranscript,
   AnnotationComment,
   AnnotationResult,
@@ -144,18 +145,28 @@ export class ApiClient {
     return this.request(`/api/sessions/${encodeURIComponent(id)}/tickets`, { method: "POST" });
   }
 
-  async getAgentLog(id: string, etag?: string): Promise<AgentLogResult> {
+  async getAgentLog(
+    id: string,
+    request: AgentLogRequest = {},
+  ): Promise<AgentLogResult> {
+    const query = new URLSearchParams();
+    if (request.before) query.set("before", request.before);
+    if (request.after) query.set("after", request.after);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
     const response = await fetch(
-      `/api/sessions/${encodeURIComponent(id)}/agent-log`,
+      `/api/sessions/${encodeURIComponent(id)}/agent-log${suffix}`,
       {
         headers: {
           Authorization: `Bearer ${this.token}`,
-          ...(etag ? { "If-None-Match": etag } : {}),
+          ...(request.etag ? { "If-None-Match": request.etag } : {}),
         },
       },
     );
     if (response.status === 304) {
-      return { log: null, etag: response.headers.get("ETag") ?? etag ?? "" };
+      return {
+        log: null,
+        etag: response.headers.get("ETag") ?? request.etag ?? "",
+      };
     }
     if (!response.ok) {
       throw await this.apiError(response);
