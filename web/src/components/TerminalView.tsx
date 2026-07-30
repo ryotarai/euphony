@@ -51,13 +51,12 @@ export type ConnectionState = "connecting" | "connected" | "disconnected" | "exi
 interface TerminalGridGeometry {
   width: number;
   height: number;
-  cellWidth: number;
-  cellHeight: number;
 }
 
 const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
 const estimatedBytesPerScrollbackRow = 128;
+const terminalViewportGutter = 14;
 
 export function terminalScrollback(historyLimit: number): number {
   if (historyLimit === 0) return maxTerminalScrollback;
@@ -191,11 +190,14 @@ export function TerminalView({
     if (!host) return;
     let active = true;
     let replayingHistory = false;
+    let acceptedSizeReceived = false;
+    let queuedHistory: Uint8Array[] = [];
     let pendingHistoryWrites = 0;
     let historyStreamComplete = false;
     let socket: WebSocketLike | undefined;
     let gridMeasurementFrame: number | undefined;
     let lastSize = "";
+    let claimActive = false;
     let lastReportedCWD = session.cwd;
     const terminal = createTerminal(
       fontSize,
@@ -218,16 +220,52 @@ export function TerminalView({
       if (!cols || !rows) return;
       const size = `${cols}x${rows}`;
       if (size === lastSize) return;
-      if (send({ type: "resize", cols, rows })) lastSize = size;
+      if (send({ type: "resize", cols, rows })) {
+        lastSize = size;
+        claimActive = true;
+      }
     };
     const reportCapacity = () => {
-      if (host.hidden || host.closest("[hidden]")) return;
+      if (host.hidden || host.closest("[hidden]")) {
+        if (claimActive && send({ type: "resize_release" })) {
+          claimActive = false;
+          lastSize = "";
+        }
+        return;
+      }
       const dimensions = terminal.proposeDimensions?.();
       if (!dimensions || dimensions.cols < 1 || dimensions.rows < 1) return;
       setLocalSize(dimensions);
       sendResize(dimensions.cols, dimensions.rows);
     };
     capacityReporterRef.current = reportCapacity;
+    const writeHistory = (data: Uint8Array) => {
+      replayingHistory = true;
+      pendingHistoryWrites++;
+      try {
+        terminal.write(data, () => {
+          pendingHistoryWrites--;
+          if (
+            acceptedSizeReceived &&
+            historyStreamComplete &&
+            pendingHistoryWrites === 0 &&
+            queuedHistory.length === 0
+          ) {
+            replayingHistory = false;
+          }
+        });
+      } catch {
+        pendingHistoryWrites--;
+        if (
+          acceptedSizeReceived &&
+          historyStreamComplete &&
+          pendingHistoryWrites === 0 &&
+          queuedHistory.length === 0
+        ) {
+          replayingHistory = false;
+        }
+      }
+    };
     terminal.attachCustomKeyEventHandler?.((event) => {
       if (event.type !== "keydown" || event.isComposing || event.keyCode === 229) return true;
       if (event.key !== "Enter" || !event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
@@ -298,24 +336,26 @@ export function TerminalView({
             rows?: number;
           };
           if (message.type === "history" && message.data) {
-            replayingHistory = true;
-            pendingHistoryWrites++;
             try {
-              terminal.write(decodeTerminalData(message.data), () => {
-                pendingHistoryWrites--;
-                if (historyStreamComplete && pendingHistoryWrites === 0) {
-                  replayingHistory = false;
-                }
-              });
-            } catch {
-              pendingHistoryWrites--;
-              if (historyStreamComplete && pendingHistoryWrites === 0) {
-                replayingHistory = false;
+              const data = decodeTerminalData(message.data);
+              replayingHistory = true;
+              if (acceptedSizeReceived) {
+                writeHistory(data);
+              } else {
+                queuedHistory.push(data);
               }
+            } catch {
+              // Ignore malformed terminal history.
             }
           } else if (message.type === "history_end") {
             historyStreamComplete = true;
-            if (pendingHistoryWrites === 0) replayingHistory = false;
+            if (
+              acceptedSizeReceived &&
+              pendingHistoryWrites === 0 &&
+              queuedHistory.length === 0
+            ) {
+              replayingHistory = false;
+            }
           } else if (message.type === "output" && message.data) {
             try {
               terminal.write(decodeTerminalData(message.data));
@@ -333,6 +373,7 @@ export function TerminalView({
           ) {
             terminal.resize?.(message.cols!, message.rows!);
             const acceptedSize = { cols: message.cols!, rows: message.rows! };
+            acceptedSizeReceived = true;
             setSharedSize(acceptedSize);
             if (gridMeasurementFrame !== undefined) {
               window.cancelAnimationFrame(gridMeasurementFrame);
@@ -343,12 +384,22 @@ export function TerminalView({
               const bounds = screen.getBoundingClientRect();
               if (bounds.width <= 0 || bounds.height <= 0) return;
               setGridGeometry({
-                width: bounds.width,
+                width: bounds.width + terminalViewportGutter,
                 height: bounds.height,
-                cellWidth: bounds.width / acceptedSize.cols,
-                cellHeight: bounds.height / acceptedSize.rows,
               });
             });
+            const history = queuedHistory;
+            queuedHistory = [];
+            for (const data of history) {
+              writeHistory(data);
+            }
+            if (
+              historyStreamComplete &&
+              pendingHistoryWrites === 0 &&
+              queuedHistory.length === 0
+            ) {
+              replayingHistory = false;
+            }
           } else if (message.type === "exit") {
             setConnection("exited");
             terminal.write(`\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`);
@@ -392,6 +443,7 @@ export function TerminalView({
   useEffect(() => {
     const terminal = terminalRef.current;
     if (active && terminal) focusTerminal(terminal);
+    capacityReporterRef.current();
   }, [active]);
 
   useEffect(() => {
@@ -401,23 +453,17 @@ export function TerminalView({
     return () => window.clearTimeout(timer);
   }, [layoutVersion]);
 
-  const paddingStyle = gridGeometry
+  const terminalHostStyle = gridGeometry
     ? ({
-        "--terminal-cell-width": `${gridGeometry.cellWidth}px`,
-        "--terminal-cell-height": `${gridGeometry.cellHeight}px`,
+        "--terminal-grid-width": `${gridGeometry.width}px`,
+        "--terminal-grid-height": `${gridGeometry.height}px`,
       } as CSSProperties)
     : undefined;
-  const showRightPadding = Boolean(
-    paddingStyle &&
+  const centerSharedGrid = Boolean(
+    terminalHostStyle &&
       localSize &&
       sharedSize &&
-      sharedSize.cols < localSize.cols,
-  );
-  const showBottomPadding = Boolean(
-    paddingStyle &&
-      localSize &&
-      sharedSize &&
-      sharedSize.rows < localSize.rows,
+      (sharedSize.cols < localSize.cols || sharedSize.rows < localSize.rows),
   );
 
   return (
@@ -429,30 +475,13 @@ export function TerminalView({
       data-shared-cols={sharedSize?.cols}
       data-shared-rows={sharedSize?.rows}
     >
-      <div className="terminal-host-frame">
-        <div className="terminal-host" ref={hostRef} aria-label={`${session.name} terminal`} />
-        {showRightPadding && gridGeometry && (
-          <div
-            className="terminal-size-padding terminal-size-padding-right"
-            aria-hidden="true"
-            style={{
-              ...paddingStyle,
-              left: `${gridGeometry.width}px`,
-              height: `${gridGeometry.height}px`,
-            }}
-          />
-        )}
-        {showBottomPadding && gridGeometry && (
-          <div
-            className="terminal-size-padding terminal-size-padding-bottom"
-            aria-hidden="true"
-            style={{
-              ...paddingStyle,
-              top: `${gridGeometry.height}px`,
-            }}
-          />
-        )}
-      </div>
+      <div
+        className="terminal-host"
+        ref={hostRef}
+        aria-label={`${session.name} terminal`}
+        data-centered={centerSharedGrid ? "true" : undefined}
+        style={terminalHostStyle}
+      />
       {copied && (
         <div className="copied-toast" data-slot="copied-toast" role="status">
           <CheckIcon data-slot="copied-icon" aria-hidden="true" />

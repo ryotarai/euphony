@@ -732,8 +732,14 @@ func TestResizeValidatesBounds(t *testing.T) {
 	if err := running.Resize(80, 1001); err == nil {
 		t.Fatal("Resize(80, 1001) error = nil")
 	}
+	if cols, rows := running.Dimensions(); cols != 80 || rows != 24 {
+		t.Fatalf("initial Dimensions() = %dx%d, want 80x24", cols, rows)
+	}
 	if err := running.Resize(120, 40); err != nil {
 		t.Fatalf("Resize(120, 40) error = %v", err)
+	}
+	if cols, rows := running.Dimensions(); cols != 120 || rows != 40 {
+		t.Fatalf("Dimensions() after resize = %dx%d, want 120x40", cols, rows)
 	}
 }
 

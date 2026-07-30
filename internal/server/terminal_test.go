@@ -201,6 +201,16 @@ func TestTerminalWebSocketsShareSmallestSize(t *testing.T) {
 	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 80, 24)
 	assertTerminalResize(t, readTerminalMessage(t, ctx, small, "resize"), 80, 24)
 
+	release, _ := json.Marshal(clientMessage{Type: "resize_release"})
+	if err := small.Write(ctx, websocket.MessageText, release); err != nil {
+		t.Fatalf("small Write(resize_release) error = %v", err)
+	}
+	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 120, 40)
+
+	writeTerminalResize(t, ctx, small, 80, 24)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 80, 24)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, small, "resize"), 80, 24)
+
 	if err := small.Close(websocket.StatusNormalClosure, "smaller browser closed"); err != nil {
 		t.Fatalf("small Close() error = %v", err)
 	}

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every browser attached to one terminal use the smallest connected browser capacity and show tmux-style dotted padding in larger viewports.
+**Goal:** Make every browser attached to one terminal use the smallest connected browser capacity and center that shared grid in larger viewports.
 
-**Architecture:** A server-owned coordinator records one capacity claim per interactive WebSocket, applies the component-wise minimum to the PTY, and publishes accepted sizes through the existing single WebSocket writer. The browser measures capacity without fitting xterm, reports claims, applies only accepted server sizes, and overlays a cell-aligned dot pattern in unused right and bottom regions.
+**Architecture:** A server-owned coordinator records one capacity claim per interactive WebSocket, publishes the component-wise minimum before applying it to the PTY, and releases hidden claims. The browser measures capacity without fitting xterm, buffers initial history until an accepted size arrives, applies only server sizes, and centers the native-scale xterm root in unmarked letterbox space.
 
 **Tech Stack:** Go 1.25, `coder/websocket`, React 19, TypeScript, xterm.js 6, Vitest, Playwright
 
@@ -27,7 +27,7 @@
 **Interfaces:**
 - Produces: `terminalDimensions{Cols uint16, Rows uint16}`
 - Produces: `newTerminalSizeCoordinator() *terminalSizeCoordinator`
-- Produces: `(*terminalSizeCoordinator).subscribe(terminalID string, apply func(uint16, uint16) error) (report func(uint16, uint16) error, updates <-chan terminalDimensions, unsubscribe func())`
+- Produces: `(*terminalSizeCoordinator).subscribe(terminalID string, initial terminalDimensions, apply func(uint16, uint16) error) (report func(uint16, uint16) error, release func() error, updates <-chan terminalDimensions, unsubscribe func())`
 
 - [ ] **Step 1: Write the failing minimum-and-disconnect test**
 
@@ -62,9 +62,13 @@ func TestTerminalSizeCoordinatorUsesSmallestClaimAndGrowsAfterDisconnect(t *test
 		return nil
 	}
 	coordinator := newTerminalSizeCoordinator()
-	reportLarge, largeUpdates, stopLarge := coordinator.subscribe("terminal", apply)
+	reportLarge, _, largeUpdates, stopLarge := coordinator.subscribe(
+		"terminal", terminalDimensions{Cols: 80, Rows: 24}, apply,
+	)
 	defer stopLarge()
-	reportSmall, smallUpdates, stopSmall := coordinator.subscribe("terminal", apply)
+	reportSmall, _, smallUpdates, stopSmall := coordinator.subscribe(
+		"terminal", terminalDimensions{Cols: 80, Rows: 24}, apply,
+	)
 
 	mustReport(t, reportLarge, 120, 40)
 	mustReadDimensions(t, largeUpdates, terminalDimensions{Cols: 120, Rows: 40})
@@ -101,15 +105,15 @@ Expected: compile failure because `terminalSizeCoordinator` does not exist.
 Use a mutex-protected map keyed by terminal ID. Each terminal entry contains
 client claims, buffered update channels, the last accepted minimum, and the PTY
 apply function. Validate each claim before storing it. Recompute the minimum
-under the mutex, call `apply` once when it changes, then replace the pending
-value in every claimed client's capacity-one update channel.
+under the mutex, publish it to every claimed client's capacity-one channel,
+then call `apply` once so SIGWINCH output follows the queued resize frame.
 
 - [ ] **Step 4: Add invalid-and-failed-apply tests**
 
 Assert `0x24` and `1001x24` return the same bounds error used by the session
 layer and publish nothing. Configure `apply` to fail for `80x24`, assert the
-previous `120x40` claim remains accepted, and prove a later valid update can
-still succeed.
+previous `120x40` accepted size is republished as a rollback, and prove a later
+valid update can still succeed.
 
 - [ ] **Step 5: Run coordinator tests and verify GREEN**
 
@@ -238,24 +242,22 @@ capacity claims so accepted sizes cannot feed back into negotiation.
 - [ ] **Step 4: Apply accepted server sizes**
 
 Validate positive `cols` and `rows`, call `terminal.resize`, store the shared
-size, and update the four diagnostic data attributes. Keep output/history
-handling unchanged.
+size, and update the four diagnostic data attributes. Buffer initial history
+until this first accepted size is applied, and send `resize_release` when the
+host becomes hidden.
 
-- [ ] **Step 5: Write the failing dotted-padding test**
+- [ ] **Step 5: Write the failing centered-letterbox test**
 
 Set the host rectangle to `1200x800`, local capacity to `120x40`, and accepted
-size to `80x24`. Stub `.xterm-screen` to `800x480`. Assert a right padding
-element starts at `800px`, a bottom padding element starts at `480px`, both
-have the accepted cell size variables, and neither element exists after an
-accepted `120x40` update.
+size to `80x24`. Stub `.xterm-screen` to `800x480`. Assert the native-scale
+xterm root is centered in the host without a dot overlay, and centering is
+removed after an accepted `120x40` update.
 
-- [ ] **Step 6: Implement the padding overlays**
+- [ ] **Step 6: Implement centered letterboxing**
 
-Render `.terminal-size-padding-right` and `.terminal-size-padding-bottom` only
-when shared size is smaller than local capacity. Set pixel geometry from the
-rendered `.xterm-screen`; use `requestAnimationFrame` after `terminal.resize`
-to capture the settled screen. Style both overlays with `pointer-events: none`,
-the existing terminal foreground color, and one radial-gradient dot per cell.
+Measure the rendered `.xterm-screen` after `terminal.resize`, size the xterm
+root to that native grid plus its viewport gutter, and center it with CSS.
+Leave the surrounding host black and unmarked; do not scale the terminal.
 
 - [ ] **Step 7: Run frontend tests, typecheck, and build**
 
@@ -283,16 +285,16 @@ git commit -m "feat: render shared terminal grid"
 
 **Interfaces:**
 - Consumes: `.terminal-view` local/shared data attributes
-- Consumes: `.terminal-size-padding-right` and `.terminal-size-padding-bottom`
+- Consumes: `.terminal-host[data-centered="true"]`
 
 - [ ] **Step 1: Write the failing two-page Playwright test**
 
 Open the same selected terminal in a `900x600` page and a `1400x900` page.
 Wait for both connections, assert both pages report identical shared columns
 and rows equal to the component-wise minimum of their local attributes, and
-assert the larger page displays at least one padding overlay. Close the smaller
-page, then assert the larger page's shared attributes equal its local
-attributes and both padding overlays disappear.
+assert the larger page centers the xterm root. Close the smaller page, then
+assert the larger page's shared attributes equal its local attributes and the
+terminal returns to filling its host.
 
 - [ ] **Step 2: Run the focused Playwright test**
 

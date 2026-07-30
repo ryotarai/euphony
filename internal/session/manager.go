@@ -299,6 +299,8 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 			id:          metadata.ID,
 			command:     command,
 			terminal:    terminal,
+			cols:        80,
+			rows:        24,
 			waitDone:    make(chan struct{}),
 			pumpDone:    make(chan struct{}),
 			subscribers: make(map[uint64]*outputSubscriber),

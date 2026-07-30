@@ -219,9 +219,10 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
   ]);
 });
 
-test("renders cell-aligned dotted padding outside the accepted shared size", async () => {
+test("centers the accepted shared grid without scaling it", async () => {
   const socket = new FakeSocket();
   let screenElement: HTMLDivElement | undefined;
+  let terminalElement: HTMLDivElement | undefined;
   let screenWidth = 1200;
   let screenHeight = 800;
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -230,6 +231,8 @@ test("renders cell-aligned dotted padding outside the accepted shared size", asy
   });
   const terminal = {
     open: (host: HTMLElement) => {
+      terminalElement = document.createElement("div");
+      terminalElement.className = "xterm";
       screenElement = document.createElement("div");
       screenElement.className = "xterm-screen";
       screenElement.getBoundingClientRect = () => ({
@@ -243,7 +246,8 @@ test("renders cell-aligned dotted padding outside the accepted shared size", asy
         height: screenHeight,
         toJSON: () => ({}),
       });
-      host.append(screenElement);
+      terminalElement.append(screenElement);
+      host.append(terminalElement);
     },
     write: () => undefined,
     focus: () => undefined,
@@ -258,7 +262,7 @@ test("renders cell-aligned dotted padding outside the accepted shared size", asy
     onSelectionChange: () => () => undefined,
     onData: () => () => undefined,
     onResize: () => () => undefined,
-    dispose: () => screenElement?.remove(),
+    dispose: () => terminalElement?.remove(),
   } as TerminalDriver & {
     proposeDimensions(): { cols: number; rows: number };
     resize(cols: number, rows: number): void;
@@ -287,19 +291,67 @@ test("renders cell-aligned dotted padding outside the accepted shared size", asy
   expect(view).toHaveAttribute("data-local-rows", "40");
   expect(view).toHaveAttribute("data-shared-cols", "80");
   expect(view).toHaveAttribute("data-shared-rows", "24");
-  const rightPadding = view.querySelector<HTMLElement>(".terminal-size-padding-right");
-  const bottomPadding = view.querySelector<HTMLElement>(".terminal-size-padding-bottom");
-  expect(rightPadding).not.toBeNull();
-  expect(bottomPadding).not.toBeNull();
-  expect(rightPadding).toHaveStyle({ left: "800px", height: "480px" });
-  expect(bottomPadding).toHaveStyle({ top: "480px" });
-  expect(rightPadding?.style.getPropertyValue("--terminal-cell-width")).toBe("10px");
-  expect(rightPadding?.style.getPropertyValue("--terminal-cell-height")).toBe("20px");
+  const host = screen.getByLabelText("Codex terminal");
+  expect(host).toHaveAttribute("data-centered", "true");
+  expect(host.style.getPropertyValue("--terminal-grid-width")).toBe("814px");
+  expect(host.style.getPropertyValue("--terminal-grid-height")).toBe("480px");
+  expect(view.querySelector(".terminal-size-padding")).not.toBeInTheDocument();
 
   act(() => socket.receive({ type: "resize", cols: 120, rows: 40 }));
 
-  expect(view.querySelector(".terminal-size-padding-right")).not.toBeInTheDocument();
-  expect(view.querySelector(".terminal-size-padding-bottom")).not.toBeInTheDocument();
+  expect(host).not.toHaveAttribute("data-centered");
+});
+
+test("holds terminal history until the first accepted size is applied", async () => {
+  const socket = new FakeSocket();
+  const operations: string[] = [];
+  const terminal = {
+    open: () => undefined,
+    write: (data: string | Uint8Array, callback?: () => void) => {
+      operations.push(`write:${terminalText(data)}`);
+      callback?.();
+    },
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => ({ cols: 120, rows: 40 }),
+    resize: (cols: number, rows: number) => {
+      operations.push(`resize:${cols}x${rows}`);
+    },
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => {
+    socket.receive({ type: "history", data: encodeTerminalData("previous output") });
+    socket.receive({ type: "history_end" });
+  });
+  expect(operations).toEqual([]);
+
+  act(() => socket.receive({ type: "resize", cols: 80, rows: 24 }));
+  expect(operations).toEqual([
+    "resize:80x24",
+    "write:previous output",
+  ]);
 });
 
 test("reports an absolute terminal title as the current working directory", async () => {
@@ -387,6 +439,7 @@ test("does not report a stale working directory from replayed history", async ()
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
   act(() => {
+    socket.receive({ type: "resize", cols: 80, rows: 24 });
     socket.receive({ type: "history", data: encodeTerminalData("stale title") });
     socket.receive({ type: "history_end" });
   });
@@ -560,6 +613,7 @@ test("remeasures terminal capacity when its pane changes size", async () => {
     />,
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  proposeDimensions.mockClear();
 
   act(() => notifyResize?.());
 
@@ -665,6 +719,63 @@ test("focuses the terminal only when its pane becomes active", async () => {
   expect(focus).toHaveBeenCalledTimes(1);
 });
 
+test("releases a hidden terminal capacity and reports it again when visible", async () => {
+  const socket = new FakeSocket();
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => ({ cols: 120, rows: 40 }),
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const createTerminal = () => terminal;
+  const createSocket = () => socket;
+  const view = (hidden: boolean) => (
+    <div hidden={hidden}>
+      <TerminalView
+        session={runningSession}
+        api={api}
+        active={!hidden}
+        createTerminal={createTerminal}
+        createSocket={createSocket}
+      />
+    </div>
+  );
+
+  const { rerender } = render(view(false));
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  act(() => socket.dispatchEvent(new Event("open")));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+
+  rerender(view(true));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+    { type: "resize_release" },
+  ]);
+
+  rerender(view(false));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+    { type: "resize_release" },
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+});
+
 test("does not steal focus from an open modal when the terminal connects", async () => {
   const socket = new FakeSocket();
   const focus = vi.fn();
@@ -742,6 +853,7 @@ test("does not send terminal query responses generated while replaying history",
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
   act(() => {
+    socket.receive({ type: "resize", cols: 80, rows: 24 });
     socket.receive({ type: "history", data: encodeTerminalData("query") });
     socket.receive({ type: "history_end" });
   });
@@ -788,6 +900,7 @@ test("keeps replay-generated terminal replies suppressed until the write complet
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
   act(() => {
+    socket.receive({ type: "resize", cols: 80, rows: 24 });
     socket.receive({ type: "history", data: encodeTerminalData("first \u001b[c") });
     socket.receive({ type: "history", data: encodeTerminalData("second \u001b[c") });
     socket.receive({ type: "history_end" });

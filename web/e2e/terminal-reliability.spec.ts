@@ -203,11 +203,34 @@ test("shares the smallest terminal size across differently sized browsers", asyn
     ]);
     expect(largeGrid.localCols).toBeGreaterThan(smallGrid.localCols);
     expect(largeGrid.localRows).toBeGreaterThan(smallGrid.localRows);
-    await expect(
-      largePage.locator(
-        ".terminal-size-padding-right, .terminal-size-padding-bottom",
-      ),
-    ).not.toHaveCount(0);
+    const largeHost = largePage.getByLabel("Shared terminal terminal", {
+      exact: true,
+    });
+    await expect(largeHost).toHaveAttribute("data-centered", "true");
+    const centeredBounds = await largeHost.evaluate((host) => {
+      const terminal = host.querySelector<HTMLElement>(".xterm");
+      const hostBounds = host.getBoundingClientRect();
+      const terminalBounds = terminal?.getBoundingClientRect();
+      return terminalBounds
+        ? {
+            horizontal:
+              Math.abs(
+                terminalBounds.left -
+                  hostBounds.left -
+                  (hostBounds.width - terminalBounds.width) / 2,
+              ),
+            vertical:
+              Math.abs(
+                terminalBounds.top -
+                  hostBounds.top -
+                  (hostBounds.height - terminalBounds.height) / 2,
+              ),
+          }
+        : null;
+    });
+    expect(centeredBounds).not.toBeNull();
+    expect(centeredBounds!.horizontal).toBeLessThanOrEqual(1);
+    expect(centeredBounds!.vertical).toBeLessThanOrEqual(1);
 
     await smallContext.close();
     await expect.poll(async () => {
@@ -217,11 +240,7 @@ test("shares the smallest terminal size across differently sized browsers", asyn
         grid.sharedRows === grid.localRows
       );
     }).toBe(true);
-    await expect(
-      largePage.locator(
-        ".terminal-size-padding-right, .terminal-size-padding-bottom",
-      ),
-    ).toHaveCount(0);
+    await expect(largeHost).not.toHaveAttribute("data-centered");
   } finally {
     await smallContext.close().catch(() => undefined);
     await largeContext.close();

@@ -44,5 +44,7 @@
   multi-megabyte files stay cheap to poll.
 - Keep CJK punctuation spacing untrimmed inside terminal renderers so every
   full-width glyph occupies the same cell geometry.
+- Center a negotiated shared terminal grid in quiet, unmarked letterbox space;
+  do not imitate tmux's dotted filler or scale terminal cells.
 - Exercise public automation features through the built CLI against both the
   Unix socket and TCP API; do not treat handler-only tests as transport proof.

@@ -8,9 +8,9 @@ to the PTY. The most recent resize therefore wins, even when another connected
 browser cannot display that size. Full-screen terminal applications wrap and
 redraw against one geometry while other browsers render with another.
 
-The desired behavior matches tmux: the PTY uses the smallest capacity reported
-by any attached interactive browser, and larger browsers show a dotted unused
-area outside that shared grid.
+The desired negotiation matches tmux: the PTY uses the smallest capacity
+reported by any attached interactive browser. Unlike tmux, larger browser
+viewports center the shared terminal grid in quiet, unmarked letterbox space.
 
 ## Requirements
 
@@ -22,8 +22,9 @@ area outside that shared grid.
 - Keep the last PTY size when no browser remains connected.
 - Exclude read-only automation streams and connections that have not reported a
   size.
-- Render unused cells on the right and bottom of larger browser viewports with
-  a middle-dot pattern aligned to the terminal cell grid.
+- Center the shared grid at its native scale in larger browser viewports.
+- Release the capacity claim while a terminal tab is hidden and report it again
+  when the tab becomes visible.
 - Preserve the existing terminal palette, typography, input, history, and
   reconnect behavior.
 
@@ -34,8 +35,9 @@ area outside that shared grid.
 A focused `terminalSizeCoordinator` owned by `Server` stores size claims by
 terminal ID and connection ID. Reporting a valid claim or removing a claimed
 connection recomputes the component-wise minimum. When that minimum changes,
-the coordinator resizes the PTY once and publishes the accepted size to all
-claimed connections for that terminal.
+the coordinator publishes the accepted size before resizing the PTY. The
+existing writer prioritizes that pending resize frame, so output generated in
+response to SIGWINCH follows the new geometry on every WebSocket.
 
 Each terminal WebSocket subscribes to a buffered accepted-size channel. The
 existing single writer goroutine serializes history, output, exit, and accepted
@@ -47,8 +49,9 @@ message has this browser protocol shape:
 ```
 
 Invalid claims continue to count toward the existing invalid-message policy.
-If applying a new minimum fails, the failed claim is rolled back and no
-accepted size is published.
+If applying a new minimum fails, the failed claim and accepted size are rolled
+back, and the previous PTY size is republished. A `resize_release` message
+temporarily removes a hidden browser's claim without disconnecting it.
 
 ### Browser capacity and accepted size
 
@@ -61,25 +64,24 @@ Only an accepted server resize calls `Terminal.resize(cols, rows)`. This avoids
 feeding the shared size back as a new local claim and ensures every browser
 renders terminal bytes using the PTY geometry.
 
-### Dotted unused area
+History bytes received before the first accepted resize remain queued. They are
+replayed only after xterm applies that size, preserving wrapping and cursor
+addressing against the negotiated grid.
+
+### Centered browser letterboxing
 
 `TerminalView` records the local capacity and accepted shared size. After an
-accepted resize, it measures the rendered `.xterm-screen` and places two
-pointer-transparent overlays above only the unused regions:
-
-- a right strip alongside the accepted rows;
-- a bottom strip across the available width.
-
-Each overlay uses a repeating radial gradient with one light middle-dot-sized
-mark per terminal cell. No label, animation, border, or new interaction is
-introduced. When the accepted size equals local capacity, the overlays are not
-rendered.
+accepted resize, it measures the rendered `.xterm-screen` and centers the
+entire xterm root at that native pixel size. The surrounding space remains the
+existing terminal black with no dots, border, scaling, label, or animation.
+When the accepted size equals local capacity, xterm fills the host normally.
 
 ## Error Handling
 
 - Capacities outside 1 through 1000 columns or rows are rejected before they
   enter coordination.
-- A hidden terminal does not report a zero or stale capacity.
+- A hidden terminal releases its previous claim instead of reporting zero or
+  retaining stale capacity.
 - A malformed or unknown server resize is ignored.
 - Disconnect cleanup is idempotent.
 - If the PTY cannot be resized after a disconnect, the previous accepted size
@@ -87,21 +89,22 @@ rendered.
 
 ## Testing
 
-- Go unit tests cover minimum selection, unchanged minima, invalid claims, and
-  growth after disconnect.
+- Go unit tests cover minimum selection, unchanged minima, invalid claims,
+  release/rejoin, publish-before-apply ordering, and growth after disconnect.
 - Server WebSocket tests cover two browser connections receiving the same
   accepted minimum.
 - Vitest covers capacity reporting, accepted resize application, prevention of
-  resize feedback, dotted-padding geometry, and growth after a server update.
+  resize feedback, history-before-resize buffering, hidden claim release, and
+  centered letterbox geometry.
 - Playwright opens the same terminal in differently sized browser pages,
-  verifies a common accepted grid and dotted padding in the larger page, then
-  closes the smaller page and verifies expansion.
+  verifies a common accepted grid centered in the larger page, then closes the
+  smaller page and verifies expansion to the full viewport.
 - The full Go, Vitest, TypeScript, production build, and Playwright suites run
   before completion.
 
 ## Assumptions
 
-The user's tmux comparison fully specifies the negotiation policy and dotted
-visual treatment. Project instructions explicitly require continuing through
-implementation without pausing for design approval, so this design proceeds
-without an intermediate approval gate.
+The user's tmux comparison specifies the negotiation policy. Follow-up feedback
+replaces tmux's dotted filler with browser-native centered letterboxing.
+Project instructions explicitly require continuing through implementation
+without pausing for design approval.

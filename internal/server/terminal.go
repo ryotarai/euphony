@@ -78,11 +78,14 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 	history, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
 	defer unsubscribe()
 	var reportSize func(uint16, uint16) error
+	var releaseSize func() error
 	var sizeUpdates <-chan terminalDimensions
 	if !ticket.readOnly {
 		var unsubscribeSize func()
-		reportSize, sizeUpdates, unsubscribeSize = s.terminalSizes.subscribe(
+		cols, rows := terminal.Dimensions()
+		reportSize, releaseSize, sizeUpdates, unsubscribeSize = s.terminalSizes.subscribe(
 			id,
+			terminalDimensions{Cols: cols, Rows: rows},
 			terminal.Resize,
 		)
 		defer unsubscribeSize()
@@ -199,6 +202,10 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 				}
 			case "resize":
 				if reportSize == nil || reportSize(message.Cols, message.Rows) != nil {
+					invalidMessages++
+				}
+			case "resize_release":
+				if releaseSize == nil || releaseSize() != nil {
 					invalidMessages++
 				}
 			case "cwd":

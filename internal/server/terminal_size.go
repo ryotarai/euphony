@@ -41,9 +41,11 @@ func newTerminalSizeCoordinator() *terminalSizeCoordinator {
 
 func (c *terminalSizeCoordinator) subscribe(
 	terminalID string,
+	initial terminalDimensions,
 	apply func(uint16, uint16) error,
 ) (
 	func(uint16, uint16) error,
+	func() error,
 	<-chan terminalDimensions,
 	func(),
 ) {
@@ -51,8 +53,10 @@ func (c *terminalSizeCoordinator) subscribe(
 	group, ok := c.groups[terminalID]
 	if !ok {
 		group = &terminalSizeGroup{
-			apply:   apply,
-			clients: make(map[uint64]*terminalSizeClient),
+			apply:       apply,
+			clients:     make(map[uint64]*terminalSizeClient),
+			accepted:    initial,
+			hasAccepted: validTerminalDimensions(initial),
 		}
 		c.groups[terminalID] = group
 	}
@@ -70,13 +74,16 @@ func (c *terminalSizeCoordinator) subscribe(
 			Rows: rows,
 		})
 	}
+	release := func() error {
+		return c.release(terminalID, clientID)
+	}
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
 			c.unsubscribe(terminalID, clientID)
 		})
 	}
-	return report, client.updates, stop
+	return report, release, client.updates, stop
 }
 
 func (c *terminalSizeCoordinator) report(
@@ -113,14 +120,64 @@ func (c *terminalSizeCoordinator) report(
 		}
 		return nil
 	}
+	previousAccepted := group.accepted
+	previouslyAccepted := group.hasAccepted
+	group.accepted = next
+	group.hasAccepted = true
+	publishAcceptedTerminalDimensions(group)
 	if err := group.apply(next.Cols, next.Rows); err != nil {
 		client.dimensions = previousDimensions
 		client.reported = previouslyReported
+		group.accepted = previousAccepted
+		group.hasAccepted = previouslyAccepted
+		if group.hasAccepted {
+			publishAcceptedTerminalDimensions(group)
+			if !previouslyReported {
+				publishTerminalDimensions(client.updates, group.accepted)
+			}
+		}
 		return err
+	}
+	return nil
+}
+
+func (c *terminalSizeCoordinator) release(
+	terminalID string,
+	clientID uint64,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	group, ok := c.groups[terminalID]
+	if !ok {
+		return errors.New("terminal size subscription is closed")
+	}
+	client, ok := group.clients[clientID]
+	if !ok {
+		return errors.New("terminal size subscription is closed")
+	}
+	if !client.reported {
+		return nil
+	}
+
+	previousAccepted := group.accepted
+	previouslyAccepted := group.hasAccepted
+	client.reported = false
+	next, hasNext := minimumTerminalDimensions(group.clients)
+	if !hasNext || (group.hasAccepted && next == group.accepted) {
+		return nil
 	}
 	group.accepted = next
 	group.hasAccepted = true
 	publishAcceptedTerminalDimensions(group)
+	if err := group.apply(next.Cols, next.Rows); err != nil {
+		client.reported = true
+		group.accepted = previousAccepted
+		group.hasAccepted = previouslyAccepted
+		if group.hasAccepted {
+			publishAcceptedTerminalDimensions(group)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -147,12 +204,19 @@ func (c *terminalSizeCoordinator) unsubscribe(terminalID string, clientID uint64
 	if !hasNext || (group.hasAccepted && next == group.accepted) {
 		return
 	}
-	if err := group.apply(next.Cols, next.Rows); err != nil {
-		return
-	}
+	previousAccepted := group.accepted
+	previouslyAccepted := group.hasAccepted
 	group.accepted = next
 	group.hasAccepted = true
 	publishAcceptedTerminalDimensions(group)
+	if err := group.apply(next.Cols, next.Rows); err != nil {
+		group.accepted = previousAccepted
+		group.hasAccepted = previouslyAccepted
+		if group.hasAccepted {
+			publishAcceptedTerminalDimensions(group)
+		}
+		return
+	}
 }
 
 func validTerminalDimensions(dimensions terminalDimensions) bool {

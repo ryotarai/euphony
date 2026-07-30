@@ -28,6 +28,8 @@ type Session struct {
 	pumpDone       chan struct{}
 	close          sync.Once
 	fileMu         sync.Mutex
+	cols           uint16
+	rows           uint16
 	outputMu       sync.Mutex
 	history        [][]byte
 	historySize    int
@@ -191,7 +193,18 @@ func (s *Session) Resize(cols, rows uint16) error {
 	}
 	s.fileMu.Lock()
 	defer s.fileMu.Unlock()
-	return pty.Setsize(s.terminal, &pty.Winsize{Cols: cols, Rows: rows})
+	if err := pty.Setsize(s.terminal, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+		return err
+	}
+	s.cols = cols
+	s.rows = rows
+	return nil
+}
+
+func (s *Session) Dimensions() (uint16, uint16) {
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	return s.cols, s.rows
 }
 
 func (s *Session) WorkingDirectory() (string, error) {
