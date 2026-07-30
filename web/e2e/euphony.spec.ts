@@ -347,6 +347,16 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   await page.keyboard.press("Meta+K");
   const command = page.getByPlaceholder("Terminal or status");
   await expect(command).toBeFocused();
+  const inputGroup = page.locator(
+    '[data-slot="command-input-wrapper"] [data-slot="input-group"]',
+  );
+  const inputWrapper = page.locator('[data-slot="command-input-wrapper"]');
+  await expect(inputGroup).toHaveCSS("border-top-width", "0px");
+  await expect(inputGroup).toHaveCSS("border-right-width", "0px");
+  await expect(inputGroup).toHaveCSS("border-bottom-width", "0px");
+  await expect(inputGroup).toHaveCSS("border-left-width", "0px");
+  await expect(inputGroup).toHaveCSS("box-shadow", "none");
+  await expect(inputWrapper).toHaveCSS("border-bottom-width", "1px");
 
   await page.keyboard.press("Control+N");
   await expect(page.getByRole("option", { name: /^Enable attention alerts/ })).toHaveAttribute(
