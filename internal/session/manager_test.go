@@ -807,6 +807,46 @@ func TestSessionHistorySnapshotUsesBoundedChunks(t *testing.T) {
 	}
 }
 
+func TestHistorySnapshotReturnsLosslessTailWithoutAliasing(t *testing.T) {
+	running := &Session{
+		historyLimit: 16,
+		subscribers:  make(map[uint64]*outputSubscriber),
+	}
+	running.publish([]byte{0xff, 0x00, 'a'})
+	running.publish([]byte{'b', 'c'})
+
+	got, truncated := running.HistorySnapshot(4)
+	if !truncated || !reflect.DeepEqual(got, []byte{0x00, 'a', 'b', 'c'}) {
+		t.Fatalf("HistorySnapshot() = %x, %t", got, truncated)
+	}
+	got[0] = 'x'
+	again, _ := running.HistorySnapshot(4)
+	if !reflect.DeepEqual(again, []byte{0x00, 'a', 'b', 'c'}) {
+		t.Fatalf("HistorySnapshot() returned aliased bytes: %x", again)
+	}
+}
+
+func TestForegroundIsShellTracksPTYForegroundProcessGroup(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Foreground", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+	waitFor(t, time.Second, func() bool {
+		available, checkErr := running.ForegroundIsShell()
+		return checkErr == nil && available
+	})
+	if _, err := running.Write([]byte("sleep 2\n")); err != nil {
+		t.Fatalf("Write(sleep) error = %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		available, checkErr := running.ForegroundIsShell()
+		return checkErr == nil && !available
+	})
+}
+
 func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
 	running := &Session{
 		historyLimit: 0,

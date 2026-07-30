@@ -208,6 +208,58 @@ func TestReplaceAndAddUpdateManualSelectionWithoutDroppingPins(t *testing.T) {
 	}
 }
 
+func TestAddCanFocusTheNewlySelectedTerminal(t *testing.T) {
+	terminals := []Terminal{
+		{ID: "a", CWD: "/repo", Statuses: []string{"running"}},
+		{ID: "b", CWD: "/repo", Statuses: []string{"waiting"}},
+	}
+	state := State{ManualTerminalIDs: []string{"a"}, FocusedTerminalID: "a"}
+
+	next, err := Apply(state, Action{
+		Type:              ActionAdd,
+		TerminalIDs:       []string{"b"},
+		FocusedTerminalID: "b",
+	}, terminals)
+	if err != nil {
+		t.Fatalf("Apply(add focused) error = %v", err)
+	}
+	if next.FocusedTerminalID != "b" {
+		t.Fatalf("FocusedTerminalID = %q, want b", next.FocusedTerminalID)
+	}
+}
+
+func TestReplaceStateAtomicallySetsEverySelectionSource(t *testing.T) {
+	terminals := []Terminal{
+		{ID: "manual", CWD: "/repo", Statuses: []string{"waiting"}},
+		{ID: "pinned", CWD: "/other", Statuses: []string{"terminal"}},
+		{ID: "filtered", CWD: "/third", Statuses: []string{"running"}},
+	}
+	current := State{Revision: 8}
+	expected := uint64(8)
+
+	next, err := Apply(current, Action{
+		Type:              ActionReplaceState,
+		TerminalIDs:       []string{"manual"},
+		PinnedTerminalIDs: []string{"pinned"},
+		FocusedTerminalID: "manual",
+		Statuses:          []string{"running"},
+		CWDFilters:        []CWDFilter{},
+		ExpectedRevision:  &expected,
+	}, terminals)
+	if err != nil {
+		t.Fatalf("Apply(replace state) error = %v", err)
+	}
+	snapshot := Resolve(next, terminals)
+	if !reflect.DeepEqual(snapshot.TerminalIDs, []string{"manual", "pinned", "filtered"}) ||
+		!reflect.DeepEqual(snapshot.ManualTerminalIDs, []string{"manual"}) ||
+		!reflect.DeepEqual(snapshot.PinnedTerminalIDs, []string{"pinned"}) ||
+		snapshot.FocusedTerminalID != "manual" ||
+		!reflect.DeepEqual(snapshot.Filters.Statuses, []string{"running"}) ||
+		snapshot.Revision != 9 {
+		t.Fatalf("replace state snapshot = %#v", snapshot)
+	}
+}
+
 func TestFilterActionsSetAddAndRemoveStatusAndCWDSelectors(t *testing.T) {
 	terminals := []Terminal{
 		{ID: "a", CWD: "/repo/a", Statuses: []string{"running"}},

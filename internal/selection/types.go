@@ -47,6 +47,7 @@ type ActionType string
 
 const (
 	ActionReplace             ActionType = "replace"
+	ActionReplaceState        ActionType = "replace_state"
 	ActionAdd                 ActionType = "add"
 	ActionRemove              ActionType = "remove"
 	ActionFocus               ActionType = "focus"
@@ -64,6 +65,7 @@ const (
 type Action struct {
 	Type              ActionType  `json:"type"`
 	TerminalIDs       []string    `json:"terminalIds,omitempty"`
+	PinnedTerminalIDs []string    `json:"pinnedTerminalIds,omitempty"`
 	FocusedTerminalID string      `json:"focusedTerminalId,omitempty"`
 	Statuses          []string    `json:"statuses,omitempty"`
 	CWDFilters        []CWDFilter `json:"cwdFilters,omitempty"`

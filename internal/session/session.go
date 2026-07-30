@@ -9,6 +9,8 @@ import (
 	"github.com/creack/pty"
 )
 
+var ErrForegroundUnsupported = errors.New("foreground process inspection is unsupported")
+
 type State string
 
 const (
@@ -197,6 +199,20 @@ func (s *Session) WorkingDirectory() (string, error) {
 		return "", errors.New("terminal process has not started")
 	}
 	return processWorkingDirectory(s.command.Process.Pid)
+}
+
+func (s *Session) HistorySnapshot(maxBytes int) ([]byte, bool) {
+	s.outputMu.Lock()
+	size := s.historySize
+	data := make([]byte, 0, size)
+	for _, chunk := range s.history {
+		data = append(data, chunk...)
+	}
+	s.outputMu.Unlock()
+	if maxBytes > 0 && len(data) > maxBytes {
+		return append([]byte(nil), data[len(data)-maxBytes:]...), true
+	}
+	return data, false
 }
 
 func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {

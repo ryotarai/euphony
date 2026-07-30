@@ -11,6 +11,9 @@ func Apply(current State, action Action, terminals []Terminal) (State, error) {
 	if err := validateTerminalIDs(action.TerminalIDs, available); err != nil {
 		return State{}, err
 	}
+	if err := validateTerminalIDs(action.PinnedTerminalIDs, available); err != nil {
+		return State{}, err
+	}
 
 	switch action.Type {
 	case ActionReplace:
@@ -27,8 +30,27 @@ func Apply(current State, action Action, terminals []Terminal) (State, error) {
 			}
 			state.FocusedTerminalID = action.FocusedTerminalID
 		}
+	case ActionReplaceState:
+		state.ManualTerminalIDs = unique(action.TerminalIDs)
+		state.PinnedTerminalIDs = unique(action.PinnedTerminalIDs)
+		state.StatusFilters = uniqueNonEmpty(action.Statuses)
+		state.CWDFilters = uniqueCWDFilters(action.CWDFilters)
+		state.FocusedTerminalID = action.FocusedTerminalID
+		if state.FocusedTerminalID != "" &&
+			!snapshotContains(Resolve(state, terminals), state.FocusedTerminalID) {
+			return State{}, ErrTerminalNotSelected
+		}
 	case ActionAdd:
 		state.ManualTerminalIDs = unique(append(state.ManualTerminalIDs, action.TerminalIDs...))
+		if action.FocusedTerminalID != "" {
+			if _, ok := available[action.FocusedTerminalID]; !ok {
+				return State{}, ErrTerminalNotFound
+			}
+			if !snapshotContains(Resolve(state, terminals), action.FocusedTerminalID) {
+				return State{}, ErrTerminalNotSelected
+			}
+			state.FocusedTerminalID = action.FocusedTerminalID
+		}
 	case ActionRemove:
 		for _, id := range unique(action.TerminalIDs) {
 			removeTerminal(&state, id, terminals)
