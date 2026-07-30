@@ -54,4 +54,6 @@ activity and verify that:
 
 The focused test must fail before implementation and pass after the minimal
 navigation change. The full frontend unit suite, typecheck, and production
-build will be run afterward.
+build will be run afterward. A focused Playwright test will verify in Chromium
+that the empty groups are visible and that selecting an empty status checkbox
+persists the status filter without removing an independently selected pane.

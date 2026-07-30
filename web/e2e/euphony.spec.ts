@@ -92,6 +92,34 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
+test("shows empty status groups with interactive checkboxes", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  await createSession(page, "Shell");
+  await page.goto("/?token=test-token");
+
+  for (const label of [
+    "Show all Need attention terminals",
+    "Show all Running terminals",
+    "Show all Waiting terminals",
+    "Show all Terminal terminals",
+  ]) {
+    await expect(page.getByRole("checkbox", { name: label })).toBeVisible();
+  }
+  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(3);
+  await page.screenshot({ path: testInfo.outputPath("empty-status-groups.png") });
+
+  const running = page.getByRole("checkbox", {
+    name: "Show all Running terminals",
+  });
+  await running.click();
+
+  await expect(running).toBeChecked();
+  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["running"]);
+  await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
+});
+
 test("confirms before deleting a terminal", async ({ page }) => {
   await clearSessions(page);
   const terminal = await createSession(page, "Disposable");

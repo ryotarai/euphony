@@ -932,6 +932,31 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
 });
 
+test("shows built-in activity groups when they have no terminals", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+
+  for (const label of [
+    "Show all Need attention terminals",
+    "Show all Running terminals",
+    "Show all Waiting terminals",
+    "Show all Terminal terminals",
+  ]) {
+    expect(screen.getByRole("checkbox", { name: label })).toBeVisible();
+  }
+  expect(screen.getAllByText("No terminal")).toHaveLength(3);
+});
+
 test("unchecking an activity group removes only its terminal panes", async () => {
   const terminals = Array.from({ length: 4 }, (_, index) => ({
     ...plainTerminalSession,

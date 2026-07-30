@@ -6,7 +6,7 @@
 
 **Architecture:** Extend `SessionNavigation`'s activity ordering helper to seed the four built-in activities before appending session-defined values. Render one semantic empty-state line when a group contains no working-directory sections, while reusing the existing status checkbox and filter callback.
 
-**Tech Stack:** React 19, TypeScript, Vitest, Testing Library, shadcn sidebar primitives
+**Tech Stack:** React 19, TypeScript, Vitest, Testing Library, Playwright, shadcn sidebar primitives
 
 ## Global Constraints
 
@@ -25,6 +25,8 @@
 - Modify: `web/src/components/SessionNavigation.tsx`
 - Modify: `web/src/styles.css`
 - Test: `web/src/App.test.tsx`
+- Test: `web/src/components/SessionNavigation.test.tsx`
+- Test: `web/e2e/euphony.spec.ts`
 
 **Interfaces:**
 - Consumes: `Session[]`, `statusFilters: string[]`, and `onStatusFilter(status: string, checked: boolean)` from the existing `SessionNavigationProps`.
@@ -127,16 +129,20 @@ cd web
 npm test -- --run
 npm run typecheck
 npm run build
+npm run e2e -- --grep "shows empty status groups with interactive checkboxes"
 ```
 
 Expected: all 89 unit tests pass, typecheck exits successfully, and Vite
-produces the production bundle.
+produces the production bundle. The focused Chromium test passes and verifies
+that an empty status checkbox can be selected.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-07-30-empty-status-groups-design.md \
   docs/superpowers/plans/2026-07-30-empty-status-groups.md \
-  web/src/App.test.tsx web/src/components/SessionNavigation.tsx web/src/styles.css
+  web/e2e/euphony.spec.ts web/src/App.test.tsx \
+  web/src/components/SessionNavigation.test.tsx \
+  web/src/components/SessionNavigation.tsx web/src/styles.css
 git commit -m "feat: show empty terminal status groups"
 ```
