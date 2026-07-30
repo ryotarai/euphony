@@ -32,7 +32,7 @@
 - Consumes: React `MouseEvent.altKey` from sidebar checkbox clicks.
 - Produces: Existing `onSelect`, `onStatusFilter`, and `onCwdFilter` callbacks with `pin=true` only for Alt-click.
 
-- [ ] **Step 1: Write the failing component tests**
+- [x] **Step 1: Write the failing component tests**
 
 Rename the two modifier-forwarding tests to Alt-click, send
 `{ altKey: true }`, and add a terminal-checkbox Shift-click assertion:
@@ -49,7 +49,7 @@ expect(onSelect).toHaveBeenCalledWith("three", true, false);
 Also assert that an unpinned checkbox exposes the
 `Option-click to pin` tooltip.
 
-- [ ] **Step 2: Run the component tests and verify RED**
+- [x] **Step 2: Run the component tests and verify RED**
 
 Run:
 
@@ -61,13 +61,13 @@ npm test -- --run src/components/SessionNavigation.test.tsx
 Expected: FAIL because the component still reads `shiftKey` and displays
 `Shift-click to pin`.
 
-- [ ] **Step 3: Implement Alt-click forwarding**
+- [x] **Step 3: Implement Alt-click forwarding**
 
 In all three checkbox handlers in `SessionNavigation.tsx`, replace
 `event.shiftKey` with `event.altKey`. Replace all three unpinned tooltip
 strings with `Option-click to pin`.
 
-- [ ] **Step 4: Update integration and end-to-end scenarios**
+- [x] **Step 4: Update integration and end-to-end scenarios**
 
 Replace pin-creating `{ shiftKey: true }` events with `{ altKey: true }` in
 the pinning scenarios in `App.test.tsx`. Replace Playwright
@@ -77,7 +77,7 @@ pinning scenarios. Rename test descriptions that name Shift-pinning.
 Update the existing pinning design specs from Shift-click to Alt/Option-click,
 and add the reusable shortcut rule to `AGENTS.md`.
 
-- [ ] **Step 5: Run focused tests and type checking**
+- [x] **Step 5: Run focused tests and type checking**
 
 Run:
 
@@ -90,7 +90,7 @@ npm run typecheck
 
 Expected: all commands PASS.
 
-- [ ] **Step 6: Run the Playwright pinning scenarios**
+- [x] **Step 6: Run the Playwright pinning scenarios**
 
 Run:
 
@@ -101,7 +101,7 @@ npm run e2e -- --grep "pins a terminal checkbox|pins status and cwd filters"
 
 Expected: both scenarios PASS against the isolated test database.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add AGENTS.md docs/superpowers/specs/2026-07-31-alt-click-pinned-checks-design.md docs/superpowers/plans/2026-07-31-alt-click-pinned-checks.md docs/superpowers/specs/2026-07-30-pinned-terminal-checkboxes-design.md docs/superpowers/specs/2026-07-30-pinned-filter-checkboxes-design.md web/src/components/SessionNavigation.tsx web/src/components/SessionNavigation.test.tsx web/src/App.test.tsx web/e2e/euphony.spec.ts

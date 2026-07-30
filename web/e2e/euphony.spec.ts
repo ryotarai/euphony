@@ -608,7 +608,7 @@ test("pins a terminal checkbox until that checkbox is clicked", async ({ page })
   const leftCheckbox = page.getByRole("checkbox", {
     name: "Include Left in split",
   });
-  await leftCheckbox.click({ modifiers: ["Shift"] });
+  await leftCheckbox.click({ modifiers: ["Alt"] });
   await expect(leftCheckbox).toHaveAttribute("data-pinned", "true");
   await expect(leftCheckbox).toHaveCSS("background-color", "rgb(245, 158, 11)");
   await expect(page.locator(".pane-checkbox-pin")).toHaveCount(0);
@@ -651,7 +651,7 @@ test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
   const terminalStatus = page.getByRole("checkbox", {
     name: "Show all Terminal terminals",
   });
-  await terminalStatus.click({ modifiers: ["Shift"] });
+  await terminalStatus.click({ modifiers: ["Alt"] });
   await expect(terminalStatus).toHaveAttribute("data-pinned", "true");
   await expect(terminalStatus).toHaveCSS(
     "background-color",
@@ -685,7 +685,7 @@ test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
   const runningACwdCheckbox = page.getByRole("checkbox", {
     name: `Include all terminals in ${runningACwd}`,
   });
-  await runningACwdCheckbox.click({ modifiers: ["Shift"] });
+  await runningACwdCheckbox.click({ modifiers: ["Alt"] });
   await expect(runningACwdCheckbox).toHaveAttribute("data-pinned", "true");
   await expect(runningACwdCheckbox).toHaveCSS(
     "background-color",
