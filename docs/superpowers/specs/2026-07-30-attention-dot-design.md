@@ -14,8 +14,9 @@ lifecycle status, and mark blocked agent sessions as needing attention.
   before its agent icon or title.
 - The dot has an accessible `Needs attention` label and is hidden when the flag
   is false.
-- A transition from `running` to either `waiting` or `blocked` sets
-  `needsAttention`.
+- A transition from `running` to `waiting`, or from any non-blocked status to
+  `blocked`, sets `needsAttention`.
+- Repeated blocked updates do not restore attention after acknowledgement.
 - Existing focus acknowledgement continues to clear `needsAttention` without
   changing the lifecycle status.
 

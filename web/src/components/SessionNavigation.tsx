@@ -50,19 +50,16 @@ interface SessionNavigationProps {
 }
 
 function activity(session: Session) {
-  if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
 }
 
 function statusLabel(status: string) {
-  if (status === "attention") return "Need attention";
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 const builtInActivities = [
   "blocked",
-  "attention",
   "running",
   "waiting",
   "terminal",
@@ -213,6 +210,12 @@ function SessionList(props: SessionNavigationProps) {
                                   )
                                 }
                               >
+                                {session.needsAttention && (
+                                  <span
+                                    className="attention-dot"
+                                    aria-label="Needs attention"
+                                  />
+                                )}
                                 {icon && (
                                   <img
                                     className="session-agent-icon"

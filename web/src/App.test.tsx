@@ -1184,14 +1184,16 @@ test("shows built-in activity groups when they have no terminals", async () => {
 
   for (const label of [
     "Show all Blocked terminals",
-    "Show all Need attention terminals",
     "Show all Running terminals",
     "Show all Waiting terminals",
     "Show all Terminal terminals",
   ]) {
     expect(screen.getByRole("checkbox", { name: label })).toBeVisible();
   }
-  expect(screen.getAllByText("No terminal")).toHaveLength(4);
+  expect(
+    screen.queryByRole("checkbox", { name: "Show all Need attention terminals" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getAllByText("No terminal")).toHaveLength(3);
 });
 
 test("unchecking an activity group removes only its terminal panes", async () => {

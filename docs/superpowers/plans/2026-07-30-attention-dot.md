@@ -25,12 +25,12 @@
 
 **Interfaces:**
 - Consumes: `(*Manager).UpdateAgent(id string, update AgentUpdate) (Metadata, error)`
-- Produces: `Metadata.NeedsAttention == true` after `running -> blocked`
+- Produces: `Metadata.NeedsAttention == true` after entering `blocked`
 
 - [ ] **Step 1: Write the failing manager test**
 
-Add `TestUpdateAgentMarksRunningToBlockedAsNeedingAttention`, create a terminal,
-update it to `running`, then update it to `blocked` and assert:
+Add `TestUpdateAgentMarksEnteringBlockedAsNeedingAttention`, create a terminal,
+update it directly to `blocked`, and assert:
 
 ```go
 if updated.AgentStatus != "blocked" || !updated.NeedsAttention {
@@ -54,8 +54,8 @@ Change the existing `running -> waiting` condition in `UpdateAgent` to accept
 either destination:
 
 ```go
-if item.metadata.AgentStatus == "running" &&
-    (nextStatus == "waiting" || nextStatus == "blocked") {
+if (item.metadata.AgentStatus == "running" && nextStatus == "waiting") ||
+    (item.metadata.AgentStatus != "blocked" && nextStatus == "blocked") {
     item.metadata.NeedsAttention = true
 }
 ```
