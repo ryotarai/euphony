@@ -75,19 +75,26 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 			cancelCWDRefresh()
 		}
 	}()
-	history, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
+	history, events, lagged, enqueueResize, unsubscribe :=
+		terminal.SubscribeTerminalEventsWithStatus()
 	defer unsubscribe()
 	var reportSize func(uint16, uint16) error
 	var releaseSize func() error
-	var sizeUpdates <-chan terminalDimensions
+	var initialSize *terminalDimensions
 	if !ticket.readOnly {
 		var unsubscribeSize func()
 		cols, rows := terminal.Dimensions()
-		reportSize, releaseSize, sizeUpdates, unsubscribeSize = s.terminalSizes.subscribe(
+		dimensions := terminalDimensions{Cols: cols, Rows: rows}
+		reportSize, releaseSize, _, unsubscribeSize = s.terminalSizes.subscribe(
 			id,
-			terminalDimensions{Cols: cols, Rows: rows},
-			terminal.Resize,
+			dimensions,
+			terminal.ResizeWithNotification,
+			func(dimensions terminalDimensions) {
+				enqueueResize(dimensions.Cols, dimensions.Rows)
+			},
 		)
+		cols, rows = terminal.Dimensions()
+		initialSize = &terminalDimensions{Cols: cols, Rows: rows}
 		defer unsubscribeSize()
 	}
 	outputDone := make(chan struct{})
@@ -105,6 +112,16 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 			},
 		)
 		defer cancelWrites()
+		if initialSize != nil {
+			payload := marshalTerminalFrame(serverMessage{
+				Type: "resize",
+				Cols: initialSize.Cols,
+				Rows: initialSize.Rows,
+			}, v1)
+			if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+				return
+			}
+		}
 		for _, chunk := range history {
 			payload := marshalTerminalFrame(serverMessage{Type: "history", Data: chunk}, v1)
 			if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
@@ -117,20 +134,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 		}
 		for {
 			select {
-			case dimensions := <-sizeUpdates:
-				payload := marshalTerminalFrame(serverMessage{
-					Type: "resize",
-					Cols: dimensions.Cols,
-					Rows: dimensions.Rows,
-				}, v1)
-				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
-					return
-				}
-				continue
-			default:
-			}
-			select {
-			case data, ok := <-output:
+			case event, ok := <-events:
 				if !ok {
 					select {
 					case <-lagged:
@@ -142,16 +146,15 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 					_ = connection.Write(writeContext, websocket.MessageText, payload)
 					return
 				}
-				payload := marshalTerminalFrame(serverMessage{Type: "output", Data: data}, v1)
-				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
-					return
+				message := serverMessage{Type: "output", Data: event.Data}
+				if event.Cols > 0 && event.Rows > 0 {
+					message = serverMessage{
+						Type: "resize",
+						Cols: event.Cols,
+						Rows: event.Rows,
+					}
 				}
-			case dimensions := <-sizeUpdates:
-				payload := marshalTerminalFrame(serverMessage{
-					Type: "resize",
-					Cols: dimensions.Cols,
-					Rows: dimensions.Rows,
-				}, v1)
+				payload := marshalTerminalFrame(message, v1)
 				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 					return
 				}

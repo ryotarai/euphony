@@ -57,6 +57,7 @@ const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
 const estimatedBytesPerScrollbackRow = 128;
 const terminalViewportGutter = 14;
+const maxQueuedInitialTerminalBytes = 2 * 1024 * 1024;
 
 export function terminalScrollback(historyLimit: number): number {
   if (historyLimit === 0) return maxTerminalScrollback;
@@ -191,7 +192,18 @@ export function TerminalView({
     let active = true;
     let replayingHistory = false;
     let acceptedSizeReceived = false;
-    let queuedHistory: Uint8Array[] = [];
+    let queuedInitialData: Array<{
+      data: Uint8Array;
+      history: boolean;
+    }> = [];
+    let queuedInitialBytes = 0;
+    let initialQueueOverflowed = false;
+    const initialTerminalQueueLimit = terminalHistoryLimit > 0
+      ? Math.min(
+          maxQueuedInitialTerminalBytes,
+          Math.max(1024, terminalHistoryLimit),
+        )
+      : maxQueuedInitialTerminalBytes;
     let pendingHistoryWrites = 0;
     let historyStreamComplete = false;
     let socket: WebSocketLike | undefined;
@@ -225,6 +237,18 @@ export function TerminalView({
         claimActive = true;
       }
     };
+    const queueInitialData = (data: Uint8Array, history: boolean) => {
+      if (initialQueueOverflowed) return;
+      if (queuedInitialBytes + data.byteLength > initialTerminalQueueLimit) {
+        queuedInitialData = [];
+        queuedInitialBytes = 0;
+        initialQueueOverflowed = true;
+        socket?.close();
+        return;
+      }
+      queuedInitialData.push({ data, history });
+      queuedInitialBytes += data.byteLength;
+    };
     const reportCapacity = () => {
       if (host.hidden || host.closest("[hidden]")) {
         if (claimActive && send({ type: "resize_release" })) {
@@ -249,7 +273,7 @@ export function TerminalView({
             acceptedSizeReceived &&
             historyStreamComplete &&
             pendingHistoryWrites === 0 &&
-            queuedHistory.length === 0
+            queuedInitialData.length === 0
           ) {
             replayingHistory = false;
           }
@@ -260,7 +284,7 @@ export function TerminalView({
           acceptedSizeReceived &&
           historyStreamComplete &&
           pendingHistoryWrites === 0 &&
-          queuedHistory.length === 0
+          queuedInitialData.length === 0
         ) {
           replayingHistory = false;
         }
@@ -342,7 +366,7 @@ export function TerminalView({
               if (acceptedSizeReceived) {
                 writeHistory(data);
               } else {
-                queuedHistory.push(data);
+                queueInitialData(data, true);
               }
             } catch {
               // Ignore malformed terminal history.
@@ -352,13 +376,18 @@ export function TerminalView({
             if (
               acceptedSizeReceived &&
               pendingHistoryWrites === 0 &&
-              queuedHistory.length === 0
+              queuedInitialData.length === 0
             ) {
               replayingHistory = false;
             }
           } else if (message.type === "output" && message.data) {
             try {
-              terminal.write(decodeTerminalData(message.data));
+              const data = decodeTerminalData(message.data);
+              if (acceptedSizeReceived) {
+                terminal.write(data);
+              } else {
+                queueInitialData(data, false);
+              }
             } catch {
               // Ignore malformed terminal payloads instead of rendering corrupt bytes.
             }
@@ -388,15 +417,20 @@ export function TerminalView({
                 height: bounds.height,
               });
             });
-            const history = queuedHistory;
-            queuedHistory = [];
-            for (const data of history) {
-              writeHistory(data);
+            const initialData = queuedInitialData;
+            queuedInitialData = [];
+            queuedInitialBytes = 0;
+            for (const entry of initialData) {
+              if (entry.history) {
+                writeHistory(entry.data);
+              } else {
+                terminal.write(entry.data);
+              }
             }
             if (
               historyStreamComplete &&
               pendingHistoryWrites === 0 &&
-              queuedHistory.length === 0
+              queuedInitialData.length === 0
             ) {
               replayingHistory = false;
             }

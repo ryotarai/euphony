@@ -16,6 +16,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/ryotarai/euphony/internal/selection"
+	"golang.org/x/sys/unix"
 )
 
 var ErrNotFound = errors.New("session not found")
@@ -215,9 +216,10 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	if err != nil {
 		return Metadata{}, err
 	}
+	go item.session.pump()
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), metadata); err != nil {
-			item.session.terminate()
+			discardStartedSession(item.session)
 			return Metadata{}, err
 		}
 	}
@@ -228,7 +230,6 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	m.mu.Unlock()
 	m.emitChange(change)
 
-	go item.session.pump()
 	go m.watch(item)
 	return item.metadata, nil
 }
@@ -253,14 +254,20 @@ func (m *Manager) restore(metadata Metadata) error {
 	if err != nil {
 		return err
 	}
+	go item.session.pump()
 	if err := m.store.Save(context.Background(), metadata); err != nil {
-		item.session.terminate()
+		discardStartedSession(item.session)
 		return err
 	}
 	m.registerSession(metadata.ID, item)
-	go item.session.pump()
 	go m.watch(item)
 	return nil
+}
+
+func discardStartedSession(running *Session) {
+	running.terminate()
+	_ = running.command.Wait()
+	<-running.pumpDone
 }
 
 func restoredCommand(shell string, metadata Metadata) *exec.Cmd {
@@ -293,17 +300,28 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	resizeWake := []int{0, 0}
+	if err := unix.Pipe(resizeWake); err != nil {
+		_ = command.Process.Kill()
+		_ = terminal.Close()
+		_ = command.Wait()
+		return nil, err
+	}
 	return &entry{
 		metadata: metadata,
 		session: &Session{
-			id:          metadata.ID,
-			command:     command,
-			terminal:    terminal,
-			cols:        80,
-			rows:        24,
-			waitDone:    make(chan struct{}),
-			pumpDone:    make(chan struct{}),
-			subscribers: make(map[uint64]*outputSubscriber),
+			id:              metadata.ID,
+			command:         command,
+			terminal:        terminal,
+			terminalFD:      int(terminal.Fd()),
+			cols:            80,
+			rows:            24,
+			waitDone:        make(chan struct{}),
+			pumpDone:        make(chan struct{}),
+			resizeRequests:  make(chan resizeRequest, 1),
+			resizeWakeRead:  resizeWake[0],
+			resizeWakeWrite: resizeWake[1],
+			subscribers:     make(map[uint64]*outputSubscriber),
 		},
 	}, nil
 }

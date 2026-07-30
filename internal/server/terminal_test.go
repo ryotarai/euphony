@@ -191,11 +191,14 @@ func TestTerminalWebSocketsShareSmallestSize(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 80, 24)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, small, "resize"), 80, 24)
 	readTerminalMessage(t, ctx, large, "history_end")
 	readTerminalMessage(t, ctx, small, "history_end")
 
 	writeTerminalResize(t, ctx, large, 120, 40)
 	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 120, 40)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, small, "resize"), 120, 40)
 
 	writeTerminalResize(t, ctx, small, 80, 24)
 	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 80, 24)
@@ -206,6 +209,7 @@ func TestTerminalWebSocketsShareSmallestSize(t *testing.T) {
 		t.Fatalf("small Write(resize_release) error = %v", err)
 	}
 	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 120, 40)
+	assertTerminalResize(t, readTerminalMessage(t, ctx, small, "resize"), 120, 40)
 
 	writeTerminalResize(t, ctx, small, 80, 24)
 	assertTerminalResize(t, readTerminalMessage(t, ctx, large, "resize"), 80, 24)
@@ -539,6 +543,7 @@ func TestTerminalReconnectKeepsSessionAndReceivesNewOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	var output strings.Builder
+	assertTerminalResize(t, readTerminalMessage(t, ctx, second, "resize"), 80, 24)
 	_, historyPayload, err := second.Read(ctx)
 	if err != nil {
 		t.Fatalf("read history: %v", err)

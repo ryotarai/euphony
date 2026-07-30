@@ -480,7 +480,7 @@ test("updates the sidebar after the shell changes directory", async ({ page }) =
   await expect(page.getByRole("heading", { name: "/etc" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Select Terminal" })).toHaveAttribute(
     "title",
-    "/etc",
+    /^\/(?:private\/)?etc$/,
   );
 });
 

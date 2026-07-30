@@ -18,10 +18,11 @@ type terminalSizeClient struct {
 	dimensions terminalDimensions
 	reported   bool
 	updates    chan terminalDimensions
+	publish    func(terminalDimensions)
 }
 
 type terminalSizeGroup struct {
-	apply       func(uint16, uint16) error
+	apply       func(uint16, uint16, func()) error
 	clients     map[uint64]*terminalSizeClient
 	accepted    terminalDimensions
 	hasAccepted bool
@@ -42,7 +43,8 @@ func newTerminalSizeCoordinator() *terminalSizeCoordinator {
 func (c *terminalSizeCoordinator) subscribe(
 	terminalID string,
 	initial terminalDimensions,
-	apply func(uint16, uint16) error,
+	apply func(uint16, uint16, func()) error,
+	publish ...func(terminalDimensions),
 ) (
 	func(uint16, uint16) error,
 	func() error,
@@ -64,6 +66,9 @@ func (c *terminalSizeCoordinator) subscribe(
 	c.nextID++
 	client := &terminalSizeClient{
 		updates: make(chan terminalDimensions, 1),
+	}
+	if len(publish) > 0 {
+		client.publish = publish[0]
 	}
 	group.clients[clientID] = client
 	c.mu.Unlock()
@@ -116,7 +121,7 @@ func (c *terminalSizeCoordinator) report(
 	}
 	if group.hasAccepted && next == group.accepted {
 		if !previouslyReported {
-			publishTerminalDimensions(client.updates, group.accepted)
+			publishClientTerminalDimensions(client, group.accepted)
 		}
 		return nil
 	}
@@ -124,18 +129,13 @@ func (c *terminalSizeCoordinator) report(
 	previouslyAccepted := group.hasAccepted
 	group.accepted = next
 	group.hasAccepted = true
-	publishAcceptedTerminalDimensions(group)
-	if err := group.apply(next.Cols, next.Rows); err != nil {
+	if err := group.apply(next.Cols, next.Rows, func() {
+		publishAcceptedTerminalDimensions(group)
+	}); err != nil {
 		client.dimensions = previousDimensions
 		client.reported = previouslyReported
 		group.accepted = previousAccepted
 		group.hasAccepted = previouslyAccepted
-		if group.hasAccepted {
-			publishAcceptedTerminalDimensions(group)
-			if !previouslyReported {
-				publishTerminalDimensions(client.updates, group.accepted)
-			}
-		}
 		return err
 	}
 	return nil
@@ -168,14 +168,12 @@ func (c *terminalSizeCoordinator) release(
 	}
 	group.accepted = next
 	group.hasAccepted = true
-	publishAcceptedTerminalDimensions(group)
-	if err := group.apply(next.Cols, next.Rows); err != nil {
+	if err := group.apply(next.Cols, next.Rows, func() {
+		publishAcceptedTerminalDimensions(group)
+	}); err != nil {
 		client.reported = true
 		group.accepted = previousAccepted
 		group.hasAccepted = previouslyAccepted
-		if group.hasAccepted {
-			publishAcceptedTerminalDimensions(group)
-		}
 		return err
 	}
 	return nil
@@ -208,13 +206,11 @@ func (c *terminalSizeCoordinator) unsubscribe(terminalID string, clientID uint64
 	previouslyAccepted := group.hasAccepted
 	group.accepted = next
 	group.hasAccepted = true
-	publishAcceptedTerminalDimensions(group)
-	if err := group.apply(next.Cols, next.Rows); err != nil {
+	if err := group.apply(next.Cols, next.Rows, func() {
+		publishAcceptedTerminalDimensions(group)
+	}); err != nil {
 		group.accepted = previousAccepted
 		group.hasAccepted = previouslyAccepted
-		if group.hasAccepted {
-			publishAcceptedTerminalDimensions(group)
-		}
 		return
 	}
 }
@@ -248,10 +244,18 @@ func minimumTerminalDimensions(
 
 func publishAcceptedTerminalDimensions(group *terminalSizeGroup) {
 	for _, client := range group.clients {
-		if client.reported {
-			publishTerminalDimensions(client.updates, group.accepted)
-		}
+		publishClientTerminalDimensions(client, group.accepted)
 	}
+}
+
+func publishClientTerminalDimensions(
+	client *terminalSizeClient,
+	dimensions terminalDimensions,
+) {
+	if client.publish != nil {
+		client.publish(dimensions)
+	}
+	publishTerminalDimensions(client.updates, dimensions)
 }
 
 func publishTerminalDimensions(

@@ -1,12 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -913,6 +915,147 @@ func TestSubscriberBuffersLiveOutputWhileHistoryReplays(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("timed out after %d chunks, want %d", index, chunkCount)
 		}
+	}
+}
+
+func TestTerminalEventSubscriberKeepsOutputAndResizeInCausalOrder(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, events, _, enqueueResize, unsubscribe := running.SubscribeTerminalEventsWithStatus()
+	defer unsubscribe()
+
+	running.publish([]byte("before"))
+	enqueueResize(80, 24)
+	running.publish([]byte("after"))
+
+	want := []TerminalEvent{
+		{Data: []byte("before")},
+		{Cols: 80, Rows: 24},
+		{Data: []byte("after")},
+	}
+	for index, expected := range want {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatalf("events closed after %d events, want %d", index, len(want))
+			}
+			if !reflect.DeepEqual(event, expected) {
+				t.Fatalf("event %d = %#v, want %#v", index, event, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out after %d events, want %d", index, len(want))
+		}
+	}
+}
+
+func TestResizeOrdersCompletedPTYReadBeforeItsBoundary(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Ordered resize")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+	_, events, _, enqueueResize, unsubscribe := running.SubscribeTerminalEventsWithStatus()
+	defer unsubscribe()
+
+	if _, err := running.Write([]byte("stty -echo; printf 'configured\\n'\n")); err != nil {
+		t.Fatalf("Write(configure) error = %v", err)
+	}
+	for {
+		select {
+		case event := <-events:
+			if bytes.Contains(event.Data, []byte("configured")) {
+				goto configured
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out configuring terminal")
+		}
+	}
+
+configured:
+	readPaused := make(chan struct{})
+	resumeRead := make(chan struct{})
+	var pauseOnce sync.Once
+	running.setAfterReadHook(func(data []byte) {
+		if bytes.Contains(data, []byte("X")) {
+			pauseOnce.Do(func() {
+				close(readPaused)
+				<-resumeRead
+			})
+		}
+	})
+	defer running.setAfterReadHook(nil)
+	if _, err := running.Write([]byte("printf X\n")); err != nil {
+		t.Fatalf("Write(output) error = %v", err)
+	}
+	select {
+	case <-readPaused:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for the PTY read to pause")
+	}
+
+	resizeDone := make(chan error, 1)
+	go func() {
+		resizeDone <- running.ResizeWithNotification(100, 30, func() {
+			enqueueResize(100, 30)
+		})
+	}()
+	waitFor(t, time.Second, func() bool {
+		return len(running.resizeRequests) == 1
+	})
+	close(resumeRead)
+
+	sawOutput := false
+	for {
+		select {
+		case event := <-events:
+			if bytes.Contains(event.Data, []byte("X")) {
+				sawOutput = true
+			}
+			if event.Cols > 0 && event.Rows > 0 {
+				if !sawOutput {
+					t.Fatal("resize boundary arrived before the completed PTY read")
+				}
+				if event.Cols != 100 || event.Rows != 30 {
+					t.Fatalf("resize = %dx%d, want 100x30", event.Cols, event.Rows)
+				}
+				goto resized
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out waiting for ordered resize events")
+		}
+	}
+
+resized:
+	if err := <-resizeDone; err != nil {
+		t.Fatalf("ResizeWithNotification() error = %v", err)
+	}
+}
+
+func TestContinuousPTYOutputDoesNotStarveResize(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Continuous output")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+	if _, err := running.Write([]byte("yes x\n")); err != nil {
+		t.Fatalf("Write(yes) error = %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	resizeDone := make(chan error, 1)
+	go func() {
+		resizeDone <- running.Resize(100, 30)
+	}()
+	select {
+	case err := <-resizeDone:
+		if err != nil {
+			t.Fatalf("Resize() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("continuous PTY output starved resize")
 	}
 }
 

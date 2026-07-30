@@ -4,7 +4,7 @@
 
 **Goal:** Make every browser attached to one terminal use the smallest connected browser capacity and center that shared grid in larger viewports.
 
-**Architecture:** A server-owned coordinator records one capacity claim per interactive WebSocket, publishes the component-wise minimum before applying it to the PTY, and releases hidden claims. The browser measures capacity without fitting xterm, buffers initial history until an accepted size arrives, applies only server sizes, and centers the native-scale xterm root in unmarked letterbox space.
+**Architecture:** A server-owned coordinator records one capacity claim per interactive WebSocket and submits the component-wise minimum to a PTY event actor that orders output and resize boundaries. Hidden claims are excluded from the minimum while their sockets continue receiving accepted sizes. The browser receives a rendering baseline before history, measures capacity without fitting xterm, applies only server sizes, and centers the native-scale xterm root in unmarked letterbox space.
 
 **Tech Stack:** Go 1.25, `coder/websocket`, React 19, TypeScript, xterm.js 6, Vitest, Playwright
 
@@ -27,7 +27,7 @@
 **Interfaces:**
 - Produces: `terminalDimensions{Cols uint16, Rows uint16}`
 - Produces: `newTerminalSizeCoordinator() *terminalSizeCoordinator`
-- Produces: `(*terminalSizeCoordinator).subscribe(terminalID string, initial terminalDimensions, apply func(uint16, uint16) error) (report func(uint16, uint16) error, release func() error, updates <-chan terminalDimensions, unsubscribe func())`
+- Produces: `(*terminalSizeCoordinator).subscribe(terminalID string, initial terminalDimensions, apply func(uint16, uint16, func()) error, publish ...func(terminalDimensions)) (report func(uint16, uint16) error, release func() error, updates <-chan terminalDimensions, unsubscribe func())`
 
 - [ ] **Step 1: Write the failing minimum-and-disconnect test**
 
@@ -103,17 +103,19 @@ Expected: compile failure because `terminalSizeCoordinator` does not exist.
 - [ ] **Step 3: Implement the coordinator**
 
 Use a mutex-protected map keyed by terminal ID. Each terminal entry contains
-client claims, buffered update channels, the last accepted minimum, and the PTY
+client claims, accepted-size publishers, the last accepted minimum, and the PTY
 apply function. Validate each claim before storing it. Recompute the minimum
-under the mutex, publish it to every claimed client's capacity-one channel,
-then call `apply` once so SIGWINCH output follows the queued resize frame.
+under the mutex and call `apply` once. The session wakes its PTY event actor,
+which drains a bounded batch of readable bytes, applies the PTY size, and
+invokes the publisher before reading again. This places the resize between pre-
+and post-resize output without waiting for the terminal input lock.
 
 - [ ] **Step 4: Add invalid-and-failed-apply tests**
 
 Assert `0x24` and `1001x24` return the same bounds error used by the session
 layer and publish nothing. Configure `apply` to fail for `80x24`, assert the
-previous `120x40` accepted size is republished as a rollback, and prove a later
-valid update can still succeed.
+tentative size is not published, and prove a later valid update can still
+succeed.
 
 - [ ] **Step 5: Run coordinator tests and verify GREEN**
 
@@ -132,7 +134,7 @@ git add internal/server/terminal_size.go internal/server/terminal_size_test.go
 git commit -m "feat: coordinate shared terminal sizes"
 ```
 
-### Task 2: Carry Accepted Sizes Through the WebSocket Protocol
+### Task 2: Carry Accepted Sizes Through the Ordered WebSocket Stream
 
 **Files:**
 - Modify: `internal/server/server.go`
@@ -171,11 +173,14 @@ Read-only streams never subscribe.
 
 - [ ] **Step 4: Serialize resize frames in the existing writer**
 
-Add accepted-size handling to the output goroutine. After `history_end`, drain
-one pending accepted size before live output. In the live loop, select on the
-resize update channel and marshal `serverMessage{Type: "resize", Cols: size.Cols,
-Rows: size.Rows}`. Preserve the v1 base64 output envelope and include columns
-and rows there for protocol consistency.
+Extend the session subscriber queue with terminal events for both output bytes
+and accepted sizes. Enqueue the accepted size from the PTY event actor, then
+have the output goroutine consume that one event stream. Send the current PTY
+size before history as every interactive browser's rendering baseline, and
+continue sending accepted sizes to hidden/released browsers. Marshal resize
+events as `serverMessage{Type: "resize", Cols: size.Cols, Rows: size.Rows}`.
+Preserve the v1 base64 output envelope and include columns and rows there for
+protocol consistency.
 
 - [ ] **Step 5: Run server tests and verify GREEN**
 
@@ -194,7 +199,7 @@ git add internal/server/server.go internal/server/terminal.go internal/server/te
 git commit -m "feat: broadcast accepted terminal size"
 ```
 
-### Task 3: Measure Browser Capacity and Render Dotted Padding
+### Task 3: Measure Browser Capacity and Render Centered Letterboxing
 
 **Files:**
 - Modify: `web/src/components/TerminalView.tsx`
@@ -243,8 +248,9 @@ capacity claims so accepted sizes cannot feed back into negotiation.
 
 Validate positive `cols` and `rows`, call `terminal.resize`, store the shared
 size, and update the four diagnostic data attributes. Buffer initial history
-until this first accepted size is applied, and send `resize_release` when the
-host becomes hidden.
+and live output in one FIFO until this first accepted size is applied, and send
+`resize_release` when the host becomes hidden. Bound the defensive pre-baseline
+FIFO and close the socket on overflow.
 
 - [ ] **Step 5: Write the failing centered-letterbox test**
 

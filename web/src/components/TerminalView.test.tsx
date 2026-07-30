@@ -36,12 +36,15 @@ class FakeSocket extends EventTarget implements WebSocketLike {
   readonly OPEN = 1;
   readyState = 1;
   sent: string[] = [];
+  closeCount = 0;
 
   send(data: string) {
     this.sent.push(data);
   }
 
-  close() {}
+  close() {
+    this.closeCount++;
+  }
 
   receive(message: unknown) {
     this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
@@ -302,7 +305,7 @@ test("centers the accepted shared grid without scaling it", async () => {
   expect(host).not.toHaveAttribute("data-centered");
 });
 
-test("holds terminal history until the first accepted size is applied", async () => {
+test("holds history and live output until the first accepted size is applied", async () => {
   const socket = new FakeSocket();
   const operations: string[] = [];
   const terminal = {
@@ -344,6 +347,7 @@ test("holds terminal history until the first accepted size is applied", async ()
   act(() => {
     socket.receive({ type: "history", data: encodeTerminalData("previous output") });
     socket.receive({ type: "history_end" });
+    socket.receive({ type: "output", data: encodeTerminalData("live output") });
   });
   expect(operations).toEqual([]);
 
@@ -351,7 +355,48 @@ test("holds terminal history until the first accepted size is applied", async ()
   expect(operations).toEqual([
     "resize:80x24",
     "write:previous output",
+    "write:live output",
   ]);
+});
+
+test("closes instead of buffering unbounded output before the first size", async () => {
+  const socket = new FakeSocket();
+  const writes: unknown[] = [];
+  const terminal = {
+    open: () => undefined,
+    write: (data: string | Uint8Array) => writes.push(data),
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver;
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      terminalHistoryLimit={1024}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  const chunk = btoa("x".repeat(600));
+  act(() => {
+    socket.receive({ type: "output", data: chunk });
+    socket.receive({ type: "output", data: chunk });
+  });
+
+  expect(socket.closeCount).toBe(1);
+  expect(writes).toEqual([]);
 });
 
 test("reports an absolute terminal title as the current working directory", async () => {
@@ -478,7 +523,10 @@ test("decodes terminal output into the original bytes", async () => {
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => socket.receive({ type: "output", data: "44GC" }));
+  act(() => {
+    socket.receive({ type: "resize", cols: 80, rows: 24 });
+    socket.receive({ type: "output", data: "44GC" });
+  });
 
   expect(writes).toEqual([new Uint8Array([0xe3, 0x81, 0x82])]);
 });

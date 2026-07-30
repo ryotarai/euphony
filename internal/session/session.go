@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"sync"
 
-	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 var ErrForegroundUnsupported = errors.New("foreground process inspection is unsupported")
@@ -21,67 +21,118 @@ const (
 )
 
 type Session struct {
-	id             string
-	command        *exec.Cmd
-	terminal       *os.File
-	waitDone       chan struct{}
-	pumpDone       chan struct{}
-	close          sync.Once
-	fileMu         sync.Mutex
-	cols           uint16
-	rows           uint16
-	outputMu       sync.Mutex
-	history        [][]byte
-	historySize    int
-	historyLimit   int
-	subscribers    map[uint64]*outputSubscriber
-	nextSubscriber uint64
-	outputClosed   bool
+	id              string
+	command         *exec.Cmd
+	terminal        *os.File
+	terminalFD      int
+	waitDone        chan struct{}
+	pumpDone        chan struct{}
+	close           sync.Once
+	fileMu          sync.Mutex
+	dimensionsMu    sync.Mutex
+	cols            uint16
+	rows            uint16
+	resizeSubmitMu  sync.Mutex
+	resizeRequests  chan resizeRequest
+	resizeWakeRead  int
+	resizeWakeWrite int
+	outputMu        sync.Mutex
+	history         [][]byte
+	historySize     int
+	historyLimit    int
+	subscribers     map[uint64]*outputSubscriber
+	nextSubscriber  uint64
+	outputClosed    bool
+	afterReadMu     sync.Mutex
+	afterRead       func([]byte)
 }
 
 const (
 	historyChunkSize       = 32 * 1024
 	maxLiveOutputQueueSize = 2 * 1024 * 1024
+	maxPTYReadBatchChunks  = 64
 )
 
 type outputSubscriber struct {
 	mu            sync.Mutex
-	queue         [][]byte
+	queue         []TerminalEvent
 	head          int
 	queuedBytes   int
 	maxQueueBytes int
 	closed        bool
 	aborted       bool
+	eventMode     bool
 	notify        chan struct{}
 	abort         chan struct{}
 	lagged        chan struct{}
 	output        chan []byte
+	events        chan TerminalEvent
 	abortOnce     sync.Once
 	laggedOnce    sync.Once
+}
+
+type TerminalEvent struct {
+	Data []byte
+	Cols uint16
+	Rows uint16
+}
+
+type resizeRequest struct {
+	cols   uint16
+	rows   uint16
+	notify func()
+	done   chan error
 }
 
 // outputSubscriber keeps the replay-to-live handoff lossless up to a bounded
 // high-water mark without blocking the PTY reader. Lagging clients reconnect
 // from a fresh history snapshot instead of growing the queue without limit.
 func newOutputSubscriber(maxQueueBytes int) *outputSubscriber {
+	return newTerminalSubscriber(maxQueueBytes, false)
+}
+
+func newTerminalEventSubscriber(maxQueueBytes int) *outputSubscriber {
+	return newTerminalSubscriber(maxQueueBytes, true)
+}
+
+func newTerminalSubscriber(maxQueueBytes int, eventMode bool) *outputSubscriber {
 	subscriber := &outputSubscriber{
 		maxQueueBytes: maxQueueBytes,
+		eventMode:     eventMode,
 		notify:        make(chan struct{}, 1),
 		abort:         make(chan struct{}),
 		lagged:        make(chan struct{}),
 		output:        make(chan []byte),
+		events:        make(chan TerminalEvent),
 	}
 	go subscriber.run()
 	return subscriber
 }
 
 func (s *outputSubscriber) enqueue(data []byte) bool {
+	return s.enqueueEvent(TerminalEvent{Data: data})
+}
+
+func (s *outputSubscriber) enqueueResize(cols, rows uint16) bool {
+	return s.enqueueEvent(TerminalEvent{Cols: cols, Rows: rows})
+}
+
+func (s *outputSubscriber) enqueueEvent(event TerminalEvent) bool {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return false
 	}
-	if s.queuedBytes+len(data) > s.maxQueueBytes {
+	if event.Cols > 0 && event.Rows > 0 && s.head < len(s.queue) {
+		last := len(s.queue) - 1
+		if s.queue[last].Cols > 0 && s.queue[last].Rows > 0 {
+			s.queue[last] = event
+			s.mu.Unlock()
+			s.signal()
+			return true
+		}
+	}
+	if s.queuedBytes+len(event.Data) > s.maxQueueBytes {
 		s.closed = true
 		s.aborted = true
 		s.queue = nil
@@ -97,8 +148,8 @@ func (s *outputSubscriber) enqueue(data []byte) bool {
 		s.signal()
 		return false
 	}
-	s.queue = append(s.queue, data)
-	s.queuedBytes += len(data)
+	s.queue = append(s.queue, event)
+	s.queuedBytes += len(event.Data)
 	s.mu.Unlock()
 	s.signal()
 	return true
@@ -133,9 +184,13 @@ func (s *outputSubscriber) signal() {
 }
 
 func (s *outputSubscriber) run() {
-	defer close(s.output)
+	if s.eventMode {
+		defer close(s.events)
+	} else {
+		defer close(s.output)
+	}
 	for {
-		data, ready, open := s.next()
+		event, ready, open := s.next()
 		if !open {
 			return
 		}
@@ -147,38 +202,46 @@ func (s *outputSubscriber) run() {
 			}
 			continue
 		}
-		select {
-		case s.output <- data:
-		case <-s.abort:
-			return
+		if s.eventMode {
+			select {
+			case s.events <- event:
+			case <-s.abort:
+				return
+			}
+		} else if len(event.Data) > 0 {
+			select {
+			case s.output <- event.Data:
+			case <-s.abort:
+				return
+			}
 		}
 	}
 }
 
-func (s *outputSubscriber) next() ([]byte, bool, bool) {
+func (s *outputSubscriber) next() (TerminalEvent, bool, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.aborted {
-		return nil, false, false
+		return TerminalEvent{}, false, false
 	}
 	if s.head < len(s.queue) {
-		data := s.queue[s.head]
-		s.queue[s.head] = nil
+		event := s.queue[s.head]
+		s.queue[s.head] = TerminalEvent{}
 		s.head++
-		s.queuedBytes -= len(data)
+		s.queuedBytes -= len(event.Data)
 		if s.head == len(s.queue) {
 			s.queue = nil
 			s.head = 0
 		} else if s.head >= 1024 && s.head*2 >= len(s.queue) {
-			s.queue = append([][]byte(nil), s.queue[s.head:]...)
+			s.queue = append([]TerminalEvent(nil), s.queue[s.head:]...)
 			s.head = 0
 		}
-		return data, true, true
+		return event, true, true
 	}
 	if s.closed {
-		return nil, false, false
+		return TerminalEvent{}, false, false
 	}
-	return nil, false, true
+	return TerminalEvent{}, false, true
 }
 
 func (s *Session) Write(data []byte) (int, error) {
@@ -188,22 +251,75 @@ func (s *Session) Write(data []byte) (int, error) {
 }
 
 func (s *Session) Resize(cols, rows uint16) error {
+	return s.ResizeWithNotification(cols, rows, nil)
+}
+
+// ResizeWithNotification submits the resize to the PTY event loop. The loop
+// drains readable output first, then calls notify after applying the size and
+// before reading more output.
+func (s *Session) ResizeWithNotification(
+	cols, rows uint16,
+	notify func(),
+) error {
 	if cols < 1 || cols > 1000 || rows < 1 || rows > 1000 {
 		return errors.New("terminal dimensions must be between 1 and 1000")
 	}
-	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
-	if err := pty.Setsize(s.terminal, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
-		return err
+	if s.resizeRequests == nil {
+		return errors.New("terminal resize loop is not running")
 	}
-	s.cols = cols
-	s.rows = rows
-	return nil
+
+	s.resizeSubmitMu.Lock()
+	defer s.resizeSubmitMu.Unlock()
+	select {
+	case <-s.pumpDone:
+		return errors.New("terminal output loop is closed")
+	default:
+	}
+	request := resizeRequest{
+		cols:   cols,
+		rows:   rows,
+		notify: notify,
+		done:   make(chan error, 1),
+	}
+	select {
+	case s.resizeRequests <- request:
+	case <-s.pumpDone:
+		return errors.New("terminal output loop is closed")
+	}
+	for {
+		if _, err := unix.Write(s.resizeWakeWrite, []byte{1}); err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			select {
+			case <-s.resizeRequests:
+			default:
+			}
+			select {
+			case <-s.pumpDone:
+				return errors.New("terminal output loop is closed")
+			default:
+				return err
+			}
+		}
+		break
+	}
+	select {
+	case err := <-request.done:
+		return err
+	case <-s.pumpDone:
+		select {
+		case err := <-request.done:
+			return err
+		default:
+			return errors.New("terminal output loop is closed")
+		}
+	}
 }
 
 func (s *Session) Dimensions() (uint16, uint16) {
-	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
+	s.dimensionsMu.Lock()
+	defer s.dimensionsMu.Unlock()
 	return s.cols, s.rows
 }
 
@@ -234,11 +350,33 @@ func (s *Session) Subscribe() ([][]byte, <-chan []byte, func()) {
 }
 
 func (s *Session) SubscribeWithStatus() ([][]byte, <-chan []byte, <-chan struct{}, func()) {
+	subscriber := newOutputSubscriber(maxLiveOutputQueueSize)
+	history, unsubscribe := s.subscribe(subscriber)
+	return history, subscriber.output, subscriber.lagged, unsubscribe
+}
+
+func (s *Session) SubscribeTerminalEventsWithStatus() (
+	[][]byte,
+	<-chan TerminalEvent,
+	<-chan struct{},
+	func(uint16, uint16),
+	func(),
+) {
+	subscriber := newTerminalEventSubscriber(maxLiveOutputQueueSize)
+	history, unsubscribe := s.subscribe(subscriber)
+	// The coordinator calls enqueueResize only from ResizeWithNotification's
+	// notify callback, except when acknowledging an unchanged initial size.
+	enqueueResize := func(cols, rows uint16) {
+		subscriber.enqueueResize(cols, rows)
+	}
+	return history, subscriber.events, subscriber.lagged, enqueueResize, unsubscribe
+}
+
+func (s *Session) subscribe(subscriber *outputSubscriber) ([][]byte, func()) {
 	s.outputMu.Lock()
 	history := append([][]byte(nil), s.history...)
 	id := s.nextSubscriber
 	s.nextSubscriber++
-	subscriber := newOutputSubscriber(maxLiveOutputQueueSize)
 	if s.outputClosed {
 		subscriber.finish()
 	} else {
@@ -257,28 +395,133 @@ func (s *Session) SubscribeWithStatus() ([][]byte, <-chan []byte, <-chan struct{
 			subscriber.abortOutput()
 		})
 	}
-	return history, subscriber.output, subscriber.lagged, unsubscribe
+	return history, unsubscribe
 }
 
 func (s *Session) pump() {
-	defer close(s.pumpDone)
+	defer func() {
+		s.fileMu.Lock()
+		_ = s.terminal.Close()
+		s.fileMu.Unlock()
+		close(s.pumpDone)
+		s.resizeSubmitMu.Lock()
+		_ = unix.Close(s.resizeWakeRead)
+		_ = unix.Close(s.resizeWakeWrite)
+		s.resizeSubmitMu.Unlock()
+	}()
 	buffer := make([]byte, 32*1024)
+	pollFDs := []unix.PollFd{
+		{
+			Fd:     int32(s.terminalFD),
+			Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR,
+		},
+		{
+			Fd:     int32(s.resizeWakeRead),
+			Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR,
+		},
+	}
 	for {
-		n, err := s.terminal.Read(buffer)
+		_, err := unix.Poll(pollFDs, -1)
+		if err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			s.finishOutput()
+			return
+		}
+
+		terminalEvents := pollFDs[0].Revents
+		if terminalEvents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) != 0 {
+			closed, readErr := s.drainTerminalOutput(buffer)
+			if readErr != nil || closed {
+				s.finishOutput()
+				return
+			}
+		}
+
+		wakeEvents := pollFDs[1].Revents
+		if wakeEvents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) != 0 {
+			var wake [1]byte
+			_, _ = unix.Read(s.resizeWakeRead, wake[:])
+			s.processPendingResize()
+		}
+	}
+}
+
+func (s *Session) drainTerminalOutput(buffer []byte) (bool, error) {
+	for range maxPTYReadBatchChunks {
+		n, err := unix.Read(s.terminalFD, buffer)
 		if n > 0 {
+			s.afterReadMu.Lock()
+			afterRead := s.afterRead
+			s.afterReadMu.Unlock()
+			if afterRead != nil {
+				afterRead(buffer[:n])
+			}
 			s.publish(buffer[:n])
 		}
 		if err != nil {
-			s.outputMu.Lock()
-			s.outputClosed = true
-			for id, subscriber := range s.subscribers {
-				delete(s.subscribers, id)
-				subscriber.finish()
+			if errors.Is(err, unix.EINTR) {
+				continue
 			}
-			s.outputMu.Unlock()
-			return
+			return false, err
+		}
+		if n == 0 {
+			return true, nil
+		}
+
+		readable := []unix.PollFd{{
+			Fd:     int32(s.terminalFD),
+			Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR,
+		}}
+		if _, err := unix.Poll(readable, 0); err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			return false, err
+		}
+		if readable[0].Revents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) == 0 {
+			return false, nil
 		}
 	}
+	return false, nil
+}
+
+func (s *Session) processPendingResize() {
+	select {
+	case request := <-s.resizeRequests:
+		err := unix.IoctlSetWinsize(s.terminalFD, unix.TIOCSWINSZ, &unix.Winsize{
+			Col: request.cols,
+			Row: request.rows,
+		})
+		if err == nil {
+			s.dimensionsMu.Lock()
+			s.cols = request.cols
+			s.rows = request.rows
+			s.dimensionsMu.Unlock()
+			if request.notify != nil {
+				request.notify()
+			}
+		}
+		request.done <- err
+	default:
+	}
+}
+
+func (s *Session) finishOutput() {
+	s.outputMu.Lock()
+	s.outputClosed = true
+	for id, subscriber := range s.subscribers {
+		delete(s.subscribers, id)
+		subscriber.finish()
+	}
+	s.outputMu.Unlock()
+}
+
+func (s *Session) setAfterReadHook(hook func([]byte)) {
+	s.afterReadMu.Lock()
+	s.afterRead = hook
+	s.afterReadMu.Unlock()
 }
 
 func (s *Session) publish(data []byte) {
@@ -333,7 +576,6 @@ func (s *Session) terminate() {
 		if s.command.Process != nil {
 			_ = s.command.Process.Kill()
 		}
-		_ = s.terminal.Close()
 	})
 }
 

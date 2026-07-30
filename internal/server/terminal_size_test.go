@@ -35,8 +35,9 @@ func assertNoTerminalDimensions(
 
 func TestTerminalSizeCoordinatorUsesSmallestClaimAndGrowsAfterDisconnect(t *testing.T) {
 	var applied []terminalDimensions
-	apply := func(cols, rows uint16) error {
+	apply := func(cols, rows uint16, notify func()) error {
 		applied = append(applied, terminalDimensions{Cols: cols, Rows: rows})
+		notify()
 		return nil
 	}
 	coordinator := newTerminalSizeCoordinator()
@@ -98,7 +99,7 @@ func TestTerminalSizeCoordinatorRejectsInvalidClaimsWithoutChangingSize(t *testi
 	report, _, updates, stop := coordinator.subscribe(
 		"terminal",
 		terminalDimensions{Cols: 80, Rows: 24},
-		func(uint16, uint16) error { return nil },
+		func(uint16, uint16, func()) error { return nil },
 	)
 	defer stop()
 
@@ -118,12 +119,13 @@ func TestTerminalSizeCoordinatorRejectsInvalidClaimsWithoutChangingSize(t *testi
 func TestTerminalSizeCoordinatorRollsBackClaimWhenResizeFails(t *testing.T) {
 	resizeFailure := errors.New("resize failed")
 	var applied []terminalDimensions
-	apply := func(cols, rows uint16) error {
+	apply := func(cols, rows uint16, notify func()) error {
 		dimensions := terminalDimensions{Cols: cols, Rows: rows}
 		applied = append(applied, dimensions)
 		if dimensions == (terminalDimensions{Cols: 80, Rows: 24}) {
 			return resizeFailure
 		}
+		notify()
 		return nil
 	}
 	coordinator := newTerminalSizeCoordinator()
@@ -152,9 +154,9 @@ func TestTerminalSizeCoordinatorRollsBackClaimWhenResizeFails(t *testing.T) {
 		"large": largeUpdates,
 		"small": smallUpdates,
 	} {
-		if got := readTerminalDimensions(t, updates); got != (terminalDimensions{Cols: 120, Rows: 40}) {
-			t.Fatalf("%s rollback dimensions = %#v, want 120x40", name, got)
-		}
+		t.Run(name, func(t *testing.T) {
+			assertNoTerminalDimensions(t, updates)
+		})
 	}
 
 	if err := reportSmall(100, 30); err != nil {
@@ -180,8 +182,9 @@ func TestTerminalSizeCoordinatorRollsBackClaimWhenResizeFails(t *testing.T) {
 
 func TestTerminalSizeCoordinatorReleasesAndRestoresClientClaim(t *testing.T) {
 	var applied []terminalDimensions
-	apply := func(cols, rows uint16) error {
+	apply := func(cols, rows uint16, notify func()) error {
 		applied = append(applied, terminalDimensions{Cols: cols, Rows: rows})
+		notify()
 		return nil
 	}
 	coordinator := newTerminalSizeCoordinator()
@@ -214,7 +217,9 @@ func TestTerminalSizeCoordinatorReleasesAndRestoresClientClaim(t *testing.T) {
 	if got := readTerminalDimensions(t, largeUpdates); got != (terminalDimensions{Cols: 120, Rows: 40}) {
 		t.Fatalf("large dimensions after release = %#v, want 120x40", got)
 	}
-	assertNoTerminalDimensions(t, smallUpdates)
+	if got := readTerminalDimensions(t, smallUpdates); got != (terminalDimensions{Cols: 120, Rows: 40}) {
+		t.Fatalf("small dimensions after release = %#v, want 120x40", got)
+	}
 
 	if err := reportSmall(70, 20); err != nil {
 		t.Fatalf("reportSmall(70, 20) error = %v", err)
@@ -239,10 +244,11 @@ func TestTerminalSizeCoordinatorReleasesAndRestoresClientClaim(t *testing.T) {
 	}
 }
 
-func TestTerminalSizeCoordinatorPublishesAcceptedSizeBeforeApplyingResize(t *testing.T) {
+func TestTerminalSizeCoordinatorPublishesAcceptedSizeDuringResize(t *testing.T) {
 	coordinator := newTerminalSizeCoordinator()
 	var updates <-chan terminalDimensions
-	apply := func(cols, rows uint16) error {
+	apply := func(cols, rows uint16, notify func()) error {
+		notify()
 		select {
 		case got := <-updates:
 			want := terminalDimensions{Cols: cols, Rows: rows}
@@ -250,7 +256,7 @@ func TestTerminalSizeCoordinatorPublishesAcceptedSizeBeforeApplyingResize(t *tes
 				t.Fatalf("published dimensions = %#v, want %#v", got, want)
 			}
 		default:
-			t.Fatal("accepted dimensions were not published before PTY resize")
+			t.Fatal("accepted dimensions were not published by the resize transaction")
 		}
 		return nil
 	}
