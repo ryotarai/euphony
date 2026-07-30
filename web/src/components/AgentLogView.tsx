@@ -87,6 +87,20 @@ function DetailEntry({ entry }: { entry: AgentLogEntry }) {
 }
 
 function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
+  const entries = transcript.entries ?? [];
+  if (entries.length === 0) {
+    return (
+      <Empty className="agent-log-empty">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <BotIcon />
+          </EmptyMedia>
+          <EmptyTitle>Transcript is empty</EmptyTitle>
+          <EmptyDescription>Waiting for the first agent event…</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
   return (
     <MessageScrollerProvider
       key={transcript.sessionId}
@@ -96,7 +110,7 @@ function TranscriptView({ transcript }: { transcript: AgentTranscript }) {
       <MessageScroller className="agent-log-scroller">
         <MessageScrollerViewport aria-label="Agent log">
           <MessageScrollerContent aria-label={`${transcript.agent} transcript`}>
-            {transcript.entries.map((entry) => (
+            {entries.map((entry) => (
               <MessageScrollerItem
                 key={entry.id}
                 messageId={entry.id}
@@ -199,9 +213,11 @@ export function AgentLogView({ session, api, active }: AgentLogViewProps) {
           </EmptyHeader>
         </Empty>
       )}
-      {unavailable && log && (
+      {(unavailable || error) && log && (
         <p className="agent-log-refresh-note" role="status">
-          Waiting for the linked transcript…
+          {error
+            ? "Refresh interrupted. Retrying automatically."
+            : "Waiting for the linked transcript…"}
         </p>
       )}
     </section>

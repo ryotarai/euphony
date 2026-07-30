@@ -23,7 +23,7 @@ func Parse(agent string, reader io.Reader) ([]Entry, error) {
 	}
 	state := parser{agent: agent, toolNames: make(map[string]string)}
 	buffered := bufio.NewReaderSize(reader, 64<<10)
-	var entries []Entry
+	entries := make([]Entry, 0)
 	lineNumber := 0
 	for {
 		line, readErr := buffered.ReadBytes('\n')
@@ -41,7 +41,9 @@ func Parse(agent string, reader io.Reader) ([]Entry, error) {
 			}
 			for index := range parsed {
 				parsed[index].ID = fmt.Sprintf("%d-%d", lineNumber, index)
-				parsed[index].Content = truncateContent(parsed[index].Content)
+				if parsed[index].Kind == "tool" || parsed[index].Kind == "tool_result" {
+					parsed[index].Content = truncateContent(parsed[index].Content)
+				}
 				entries = append(entries, parsed[index])
 			}
 		}

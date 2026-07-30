@@ -121,3 +121,38 @@ test("distinguishes a linked transcript that has not appeared yet", async () => 
     await screen.findByText("Waiting for the linked Claude transcript…"),
   ).toBeInTheDocument();
 });
+
+test("shows an explicit empty state for an empty transcript", async () => {
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({
+      log: { ...initialLog, entries: null },
+      etag: 'W/"empty"',
+    }),
+  } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+
+  expect(await screen.findByText("Transcript is empty")).toBeInTheDocument();
+  expect(screen.getByText("Waiting for the first agent event…")).toBeInTheDocument();
+});
+
+test("keeps the current log visible while a refresh is failing", async () => {
+  vi.useFakeTimers();
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockRejectedValueOnce(new Error("Temporary failure"));
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await act(async () => Promise.resolve());
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+  });
+
+  expect(screen.getByRole("heading", { name: "Result" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Refresh interrupted. Retrying automatically.",
+  );
+  vi.useRealTimers();
+});

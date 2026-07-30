@@ -156,6 +156,32 @@ func TestMetadataReturnsHiddenAgentLinkage(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentClearsStaleTranscriptWhenSessionChanges(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	_, err = manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "claude", AgentSessionID: "session-1",
+		TranscriptPath: "/home/me/.claude/projects/repo/session-1.jsonl",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(first session) error = %v", err)
+	}
+
+	updated, err := manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "claude", AgentSessionID: "session-2",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(second session) error = %v", err)
+	}
+	if updated.AgentTranscriptPath != "" {
+		t.Fatalf("AgentTranscriptPath = %q, want empty", updated.AgentTranscriptPath)
+	}
+}
+
 func TestUpdateCWDExpandsHomeDirectoryTitle(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

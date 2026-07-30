@@ -7,21 +7,25 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 var ErrTranscriptNotFound = errors.New("agent transcript not found")
+
+const fallbackMissCacheTTL = time.Second
 
 type Resolver struct {
 	codexRoot  string
 	claudeRoot string
 	mu         sync.Mutex
 	cache      map[string]string
+	misses     map[string]time.Time
 }
 
 func NewResolver(codexRoot, claudeRoot string) *Resolver {
 	return &Resolver{
 		codexRoot: cleanRoot(codexRoot), claudeRoot: cleanRoot(claudeRoot),
-		cache: make(map[string]string),
+		cache: make(map[string]string), misses: make(map[string]time.Time),
 	}
 }
 
@@ -37,7 +41,7 @@ func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error
 	if root == "" || !safeSessionID(sessionID) {
 		return "", ErrTranscriptNotFound
 	}
-	if recordedPath != "" {
+	if recordedPath != "" && matchesSessionFilename(agent, filepath.Base(recordedPath), sessionID) {
 		if path, ok := confinedRegularFile(root, recordedPath); ok {
 			return path, nil
 		}
@@ -45,18 +49,26 @@ func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error
 	key := agent + "\x00" + sessionID
 	r.mu.Lock()
 	cached := r.cache[key]
+	missUntil := r.misses[key]
 	r.mu.Unlock()
 	if cached != "" {
 		if path, ok := confinedRegularFile(root, cached); ok {
 			return path, nil
 		}
 	}
+	if time.Now().Before(missUntil) {
+		return "", ErrTranscriptNotFound
+	}
 	path := r.find(root, agent, sessionID)
 	if path == "" {
+		r.mu.Lock()
+		r.misses[key] = time.Now().Add(fallbackMissCacheTTL)
+		r.mu.Unlock()
 		return "", ErrTranscriptNotFound
 	}
 	r.mu.Lock()
 	r.cache[key] = path
+	delete(r.misses, key)
 	r.mu.Unlock()
 	return path, nil
 }
@@ -84,12 +96,7 @@ func (r *Resolver) find(root, agent, sessionID string) string {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			return nil
 		}
-		matches := entry.Name() == sessionID+".jsonl"
-		if agent == "codex" {
-			matches = strings.HasSuffix(entry.Name(), "-"+sessionID+".jsonl") ||
-				entry.Name() == sessionID+".jsonl"
-		}
-		if !matches {
+		if !matchesSessionFilename(agent, entry.Name(), sessionID) {
 			return nil
 		}
 		if confined, ok := confinedRegularFile(root, path); ok {
@@ -99,6 +106,13 @@ func (r *Resolver) find(root, agent, sessionID string) string {
 		return nil
 	})
 	return result
+}
+
+func matchesSessionFilename(agent, name, sessionID string) bool {
+	if name == sessionID+".jsonl" {
+		return true
+	}
+	return agent == "codex" && strings.HasSuffix(name, "-"+sessionID+".jsonl")
 }
 
 func safeSessionID(sessionID string) bool {

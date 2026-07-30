@@ -1,6 +1,7 @@
 package agentlog
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -107,6 +108,30 @@ func TestParseKeepsReadingAfterAMultiMegabyteRecord(t *testing.T) {
 func TestParseRejectsUnsupportedAgent(t *testing.T) {
 	if _, err := Parse("other", strings.NewReader("{}")); err == nil {
 		t.Fatal("Parse() error = nil, want unsupported agent error")
+	}
+}
+
+func TestParseReturnsAnEmptySliceForAnEmptyTranscript(t *testing.T) {
+	got, err := Parse("claude", strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("Parse() = %#v, want non-nil empty slice", got)
+	}
+}
+
+func TestParseDoesNotTruncateAssistantMessages(t *testing.T) {
+	content := strings.Repeat("x", maxEntryContentBytes+100)
+	input := `{"type":"assistant","message":{"role":"assistant","content":` +
+		strconv.Quote(content) + `}}`
+
+	got, err := Parse("claude", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(got) != 1 || got[0].Content != content {
+		t.Fatalf("Parse() message length = %d, want %d", len(got[0].Content), len(content))
 	}
 }
 

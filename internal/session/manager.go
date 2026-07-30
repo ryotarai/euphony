@@ -275,6 +275,10 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		item.metadata.ResumeAgent = item.metadata.Agent
 	}
 	if sessionID := strings.TrimSpace(update.AgentSessionID); sessionID != "" {
+		if sessionID != item.metadata.AgentSessionID &&
+			strings.TrimSpace(update.TranscriptPath) == "" {
+			item.metadata.AgentTranscriptPath = ""
+		}
 		item.metadata.AgentSessionID = sessionID
 	}
 	if transcriptPath := strings.TrimSpace(update.TranscriptPath); transcriptPath != "" {

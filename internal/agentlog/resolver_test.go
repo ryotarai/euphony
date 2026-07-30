@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestResolverAcceptsRecordedPathInsideAgentRoot(t *testing.T) {
@@ -33,6 +34,17 @@ func TestResolverRejectsRecordedPathOutsideAgentRoot(t *testing.T) {
 	resolver := NewResolver("", root)
 
 	if _, err := resolver.Resolve("claude", "session-1", outside); !errors.Is(err, ErrTranscriptNotFound) {
+		t.Fatalf("Resolve() error = %v, want ErrTranscriptNotFound", err)
+	}
+}
+
+func TestResolverRejectsRecordedPathForAnotherSession(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "claude-projects")
+	oldPath := filepath.Join(root, "repo", "session-1.jsonl")
+	writeTranscriptFixture(t, oldPath)
+	resolver := NewResolver("", root)
+
+	if _, err := resolver.Resolve("claude", "session-2", oldPath); !errors.Is(err, ErrTranscriptNotFound) {
 		t.Fatalf("Resolve() error = %v, want ErrTranscriptNotFound", err)
 	}
 }
@@ -122,6 +134,24 @@ func TestResolverRejectsSymlinkEscapingAgentRoot(t *testing.T) {
 
 	if _, err := resolver.Resolve("claude", "session-1", link); !errors.Is(err, ErrTranscriptNotFound) {
 		t.Fatalf("Resolve() error = %v, want ErrTranscriptNotFound", err)
+	}
+}
+
+func TestResolverBrieflyCachesFallbackMisses(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "claude-projects")
+	path := filepath.Join(root, "repo", "session-1.jsonl")
+	resolver := NewResolver("", root)
+
+	if _, err := resolver.Resolve("claude", "session-1", ""); !errors.Is(err, ErrTranscriptNotFound) {
+		t.Fatalf("first Resolve() error = %v, want ErrTranscriptNotFound", err)
+	}
+	writeTranscriptFixture(t, path)
+	if _, err := resolver.Resolve("claude", "session-1", ""); !errors.Is(err, ErrTranscriptNotFound) {
+		t.Fatalf("immediate Resolve() error = %v, want cached ErrTranscriptNotFound", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := resolver.Resolve("claude", "session-1", ""); err != nil {
+		t.Fatalf("Resolve() after cache expiry error = %v", err)
 	}
 }
 

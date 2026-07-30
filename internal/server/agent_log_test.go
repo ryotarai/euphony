@@ -112,6 +112,49 @@ func TestAgentLogEndpointRejectsMissingTerminalOrLinkage(t *testing.T) {
 	}
 }
 
+func TestAgentLogEndpointSerializesEmptyEntriesAsAnArray(t *testing.T) {
+	claudeRoot := filepath.Join(t.TempDir(), "claude-projects")
+	transcriptPath := filepath.Join(claudeRoot, "repo", "session-1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(transcriptPath, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", ClaudeProjectsRoot: claudeRoot,
+		CodexSessionsRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	terminal, err := srv.sessions.Create(t.Context(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	_, err = srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "claude", AgentSessionID: "session-1", TranscriptPath: transcriptPath,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	response := performAgentLogRequest(t, srv, terminal.ID, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET agent log status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Entries json.RawMessage `json:"entries"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode transcript: %v", err)
+	}
+	if string(payload.Entries) != "[]" {
+		t.Fatalf("entries = %s, want []", payload.Entries)
+	}
+}
+
 func TestAgentLogETagChangesWhenLinkedAgentSessionChanges(t *testing.T) {
 	claudeRoot := filepath.Join(t.TempDir(), "claude-projects")
 	content := []byte(`{"type":"assistant","message":{"role":"assistant","content":"Same size"}}` + "\n")
