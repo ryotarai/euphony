@@ -128,6 +128,39 @@ function claudeTranscriptLine(index: number) {
   }) + "\n";
 }
 
+function claudeToolTranscriptLines() {
+  return Array.from({ length: 3 }, (_, index) => {
+    const callID = `tool-${index + 1}`;
+    return [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-07-30T03:00:00Z",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "tool_use",
+            id: callID,
+            name: "exec_command",
+            input: { command: `secret command ${index + 1}` },
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-07-30T03:00:01Z",
+        message: {
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: callID,
+            content: `secret result ${index + 1}`,
+          }],
+        },
+      }),
+    ].join("\n") + "\n";
+  }).join("");
+}
+
 test("opens from a development token URL and immediately scrubs it", async ({ page }) => {
   await clearSessions(page);
   await page.goto("/?token=test-token");
@@ -253,7 +286,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await mkdir(`${claudeConfigDir}/projects/euphony`, { recursive: true });
   await writeFile(
     transcriptPath,
-    Array.from({ length: 40 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
+    Array.from({ length: 105 }, (_, index) => claudeTranscriptLine(index + 1)).join("") +
+      claudeToolTranscriptLines(),
   );
   const hook = await page.request.post("/api/hooks/terminal", {
     headers: {
@@ -275,7 +309,11 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await page.goto("/?token=test-token");
   await page.getByRole("tab", { name: "Agent log" }).click();
   const viewport = page.locator('[data-slot="message-scroller-viewport"]');
-  await expect(page.getByRole("heading", { name: "Agent log entry 40" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agent log entry 105" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agent log entry 01" })).toHaveCount(0);
+  await expect(page.getByText("3 tool calls")).toBeVisible();
+  await expect(page.getByText("secret command 1")).toHaveCount(0);
+  await expect(page.getByText("secret result 1")).toHaveCount(0);
   const table = page.getByRole("table");
   const tableCell = table.getByRole("cell", { name: "go test ./..." });
   await expect(table.getByRole("columnheader", { name: "Command" })).toBeVisible();
@@ -294,8 +332,24 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
 
-  await appendFile(transcriptPath, claudeTranscriptLine(41));
-  await expect(page.getByRole("heading", { name: "Agent log entry 41" })).toBeVisible();
+  await viewport.hover();
+  await page.mouse.wheel(0, -20_000);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(20);
+  const firstNewestHeading = page.getByRole("heading", { name: "Agent log entry 12" });
+  const topBeforeLoad = (await firstNewestHeading.boundingBox())?.y;
+  expect(topBeforeLoad).toBeDefined();
+
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByRole("heading", { name: "Agent log entry 01" })).toBeAttached();
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+  await expect.poll(async () => {
+    const currentTop = (await firstNewestHeading.boundingBox())?.y;
+    return currentTop === undefined ? Number.POSITIVE_INFINITY : Math.abs(currentTop - topBeforeLoad!);
+  }).toBeLessThan(2);
+
+  await page.getByRole("button", { name: "Scroll to end" }).click();
+  await appendFile(transcriptPath, claudeTranscriptLine(106));
+  await expect(page.getByRole("heading", { name: "Agent log entry 106" })).toBeVisible();
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
@@ -305,8 +359,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(20);
   const readingPosition = await viewport.evaluate((element) => element.scrollTop);
 
-  await appendFile(transcriptPath, claudeTranscriptLine(42));
-  await expect(page.getByRole("heading", { name: "Agent log entry 42" })).toBeAttached();
+  await appendFile(transcriptPath, claudeTranscriptLine(107));
+  await expect(page.getByRole("heading", { name: "Agent log entry 107" })).toBeAttached();
   await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(
     readingPosition + 2,
   );
@@ -316,8 +370,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
 
-  await appendFile(transcriptPath, claudeTranscriptLine(43));
-  await expect(page.getByRole("heading", { name: "Agent log entry 43" })).toBeVisible();
+  await appendFile(transcriptPath, claudeTranscriptLine(108));
+  await expect(page.getByRole("heading", { name: "Agent log entry 108" })).toBeVisible();
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);

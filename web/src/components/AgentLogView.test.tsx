@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, vi } from "vitest";
 import type { ApiClient } from "../api";
 import type { AgentTranscript, Session } from "../types";
@@ -32,6 +33,9 @@ const session: Session = {
 const initialLog: AgentTranscript = {
   agent: "codex",
   sessionId: "session-1",
+  startCursor: "100",
+  endCursor: "200",
+  nextCursor: "100",
   entries: [
     {
       id: "1-0",
@@ -42,9 +46,8 @@ const initialLog: AgentTranscript = {
     },
     {
       id: "2-0",
-      kind: "tool",
-      title: "exec_command",
-      content: '{\n  "cmd": "go test ./..."\n}',
+      kind: "tool_group",
+      toolCalls: 3,
     },
   ],
 };
@@ -78,7 +81,8 @@ test("renders normalized transcript as safe semantic HTML", async () => {
   expect(screen.getByText("const answer = 42;")).toHaveClass("language-typescript");
   expect(screen.getByText("<script>alert('no')</script>")).toBeInTheDocument();
   expect(document.querySelector("script")).toBeNull();
-  expect(screen.getByText("exec_command")).toBeInTheDocument();
+  expect(screen.getByText("3 tool calls")).toBeInTheDocument();
+  expect(screen.getByText("3 tool calls").closest("details")).toBeNull();
 });
 
 test("renders Mermaid fenced code as a diagram", async () => {
@@ -155,7 +159,10 @@ test("polls with the previous etag only while active", async () => {
     vi.advanceTimersByTime(1000);
     await Promise.resolve();
   });
-  expect(getAgentLog).toHaveBeenLastCalledWith("terminal-1", 'W/"first"');
+  expect(getAgentLog).toHaveBeenLastCalledWith("terminal-1", {
+    after: "200",
+    etag: 'W/"first"',
+  });
 
   rerender(<AgentLogView session={session} api={api} active={false} />);
   await act(async () => {
@@ -163,6 +170,231 @@ test("polls with the previous etag only while active", async () => {
     await Promise.resolve();
   });
   expect(getAgentLog).toHaveBeenCalledTimes(2);
+  vi.useRealTimers();
+});
+
+test("loads older entries from the top and preserves the reading position", async () => {
+  const user = userEvent.setup();
+  const olderLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Oldest message" },
+      { id: "50-0", kind: "tool_group", toolCalls: 2 },
+    ],
+  };
+  let scrollHeight = 1000;
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockImplementationOnce(async () => {
+      scrollHeight = 1600;
+      return { log: olderLog, etag: 'W/"first"' };
+    });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await screen.findByRole("heading", { name: "Result" });
+  const viewport = screen.getByLabelText("Agent log", {
+    selector: '[data-slot="message-scroller-viewport"]',
+  });
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => scrollHeight,
+  });
+  fireEvent.scroll(viewport, { target: { scrollTop: 250 } });
+
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+
+  expect(await screen.findByText("Oldest message")).toBeInTheDocument();
+  expect(screen.getByText("2 tool calls")).toBeInTheDocument();
+  expect(getAgentLog).toHaveBeenNthCalledWith(2, "terminal-1", {
+    before: "100",
+  });
+  await waitFor(() => expect(viewport.scrollTop).toBe(850));
+  expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+});
+
+test("offers older history when the newest page has no displayable entries", async () => {
+  const user = userEvent.setup();
+  const emptyNewest: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "100",
+    endCursor: "200",
+    nextCursor: "100",
+    entries: [],
+  };
+  const olderLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Older message" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: emptyNewest, etag: 'W/"first"' })
+    .mockResolvedValueOnce({ log: olderLog, etag: 'W/"first"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+
+  await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+  expect(await screen.findByText("Older message")).toBeInTheDocument();
+  expect(screen.queryByText("Transcript is empty")).not.toBeInTheDocument();
+});
+
+test("discards an older-page response after the terminal changes", async () => {
+  const user = userEvent.setup();
+  let resolveOlder: ((value: {
+    log: AgentTranscript;
+    etag: string;
+  }) => void) | undefined;
+  const pendingOlder = new Promise<{
+    log: AgentTranscript;
+    etag: string;
+  }>((resolve) => {
+    resolveOlder = resolve;
+  });
+  const replacementLog: AgentTranscript = {
+    agent: "claude",
+    sessionId: "session-2",
+    startCursor: "0",
+    endCursor: "50",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Replacement session" },
+    ],
+  };
+  const staleOlder: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Stale older page" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockReturnValueOnce(pendingOlder)
+    .mockResolvedValueOnce({ log: replacementLog, etag: 'W/"replacement"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  const { rerender } = render(
+    <AgentLogView session={session} api={api} active />,
+  );
+  await screen.findByRole("heading", { name: "Result" });
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+
+  rerender(
+    <AgentLogView
+      session={{ ...session, id: "terminal-2", agent: "claude" }}
+      api={api}
+      active
+    />,
+  );
+  expect(await screen.findByText("Replacement session")).toBeInTheDocument();
+
+  await act(async () => {
+    resolveOlder?.({ log: staleOlder, etag: 'W/"stale"' });
+    await pendingOlder;
+  });
+
+  expect(screen.getByText("Replacement session")).toBeInTheDocument();
+  expect(screen.queryByText("Stale older page")).not.toBeInTheDocument();
+});
+
+test("discards an older-page response after the linked transcript changes", async () => {
+  vi.useFakeTimers();
+  let resolveOlder: ((value: {
+    log: AgentTranscript;
+    etag: string;
+  }) => void) | undefined;
+  const pendingOlder = new Promise<{
+    log: AgentTranscript;
+    etag: string;
+  }>((resolve) => {
+    resolveOlder = resolve;
+  });
+  const replacementLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-2",
+    startCursor: "0",
+    endCursor: "50",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "New transcript" },
+    ],
+  };
+  const staleOlder: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "0-0", kind: "message", role: "assistant", content: "Old transcript history" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockReturnValueOnce(pendingOlder)
+    .mockResolvedValueOnce({ log: replacementLog, etag: 'W/"replacement"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await act(async () => Promise.resolve());
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+  });
+  expect(screen.getByText("New transcript")).toBeInTheDocument();
+
+  await act(async () => {
+    resolveOlder?.({ log: staleOlder, etag: 'W/"stale"' });
+    await pendingOlder;
+  });
+
+  expect(screen.getByText("New transcript")).toBeInTheDocument();
+  expect(screen.queryByText("Old transcript history")).not.toBeInTheDocument();
+  vi.useRealTimers();
+});
+
+test("appends only records after the observed live edge", async () => {
+  vi.useFakeTimers();
+  const appendedLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "200",
+    endCursor: "240",
+    entries: [
+      { id: "200-0", kind: "tool_group", toolCalls: 2 },
+      { id: "220-0", kind: "message", role: "assistant", content: "Newest message" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockResolvedValueOnce({ log: appendedLog, etag: 'W/"second"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await act(async () => Promise.resolve());
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+  });
+
+  expect(getAgentLog).toHaveBeenLastCalledWith("terminal-1", {
+    after: "200",
+    etag: 'W/"first"',
+  });
+  expect(screen.getByText("Newest message")).toBeInTheDocument();
+  expect(screen.getByText("5 tool calls")).toBeInTheDocument();
   vi.useRealTimers();
 });
 
@@ -218,7 +450,7 @@ test("distinguishes a linked transcript that has not appeared yet", async () => 
 test("shows an explicit empty state for an empty transcript", async () => {
   const api = {
     getAgentLog: vi.fn().mockResolvedValue({
-      log: { ...initialLog, entries: null },
+      log: { ...initialLog, entries: null, nextCursor: undefined },
       etag: 'W/"empty"',
     }),
   } as unknown as ApiClient;

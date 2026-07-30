@@ -1189,11 +1189,12 @@
           "id": {"type": "string"},
           "kind": {
             "type": "string",
-            "enum": ["message", "thinking", "tool", "tool_result"]
+            "enum": ["message", "thinking", "tool", "tool_result", "tool_group"]
           },
           "role": {"type": "string"},
           "title": {"type": "string"},
           "content": {"type": "string"},
+          "toolCalls": {"type": "integer", "minimum": 1},
           "timestamp": {"type": "string"}
         },
         "additionalProperties": false
@@ -1207,7 +1208,10 @@
           "entries": {
             "type": "array",
             "items": {"$ref": "#/components/schemas/AgentTranscriptEntry"}
-          }
+          },
+          "startCursor": {"type": "string", "pattern": "^[0-9]+$"},
+          "endCursor": {"type": "string", "pattern": "^[0-9]+$"},
+          "nextCursor": {"type": "string", "pattern": "^[0-9]+$"}
         },
         "additionalProperties": false
       },
