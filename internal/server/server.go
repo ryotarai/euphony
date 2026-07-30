@@ -59,6 +59,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("GET /api/sessions", server.listSessions)
 	protected.HandleFunc("POST /api/sessions", server.createSession)
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
+	protected.HandleFunc("POST /api/sessions/{id}/acknowledge-attention", server.acknowledgeAttention)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
 	protected.HandleFunc("POST /api/hooks/terminal", server.updateTerminalHook)
 	protected.HandleFunc("GET /api/settings", server.getSettings)

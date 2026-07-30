@@ -27,6 +27,7 @@ type Metadata struct {
 	RepoRoot       string     `json:"repoRoot"`
 	Agent          string     `json:"agent,omitempty"`
 	AgentStatus    string     `json:"agentStatus,omitempty"`
+	NeedsAttention bool       `json:"needsAttention,omitempty"`
 	AgentTitle     string     `json:"agentTitle,omitempty"`
 	AgentSessionID string     `json:"-"`
 	ResumeAgent    string     `json:"-"`
@@ -276,9 +277,12 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	}
 	nextStatus := strings.TrimSpace(update.Status)
 	if item.metadata.AgentStatus == "running" && nextStatus == "waiting" {
-		nextStatus = "attention"
+		item.metadata.NeedsAttention = true
 	}
 	item.metadata.AgentStatus = nextStatus
+	if item.metadata.Agent == "" && nextStatus == "" {
+		item.metadata.NeedsAttention = false
+	}
 	if title := strings.TrimSpace(update.Title); title != "" {
 		item.metadata.AgentTitle = title
 	} else if item.metadata.Agent == "" && nextStatus == "" {
@@ -288,6 +292,25 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		item.metadata.CWD = cwd
 		item.metadata.RepoRoot = repositoryRoot(cwd)
 	}
+	if m.store != nil {
+		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+			return Metadata{}, err
+		}
+	}
+	return item.metadata, nil
+}
+
+func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.sessions[id]
+	if !ok {
+		return Metadata{}, ErrNotFound
+	}
+	if !item.metadata.NeedsAttention {
+		return item.metadata, nil
+	}
+	item.metadata.NeedsAttention = false
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), item.metadata); err != nil {
 			return Metadata{}, err

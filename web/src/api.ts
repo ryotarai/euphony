@@ -28,6 +28,13 @@ export class ApiClient {
     await this.request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
+  acknowledgeAttention(id: string): Promise<Session> {
+    return this.request(
+      `/api/sessions/${encodeURIComponent(id)}/acknowledge-attention`,
+      { method: "POST" },
+    );
+  }
+
   createTicket(id: string): Promise<{ ticket: string }> {
     return this.request(`/api/sessions/${encodeURIComponent(id)}/tickets`, { method: "POST" });
   }

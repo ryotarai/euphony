@@ -49,6 +49,7 @@ interface SessionNavigationProps {
 }
 
 function activity(session: Session) {
+  if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
 }

@@ -56,6 +56,7 @@ const defaultSettings: Settings = {
 };
 
 function sessionActivity(session: Session) {
+  if (session.needsAttention) return "attention";
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
 }
@@ -82,11 +83,13 @@ function cwdFilterBelongsToStatus(filter: string, status: string) {
 }
 
 export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
-  const previousActivity = new Map(previous.map((session) => [session.id, sessionActivity(session)]));
+  const previousAttention = new Map(
+    previous.map((session) => [session.id, Boolean(session.needsAttention)]),
+  );
   return next.filter(
     (session) =>
-      sessionActivity(session) === "attention" &&
-      previousActivity.get(session.id) !== "attention",
+      session.needsAttention &&
+      !previousAttention.get(session.id),
   );
 }
 
@@ -231,6 +234,7 @@ export function App({
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
+  const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
@@ -361,6 +365,43 @@ export function App({
       writeWorkspaceToURL(next, nextFocus, statusFilters, cwdFilters, "replace");
     }
   }, [sessions, statusFilters, cwdFilters, selectedIDs, focusedID]);
+
+  useEffect(() => {
+    if (!api || !sessions || !focusedID) return;
+    const focused = sessions.find((session) => session.id === focusedID);
+    if (
+      !focused ||
+      !focused.needsAttention ||
+      pendingAttentionAcknowledgementsRef.current.has(focusedID)
+    ) {
+      return;
+    }
+    pendingAttentionAcknowledgementsRef.current.add(focusedID);
+    api.acknowledgeAttention(focusedID).then((acknowledged) => {
+      setSessions((current) =>
+        current?.map((session) =>
+          session.id === acknowledged.id &&
+          session.needsAttention
+            ? acknowledged
+            : session
+        ) ?? current
+      );
+      previousSessionsRef.current = previousSessionsRef.current.map((session) =>
+        session.id === acknowledged.id &&
+        session.needsAttention
+          ? acknowledged
+          : session
+      );
+    }).catch((error: unknown) => {
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The terminal attention state could not be acknowledged.",
+      );
+    }).finally(() => {
+      pendingAttentionAcknowledgementsRef.current.delete(focusedID);
+    });
+  }, [api, sessions, focusedID]);
 
   useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {

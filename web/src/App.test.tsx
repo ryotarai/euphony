@@ -52,9 +52,40 @@ const plainTerminalSession: Session = {
 };
 
 test("detects only new transitions into attention", () => {
-  const attention = { ...runningSession, agentStatus: "attention" };
+  const attention = { ...runningSession, needsAttention: true };
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);
   expect(attentionTransitions([attention], [attention])).toEqual([]);
+});
+
+test("acknowledges a need-attention terminal when it receives focus", async () => {
+  const attention = { ...secondRunningSession, needsAttention: true };
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() => jsonResponse([runningSession, attention]))
+    .mockImplementationOnce(() =>
+      jsonResponse({ ...attention, needsAttention: false }),
+    );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} ${session.agentStatus}`} />
+      )}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Select Claude" }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/sessions/session-2/acknowledge-attention",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+  expect(await screen.findByLabelText("Claude waiting")).toBeVisible();
 });
 
 function jsonResponse(body: unknown, status = 200) {

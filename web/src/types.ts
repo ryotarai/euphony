@@ -8,6 +8,7 @@ export interface Session {
   repoRoot?: string;
   agent?: string;
   agentStatus?: string;
+  needsAttention?: boolean;
   agentTitle?: string;
   createdAt: string;
   exitedAt?: string;

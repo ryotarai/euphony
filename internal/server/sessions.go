@@ -58,6 +58,20 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) acknowledgeAttention(w http.ResponseWriter, r *http.Request) {
+	metadata, err := s.sessions.AcknowledgeAttention(r.PathValue("id"))
+	if errors.Is(err, session.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "attention_acknowledge_failed",
+			"The terminal attention state could not be acknowledged.")
+		return
+	}
+	writeJSON(w, http.StatusOK, metadata)
+}
+
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, ok := s.sessions.Get(id); !ok {
