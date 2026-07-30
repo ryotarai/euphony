@@ -33,6 +33,9 @@ func Report(ctx context.Context, config Config, input io.Reader) error {
 	if title == "" {
 		title = event.Title
 	}
+	if title == "" {
+		title = transcriptTitle(event.TranscriptPath)
+	}
 	if event.CWD == "" {
 		event.CWD, _ = os.Getwd()
 	}

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -49,6 +51,96 @@ func TestReportTranslatesAgentHookInputToTerminalActivity(t *testing.T) {
 			t.Fatalf("payload[%q] = %q, want %q; payload = %#v", key, payload[key], value, payload)
 		}
 	}
+}
+
+func TestReportFallsBackToClaudeTranscriptTitle(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"ai-title","aiTitle":"First guess","sessionId":"agent-1"}`,
+		`{"type":"user","message":{"content":"` + strings.Repeat("x", 200_000) + `"}}`,
+		`{"type":"ai-title","aiTitle":"Add relayed webhook support","sessionId":"agent-1"}`,
+		`{"type":"assistant","message":{"content":"done"}}`,
+	}
+	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	input := `{"cwd":"/repo","session_id":"agent-1","transcript_path":` + quote(transcript) + `}`
+	err := Report(context.Background(), Config{
+		URL:        server.URL,
+		Token:      "secret",
+		TerminalID: "terminal-123",
+		Agent:      "claude",
+		Status:     "running",
+	}, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if payload["title"] != "Add relayed webhook support" {
+		t.Fatalf("payload[title] = %q, want latest transcript title; payload = %#v", payload["title"], payload)
+	}
+}
+
+func TestReportPrefersHookInputTitleOverTranscript(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(transcript, []byte(`{"type":"ai-title","aiTitle":"Transcript title"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	input := `{"cwd":"/repo","session_title":"Hook title","transcript_path":` + quote(transcript) + `}`
+	err := Report(context.Background(), Config{
+		URL: server.URL, Token: "secret", TerminalID: "terminal-123",
+		Agent: "claude", Status: "running",
+	}, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if payload["title"] != "Hook title" {
+		t.Fatalf("payload[title] = %q, want hook input title", payload["title"])
+	}
+}
+
+func TestReportIgnoresUnreadableTranscript(t *testing.T) {
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	input := `{"cwd":"/repo","transcript_path":"/does/not/exist.jsonl"}`
+	err := Report(context.Background(), Config{
+		URL: server.URL, Token: "secret", TerminalID: "terminal-123",
+		Agent: "claude", Status: "running",
+	}, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if payload["title"] != "" {
+		t.Fatalf("payload[title] = %q, want empty", payload["title"])
+	}
+}
+
+func quote(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
 
 func TestReportIsNoopOutsideEuphonyTerminal(t *testing.T) {
