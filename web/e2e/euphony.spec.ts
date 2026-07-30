@@ -18,6 +18,8 @@ async function clearSessions(page: Page) {
       sidebarCollapsed: false,
       interfaceFontSize: 16,
       terminalFontSize: 14,
+      terminalFontFamily:
+        'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
       autoSelectAttention: true,
@@ -1219,6 +1221,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("History buffer").fill("8");
   await settingsDialog.getByLabel("Interface").fill("18");
   await settingsDialog.getByLabel("Terminal", { exact: true }).fill("17");
+  await settingsDialog.getByLabel("Terminal font").fill('"Courier New", monospace');
   await settingsDialog.getByLabel("Agent log").fill("16");
   const autoSelectAttention = settingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
@@ -1227,6 +1230,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await autoSelectAttention.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
+  await expect(page.locator(".xterm-rows").first()).toHaveCSS(
+    "font-family",
+    '"Courier New", monospace',
+  );
   await expect(page.locator(".agent-log-view").first()).toHaveCSS(
     "--agent-log-font-size",
     "16px",
@@ -1239,6 +1246,9 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(savedSettingsDialog.getByLabel("History buffer")).toHaveValue("8");
   await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
   await expect(savedSettingsDialog.getByLabel("Terminal", { exact: true })).toHaveValue("17");
+  await expect(savedSettingsDialog.getByLabel("Terminal font")).toHaveValue(
+    '"Courier New", monospace',
+  );
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
   await expect(savedSettingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
