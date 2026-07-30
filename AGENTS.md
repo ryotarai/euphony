@@ -50,6 +50,8 @@
   do not imitate tmux's dotted filler or scale terminal cells.
 - Keep a terminal's negotiated size claim while switching its in-pane source;
   Terminal, Agent Log, Git Changes, and Annotation tabs must not resize the PTY.
+- Let Command-clicking a pane source tab open it as a secondary split, with a
+  draggable divider that does not renegotiate the PTY size.
 - Bound browser-owned terminal size claims with server-driven WebSocket
   Ping/Pong; do not rely on JavaScript heartbeat timers for liveness.
 - Exercise public automation features through the built CLI against both the

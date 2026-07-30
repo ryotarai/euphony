@@ -505,6 +505,74 @@ test("browses workspace files inside a terminal pane", async ({ page }, testInfo
   }
 });
 
+test("splits pane sources with Command-click and drags the divider", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  const repo = await mkdtemp(`/tmp/euphony-e2e-${e2ePort}-split-`);
+  try {
+    await writeFile(`${repo}/README.md`, "# Split view\n");
+    await createSession(page, "Split source", repo);
+    await page.goto("/?token=test-token");
+
+    const pane = page.getByLabel("Split source pane", { exact: true });
+    const terminalTab = pane.getByRole("tab", { name: "Terminal" });
+    const filesTab = pane.getByRole("tab", { name: "Files" });
+    await filesTab.click({ modifiers: ["Meta"] });
+
+    await expect(terminalTab).toHaveAttribute("data-active");
+    await expect(filesTab).toHaveAttribute("data-split-active", "true");
+    await expect(filesTab).toBeFocused();
+    await expect(filesTab).toHaveAttribute(
+      "aria-description",
+      "Visible in split",
+    );
+    await expect(
+      pane.getByLabel("Split source terminal", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      pane.getByRole("navigation", { name: "Workspace files" }),
+    ).toBeVisible();
+
+    const stage = pane.locator(".terminal-source-stage");
+    const separator = pane.getByRole("separator", {
+      name: "Resize source split",
+    });
+    const stageBounds = await stage.boundingBox();
+    const separatorBounds = await separator.boundingBox();
+    expect(stageBounds).not.toBeNull();
+    expect(separatorBounds).not.toBeNull();
+    await page.mouse.move(
+      separatorBounds!.x + separatorBounds!.width / 2,
+      separatorBounds!.y + separatorBounds!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      stageBounds!.x + stageBounds!.width * 0.65,
+      stageBounds!.y + stageBounds!.height / 2,
+    );
+    await page.mouse.up();
+
+    await expect(separator).toHaveAttribute("aria-valuenow", "65");
+    const terminalPanelBounds = await pane.getByRole("tabpanel", {
+      name: "Terminal",
+    }).boundingBox();
+    expect(terminalPanelBounds).not.toBeNull();
+    expect(terminalPanelBounds!.width / stageBounds!.width).toBeCloseTo(0.65, 1);
+    await page.screenshot({ path: testInfo.outputPath("pane-source-split.png") });
+
+    await filesTab.click();
+    await expect(separator).toHaveCount(0);
+    await expect(filesTab).toHaveAttribute("data-active");
+    await expect(
+      pane.getByLabel("Split source terminal", { exact: true }),
+    ).not.toBeVisible();
+  } finally {
+    await clearSessions(page);
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("auto-selects an attention terminal without moving focus", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First", "/tmp");

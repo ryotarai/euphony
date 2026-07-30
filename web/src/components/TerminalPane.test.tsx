@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import type { ApiClient } from "../api";
@@ -124,6 +124,161 @@ test("keeps an independent selected source for each pane instance", async () => 
   await user.click(logTabs[0]);
   expect(logTabs[0]).toHaveAttribute("data-active");
   expect(screen.getAllByRole("tab", { name: "Terminal" })[1]).toHaveAttribute("data-active");
+});
+
+test("opens a secondary source with Command-click without changing the primary source", async () => {
+  const activeStates: boolean[] = [];
+  const sourceVisibilities: boolean[] = [];
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={(_layoutVersion, terminalActive, sourceVisible) => {
+        activeStates.push(terminalActive);
+        sourceVisibilities.push(sourceVisible);
+        return <div aria-label="live terminal">terminal</div>;
+      }}
+    />,
+  );
+
+  const terminalTab = screen.getByRole("tab", { name: "Terminal" });
+  const filesTab = screen.getByRole("tab", { name: "Files" });
+  fireEvent.click(filesTab, { metaKey: true });
+
+  expect(terminalTab).toHaveAttribute("data-active");
+  expect(filesTab).toHaveAttribute("data-split-active", "true");
+  expect(filesTab).toHaveAccessibleDescription("Visible in split");
+  expect(screen.getByLabelText("live terminal")).toBeVisible();
+  expect(await screen.findByRole("region", { name: "Workspace files" }))
+    .toBeVisible();
+  expect(screen.getByRole("region", { name: "Workspace files split view" }))
+    .toBeVisible();
+  expect(screen.queryByRole("tabpanel", { name: "Files" }))
+    .not.toBeInTheDocument();
+  expect(screen.getByRole("separator", { name: "Resize source split" }))
+    .toHaveAttribute("aria-valuenow", "50");
+  expect(activeStates.at(-1)).toBe(false);
+  expect(sourceVisibilities.at(-1)).toBe(false);
+  expect(screen.getByText("Terminal + Workspace files")).toBeVisible();
+});
+
+test("opens a keyboard-accessible secondary source with Command-Enter", () => {
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  const filesTab = screen.getByRole("tab", { name: "Files" });
+  filesTab.focus();
+  fireEvent.keyDown(filesTab, { key: "Enter", metaKey: true });
+
+  expect(filesTab).toHaveAttribute("data-split-active", "true");
+  expect(screen.getByRole("separator", { name: "Resize source split" }))
+    .toBeVisible();
+});
+
+test("replaces, closes, and clears a secondary source without unmounting views", async () => {
+  const user = userEvent.setup();
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div aria-label="live terminal">terminal</div>}
+    />,
+  );
+
+  const logTab = screen.getByRole("tab", { name: "Agent log" });
+  const changesTab = screen.getByRole("tab", { name: "Changes" });
+  fireEvent.click(logTab, { metaKey: true });
+  fireEvent.click(changesTab, { metaKey: true });
+
+  expect(logTab).not.toHaveAttribute("data-split-active");
+  expect(changesTab).toHaveAttribute("data-split-active", "true");
+  expect(screen.getByRole("region", { name: "Git changes" })).toBeVisible();
+  expect(document.querySelector(".agent-log-view")).toBeInTheDocument();
+  expect(document.querySelector(".agent-log-view")).not.toBeVisible();
+
+  fireEvent.click(changesTab, { metaKey: true });
+  expect(screen.queryByRole("separator", { name: "Resize source split" }))
+    .not.toBeInTheDocument();
+  expect(screen.getByLabelText("live terminal")).toBeVisible();
+
+  fireEvent.click(logTab, { metaKey: true });
+  await user.click(logTab);
+  expect(logTab).toHaveAttribute("data-active");
+  expect(logTab).not.toHaveAttribute("data-split-active");
+  expect(screen.queryByRole("separator", { name: "Resize source split" }))
+    .not.toBeInTheDocument();
+});
+
+test("resizes a source split by dragging or using the separator keyboard controls", () => {
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("tab", { name: "Files" }), {
+    metaKey: true,
+  });
+  const stage = document.querySelector(".terminal-source-stage");
+  vi.spyOn(stage!, "getBoundingClientRect").mockReturnValue({
+    bottom: 600,
+    height: 500,
+    left: 100,
+    right: 1100,
+    top: 100,
+    width: 1000,
+    x: 100,
+    y: 100,
+    toJSON: () => ({}),
+  });
+  const separator = screen.getByRole("separator", {
+    name: "Resize source split",
+  });
+
+  fireEvent.pointerDown(separator, { clientX: 600 });
+  fireEvent.pointerMove(document, { clientX: 750 });
+  expect(separator).toHaveAttribute("aria-valuenow", "65");
+  expect(stage).toHaveStyle({ "--pane-primary-size": "65%" });
+
+  fireEvent.pointerMove(document, { clientX: 1200 });
+  expect(separator).toHaveAttribute("aria-valuenow", "80");
+  fireEvent.pointerUp(document, { clientX: 1200 });
+
+  fireEvent.keyDown(separator, { key: "ArrowLeft" });
+  expect(separator).toHaveAttribute("aria-valuenow", "75");
+  fireEvent.keyDown(separator, { key: "Home" });
+  expect(separator).toHaveAttribute("aria-valuenow", "20");
+  fireEvent.keyDown(separator, { key: "End" });
+  expect(separator).toHaveAttribute("aria-valuenow", "80");
+
+  fireEvent.pointerDown(separator, { clientX: 900, pointerId: 7 });
+  fireEvent.pointerMove(document, { clientX: 500, pointerId: 8 });
+  expect(separator).toHaveAttribute("aria-valuenow", "80");
+  fireEvent.pointerCancel(document, { clientX: 0, pointerId: 7 });
+  expect(separator).toHaveAttribute("aria-valuenow", "80");
 });
 
 test("shows attention in the pane rail only for flagged sessions", () => {
@@ -352,6 +507,91 @@ test("discovers a new annotation as a third tab and selects it", async () => {
   expect(screen.getByLabelText("live terminal")).toBeVisible();
   expect(layoutVersions.at(-1)).toBe(2);
   expect(sourceVisibilities.at(-1)).toBe(true);
+});
+
+test("repairs a split when its primary annotation is completed", async () => {
+  const user = userEvent.setup();
+  const completeAnnotation = vi.fn().mockResolvedValue({
+    annotationId: "annotation-1",
+    comments: [],
+  });
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI({
+        getCurrentAnnotation: vi.fn().mockResolvedValue({
+          id: "annotation-1",
+          terminalId: "terminal-1",
+          filename: "review.md",
+          format: "markdown",
+          content: "# Review",
+          createdAt: "2026-07-30T00:00:00Z",
+        }),
+        completeAnnotation,
+      })}
+      active
+      layoutVersion={1}
+      annotationRevision={0}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  expect(await screen.findByRole("tab", { name: "Annotation" }))
+    .toHaveAttribute("data-active");
+  fireEvent.click(screen.getByRole("tab", { name: "Files" }), {
+    metaKey: true,
+  });
+  await user.click(screen.getByRole("button", { name: "Send comments" }));
+
+  await waitFor(() => expect(completeAnnotation).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("tab", { name: "Annotation" }))
+    .not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Terminal" }))
+    .toHaveAttribute("data-active");
+  expect(screen.getByRole("tab", { name: "Files" }))
+    .toHaveAttribute("data-split-active", "true");
+});
+
+test("closes a split when its secondary annotation is completed", async () => {
+  const user = userEvent.setup();
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI({
+        getCurrentAnnotation: vi.fn().mockResolvedValue({
+          id: "annotation-1",
+          terminalId: "terminal-1",
+          filename: "review.md",
+          format: "markdown",
+          content: "# Review",
+          createdAt: "2026-07-30T00:00:00Z",
+        }),
+      })}
+      active
+      layoutVersion={1}
+      annotationRevision={0}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={() => <div>terminal</div>}
+    />,
+  );
+
+  const annotationTab = await screen.findByRole("tab", {
+    name: "Annotation",
+  });
+  await user.click(screen.getByRole("tab", { name: "Terminal" }));
+  fireEvent.click(annotationTab, { metaKey: true });
+  await user.click(screen.getByRole("button", { name: "Send comments" }));
+
+  await waitFor(() => expect(
+    screen.queryByRole("tab", { name: "Annotation" }),
+  ).not.toBeInTheDocument());
+  expect(screen.getByRole("tab", { name: "Terminal" }))
+    .toHaveAttribute("data-active");
+  expect(screen.queryByRole("separator", { name: "Resize source split" }))
+    .not.toBeInTheDocument();
 });
 
 test("keeps a displayed annotation and offers retry after refresh failure", async () => {

@@ -1898,6 +1898,16 @@ input {
   color: var(--foreground);
 }
 
+.terminal-tab-rail
+  [data-slot="tabs-trigger"][data-split-active="true"] {
+  color: color-mix(in srgb, var(--foreground) 78%, transparent);
+}
+
+.terminal-tab-rail
+  [data-slot="tabs-trigger"][data-split-active="true"]::after {
+  opacity: 0.5;
+}
+
 .terminal-tab-source {
   overflow: hidden;
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -1931,12 +1941,90 @@ input {
   inset: -0.3rem;
 }
 
+.terminal-source-stage {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.terminal-source-stage[data-split="true"] {
+  grid-template-columns:
+    minmax(0, var(--pane-primary-size))
+    1px
+    minmax(0, 1fr);
+}
+
 .terminal-tab-content {
   position: relative;
   min-width: 0;
   min-height: 0;
-  flex: 1;
+  grid-column: 1;
+  grid-row: 1;
   container-type: inline-size;
+}
+
+.terminal-tab-content[data-pane-position="secondary"] {
+  grid-column: 3;
+}
+
+.terminal-source-divider {
+  position: relative;
+  z-index: 4;
+  width: 9px;
+  min-width: 9px;
+  height: 100%;
+  margin-left: -4px;
+  padding: 0;
+  grid-column: 2;
+  grid-row: 1;
+  cursor: col-resize;
+  touch-action: none;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+}
+
+.terminal-source-divider::before {
+  position: absolute;
+  inset: 0 4px;
+  content: "";
+  background: #394149;
+  transition: background-color 120ms ease;
+}
+
+.terminal-source-divider span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 2rem;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: #737d86;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease;
+}
+
+.terminal-source-divider:hover::before,
+.terminal-source-divider:focus-visible::before,
+.terminal-source-stage[data-resizing="true"] .terminal-source-divider::before {
+  background: #7f8b95;
+}
+
+.terminal-source-divider:hover span,
+.terminal-source-divider:focus-visible span,
+.terminal-source-stage[data-resizing="true"] .terminal-source-divider span {
+  opacity: 1;
+}
+
+.terminal-source-divider:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #b8f34a 55%, transparent);
 }
 
 .agent-log-view {
