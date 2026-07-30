@@ -595,10 +595,16 @@ input {
   opacity: 0.75;
 }
 
+.terminal-host-frame,
 .terminal-host,
 .terminal-host .xterm {
   width: 100%;
   height: 100%;
+}
+
+.terminal-host-frame {
+  position: relative;
+  overflow: hidden;
 }
 
 .terminal-host .xterm {
@@ -608,6 +614,32 @@ input {
 .terminal-host .xterm-viewport {
   scrollbar-color: #394149 transparent;
   scrollbar-width: thin;
+}
+
+.terminal-size-padding {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background-color: #050505;
+  background-image: radial-gradient(
+    circle,
+    #f5f5f5 0 1.25px,
+    transparent 1.5px
+  );
+  background-size:
+    var(--terminal-cell-width)
+    var(--terminal-cell-height);
+}
+
+.terminal-size-padding-right {
+  top: 0;
+  right: 0;
+}
+
+.terminal-size-padding-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
 }
 
 .copied-toast {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CheckIcon } from "lucide-react";
@@ -13,6 +13,8 @@ export interface TerminalDriver {
   write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
   fit(): void;
+  proposeDimensions?(): { cols: number; rows: number } | undefined;
+  resize?(cols: number, rows: number): void;
   setScrollback?(scrollback: number): void;
   getSelection(): string;
   clearSelection(): void;
@@ -45,6 +47,13 @@ interface TerminalViewProps {
 }
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
+
+interface TerminalGridGeometry {
+  width: number;
+  height: number;
+  cellWidth: number;
+  cellHeight: number;
+}
 
 const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
@@ -100,6 +109,8 @@ function defaultTerminal(fontSize: number, scrollback: number): TerminalDriver {
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
+    proposeDimensions: () => fitAddon.proposeDimensions(),
+    resize: (cols, rows) => terminal.resize(cols, rows),
     setScrollback: (next) => {
       terminal.options.scrollback = next;
     },
@@ -162,10 +173,14 @@ export function TerminalView({
 }: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<TerminalDriver | null>(null);
+  const capacityReporterRef = useRef<() => void>(() => undefined);
   const activeRef = useRef(active);
   activeRef.current = active;
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [copied, setCopied] = useState(false);
+  const [localSize, setLocalSize] = useState<{ cols: number; rows: number }>();
+  const [sharedSize, setSharedSize] = useState<{ cols: number; rows: number }>();
+  const [gridGeometry, setGridGeometry] = useState<TerminalGridGeometry>();
 
   useEffect(() => {
     onConnectionChange?.(session.id, connection);
@@ -179,6 +194,7 @@ export function TerminalView({
     let pendingHistoryWrites = 0;
     let historyStreamComplete = false;
     let socket: WebSocketLike | undefined;
+    let gridMeasurementFrame: number | undefined;
     let lastSize = "";
     let lastReportedCWD = session.cwd;
     const terminal = createTerminal(
@@ -204,6 +220,14 @@ export function TerminalView({
       if (size === lastSize) return;
       if (send({ type: "resize", cols, rows })) lastSize = size;
     };
+    const reportCapacity = () => {
+      if (host.hidden || host.closest("[hidden]")) return;
+      const dimensions = terminal.proposeDimensions?.();
+      if (!dimensions || dimensions.cols < 1 || dimensions.rows < 1) return;
+      setLocalSize(dimensions);
+      sendResize(dimensions.cols, dimensions.rows);
+    };
+    capacityReporterRef.current = reportCapacity;
     terminal.attachCustomKeyEventHandler?.((event) => {
       if (event.type !== "keydown" || event.isComposing || event.keyCode === 229) return true;
       if (event.key !== "Enter" || !event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
@@ -216,7 +240,6 @@ export function TerminalView({
     const removeData = terminal.onData((data) => {
       if (!replayingHistory) send({ type: "input", data });
     });
-    const removeResize = terminal.onResize(sendResize);
     const removeTitleChange = terminal.onTitleChange?.((title) => {
       const cwd = title.trim();
       const isDirectoryTitle = cwd.startsWith("/") || cwd === "~" || cwd.startsWith("~/");
@@ -242,11 +265,10 @@ export function TerminalView({
           .catch(() => undefined);
       }, 150);
     });
-    const fit = () => fitTerminalIfVisible(host, terminal);
-    window.addEventListener("resize", fit);
+    window.addEventListener("resize", reportCapacity);
     const resizeObserver = typeof ResizeObserver === "undefined"
       ? undefined
-      : new ResizeObserver(fit);
+      : new ResizeObserver(reportCapacity);
     resizeObserver?.observe(host);
 
     void api
@@ -262,8 +284,7 @@ export function TerminalView({
         connectionSocket.addEventListener("open", () => {
           if (!active) return;
           setConnection("connected");
-          fitTerminalIfVisible(host, terminal);
-          sendResize(terminal.cols, terminal.rows);
+          reportCapacity();
           if (activeRef.current) focusTerminal(terminal);
         });
         connectionSocket.addEventListener("message", (event) => {
@@ -273,6 +294,8 @@ export function TerminalView({
             data?: string;
             exitCode?: number;
             message?: string;
+            cols?: number;
+            rows?: number;
           };
           if (message.type === "history" && message.data) {
             replayingHistory = true;
@@ -299,6 +322,33 @@ export function TerminalView({
             } catch {
               // Ignore malformed terminal payloads instead of rendering corrupt bytes.
             }
+          } else if (
+            message.type === "resize" &&
+            Number.isInteger(message.cols) &&
+            Number.isInteger(message.rows) &&
+            message.cols! >= 1 &&
+            message.cols! <= 1000 &&
+            message.rows! >= 1 &&
+            message.rows! <= 1000
+          ) {
+            terminal.resize?.(message.cols!, message.rows!);
+            const acceptedSize = { cols: message.cols!, rows: message.rows! };
+            setSharedSize(acceptedSize);
+            if (gridMeasurementFrame !== undefined) {
+              window.cancelAnimationFrame(gridMeasurementFrame);
+            }
+            gridMeasurementFrame = window.requestAnimationFrame(() => {
+              const screen = host.querySelector<HTMLElement>(".xterm-screen");
+              if (!screen) return;
+              const bounds = screen.getBoundingClientRect();
+              if (bounds.width <= 0 || bounds.height <= 0) return;
+              setGridGeometry({
+                width: bounds.width,
+                height: bounds.height,
+                cellWidth: bounds.width / acceptedSize.cols,
+                cellHeight: bounds.height / acceptedSize.rows,
+              });
+            });
           } else if (message.type === "exit") {
             setConnection("exited");
             terminal.write(`\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`);
@@ -316,17 +366,22 @@ export function TerminalView({
 
     return () => {
       active = false;
-      window.removeEventListener("resize", fit);
+      window.removeEventListener("resize", reportCapacity);
       resizeObserver?.disconnect();
       removeData();
-      removeResize();
       removeTitleChange?.();
       removeSelectionChange();
       clearTimeout(selectionTimer);
       clearTimeout(copiedTimer);
+      if (gridMeasurementFrame !== undefined) {
+        window.cancelAnimationFrame(gridMeasurementFrame);
+      }
       socket?.close();
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
+      if (capacityReporterRef.current === reportCapacity) {
+        capacityReporterRef.current = () => undefined;
+      }
     };
   }, [api, createSocket, createTerminal, fontSize, reconnectSignal, session.id]);
 
@@ -341,16 +396,63 @@ export function TerminalView({
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const host = hostRef.current;
-      const terminal = terminalRef.current;
-      if (host && terminal) fitTerminalIfVisible(host, terminal);
+      capacityReporterRef.current();
     }, 50);
     return () => window.clearTimeout(timer);
   }, [layoutVersion]);
 
+  const paddingStyle = gridGeometry
+    ? ({
+        "--terminal-cell-width": `${gridGeometry.cellWidth}px`,
+        "--terminal-cell-height": `${gridGeometry.cellHeight}px`,
+      } as CSSProperties)
+    : undefined;
+  const showRightPadding = Boolean(
+    paddingStyle &&
+      localSize &&
+      sharedSize &&
+      sharedSize.cols < localSize.cols,
+  );
+  const showBottomPadding = Boolean(
+    paddingStyle &&
+      localSize &&
+      sharedSize &&
+      sharedSize.rows < localSize.rows,
+  );
+
   return (
-    <div className="terminal-view" data-connection={connection}>
-      <div className="terminal-host" ref={hostRef} aria-label={`${session.name} terminal`} />
+    <div
+      className="terminal-view"
+      data-connection={connection}
+      data-local-cols={localSize?.cols}
+      data-local-rows={localSize?.rows}
+      data-shared-cols={sharedSize?.cols}
+      data-shared-rows={sharedSize?.rows}
+    >
+      <div className="terminal-host-frame">
+        <div className="terminal-host" ref={hostRef} aria-label={`${session.name} terminal`} />
+        {showRightPadding && gridGeometry && (
+          <div
+            className="terminal-size-padding terminal-size-padding-right"
+            aria-hidden="true"
+            style={{
+              ...paddingStyle,
+              left: `${gridGeometry.width}px`,
+              height: `${gridGeometry.height}px`,
+            }}
+          />
+        )}
+        {showBottomPadding && gridGeometry && (
+          <div
+            className="terminal-size-padding terminal-size-padding-bottom"
+            aria-hidden="true"
+            style={{
+              ...paddingStyle,
+              top: `${gridGeometry.height}px`,
+            }}
+          />
+        )}
+      </div>
       {copied && (
         <div className="copied-toast" data-slot="copied-toast" role="status">
           <CheckIcon data-slot="copied-icon" aria-hidden="true" />

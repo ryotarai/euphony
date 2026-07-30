@@ -162,12 +162,15 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
   const socket = new FakeSocket();
   const writes: Array<string | Uint8Array> = [];
   let onData: ((data: string) => void) | undefined;
-  let onResize: ((cols: number, rows: number) => void) | undefined;
-  const terminal: TerminalDriver = {
+  let capacity = { cols: 120, rows: 40 };
+  const resize = vi.fn();
+  const terminal = {
     open: () => undefined,
     write: (data) => writes.push(data),
     focus: () => undefined,
-    fit: () => onResize?.(120, 40),
+    fit: vi.fn(),
+    proposeDimensions: () => capacity,
+    resize,
     getSelection: () => "",
     clearSelection: () => undefined,
     onSelectionChange: () => () => undefined,
@@ -175,11 +178,11 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
       onData = callback;
       return () => undefined;
     },
-    onResize: (callback) => {
-      onResize = callback;
-      return () => undefined;
-    },
+    onResize: () => () => undefined,
     dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
   };
   const api = {
     createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
@@ -202,15 +205,101 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
     socket.dispatchEvent(new Event("open"));
     socket.receive({ type: "output", data: encodeTerminalData("hello terminal") });
     onData?.("ls\r");
-    onResize?.(100, 32);
+    socket.receive({ type: "resize", cols: 100, rows: 32 });
+    capacity = { cols: 110, rows: 36 };
+    window.dispatchEvent(new Event("resize"));
   });
 
   expect(writes.map(terminalText)).toContain("hello terminal");
+  expect(resize).toHaveBeenCalledWith(100, 32);
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "resize", cols: 120, rows: 40 },
     { type: "input", data: "ls\r" },
-    { type: "resize", cols: 100, rows: 32 },
+    { type: "resize", cols: 110, rows: 36 },
   ]);
+});
+
+test("renders cell-aligned dotted padding outside the accepted shared size", async () => {
+  const socket = new FakeSocket();
+  let screenElement: HTMLDivElement | undefined;
+  let screenWidth = 1200;
+  let screenHeight = 800;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callback(0);
+    return 1;
+  });
+  const terminal = {
+    open: (host: HTMLElement) => {
+      screenElement = document.createElement("div");
+      screenElement.className = "xterm-screen";
+      screenElement.getBoundingClientRect = () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: screenWidth,
+        bottom: screenHeight,
+        left: 0,
+        width: screenWidth,
+        height: screenHeight,
+        toJSON: () => ({}),
+      });
+      host.append(screenElement);
+    },
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => ({ cols: 120, rows: 40 }),
+    resize: (cols: number, rows: number) => {
+      screenWidth = cols * 10;
+      screenHeight = rows * 20;
+    },
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => screenElement?.remove(),
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  act(() => {
+    socket.dispatchEvent(new Event("open"));
+    socket.receive({ type: "resize", cols: 80, rows: 24 });
+  });
+
+  const view = screen.getByLabelText("Codex terminal").closest(".terminal-view")!;
+  expect(view).toHaveAttribute("data-local-cols", "120");
+  expect(view).toHaveAttribute("data-local-rows", "40");
+  expect(view).toHaveAttribute("data-shared-cols", "80");
+  expect(view).toHaveAttribute("data-shared-rows", "24");
+  const rightPadding = view.querySelector<HTMLElement>(".terminal-size-padding-right");
+  const bottomPadding = view.querySelector<HTMLElement>(".terminal-size-padding-bottom");
+  expect(rightPadding).not.toBeNull();
+  expect(bottomPadding).not.toBeNull();
+  expect(rightPadding).toHaveStyle({ left: "800px", height: "480px" });
+  expect(bottomPadding).toHaveStyle({ top: "480px" });
+  expect(rightPadding?.style.getPropertyValue("--terminal-cell-width")).toBe("10px");
+  expect(rightPadding?.style.getPropertyValue("--terminal-cell-height")).toBe("20px");
+
+  act(() => socket.receive({ type: "resize", cols: 120, rows: 40 }));
+
+  expect(view.querySelector(".terminal-size-padding-right")).not.toBeInTheDocument();
+  expect(view.querySelector(".terminal-size-padding-bottom")).not.toBeInTheDocument();
 });
 
 test("reports an absolute terminal title as the current working directory", async () => {
@@ -341,26 +430,26 @@ test("decodes terminal output into the original bytes", async () => {
   expect(writes).toEqual([new Uint8Array([0xe3, 0x81, 0x82])]);
 });
 
-test("sends a resize observed before the socket opens", async () => {
+test("sends the latest measured capacity when the socket opens", async () => {
   const socket = new FakeSocket();
   socket.readyState = 0;
-  let onResize: ((cols: number, rows: number) => void) | undefined;
-  const terminal: TerminalDriver = {
-    cols: 120,
-    rows: 40,
+  let capacity = { cols: 100, rows: 30 };
+  const terminal = {
     open: () => undefined,
     write: () => undefined,
     focus: () => undefined,
-    fit: () => onResize?.(120, 40),
+    fit: () => undefined,
+    proposeDimensions: () => capacity,
+    resize: () => undefined,
     getSelection: () => "",
     clearSelection: () => undefined,
     onSelectionChange: () => () => undefined,
     onData: () => () => undefined,
-    onResize: (callback) => {
-      onResize = callback;
-      return () => undefined;
-    },
+    onResize: () => () => undefined,
     dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
   };
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
 
@@ -374,7 +463,8 @@ test("sends a resize observed before the socket opens", async () => {
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
-  act(() => onResize?.(120, 40));
+  capacity = { cols: 120, rows: 40 };
+  act(() => window.dispatchEvent(new Event("resize")));
   expect(socket.sent).toEqual([]);
 
   act(() => {
@@ -387,19 +477,25 @@ test("sends a resize observed before the socket opens", async () => {
   ]);
 });
 
-test("refits after the pane topology changes", async () => {
+test("remeasures capacity after the pane topology changes", async () => {
   vi.useFakeTimers();
-  const terminal: TerminalDriver = {
+  const proposeDimensions = vi.fn(() => ({ cols: 120, rows: 40 }));
+  const terminal = {
     open: () => undefined,
     write: () => undefined,
     focus: () => undefined,
-    fit: vi.fn(),
+    fit: () => undefined,
+    proposeDimensions,
+    resize: () => undefined,
     getSelection: () => "",
     clearSelection: () => undefined,
     onSelectionChange: () => () => undefined,
     onData: () => () => undefined,
     onResize: () => () => undefined,
     dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
   };
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
   const props = {
@@ -411,17 +507,17 @@ test("refits after the pane topology changes", async () => {
   const { rerender } = render(<TerminalView {...props} layoutVersion={1} />);
   await act(async () => Promise.resolve());
   act(() => vi.advanceTimersByTime(50));
-  vi.mocked(terminal.fit).mockClear();
+  proposeDimensions.mockClear();
 
   rerender(<TerminalView {...props} layoutVersion={2} />);
   act(() => vi.advanceTimersByTime(49));
-  expect(terminal.fit).not.toHaveBeenCalled();
+  expect(proposeDimensions).not.toHaveBeenCalled();
   act(() => vi.advanceTimersByTime(1));
-  expect(terminal.fit).toHaveBeenCalledTimes(1);
+  expect(proposeDimensions).toHaveBeenCalledTimes(1);
   vi.useRealTimers();
 });
 
-test("fits the terminal when its pane changes size", async () => {
+test("remeasures terminal capacity when its pane changes size", async () => {
   let notifyResize: (() => void) | undefined;
   const observe = vi.fn();
   const disconnect = vi.fn();
@@ -435,17 +531,23 @@ test("fits the terminal when its pane changes size", async () => {
     disconnect = disconnect;
   }
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
-  const terminal: TerminalDriver = {
+  const proposeDimensions = vi.fn(() => ({ cols: 100, rows: 32 }));
+  const terminal = {
     open: () => undefined,
     write: () => undefined,
     focus: () => undefined,
-    fit: vi.fn(),
+    fit: () => undefined,
+    proposeDimensions,
+    resize: () => undefined,
     getSelection: () => "",
     clearSelection: () => undefined,
     onSelectionChange: () => () => undefined,
     onData: () => () => undefined,
     onResize: () => () => undefined,
     dispose: () => undefined,
+  } as TerminalDriver & {
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
   };
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
 
@@ -462,7 +564,7 @@ test("fits the terminal when its pane changes size", async () => {
   act(() => notifyResize?.());
 
   expect(observe).toHaveBeenCalledWith(screen.getByLabelText("Codex terminal"));
-  expect(terminal.fit).toHaveBeenCalledTimes(1);
+  expect(proposeDimensions).toHaveBeenCalledTimes(1);
   unmount();
   expect(disconnect).toHaveBeenCalledTimes(1);
   vi.unstubAllGlobals();
