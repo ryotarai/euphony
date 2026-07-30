@@ -80,14 +80,11 @@ func TestCreateRecordsCWDAndExposesTerminalHookEnvironment(t *testing.T) {
 		Token: "secret",
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	wantCWD := t.TempDir()
 
-	metadata, err := manager.Create(context.Background(), "Terminal")
+	metadata, err := manager.Create(context.Background(), "Terminal", wantCWD)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
-	}
-	wantCWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd() error = %v", err)
 	}
 	if metadata.CWD != wantCWD {
 		t.Fatalf("CWD = %q, want %q", metadata.CWD, wantCWD)
@@ -362,6 +359,35 @@ func TestCreateUsesRequestedWorkingDirectoryAndUTF8Locale(t *testing.T) {
 	got := receiveUntil(t, output, "UTF-8", 3*time.Second)
 	if !strings.Contains(got, "UTF-8") {
 		t.Fatalf("locale output = %q, want UTF-8", got)
+	}
+}
+
+func TestCreateWithoutWorkingDirectoryUsesHomeDirectory(t *testing.T) {
+	home := t.TempDir()
+	processCWD := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(processCWD)
+
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if metadata.CWD != home {
+		t.Fatalf("CWD = %q, want home %q", metadata.CWD, home)
+	}
+
+	running, _ := manager.Get(metadata.ID)
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if _, err := running.Write([]byte("pwd\n")); err != nil {
+		t.Fatalf("Write(pwd) error = %v", err)
+	}
+	got := receiveUntil(t, output, home, 3*time.Second)
+	if !strings.Contains(got, home) {
+		t.Fatalf("pwd output = %q, want home %q", got, home)
 	}
 }
 
