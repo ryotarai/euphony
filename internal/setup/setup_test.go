@@ -61,6 +61,19 @@ func TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent(t *testing.T) {
 		!strings.Contains(string(claudeSettings), `"theme": "dark"`) {
 		t.Fatalf("claude settings = %s", claudeSettings)
 	}
+	for _, path := range []string{
+		filepath.Join(home, ".codex", "skills", "euphony-annotate", "SKILL.md"),
+		filepath.Join(home, ".claude", "skills", "euphony-annotate", "SKILL.md"),
+	} {
+		skill, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read installed skill %s: %v", path, err)
+		}
+		if !strings.HasPrefix(string(skill), "---\nname: euphony-annotate\n") ||
+			!strings.Contains(string(skill), "euphony annotate") {
+			t.Fatalf("installed skill %s is invalid:\n%s", path, skill)
+		}
+	}
 	configTOML, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +85,8 @@ func TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent(t *testing.T) {
 
 	beforeCodex := string(codexHooks)
 	beforeClaude := string(claudeSettings)
+	beforeSkill := string(readFile(t,
+		filepath.Join(home, ".codex", "skills", "euphony-annotate", "SKILL.md")))
 	if _, err := Install(config); err != nil {
 		t.Fatalf("second Install() error = %v", err)
 	}
@@ -80,6 +95,10 @@ func TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent(t *testing.T) {
 	}
 	if got := string(readJSON(t, filepath.Join(home, ".claude", "settings.json"))); got != beforeClaude {
 		t.Fatalf("second install changed claude settings:\n%s", got)
+	}
+	if got := string(readFile(t,
+		filepath.Join(home, ".codex", "skills", "euphony-annotate", "SKILL.md"))); got != beforeSkill {
+		t.Fatalf("second install changed Codex skill:\n%s", got)
 	}
 }
 
@@ -123,6 +142,15 @@ func readJSON(t *testing.T, path string) []byte {
 	var value any
 	if err := json.Unmarshal(data, &value); err != nil {
 		t.Fatalf("%s is invalid JSON: %v", path, err)
+	}
+	return data
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return data
 }

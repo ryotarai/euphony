@@ -1,0 +1,4 @@
+interface:
+  display_name: "Euphony Annotate"
+  short_description: "Review Markdown or HTML inside Euphony"
+  default_prompt: "Use $euphony-annotate to request review of this Markdown artifact."
