@@ -42,6 +42,7 @@ interface WorkspaceFilesViewProps {
 }
 
 const searchDelay = 180;
+const maxRenderedLines = 5_000;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -55,10 +56,23 @@ function fileKind(path: string): string {
   return extension.toUpperCase();
 }
 
-function fileLines(content: string): string[] {
-  const lines = content.split("\n");
-  if (lines.length > 1 && lines.at(-1) === "") lines.pop();
-  return lines.length > 0 ? lines : [""];
+function fileLines(content: string): { lines: string[]; truncated: boolean } {
+  if (content === "") return { lines: [""], truncated: false };
+  const lines: string[] = [];
+  let start = 0;
+  while (lines.length < maxRenderedLines) {
+    const end = content.indexOf("\n", start);
+    if (end < 0) {
+      lines.push(content.slice(start));
+      return { lines, truncated: false };
+    }
+    lines.push(content.slice(start, end));
+    start = end + 1;
+    if (start === content.length) {
+      return { lines, truncated: false };
+    }
+  }
+  return { lines, truncated: start < content.length };
 }
 
 function entryIcon(entry: WorkspaceEntry, expanded: boolean) {
@@ -82,6 +96,9 @@ export function WorkspaceFilesView({
   const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(
     new Set(),
   );
+  const [directoryErrors, setDirectoryErrors] = useState<Set<string>>(
+    new Set(),
+  );
   const [rootLoading, setRootLoading] = useState(false);
   const [rootError, setRootError] = useState<unknown>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
@@ -95,18 +112,21 @@ export function WorkspaceFilesView({
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState(false);
   const sessionIDRef = useRef(session.id);
+  const refreshGenerationRef = useRef(0);
   sessionIDRef.current = session.id;
 
   useEffect(() => {
     setDirectories({});
     setExpanded(new Set());
     setLoadingDirectories(new Set());
+    setDirectoryErrors(new Set());
     setRootError(null);
     setQuery("");
     setSearchResult(null);
     setSelectedPath(null);
     setSelectedFile(null);
     setFileError(false);
+    refreshGenerationRef.current += 1;
   }, [session.id]);
 
   useEffect(() => {
@@ -155,7 +175,7 @@ export function WorkspaceFilesView({
       current = false;
       window.clearTimeout(timer);
     };
-  }, [active, api, query, session.id]);
+  }, [active, api, query, refreshVersion, session.id]);
 
   useEffect(() => {
     if (!active || !selectedPath) return;
@@ -174,10 +194,51 @@ export function WorkspaceFilesView({
     return () => {
       current = false;
     };
-  }, [active, api, selectedPath, session.id]);
+  }, [active, api, refreshVersion, selectedPath, session.id]);
 
   const root = directories[""];
   const workspaceRoot = root?.root ?? searchResult?.root ?? session.cwd;
+
+  const loadDirectory = (entry: WorkspaceEntry) => {
+    const requestSessionID = session.id;
+    const requestGeneration = refreshGenerationRef.current;
+    setDirectoryErrors((current) => {
+      const next = new Set(current);
+      next.delete(entry.path);
+      return next;
+    });
+    setLoadingDirectories((current) => new Set(current).add(entry.path));
+    void api.getWorkspaceDirectory(session.id, entry.path).then((directory) => {
+      if (
+        sessionIDRef.current !== requestSessionID ||
+        refreshGenerationRef.current !== requestGeneration
+      ) return;
+      setDirectories((current) => ({
+        ...current,
+        [entry.path]: directory,
+      }));
+    }).catch(() => {
+      if (
+        sessionIDRef.current !== requestSessionID ||
+        refreshGenerationRef.current !== requestGeneration
+      ) return;
+      setDirectoryErrors((current) => {
+        const next = new Set(current);
+        next.add(entry.path);
+        return next;
+      });
+    }).finally(() => {
+      if (
+        sessionIDRef.current !== requestSessionID ||
+        refreshGenerationRef.current !== requestGeneration
+      ) return;
+      setLoadingDirectories((current) => {
+        const next = new Set(current);
+        next.delete(entry.path);
+        return next;
+      });
+    });
+  };
 
   const toggleDirectory = (entry: WorkspaceEntry) => {
     if (entry.kind !== "directory") return;
@@ -191,30 +252,20 @@ export function WorkspaceFilesView({
     }
     setExpanded((current) => new Set(current).add(entry.path));
     if (directories[entry.path] || loadingDirectories.has(entry.path)) return;
+    loadDirectory(entry);
+  };
 
-    const requestSessionID = session.id;
-    setLoadingDirectories((current) => new Set(current).add(entry.path));
-    void api.getWorkspaceDirectory(session.id, entry.path).then((directory) => {
-      if (sessionIDRef.current !== requestSessionID) return;
-      setDirectories((current) => ({
-        ...current,
-        [entry.path]: directory,
-      }));
-    }).catch(() => {
-      if (sessionIDRef.current !== requestSessionID) return;
-      setExpanded((current) => {
-        const next = new Set(current);
-        next.delete(entry.path);
-        return next;
-      });
-    }).finally(() => {
-      if (sessionIDRef.current !== requestSessionID) return;
-      setLoadingDirectories((current) => {
-        const next = new Set(current);
-        next.delete(entry.path);
-        return next;
-      });
+  const refreshWorkspace = () => {
+    refreshGenerationRef.current += 1;
+    setDirectories((current) => {
+      const next: Record<string, WorkspaceDirectory> = {};
+      if (current[""]) next[""] = current[""];
+      return next;
     });
+    setExpanded(new Set());
+    setLoadingDirectories(new Set());
+    setDirectoryErrors(new Set());
+    setRefreshVersion((current) => current + 1);
   };
 
   const openFile = (path: string) => {
@@ -239,8 +290,7 @@ export function WorkspaceFilesView({
           return (
             <div
               className="workspace-tree-node"
-              role="treeitem"
-              aria-expanded={isDirectory ? isExpanded : undefined}
+              role="listitem"
               key={entry.path}
             >
               <button
@@ -263,14 +313,35 @@ export function WorkspaceFilesView({
                 <span>{entry.name}</span>
               </button>
               {isDirectory && isExpanded && (
-                <div role="group">
-                  {loadingDirectories.has(entry.path)
+                <div role="list">
+                  {directoryErrors.has(entry.path)
+                    ? (
+                      <div className="workspace-tree-feedback" role="status">
+                        <span>Directory unavailable.</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          aria-label={`Retry ${entry.path} directory`}
+                          onClick={() => loadDirectory(entry)}
+                        >
+                          Retry
+                        </Button>
+                      </div>
+                    )
+                    : loadingDirectories.has(entry.path)
                     ? (
                       <span className="workspace-tree-loading" role="status">
                         Loading {entry.path}…
                       </span>
                     )
-                    : renderEntries(entry.path, depth + 1)}
+                    : directories[entry.path]?.entries.length === 0
+                      ? (
+                        <span className="workspace-tree-empty">
+                          This directory is empty.
+                        </span>
+                      )
+                      : renderEntries(entry.path, depth + 1)}
                 </div>
               )}
             </div>
@@ -285,10 +356,10 @@ export function WorkspaceFilesView({
     );
   };
 
-  const lines = useMemo(
+  const renderedFile = useMemo(
     () => selectedFile && !selectedFile.binary
       ? fileLines(selectedFile.content ?? "")
-      : [],
+      : { lines: [], truncated: false },
     [selectedFile],
   );
 
@@ -365,13 +436,18 @@ export function WorkspaceFilesView({
                       role="table"
                       aria-label={`Contents of ${selectedFile.path}`}
                     >
-                      {lines.map((line, index) => (
+                      {renderedFile.lines.map((line, index) => (
                         <div className="workspace-code-row" role="row" key={index}>
                           <span role="cell">{index + 1}</span>
                           <code role="cell">{line || " "}</code>
                         </div>
                       ))}
                     </div>
+                    {renderedFile.truncated && (
+                      <p className="workspace-files-note">
+                        Only the first 5,000 lines are shown.
+                      </p>
+                    )}
                     {selectedFile.truncated && (
                       <p className="workspace-files-note">
                         Only the first 1 MiB is shown.
@@ -394,7 +470,7 @@ export function WorkspaceFilesView({
                 size="icon-xs"
                 aria-label="Refresh workspace files"
                 title="Refresh workspace files"
-                onClick={() => setRefreshVersion((current) => current + 1)}
+                onClick={refreshWorkspace}
               >
                 <RefreshCwIcon aria-hidden="true" />
               </Button>
@@ -435,7 +511,7 @@ export function WorkspaceFilesView({
                     type="button"
                     variant="outline"
                     size="xs"
-                    onClick={() => setRefreshVersion((current) => current + 1)}
+                    onClick={refreshWorkspace}
                   >
                     Retry
                   </Button>
@@ -469,16 +545,10 @@ export function WorkspaceFilesView({
                       key={entry.path}
                       aria-label={entry.kind === "file"
                         ? `Open search result ${entry.path}`
-                        : `Browse search result ${entry.path}`}
-                      disabled={
-                        entry.kind !== "file" && entry.kind !== "directory"
-                      }
+                        : `Directory search result ${entry.path}`}
+                      disabled={entry.kind !== "file"}
                       onClick={() => {
                         if (entry.kind === "file") openFile(entry.path);
-                        if (entry.kind === "directory") {
-                          setQuery("");
-                          toggleDirectory(entry);
-                        }
                       }}
                     >
                       {entryIcon(entry, false)}
@@ -498,10 +568,9 @@ export function WorkspaceFilesView({
               : root && (
                 <nav
                   className="workspace-tree"
-                  role="tree"
                   aria-label="Workspace files"
                 >
-                  {renderEntries("")}
+                  <div role="list">{renderEntries("")}</div>
                   {root.entries.length === 0 && (
                     <p className="workspace-search-state">
                       This directory is empty.
@@ -510,6 +579,11 @@ export function WorkspaceFilesView({
                 </nav>
               )}
           </div>
+          {root && Boolean(rootError) && (
+            <p className="workspace-refresh-warning" role="status">
+              Workspace could not be refreshed.
+            </p>
+          )}
         </aside>
       </div>
     </section>

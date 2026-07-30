@@ -477,7 +477,9 @@ test("browses workspace files inside a terminal pane", async ({ page }, testInfo
     const pane = page.getByLabel("File browser pane", { exact: true });
     await pane.getByRole("tab", { name: "Files" }).click();
 
-    await expect(pane.getByRole("tree", { name: "Workspace files" })).toBeVisible();
+    await expect(pane.getByRole("navigation", {
+      name: "Workspace files",
+    })).toBeVisible();
     await pane.getByRole("button", { name: "Expand docs" }).click();
     await pane.getByRole("button", { name: "Open docs/User Guide.md" }).click();
     await expect(pane.getByRole("heading", { name: "User Guide.md" })).toBeVisible();

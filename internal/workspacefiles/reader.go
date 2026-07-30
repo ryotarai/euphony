@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,7 +16,8 @@ import (
 )
 
 type Reader struct {
-	root string
+	root       string
+	rootHandle *os.Root
 }
 
 func New(ctx context.Context, cwd string) (*Reader, error) {
@@ -52,31 +55,49 @@ func New(ctx context.Context, cwd string) (*Reader, error) {
 			}
 		}
 	}
-	return &Reader{root: filepath.Clean(root)}, nil
+	root = filepath.Clean(root)
+	rootHandle, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, classifyPathError(err)
+	}
+	return &Reader{root: root, rootHandle: rootHandle}, nil
 }
 
 func (r *Reader) Root() string {
 	return r.root
 }
 
+func (r *Reader) Close() error {
+	return r.rootHandle.Close()
+}
+
 func (r *Reader) Directory(path string) (Directory, error) {
-	target, clean, err := r.resolve(path, true)
+	clean, err := cleanPath(path, true)
 	if err != nil {
 		return Directory{}, err
 	}
-	info, err := os.Stat(target)
+	handle, err := r.rootHandle.Open(rootPath(clean))
+	if err != nil {
+		return Directory{}, classifyPathError(err)
+	}
+	defer handle.Close()
+	info, err := handle.Stat()
 	if err != nil {
 		return Directory{}, classifyPathError(err)
 	}
 	if !info.IsDir() {
 		return Directory{}, ErrTypeMismatch
 	}
-	entries, err := os.ReadDir(target)
-	if err != nil {
+	entries, err := handle.ReadDir(maxDirectoryEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return Directory{}, classifyPathError(err)
 	}
 
-	result := make([]Entry, 0, min(len(entries), maxDirectoryEntries))
+	truncated := len(entries) > maxDirectoryEntries
+	if truncated {
+		entries = entries[:maxDirectoryEntries]
+	}
+	result := make([]Entry, 0, len(entries))
 	for _, dirEntry := range entries {
 		entry, entryErr := r.entry(clean, dirEntry)
 		if entryErr != nil {
@@ -85,10 +106,6 @@ func (r *Reader) Directory(path string) (Directory, error) {
 		result = append(result, entry)
 	}
 	sortEntries(result)
-	truncated := len(result) > maxDirectoryEntries
-	if truncated {
-		result = result[:maxDirectoryEntries]
-	}
 	return Directory{
 		Root:      r.root,
 		Path:      slash(clean),
@@ -98,22 +115,22 @@ func (r *Reader) Directory(path string) (Directory, error) {
 }
 
 func (r *Reader) File(path string) (File, error) {
-	target, clean, err := r.resolve(path, false)
+	clean, err := cleanPath(path, false)
 	if err != nil {
 		return File{}, err
 	}
-	info, err := os.Stat(target)
+	handle, err := r.rootHandle.OpenFile(rootPath(clean), secureReadOnlyFlags, 0)
+	if err != nil {
+		return File{}, classifyPathError(err)
+	}
+	defer handle.Close()
+	info, err := handle.Stat()
 	if err != nil {
 		return File{}, classifyPathError(err)
 	}
 	if !info.Mode().IsRegular() {
 		return File{}, ErrTypeMismatch
 	}
-	handle, err := os.Open(target)
-	if err != nil {
-		return File{}, classifyPathError(err)
-	}
-	defer handle.Close()
 
 	data, err := io.ReadAll(io.LimitReader(handle, maxFileBytes+1))
 	if err != nil {
@@ -123,10 +140,11 @@ func (r *Reader) File(path string) (File, error) {
 	if truncated {
 		data = data[:maxFileBytes]
 	}
-	binary := bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
+	utf8Data, valid := completeUTF8Prefix(data)
+	binary := bytes.IndexByte(data, 0) >= 0 || !valid
 	content := ""
 	if !binary {
-		content = string(data)
+		content = string(utf8Data)
 	}
 	return File{
 		Root:      r.root,
@@ -153,7 +171,11 @@ func (r *Reader) Search(query string) (SearchResult, error) {
 		".git": true, "node_modules": true, ".cache": true,
 	}
 
-	err := filepath.WalkDir(r.root, func(path string, entry os.DirEntry, walkErr error) error {
+	err := fs.WalkDir(r.rootHandle.FS(), ".", func(
+		path string,
+		entry fs.DirEntry,
+		walkErr error,
+	) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) ||
 				errors.Is(walkErr, os.ErrPermission) {
@@ -161,7 +183,7 @@ func (r *Reader) Search(query string) (SearchResult, error) {
 			}
 			return walkErr
 		}
-		if path == r.root {
+		if path == "." {
 			return nil
 		}
 		if entry.IsDir() && skippedDirectories[entry.Name()] {
@@ -172,11 +194,7 @@ func (r *Reader) Search(query string) (SearchResult, error) {
 			truncated = true
 			return stop
 		}
-		relative, relativeErr := filepath.Rel(r.root, path)
-		if relativeErr != nil {
-			return relativeErr
-		}
-		relative = slash(relative)
+		relative := strings.TrimPrefix(path, "./")
 		if !strings.Contains(strings.ToLower(relative), needle) {
 			return nil
 		}
@@ -184,7 +202,7 @@ func (r *Reader) Search(query string) (SearchResult, error) {
 			truncated = true
 			return stop
 		}
-		result, resultErr := r.entry(filepath.Dir(relative), entry)
+		result, resultErr := r.entry(pathpkg.Dir(relative), entry)
 		if resultErr != nil {
 			return resultErr
 		}
@@ -203,38 +221,24 @@ func (r *Reader) Search(query string) (SearchResult, error) {
 	}, nil
 }
 
-func (r *Reader) resolve(path string, allowRoot bool) (string, string, error) {
+func cleanPath(path string, allowRoot bool) (string, error) {
 	if strings.IndexByte(path, 0) >= 0 || filepath.IsAbs(path) {
-		return "", "", ErrInvalidPath
+		return "", ErrInvalidPath
 	}
 	clean := filepath.Clean(path)
 	if path == "" || clean == "." {
 		if !allowRoot && path == "" {
-			return "", "", ErrInvalidPath
+			return "", ErrInvalidPath
 		}
 		clean = ""
 	}
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", "", ErrInvalidPath
+		return "", ErrInvalidPath
 	}
-	target := r.root
-	if clean != "" {
-		target = filepath.Join(r.root, clean)
-	}
-	resolved, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return "", "", classifyPathError(err)
-	}
-	relative, err := filepath.Rel(r.root, resolved)
-	if err != nil ||
-		relative == ".." ||
-		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", "", ErrInvalidPath
-	}
-	return resolved, clean, nil
+	return clean, nil
 }
 
-func (r *Reader) entry(parent string, entry os.DirEntry) (Entry, error) {
+func (r *Reader) entry(parent string, entry fs.DirEntry) (Entry, error) {
 	kind := KindOther
 	size := int64(0)
 	switch {
@@ -284,11 +288,34 @@ func classifyPathError(err error) error {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return ErrPathNotFound
+	case strings.Contains(err.Error(), "path escapes from parent"):
+		return ErrInvalidPath
 	case errors.Is(err, os.ErrPermission):
 		return err
 	default:
 		return err
 	}
+}
+
+func completeUTF8Prefix(data []byte) ([]byte, bool) {
+	for offset := 0; offset < len(data); {
+		if !utf8.FullRune(data[offset:]) {
+			return data[:offset], true
+		}
+		runeValue, size := utf8.DecodeRune(data[offset:])
+		if runeValue == utf8.RuneError && size == 1 {
+			return nil, false
+		}
+		offset += size
+	}
+	return data, true
+}
+
+func rootPath(path string) string {
+	if path == "" {
+		return "."
+	}
+	return filepath.ToSlash(path)
 }
 
 func slash(path string) string {

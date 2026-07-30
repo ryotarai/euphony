@@ -24,6 +24,9 @@ func TestNewUsesGitTopLevelAndFallsBackToCWD(t *testing.T) {
 	if reader.Root() != canonicalRepo {
 		t.Fatalf("Root() = %q, want %q", reader.Root(), canonicalRepo)
 	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("Close(repo) error = %v", err)
+	}
 
 	plain := t.TempDir()
 	reader, err = New(context.Background(), plain)
@@ -33,6 +36,9 @@ func TestNewUsesGitTopLevelAndFallsBackToCWD(t *testing.T) {
 	canonicalPlain := mustEvalSymlinks(t, plain)
 	if reader.Root() != canonicalPlain {
 		t.Fatalf("Root() = %q, want %q", reader.Root(), canonicalPlain)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("Close(plain) error = %v", err)
 	}
 }
 
@@ -85,7 +91,7 @@ func TestReaderRejectsTraversalAndEscapingSymlinks(t *testing.T) {
 	}
 	mustWriteFile(t, filepath.Join(root, "inside.txt"), "inside")
 	if err := os.Symlink(
-		filepath.Join(root, "inside.txt"),
+		"inside.txt",
 		filepath.Join(root, "inside-link"),
 	); err != nil {
 		t.Fatalf("Symlink() error = %v", err)
@@ -103,6 +109,33 @@ func TestReaderRejectsTraversalAndEscapingSymlinks(t *testing.T) {
 	}
 	if file.Content != "inside" {
 		t.Fatalf("Content = %q, want inside", file.Content)
+	}
+}
+
+func TestReaderRemainsAnchoredWhenTheRootPathIsReplaced(t *testing.T) {
+	container := t.TempDir()
+	root := filepath.Join(container, "workspace")
+	mustMkdirAll(t, root)
+	mustWriteFile(t, filepath.Join(root, "marker.txt"), "original")
+	outside := filepath.Join(container, "outside")
+	mustMkdirAll(t, outside)
+	mustWriteFile(t, filepath.Join(outside, "marker.txt"), "outside")
+
+	reader := mustReader(t, root)
+	moved := filepath.Join(container, "moved-workspace")
+	if err := os.Rename(root, moved); err != nil {
+		t.Fatalf("Rename() error = %v", err)
+	}
+	if err := os.Symlink(outside, root); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	file, err := reader.File("marker.txt")
+	if err != nil {
+		t.Fatalf("File(marker.txt) error = %v", err)
+	}
+	if file.Content != "original" {
+		t.Fatalf("Content = %q, want original", file.Content)
 	}
 }
 
@@ -145,6 +178,45 @@ func TestFileReportsTextBinaryAndTruncation(t *testing.T) {
 	}
 	if !large.Truncated || len(large.Content) != maxFileBytes {
 		t.Fatalf("large content bytes = %d, truncated = %v", len(large.Content), large.Truncated)
+	}
+}
+
+func TestTruncatedFileKeepsCompleteUTF8RunesAtTheBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		rune string
+	}{
+		{name: "two bytes", rune: "¢"},
+		{name: "three bytes", rune: "€"},
+		{name: "four bytes", rune: "𐍈"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			prefix := strings.Repeat("a", maxFileBytes-1)
+			mustWriteFile(
+				t,
+				filepath.Join(root, "boundary.txt"),
+				prefix+test.rune+"tail",
+			)
+			reader := mustReader(t, root)
+
+			file, err := reader.File("boundary.txt")
+			if err != nil {
+				t.Fatalf("File() error = %v", err)
+			}
+			if file.Binary {
+				t.Fatalf("File() marked valid UTF-8 boundary as binary")
+			}
+			if !file.Truncated || file.Content != prefix {
+				t.Fatalf(
+					"content bytes = %d, truncated = %v; want %d complete bytes",
+					len(file.Content),
+					file.Truncated,
+					len(prefix),
+				)
+			}
+		})
 	}
 }
 
@@ -208,6 +280,11 @@ func mustReader(t *testing.T, cwd string) *Reader {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
 	return reader
 }
 

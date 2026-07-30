@@ -2939,6 +2939,33 @@ input {
   font-size: 0.56rem;
 }
 
+.workspace-tree-empty,
+.workspace-tree-feedback {
+  min-height: 1.8rem;
+  margin-left: 1.35rem;
+  padding: 0.35rem 0.65rem;
+  color: #666;
+  border-left: 1px solid #262626;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.56rem;
+}
+
+.workspace-tree-empty {
+  display: flex;
+  align-items: center;
+}
+
+.workspace-tree-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.workspace-tree-feedback button {
+  color: #a3a3a3;
+}
+
 .workspace-search-row {
   min-height: 2.6rem;
   display: grid;
@@ -3099,6 +3126,16 @@ input {
   color: #737373;
   background: #0b0d0f;
   border-top: 1px solid #262626;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.56rem;
+}
+
+.workspace-refresh-warning {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  color: #f0a6a0;
+  background: #160c0c;
+  border-top: 1px solid #4a2020;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.56rem;
 }

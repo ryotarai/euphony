@@ -12,6 +12,7 @@ func (s *Server) workspaceDirectory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	defer reader.Close()
 	path, valid := optionalSingleQueryValue(r, "path")
 	if !valid {
 		writeWorkspaceError(w, workspacefiles.ErrInvalidPath)
@@ -30,6 +31,7 @@ func (s *Server) workspaceSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	defer reader.Close()
 	query, valid := requiredSingleQueryValue(r, "query")
 	if !valid {
 		writeWorkspaceError(w, workspacefiles.ErrInvalidQuery)
@@ -48,6 +50,7 @@ func (s *Server) workspaceFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	defer reader.Close()
 	path, valid := requiredSingleQueryValue(r, "path")
 	if !valid {
 		writeWorkspaceError(w, workspacefiles.ErrInvalidPath)

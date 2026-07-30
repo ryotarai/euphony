@@ -57,7 +57,9 @@ test("loads the workspace only while active and shows its root", async () => {
 
   rerender(<WorkspaceFilesView session={session} api={api} active />);
 
-  expect(await screen.findByRole("tree", { name: "Workspace files" })).toBeVisible();
+  expect(await screen.findByRole("navigation", {
+    name: "Workspace files",
+  })).toBeVisible();
   expect(screen.getByText("/repo")).toBeVisible();
   expect(getWorkspaceDirectory).toHaveBeenCalledWith("terminal-1");
   expect(screen.getByRole("button", { name: "Expand docs" })).toBeVisible();
@@ -255,4 +257,188 @@ test("ignores a stale file response after another file is selected", async () =>
   await waitFor(() => {
     expect(screen.getByRole("heading", { name: "second.txt" })).toBeVisible();
   });
+});
+
+test("refresh invalidates child directories and reloads the selected file", async () => {
+  const user = userEvent.setup();
+  const child: WorkspaceDirectory = {
+    root: "/repo",
+    path: "docs",
+    entries: [
+      { name: "guide.md", path: "docs/guide.md", kind: "file", size: 5 },
+    ],
+  };
+  const getWorkspaceDirectory = vi.fn()
+    .mockResolvedValueOnce(rootDirectory)
+    .mockResolvedValueOnce(child)
+    .mockResolvedValueOnce(rootDirectory)
+    .mockResolvedValueOnce(child);
+  const getWorkspaceFile = vi.fn().mockResolvedValue({
+    root: "/repo",
+    name: "guide.md",
+    path: "docs/guide.md",
+    size: 5,
+    content: "guide",
+  } satisfies WorkspaceFile);
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({ getWorkspaceDirectory, getWorkspaceFile })}
+      active
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Expand docs" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Open docs/guide.md" }),
+  );
+  expect(await screen.findByRole("heading", { name: "guide.md" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", {
+    name: "Refresh workspace files",
+  }));
+
+  await waitFor(() => {
+    expect(getWorkspaceDirectory).toHaveBeenCalledTimes(3);
+    expect(getWorkspaceFile).toHaveBeenCalledTimes(2);
+  });
+  expect(screen.queryByRole("button", { name: "Open docs/guide.md" }))
+    .not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Expand docs" }));
+  expect(await screen.findByRole("button", { name: "Open docs/guide.md" }))
+    .toBeVisible();
+  expect(getWorkspaceDirectory).toHaveBeenCalledTimes(4);
+});
+
+test("ignores a child directory response from before refresh", async () => {
+  const user = userEvent.setup();
+  let resolveStale: ((directory: WorkspaceDirectory) => void) | undefined;
+  const stale = new Promise<WorkspaceDirectory>((resolve) => {
+    resolveStale = resolve;
+  });
+  let childRequest = 0;
+  const getWorkspaceDirectory = vi.fn(
+    (_id: string, path?: string) => {
+      if (!path) return Promise.resolve(rootDirectory);
+      childRequest += 1;
+      if (childRequest === 1) return stale;
+      return Promise.resolve({
+        root: "/repo",
+        path: "docs",
+        entries: [
+          { name: "fresh.md", path: "docs/fresh.md", kind: "file" },
+        ],
+      } satisfies WorkspaceDirectory);
+    },
+  );
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({ getWorkspaceDirectory })}
+      active
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Expand docs" }));
+  await user.click(screen.getByRole("button", {
+    name: "Refresh workspace files",
+  }));
+  resolveStale?.({
+    root: "/repo",
+    path: "docs",
+    entries: [
+      { name: "stale.md", path: "docs/stale.md", kind: "file" },
+    ],
+  });
+  await waitFor(() => {
+    expect(getWorkspaceDirectory).toHaveBeenCalledTimes(3);
+  });
+
+  expect(screen.queryByRole("button", { name: "Open docs/stale.md" }))
+    .not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Expand docs" }));
+  expect(await screen.findByRole("button", { name: "Open docs/fresh.md" }))
+    .toBeVisible();
+});
+
+test("shows child directory empty and retry states", async () => {
+  const user = userEvent.setup();
+  const directory: WorkspaceDirectory = {
+    root: "/repo",
+    path: "",
+    entries: [
+      { name: "empty", path: "empty", kind: "directory" },
+      { name: "unavailable", path: "unavailable", kind: "directory" },
+    ],
+  };
+  const getWorkspaceDirectory = vi.fn()
+    .mockResolvedValueOnce(directory)
+    .mockResolvedValueOnce({
+      root: "/repo",
+      path: "empty",
+      entries: [],
+    } satisfies WorkspaceDirectory)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({
+      root: "/repo",
+      path: "unavailable",
+      entries: [
+        { name: "ready.txt", path: "unavailable/ready.txt", kind: "file" },
+      ],
+    } satisfies WorkspaceDirectory);
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({ getWorkspaceDirectory })}
+      active
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Expand empty" }));
+  expect(await screen.findByText("This directory is empty.")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Expand unavailable" }));
+  expect(await screen.findByText("Directory unavailable.")).toBeVisible();
+  await user.click(screen.getByRole("button", {
+    name: "Retry unavailable directory",
+  }));
+  expect(await screen.findByRole("button", {
+    name: "Open unavailable/ready.txt",
+  })).toBeVisible();
+});
+
+test("caps rendered code lines", async () => {
+  const user = userEvent.setup();
+  const directory: WorkspaceDirectory = {
+    root: "/repo",
+    path: "",
+    entries: [
+      { name: "many-lines.txt", path: "many-lines.txt", kind: "file" },
+    ],
+  };
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({
+        getWorkspaceDirectory: vi.fn().mockResolvedValue(directory),
+        getWorkspaceFile: vi.fn().mockResolvedValue({
+          root: "/repo",
+          name: "many-lines.txt",
+          path: "many-lines.txt",
+          size: 12_000,
+          content: "x\n".repeat(6_000),
+        } satisfies WorkspaceFile),
+      })}
+      active
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: "Open many-lines.txt",
+  }));
+
+  expect(await screen.findByText("Only the first 5,000 lines are shown."))
+    .toBeVisible();
+  expect(screen.getAllByRole("row")).toHaveLength(5_000);
 });

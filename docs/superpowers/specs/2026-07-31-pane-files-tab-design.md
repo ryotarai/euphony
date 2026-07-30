@@ -52,15 +52,17 @@ Two authenticated session-scoped endpoints are added:
 - `GET /api/sessions/{id}/workspace/file?path=<relative-file>`
 
 All roots come from terminal metadata. Browser-provided absolute paths and
-relative paths that escape the resolved root are rejected. Symlink targets may
-only be read when their canonical path remains inside the canonical workspace
-root.
+relative paths that escape the resolved root are rejected. The reader holds an
+`os.Root` handle so opens remain confined during concurrent renames and symlink
+changes. Relative symlinks may only resolve inside that root.
 
 Directory listings are sorted with directories first and capped at 500 entries.
 Search skips large implementation directories such as `.git` and
 `node_modules`, visits at most 10,000 entries, and returns at most 200 matches.
-File reads are capped at 1 MiB plus one detection byte. NUL-containing or
-invalid UTF-8 content is reported as binary and is never embedded in JSON.
+File reads are capped at 1 MiB plus one detection byte. A partial UTF-8 rune at
+the boundary is removed without classifying the file as binary. NUL-containing
+or otherwise invalid UTF-8 content is reported as binary and is never embedded
+in JSON. The viewer renders at most 5,000 lines from the bounded response.
 
 ## Failure handling
 
@@ -70,8 +72,11 @@ invalid UTF-8 content is reported as binary and is never embedded in JSON.
 - Wrong path kind: `400 workspace_path_type_mismatch`
 - Other read errors: `500 workspace_read_failed`
 
-The frontend keeps the last successful tree visible during refreshes, ignores
-stale request completions, and offers a retry action for failed initial loads.
+The frontend keeps the last successful root visible during refreshes,
+invalidates child-directory caches, reloads the selected file and active
+search, and ignores stale request completions from older refresh generations.
+Failed initial and child-directory loads offer retry actions, while empty child
+directories have an explicit empty row.
 
 ## Verification
 
