@@ -307,6 +307,13 @@ test("groups terminals by their exact cwd within each ordered status", () => {
       repoRoot: "/workspace/project",
       agentStatus: "waiting",
     },
+    {
+      ...sessions[0],
+      id: "blocked",
+      name: "Blocked",
+      repoRoot: "/workspace/project",
+      agentStatus: "blocked",
+    },
   ];
   render(
     <SessionNavigation
@@ -322,12 +329,15 @@ test("groups terminals by their exact cwd within each ordered status", () => {
 
   const statusNames = screen.getAllByRole("heading").map((heading) => heading.textContent);
   expect(statusNames).toEqual([
+    "Blocked",
+    "~/work/euphony",
     "Need attention",
     "/workspace/project/tmp/worktrees/fix",
     "Running",
     "~/work/euphony",
     "Waiting",
     "~/work/euphony",
+    "Terminal",
   ]);
 });
 

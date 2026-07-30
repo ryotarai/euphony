@@ -423,6 +423,41 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", as
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
 });
 
+test("scrolls the Quick Actions keyboard selection into view", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession, secondRunningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("Codex terminal pane");
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  const input = await screen.findByPlaceholderText("Terminal or status");
+  await waitFor(() => expect(input).toHaveFocus());
+  const attentionOption = screen.getByRole("option", {
+    name: /^Enable attention alerts/,
+  });
+  const scrollIntoView = vi.spyOn(
+    HTMLElement.prototype,
+    "scrollIntoView",
+  );
+
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+
+  await waitFor(() =>
+    expect(attentionOption).toHaveAttribute("aria-selected", "true"),
+  );
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+  expect(scrollIntoView.mock.contexts).toContain(attentionOption);
+});
+
 test("shows one workspace connection status and retries disconnected panes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession]),
@@ -933,6 +968,32 @@ test("the Terminal activity checkbox selects shells without a coding agent", asy
   fireEvent.click(screen.getByRole("checkbox", { name: "Show all Terminal terminals" }));
 
   expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
+});
+
+test("shows built-in activity groups when they have no terminals", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await screen.findByLabelText("session-1 terminal pane");
+
+  for (const label of [
+    "Show all Blocked terminals",
+    "Show all Need attention terminals",
+    "Show all Running terminals",
+    "Show all Waiting terminals",
+    "Show all Terminal terminals",
+  ]) {
+    expect(screen.getByRole("checkbox", { name: label })).toBeVisible();
+  }
+  expect(screen.getAllByText("No terminal")).toHaveLength(4);
 });
 
 test("unchecking an activity group removes only its terminal panes", async () => {
