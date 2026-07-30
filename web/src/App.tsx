@@ -63,6 +63,7 @@ import type {
   Session,
   Settings,
 } from "./types";
+import { defaultTerminalFontFamily } from "./settings";
 
 const tokenKey = "euphony.token";
 const recentQuickActionsKey = "euphony.recentQuickActions";
@@ -87,6 +88,7 @@ interface AppProps {
     layoutVersion: number,
     onConnectionChange: (sessionID: string, state: ConnectionState) => void,
     reconnectSignal: number,
+    fontFamily: string,
     fontSize: number,
     terminalHistoryLimit: number,
     sourceVisible: boolean,
@@ -100,6 +102,7 @@ const defaultSettings: Settings = {
   sidebarCollapsed: false,
   interfaceFontSize: 16,
   terminalFontSize: 14,
+  terminalFontFamily: defaultTerminalFontFamily,
   agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
   autoSelectAttention: true,
@@ -125,6 +128,11 @@ type FontSizeSetting = "interfaceFontSize" | "terminalFontSize" | "agentLogFontS
 function parseFontSize(value: string): number | null {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 10 && parsed <= 24 ? parsed : null;
+}
+
+function parseTerminalFontFamily(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed && Array.from(trimmed).length <= 256 ? trimmed : null;
 }
 
 function sessionActivity(session: Session) {
@@ -354,6 +362,7 @@ export function App({
     layoutVersion,
     onConnectionChange,
     reconnectSignal,
+    fontFamily,
     fontSize,
     terminalHistoryLimit,
     sourceVisible,
@@ -367,6 +376,7 @@ export function App({
       layoutVersion={layoutVersion}
       onConnectionChange={onConnectionChange}
       reconnectSignal={reconnectSignal}
+      fontFamily={fontFamily}
       fontSize={fontSize}
       terminalHistoryLimit={terminalHistoryLimit}
     />
@@ -400,13 +410,21 @@ export function App({
   const [autoSelectAttentionDraft, setAutoSelectAttentionDraft] = useState(
     settings.autoSelectAttention,
   );
+  const [terminalFontFamilyDraft, setTerminalFontFamilyDraft] = useState(
+    settings.terminalFontFamily,
+  );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
     terminalFontSize: String(settings.terminalFontSize),
     agentLogFontSize: String(settings.agentLogFontSize),
   });
   const [settingsError, setSettingsError] = useState<{
-    field: "prefix" | "paneTabShortcut" | "terminalHistoryLimit" | FontSizeSetting;
+    field:
+      | "prefix"
+      | "paneTabShortcut"
+      | "terminalHistoryLimit"
+      | "terminalFontFamily"
+      | FontSizeSetting;
     message: string;
   } | null>(null);
   const [prefixActive, setPrefixActive] = useState(false);
@@ -474,10 +492,13 @@ export function App({
         parseFontSize(fontSizeDrafts.interfaceFontSize) ?? settings.interfaceFontSize,
       terminalFontSize:
         parseFontSize(fontSizeDrafts.terminalFontSize) ?? settings.terminalFontSize,
+      terminalFontFamily:
+        parseTerminalFontFamily(terminalFontFamilyDraft) ??
+        settings.terminalFontFamily,
       agentLogFontSize:
         parseFontSize(fontSizeDrafts.agentLogFontSize) ?? settings.agentLogFontSize,
     };
-  }, [fontSizeDrafts, settings, settingsOpen]);
+  }, [fontSizeDrafts, settings, settingsOpen, terminalFontFamilyDraft]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
       current[sessionID] === state ? current : { ...current, [sessionID]: state },
@@ -682,6 +703,7 @@ export function App({
       setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
       setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
       setAutoSelectAttentionDraft(loaded.autoSelectAttention);
+      setTerminalFontFamilyDraft(loaded.terminalFontFamily);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -1967,6 +1989,7 @@ export function App({
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setAutoSelectAttentionDraft(settings.autoSelectAttention);
+    setTerminalFontFamilyDraft(settings.terminalFontFamily);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -2032,12 +2055,21 @@ export function App({
       });
       return;
     }
+    const terminalFontFamily = parseTerminalFontFamily(terminalFontFamilyDraft);
+    if (!terminalFontFamily) {
+      setSettingsError({
+        field: "terminalFontFamily",
+        message: "Choose a font family of 1 to 256 characters.",
+      });
+      return;
+    }
     await persistSettings({
       ...settings,
       prefix,
       paneTabShortcut,
       interfaceFontSize: fontSizes.interfaceFontSize!,
       terminalFontSize: fontSizes.terminalFontSize!,
+      terminalFontFamily,
       agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
       autoSelectAttention: autoSelectAttentionDraft,
@@ -2314,6 +2346,7 @@ export function App({
                       paneLayoutVersion,
                       handleConnectionChange,
                       reconnectSignals[pane.id] ?? 0,
+                      previewSettings.terminalFontFamily,
                       previewSettings.terminalFontSize,
                       settings.terminalHistoryLimit,
                       sourceVisible,
@@ -2584,6 +2617,34 @@ export function App({
                   ))}
                 </div>
               </section>
+              <Field
+                data-invalid={settingsError?.field === "terminalFontFamily"}
+              >
+                <FieldLabel htmlFor="terminalFontFamily">
+                  Terminal font
+                </FieldLabel>
+                <Input
+                  id="terminalFontFamily"
+                  name="terminalFontFamily"
+                  value={terminalFontFamilyDraft}
+                  onChange={(event) => {
+                    setTerminalFontFamilyDraft(event.target.value);
+                    if (settingsError?.field === "terminalFontFamily") {
+                      setSettingsError(null);
+                    }
+                  }}
+                  aria-invalid={
+                    settingsError?.field === "terminalFontFamily"
+                  }
+                />
+                <FieldDescription>
+                  Use a CSS font family or fallback list. Unavailable fonts use
+                  the next family.
+                </FieldDescription>
+                {settingsError?.field === "terminalFontFamily" && (
+                  <FieldError>{settingsError.message}</FieldError>
+                )}
+              </Field>
             </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>

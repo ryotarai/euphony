@@ -22,6 +22,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { Session, Settings } from "../types";
+import { defaultTerminalFontFamily } from "../settings";
 
 const defaultSidebarWidth = 256;
 const minimumSidebarWidth = 180;
@@ -424,6 +425,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     sidebarCollapsed: false,
     interfaceFontSize: 16,
     terminalFontSize: 14,
+    terminalFontFamily: defaultTerminalFontFamily,
     agentLogFontSize: 14,
     terminalHistoryLimit: 1024 * 1024,
     autoSelectAttention: true,

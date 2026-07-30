@@ -11,6 +11,8 @@ const defaultSettings: Settings = {
   sidebarCollapsed: false,
   interfaceFontSize: 16,
   terminalFontSize: 14,
+  terminalFontFamily:
+    'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,
@@ -2448,10 +2450,12 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         _layoutVersion,
         _onConnectionChange,
         _reconnectSignal,
+        fontFamily,
         fontSize,
       ) => (
         <div
           aria-label={`${session.id} terminal pane`}
+          data-font-family={fontFamily}
           data-font-size={fontSize}
         />
       )}
@@ -2468,16 +2472,21 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const interfaceFontSize = within(dialog).getByLabelText("Interface");
   const terminalFontSize = within(dialog).getByLabelText("Terminal");
   const agentLogFontSize = within(dialog).getByLabelText("Agent log");
-  await user.clear(interfaceFontSize);
-  await user.type(interfaceFontSize, "18");
-  await user.clear(terminalFontSize);
-  await user.type(terminalFontSize, "17");
-  await user.clear(agentLogFontSize);
-  await user.type(agentLogFontSize, "16");
+  const terminalFontFamily = within(dialog).getByLabelText("Terminal font");
+  fireEvent.change(interfaceFontSize, { target: { value: "18" } });
+  fireEvent.change(terminalFontSize, { target: { value: "17" } });
+  fireEvent.change(agentLogFontSize, { target: { value: "16" } });
+  fireEvent.change(terminalFontFamily, {
+    target: { value: '"JetBrains Mono", monospace' },
+  });
   expect(document.documentElement).toHaveStyle({ fontSize: "18px" });
   expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
     "data-font-size",
     "17",
+  );
+  expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-font-family",
+    '"JetBrains Mono", monospace',
   );
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
@@ -2485,6 +2494,10 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
     "data-font-size",
     "14",
+  );
+  expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-font-family",
+    defaultSettings.terminalFontFamily,
   );
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
@@ -2497,18 +2510,24 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   expect(within(reopenedDialog).getByLabelText("Interface")).toHaveValue(16);
   expect(within(reopenedDialog).getByLabelText("Terminal")).toHaveValue(14);
   expect(within(reopenedDialog).getByLabelText("Agent log")).toHaveValue(14);
-  await user.clear(reopenedPrefix);
-  await user.type(reopenedPrefix, "Ctrl+A");
-  await user.clear(paneTabShortcut);
-  await user.type(paneTabShortcut, "control+j");
-  await user.clear(historyBuffer);
-  await user.type(historyBuffer, "8");
-  await user.clear(within(reopenedDialog).getByLabelText("Interface"));
-  await user.type(within(reopenedDialog).getByLabelText("Interface"), "18");
-  await user.clear(within(reopenedDialog).getByLabelText("Terminal"));
-  await user.type(within(reopenedDialog).getByLabelText("Terminal"), "17");
-  await user.clear(within(reopenedDialog).getByLabelText("Agent log"));
-  await user.type(within(reopenedDialog).getByLabelText("Agent log"), "16");
+  expect(within(reopenedDialog).getByLabelText("Terminal font")).toHaveValue(
+    defaultSettings.terminalFontFamily,
+  );
+  fireEvent.change(reopenedPrefix, { target: { value: "Ctrl+A" } });
+  fireEvent.change(paneTabShortcut, { target: { value: "control+j" } });
+  fireEvent.change(historyBuffer, { target: { value: "8" } });
+  fireEvent.change(within(reopenedDialog).getByLabelText("Interface"), {
+    target: { value: "18" },
+  });
+  fireEvent.change(within(reopenedDialog).getByLabelText("Terminal"), {
+    target: { value: "17" },
+  });
+  fireEvent.change(within(reopenedDialog).getByLabelText("Agent log"), {
+    target: { value: "16" },
+  });
+  fireEvent.change(within(reopenedDialog).getByLabelText("Terminal font"), {
+    target: { value: "  Iosevka, monospace  " },
+  });
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
@@ -2521,6 +2540,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         paneTabShortcut: "Ctrl+J",
         interfaceFontSize: 18,
         terminalFontSize: 17,
+        terminalFontFamily: "Iosevka, monospace",
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
       }),
@@ -2658,6 +2678,7 @@ test("forwards the saved history limit to terminal panes", async () => {
         _layoutVersion,
         _onConnectionChange,
         _reconnectSignal,
+        _fontFamily,
         _fontSize,
         terminalHistoryLimit,
       ) => (
@@ -2736,5 +2757,39 @@ test("rejects a font size outside the supported range", async () => {
   expect(
     fetchMock.mock.calls.some(([input, init]) =>
       input === "/api/settings" && init?.method === "PATCH"),
+  ).toBe(false);
+});
+
+test("rejects an empty terminal font family", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.id} terminal pane`} />
+      )}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const terminalFont = screen.getByLabelText("Terminal font");
+  fireEvent.change(terminalFont, { target: { value: "   " } });
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose a font family of 1 to 256 characters.",
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  expect(
+    fetchMock.mock.calls.some(
+      ([input, init]) =>
+        input === "/api/settings" && init?.method === "PATCH",
+    ),
   ).toBe(false);
 });

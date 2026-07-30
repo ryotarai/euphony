@@ -24,6 +24,8 @@ const settings: Settings = {
   sidebarCollapsed: false,
   interfaceFontSize: 16,
   terminalFontSize: 14,
+  terminalFontFamily:
+    'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,

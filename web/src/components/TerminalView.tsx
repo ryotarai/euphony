@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
+import { defaultTerminalFontFamily } from "../settings";
 import type { Session } from "../types";
 
 export interface TerminalDriver {
@@ -41,9 +42,14 @@ interface TerminalViewProps {
   layoutVersion?: number;
   reconnectSignal?: number;
   terminalHistoryLimit?: number;
+  fontFamily?: string;
   fontSize?: number;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
-  createTerminal?: (fontSize: number, scrollback: number) => TerminalDriver;
+  createTerminal?: (
+    fontFamily: string,
+    fontSize: number,
+    scrollback: number,
+  ) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
 
@@ -71,13 +77,17 @@ export function terminalScrollback(historyLimit: number): number {
   );
 }
 
-function defaultTerminal(fontSize: number, scrollback: number): TerminalDriver {
+function defaultTerminal(
+  fontFamily: string,
+  fontSize: number,
+  scrollback: number,
+): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
     cursorBlink: false,
     cursorStyle: "bar",
     allowTransparency: true,
-    fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
+    fontFamily,
     fontSize,
     lineHeight: 1.25,
     scrollback,
@@ -168,6 +178,7 @@ export function TerminalView({
   layoutVersion = 1,
   reconnectSignal = 0,
   terminalHistoryLimit = 1024 * 1024,
+  fontFamily = defaultTerminalFontFamily,
   fontSize = 14,
   onConnectionChange,
   createTerminal = defaultTerminal,
@@ -217,6 +228,7 @@ export function TerminalView({
     let claimActive = false;
     let lastReportedCWD = session.cwd;
     const terminal = createTerminal(
+      fontFamily,
       fontSize,
       terminalScrollback(terminalHistoryLimit),
     );
@@ -474,7 +486,15 @@ export function TerminalView({
         capacityReporterRef.current = () => undefined;
       }
     };
-  }, [api, createSocket, createTerminal, fontSize, reconnectSignal, session.id]);
+  }, [
+    api,
+    createSocket,
+    createTerminal,
+    fontFamily,
+    fontSize,
+    reconnectSignal,
+    session.id,
+  ]);
 
   useEffect(() => {
     terminalRef.current?.setScrollback?.(terminalScrollback(terminalHistoryLimit));

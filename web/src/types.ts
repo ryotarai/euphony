@@ -28,6 +28,7 @@ export interface Settings {
   sidebarCollapsed: boolean;
   interfaceFontSize: number;
   terminalFontSize: number;
+  terminalFontFamily: string;
   agentLogFontSize: number;
   terminalHistoryLimit: number;
   autoSelectAttention: boolean;
