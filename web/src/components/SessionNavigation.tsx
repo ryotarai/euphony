@@ -169,6 +169,9 @@ function SessionList(props: SessionNavigationProps) {
                           const icon = agentIcon(session);
                           const selected = props.selectedIDs.includes(session.id);
                           const pinned = props.pinnedIDs?.includes(session.id) ?? false;
+                          const attentionDescriptionID = session.needsAttention
+                            ? `attention-${session.id}`
+                            : undefined;
                           return (
                             <SidebarMenuItem
                               className="session-channel"
@@ -202,6 +205,7 @@ function SessionList(props: SessionNavigationProps) {
                                 aria-label={`Select ${session.name}`}
                                 aria-pressed={selected}
                                 aria-current={selected ? "true" : undefined}
+                                aria-describedby={attentionDescriptionID}
                                 title={session.cwd}
                                 onClick={(event) =>
                                   selectSession(
@@ -211,10 +215,18 @@ function SessionList(props: SessionNavigationProps) {
                                 }
                               >
                                 {session.needsAttention && (
-                                  <span
-                                    className="attention-dot"
-                                    aria-label="Needs attention"
-                                  />
+                                  <>
+                                    <span
+                                      className="attention-dot"
+                                      aria-hidden="true"
+                                    />
+                                    <span
+                                      className="sr-only"
+                                      id={attentionDescriptionID}
+                                    >
+                                      Needs attention
+                                    </span>
+                                  </>
                                 )}
                                 {icon && (
                                   <img

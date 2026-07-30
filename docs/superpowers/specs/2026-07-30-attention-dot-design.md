@@ -12,8 +12,8 @@ lifecycle status, and mark blocked agent sessions as needing attention.
 - `needsAttention` never changes the status group that contains a session.
 - A session with `needsAttention: true` shows a small blue dot immediately
   before its agent icon or title.
-- The dot has an accessible `Needs attention` label and is hidden when the flag
-  is false.
+- The dot is decorative, while its terminal selection button has the accessible
+  description `Needs attention`. Both are hidden when the flag is false.
 - A transition from `running` to `waiting`, or from any non-blocked status to
   `blocked`, sets `needsAttention`.
 - Repeated blocked updates do not restore attention after acknowledgement.

@@ -43,7 +43,7 @@ if updated.AgentStatus != "blocked" || !updated.NeedsAttention {
 Run:
 
 ```bash
-go test ./internal/session -run TestUpdateAgentMarksRunningToBlockedAsNeedingAttention -count=1
+go test ./internal/session -run TestUpdateAgentMarksEnteringBlockedAsNeedingAttention -count=1
 ```
 
 Expected: FAIL because `NeedsAttention` is false.
@@ -120,9 +120,20 @@ const builtInActivities = ["blocked", "running", "waiting", "terminal"];
 Inside `SidebarMenuButton`, render:
 
 ```tsx
+const attentionDescriptionID = session.needsAttention
+  ? `attention-${session.id}`
+  : undefined;
+
+<SidebarMenuButton aria-describedby={attentionDescriptionID}>
 {session.needsAttention && (
-  <span className="attention-dot" aria-label="Needs attention" />
+  <>
+    <span className="attention-dot" aria-hidden="true" />
+    <span className="sr-only" id={attentionDescriptionID}>
+      Needs attention
+    </span>
+  </>
 )}
+</SidebarMenuButton>
 ```
 
 Style it as:

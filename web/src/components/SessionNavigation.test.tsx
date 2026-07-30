@@ -381,14 +381,15 @@ test("groups terminals by their exact cwd within each ordered status", () => {
     "~/work/euphony",
     "Terminal",
   ]);
-  const attentionDot = screen.getByLabelText("Needs attention");
+  const attentionButton = screen.getByRole("button", {
+    name: "Select Needs review",
+  });
+  const attentionDot = attentionButton.querySelector(".attention-dot");
   expect(attentionDot).toBeVisible();
-  expect(screen.getByRole("button", { name: "Select Needs review" }))
-    .toContainElement(attentionDot);
-  expect(
-    within(screen.getByRole("button", { name: "Select Waiting" }))
-      .queryByLabelText("Needs attention"),
-  ).not.toBeInTheDocument();
+  expect(attentionDot).toHaveAttribute("aria-hidden", "true");
+  expect(attentionButton).toHaveAccessibleDescription("Needs attention");
+  expect(screen.getByRole("button", { name: "Select Waiting" }))
+    .not.toHaveAccessibleDescription("Needs attention");
   expect(
     screen.queryByRole("checkbox", { name: "Show all Need attention terminals" }),
   ).not.toBeInTheDocument();

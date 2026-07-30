@@ -143,8 +143,10 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   const blockedButton = page.getByRole("button", {
     name: "Select Permission request",
   });
-  const attentionDot = blockedButton.getByLabel("Needs attention");
+  const attentionDot = blockedButton.locator(".attention-dot");
+  await expect(blockedButton).toHaveAccessibleDescription("Needs attention");
   await expect(attentionDot).toBeVisible();
+  await expect(attentionDot).toHaveAttribute("aria-hidden", "true");
   await expect(attentionDot).toHaveCSS("width", "6px");
   await expect(attentionDot).toHaveCSS("height", "6px");
   await expect(attentionDot).toHaveCSS("border-radius", "50%");
