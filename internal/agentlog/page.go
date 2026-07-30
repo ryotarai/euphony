@@ -90,7 +90,18 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 		return Page{}, ErrCursorBeyondEnd
 	}
 	if end-after > maxAgentLogPageBytes {
-		end = after + maxAgentLogPageBytes
+		limitedEnd := after + maxAgentLogPageBytes
+		boundary, found, err := lastNewlineBoundary(file, after, limitedEnd)
+		if err != nil {
+			return Page{}, err
+		}
+		if found {
+			end = boundary
+		} else {
+			// A single record exceeds the byte limit. Advance through it in
+			// bounded chunks so incremental polling cannot become stuck.
+			end = limitedEnd
+		}
 	}
 	entries, err := ParseAt(
 		agent,
@@ -175,6 +186,33 @@ func boundedPageStart(
 		cursor = start
 	}
 	return floor, nil
+}
+
+func lastNewlineBoundary(
+	file *os.File,
+	after int64,
+	before int64,
+) (int64, bool, error) {
+	buffer := make([]byte, reverseScanChunkBytes)
+	cursor := before
+	for cursor > after {
+		start := cursor - int64(len(buffer))
+		if start < after {
+			start = after
+		}
+		length := int(cursor - start)
+		n, err := file.ReadAt(buffer[:length], start)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, false, fmt.Errorf("scan transcript: %w", err)
+		}
+		for index := n - 1; index >= 0; index-- {
+			if buffer[index] == '\n' {
+				return start + int64(index) + 1, true, nil
+			}
+		}
+		cursor = start
+	}
+	return 0, false, nil
 }
 
 func completeJSONLEnd(

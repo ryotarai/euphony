@@ -142,6 +142,52 @@ func TestReadAfterReturnsOnlyAppendedRecords(t *testing.T) {
 	}
 }
 
+func TestReadAfterKeepsNormalRecordsWholeAtTheByteLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	firstContent := strings.Repeat("a", maxAgentLogPageBytes*3/4)
+	secondContent := strings.Repeat("b", maxAgentLogPageBytes*3/4)
+	first := `{"type":"assistant","message":{"role":"assistant","content":` +
+		strconv.Quote(firstContent) + `}}` + "\n"
+	second := `{"type":"assistant","message":{"role":"assistant","content":` +
+		strconv.Quote(secondContent) + `}}` + "\n"
+	if err := os.WriteFile(path, []byte(first+second), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer file.Close()
+
+	firstPage, err := ReadAfter("claude", file, 0)
+	if err != nil {
+		t.Fatalf("first ReadAfter() error = %v", err)
+	}
+	if firstPage.EndCursor != int64(len(first)) ||
+		len(firstPage.Entries) != 1 ||
+		firstPage.Entries[0].Content != firstContent {
+		t.Fatalf(
+			"first ReadAfter() cursor/entry count = %d, %d",
+			firstPage.EndCursor,
+			len(firstPage.Entries),
+		)
+	}
+
+	secondPage, err := ReadAfter("claude", file, firstPage.EndCursor)
+	if err != nil {
+		t.Fatalf("second ReadAfter() error = %v", err)
+	}
+	if secondPage.EndCursor != int64(len(first)+len(second)) ||
+		len(secondPage.Entries) != 1 ||
+		secondPage.Entries[0].Content != secondContent {
+		t.Fatalf(
+			"second ReadAfter() cursor/entry count = %d, %d",
+			secondPage.EndCursor,
+			len(secondPage.Entries),
+		)
+	}
+}
+
 func TestReadAfterDoesNotAdvancePastAnIncompleteJSONLRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	initial := `{"type":"assistant","message":{"role":"assistant","content":"First"}}` + "\n"
