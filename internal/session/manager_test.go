@@ -691,7 +691,7 @@ func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
 
 	history, liveOutput, unsubscribeReloaded := running.Subscribe()
 	defer unsubscribeReloaded()
-	if !strings.Contains(string(history), "before-reload\r\n") {
+	if !strings.Contains(historyString(history), "before-reload\r\n") {
 		t.Fatalf("reloaded history = %q, want previous terminal output", history)
 	}
 
@@ -704,6 +704,169 @@ func TestSubscribeReplaysHistoryAndContinuesWithLiveOutput(t *testing.T) {
 	}
 	if !strings.Contains(beforeReload, "before-reload\r\n") {
 		t.Fatalf("initial output = %q, want command output", beforeReload)
+	}
+}
+
+func TestSessionHistoryLimitRetainsNewestBytes(t *testing.T) {
+	running := &Session{
+		historyLimit: 5,
+		subscribers:  make(map[uint64]*outputSubscriber),
+	}
+
+	running.publish([]byte("abc"))
+	running.publish([]byte("def"))
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if got := historyString(history); got != "bcdef" {
+		t.Fatalf("history = %q, want %q", got, "bcdef")
+	}
+}
+
+func TestSessionHistorySnapshotUsesBoundedChunks(t *testing.T) {
+	running := &Session{
+		historyLimit: 128 * 1024,
+		subscribers:  make(map[uint64]*outputSubscriber),
+	}
+
+	running.publish(make([]byte, 70*1024))
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if len(history) != 3 {
+		t.Fatalf("history chunks = %d, want 3", len(history))
+	}
+	for index, chunk := range history {
+		if len(chunk) > 32*1024 {
+			t.Fatalf("history chunk %d length = %d, want at most 32768", index, len(chunk))
+		}
+	}
+}
+
+func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
+	running := &Session{
+		historyLimit: 0,
+		subscribers:  make(map[uint64]*outputSubscriber),
+	}
+
+	running.publish([]byte("abc"))
+	running.publish([]byte("def"))
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if got := historyString(history); got != "abcdef" {
+		t.Fatalf("history = %q, want %q", got, "abcdef")
+	}
+}
+
+func TestSubscriberBuffersLiveOutputWhileHistoryReplays(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+
+	const chunkCount = 80
+	for index := range chunkCount {
+		running.publish([]byte{byte(index)})
+	}
+
+	for index := range chunkCount {
+		select {
+		case chunk, ok := <-output:
+			if !ok {
+				t.Fatalf("output closed after %d chunks, want %d", index, chunkCount)
+			}
+			if len(chunk) != 1 || chunk[0] != byte(index) {
+				t.Fatalf("chunk %d = %v, want [%d]", index, chunk, index)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out after %d chunks, want %d", index, chunkCount)
+		}
+	}
+}
+
+func TestSubscriberDisconnectsWhenLiveOutputQueueExceedsLimit(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, output, lagged, unsubscribe := running.SubscribeWithStatus()
+	defer unsubscribe()
+
+	chunk := make([]byte, historyChunkSize)
+	for range 80 {
+		running.publish(chunk)
+	}
+
+	select {
+	case <-lagged:
+	case <-time.After(time.Second):
+		t.Fatal("lagged signal was not closed after the queue exceeded its limit")
+	}
+	select {
+	case _, ok := <-output:
+		if ok {
+			t.Fatal("output remained open after the subscriber fell behind")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("output did not close after the subscriber fell behind")
+	}
+}
+
+func TestUnsubscribeAbortsSubscriberAfterProcessFinishes(t *testing.T) {
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+	_, _, unsubscribe := running.Subscribe()
+	subscriber := running.subscribers[0]
+
+	running.outputMu.Lock()
+	delete(running.subscribers, 0)
+	subscriber.finish()
+	running.outputMu.Unlock()
+	unsubscribe()
+
+	subscriber.mu.Lock()
+	defer subscriber.mu.Unlock()
+	if !subscriber.aborted {
+		t.Fatal("subscriber was not aborted after it had been removed by process exit")
+	}
+}
+
+func TestRegisterSessionAppliesLatestHistoryLimit(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	settings := DefaultSettings()
+	settings.TerminalHistoryLimit = 8 * 1024 * 1024
+	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	running := &Session{subscribers: make(map[uint64]*outputSubscriber)}
+
+	manager.registerSession("one", &entry{session: running})
+
+	if running.historyLimit != settings.TerminalHistoryLimit {
+		t.Fatalf(
+			"history limit = %d, want latest setting %d",
+			running.historyLimit,
+			settings.TerminalHistoryLimit,
+		)
+	}
+}
+
+func TestUpdateSettingsTrimsHistoryForRunningSessions(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	running := &Session{
+		historyLimit: 10,
+		history:      [][]byte{[]byte("0123456789")},
+		historySize:  10,
+		subscribers:  make(map[uint64]*outputSubscriber),
+	}
+	manager.sessions["one"] = &entry{session: running}
+	settings := DefaultSettings()
+	settings.TerminalHistoryLimit = 4
+
+	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+
+	history, _, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if got := historyString(history); got != "6789" {
+		t.Fatalf("history = %q, want %q", got, "6789")
 	}
 }
 
@@ -732,7 +895,7 @@ func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
 
 	history, exitedOutput, unsubscribeExited := running.Subscribe()
 	defer unsubscribeExited()
-	if !strings.Contains(string(history), "final-output\r\n") {
+	if !strings.Contains(historyString(history), "final-output\r\n") {
 		t.Fatalf("history = %q, want final output", history)
 	}
 	select {
@@ -743,6 +906,14 @@ func TestSubscribeAfterProcessExitReturnsHistoryAndClosedOutput(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("exited output channel did not close")
 	}
+}
+
+func historyString(history [][]byte) string {
+	var result strings.Builder
+	for _, chunk := range history {
+		result.Write(chunk)
+	}
+	return result.String()
 }
 
 func receiveUntil(t *testing.T, output <-chan []byte, needle string, timeout time.Duration) string {

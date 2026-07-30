@@ -25,6 +25,7 @@ const settings: Settings = {
   interfaceFontSize: 16,
   terminalFontSize: 14,
   agentLogFontSize: 14,
+  terminalHistoryLimit: 1024 * 1024,
 };
 
 const sessions: Session[] = [

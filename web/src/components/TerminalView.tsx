@@ -13,6 +13,7 @@ export interface TerminalDriver {
   write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
   fit(): void;
+  setScrollback?(scrollback: number): void;
   getSelection(): string;
   clearSelection(): void;
   attachCustomKeyEventHandler?(handler: (event: KeyboardEvent) => boolean): void;
@@ -36,15 +37,31 @@ interface TerminalViewProps {
   active?: boolean;
   layoutVersion?: number;
   reconnectSignal?: number;
+  terminalHistoryLimit?: number;
   fontSize?: number;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
-  createTerminal?: (fontSize: number) => TerminalDriver;
+  createTerminal?: (fontSize: number, scrollback: number) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 
-function defaultTerminal(fontSize: number): TerminalDriver {
+const maxTerminalScrollback = 4294967295;
+const maxFiniteTerminalScrollback = 100000;
+const estimatedBytesPerScrollbackRow = 128;
+
+export function terminalScrollback(historyLimit: number): number {
+  if (historyLimit === 0) return maxTerminalScrollback;
+  return Math.max(
+    1000,
+    Math.min(
+      maxFiniteTerminalScrollback,
+      Math.ceil(historyLimit / estimatedBytesPerScrollbackRow),
+    ),
+  );
+}
+
+function defaultTerminal(fontSize: number, scrollback: number): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
     cursorBlink: true,
@@ -53,6 +70,7 @@ function defaultTerminal(fontSize: number): TerminalDriver {
     fontFamily: 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
     fontSize,
     lineHeight: 1.25,
+    scrollback,
     scrollSensitivity: 3,
     theme: {
       background: "#050505",
@@ -82,6 +100,9 @@ function defaultTerminal(fontSize: number): TerminalDriver {
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
+    setScrollback: (next) => {
+      terminal.options.scrollback = next;
+    },
     getSelection: () => terminal.getSelection(),
     clearSelection: () => terminal.clearSelection(),
     attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
@@ -133,6 +154,7 @@ export function TerminalView({
   active = true,
   layoutVersion = 1,
   reconnectSignal = 0,
+  terminalHistoryLimit = 1024 * 1024,
   fontSize = 14,
   onConnectionChange,
   createTerminal = defaultTerminal,
@@ -154,10 +176,15 @@ export function TerminalView({
     if (!host) return;
     let active = true;
     let replayingHistory = false;
+    let pendingHistoryWrites = 0;
+    let historyStreamComplete = false;
     let socket: WebSocketLike | undefined;
     let lastSize = "";
     let lastReportedCWD = session.cwd;
-    const terminal = createTerminal(fontSize);
+    const terminal = createTerminal(
+      fontSize,
+      terminalScrollback(terminalHistoryLimit),
+    );
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
@@ -249,13 +276,23 @@ export function TerminalView({
           };
           if (message.type === "history" && message.data) {
             replayingHistory = true;
+            pendingHistoryWrites++;
             try {
               terminal.write(decodeTerminalData(message.data), () => {
-                replayingHistory = false;
+                pendingHistoryWrites--;
+                if (historyStreamComplete && pendingHistoryWrites === 0) {
+                  replayingHistory = false;
+                }
               });
             } catch {
-              replayingHistory = false;
+              pendingHistoryWrites--;
+              if (historyStreamComplete && pendingHistoryWrites === 0) {
+                replayingHistory = false;
+              }
             }
+          } else if (message.type === "history_end") {
+            historyStreamComplete = true;
+            if (pendingHistoryWrites === 0) replayingHistory = false;
           } else if (message.type === "output" && message.data) {
             try {
               terminal.write(decodeTerminalData(message.data));
@@ -292,6 +329,10 @@ export function TerminalView({
       if (terminalRef.current === terminal) terminalRef.current = null;
     };
   }, [api, createSocket, createTerminal, fontSize, reconnectSignal, session.id]);
+
+  useEffect(() => {
+    terminalRef.current?.setScrollback?.(terminalScrollback(terminalHistoryLimit));
+  }, [terminalHistoryLimit]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

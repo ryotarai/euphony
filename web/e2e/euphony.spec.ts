@@ -15,6 +15,7 @@ async function clearSessions(page: Page) {
       interfaceFontSize: 16,
       terminalFontSize: 14,
       agentLogFontSize: 14,
+      terminalHistoryLimit: 1024 * 1024,
     },
   });
   const existing = await page.request.get("/api/sessions", {
@@ -909,6 +910,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const settingsDialog = page.getByRole("dialog", { name: "Settings" });
   await settingsDialog.getByLabel("Prefix").fill("Ctrl+A");
   await settingsDialog.getByLabel("Pane tab toggle").fill("Ctrl+J");
+  await settingsDialog.getByLabel("History buffer").fill("8");
   await settingsDialog.getByLabel("Interface").fill("18");
   await settingsDialog.getByLabel("Terminal").fill("17");
   await settingsDialog.getByLabel("Agent log").fill("16");
@@ -923,9 +925,17 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.reload();
   await page.getByRole("button", { name: "Open settings" }).click();
   const savedSettingsDialog = page.getByRole("dialog", { name: "Settings" });
+  await expect(savedSettingsDialog.getByLabel("History buffer")).toHaveValue("8");
   await expect(savedSettingsDialog.getByLabel("Interface")).toHaveValue("18");
   await expect(savedSettingsDialog.getByLabel("Terminal")).toHaveValue("17");
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
+  await savedSettingsDialog.getByRole("checkbox", { name: "Unlimited history" }).check();
+  await expect(savedSettingsDialog.getByLabel("History buffer")).toBeDisabled();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await expect(page.getByRole("checkbox", { name: "Unlimited history" })).toBeChecked();
+  await expect(page.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Cancel" }).click();
   await page.getByRole("button", { name: "Select Codex" }).click();
   await page.locator(".xterm-helper-textarea").focus();

@@ -22,6 +22,7 @@ async function clearSessions(page: Page) {
       interfaceFontSize: 16,
       terminalFontSize: 14,
       agentLogFontSize: 14,
+      terminalHistoryLimit: 1024 * 1024,
     },
   });
   const existing = await page.request.get("/api/sessions", {

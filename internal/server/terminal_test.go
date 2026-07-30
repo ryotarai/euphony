@@ -87,6 +87,29 @@ func TestTerminalWebSocketPreservesSplitUTF8Bytes(t *testing.T) {
 	}
 }
 
+func TestInterruptTerminalWritesOnLag(t *testing.T) {
+	lagged := make(chan struct{})
+	closeCalled := make(chan struct{})
+	writeContext, cancel := interruptTerminalWritesOnLag(
+		t.Context(),
+		lagged,
+		func() { close(closeCalled) },
+	)
+	defer cancel()
+
+	close(lagged)
+	select {
+	case <-closeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("lagged subscriber did not close its WebSocket")
+	}
+	select {
+	case <-writeContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("lagged subscriber did not cancel an in-progress history write")
+	}
+}
+
 func TestTerminalWebSocketStreamsPTY(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

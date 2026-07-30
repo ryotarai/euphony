@@ -12,6 +12,7 @@ const defaultSettings: Settings = {
   interfaceFontSize: 16,
   terminalFontSize: 14,
   agentLogFontSize: 14,
+  terminalHistoryLimit: 1024 * 1024,
 };
 
 const runningSession: Session = {
@@ -1632,6 +1633,9 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
   const reopenedPrefix = screen.getByLabelText("Prefix");
   const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
+  const historyBuffer = screen.getByLabelText("History buffer");
+  expect(historyBuffer).toHaveValue(1);
+  expect(screen.getByRole("checkbox", { name: "Unlimited history" })).not.toBeChecked();
   expect(within(reopenedDialog).getByLabelText("Interface")).toHaveValue(16);
   expect(within(reopenedDialog).getByLabelText("Terminal")).toHaveValue(14);
   expect(within(reopenedDialog).getByLabelText("Agent log")).toHaveValue(14);
@@ -1639,6 +1643,8 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   await user.type(reopenedPrefix, "Ctrl+A");
   await user.clear(paneTabShortcut);
   await user.type(paneTabShortcut, "control+j");
+  await user.clear(historyBuffer);
+  await user.type(historyBuffer, "8");
   await user.clear(within(reopenedDialog).getByLabelText("Interface"));
   await user.type(within(reopenedDialog).getByLabelText("Interface"), "18");
   await user.clear(within(reopenedDialog).getByLabelText("Terminal"));
@@ -1658,8 +1664,108 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         interfaceFontSize: 18,
         terminalFontSize: 17,
         agentLogFontSize: 16,
+        terminalHistoryLimit: 8 * 1024 * 1024,
       }),
     }),
+  );
+});
+
+test("saves unlimited terminal history and disables the finite size", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const historyBuffer = screen.getByLabelText("History buffer");
+  await user.click(screen.getByRole("checkbox", { name: "Unlimited history" }));
+  expect(historyBuffer).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({
+        ...defaultSettings,
+        terminalHistoryLimit: 0,
+      }),
+    }),
+  );
+});
+
+test("rejects a terminal history size outside the supported MiB range", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const historyBuffer = screen.getByLabelText("History buffer");
+  await user.clear(historyBuffer);
+  await user.type(historyBuffer, "0");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Enter a whole number from 1 to 4095 MiB.",
+  );
+  expect(
+    fetchMock.mock.calls.some(([input, init]) =>
+      input === "/api/settings" && init?.method === "PATCH"),
+  ).toBe(false);
+});
+
+test("forwards the saved history limit to terminal panes", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={{
+        ...defaultSettings,
+        terminalHistoryLimit: 16 * 1024 * 1024,
+      }}
+      renderTerminal={(
+        session,
+        _api,
+        _active,
+        _layoutVersion,
+        _onConnectionChange,
+        _reconnectSignal,
+        _fontSize,
+        terminalHistoryLimit,
+      ) => (
+        <div
+          aria-label={`${session.id} terminal pane`}
+          data-history-limit={terminalHistoryLimit}
+        />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("session-1 terminal pane")).toHaveAttribute(
+    "data-history-limit",
+    String(16 * 1024 * 1024),
   );
 });
 

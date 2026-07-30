@@ -19,13 +19,14 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Prefix            string  `json:"prefix"`
-		PaneTabShortcut   string  `json:"paneTabShortcut"`
-		SidebarWidth      float64 `json:"sidebarWidth"`
-		SidebarCollapsed  bool    `json:"sidebarCollapsed"`
-		InterfaceFontSize float64 `json:"interfaceFontSize"`
-		TerminalFontSize  float64 `json:"terminalFontSize"`
-		AgentLogFontSize  float64 `json:"agentLogFontSize"`
+		Prefix               string   `json:"prefix"`
+		PaneTabShortcut      string   `json:"paneTabShortcut"`
+		SidebarWidth         float64  `json:"sidebarWidth"`
+		SidebarCollapsed     bool     `json:"sidebarCollapsed"`
+		InterfaceFontSize    float64  `json:"interfaceFontSize"`
+		TerminalFontSize     float64  `json:"terminalFontSize"`
+		AgentLogFontSize     float64  `json:"agentLogFontSize"`
+		TerminalHistoryLimit *float64 `json:"terminalHistoryLimit"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -37,24 +38,36 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		input.SidebarWidth < 180 || input.SidebarWidth > 600 ||
 		!validFontSize(input.InterfaceFontSize) ||
 		!validFontSize(input.TerminalFontSize) ||
-		!validFontSize(input.AgentLogFontSize) {
+		!validFontSize(input.AgentLogFontSize) ||
+		!validTerminalHistoryLimit(input.TerminalHistoryLimit) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
 	}
 	settings := session.Settings{
-		Prefix:            input.Prefix,
-		PaneTabShortcut:   input.PaneTabShortcut,
-		SidebarWidth:      int(math.Round(input.SidebarWidth)),
-		SidebarCollapsed:  input.SidebarCollapsed,
-		InterfaceFontSize: int(input.InterfaceFontSize),
-		TerminalFontSize:  int(input.TerminalFontSize),
-		AgentLogFontSize:  int(input.AgentLogFontSize),
+		Prefix:               input.Prefix,
+		PaneTabShortcut:      input.PaneTabShortcut,
+		SidebarWidth:         int(math.Round(input.SidebarWidth)),
+		SidebarCollapsed:     input.SidebarCollapsed,
+		InterfaceFontSize:    int(input.InterfaceFontSize),
+		TerminalFontSize:     int(input.TerminalFontSize),
+		AgentLogFontSize:     int(input.AgentLogFontSize),
+		TerminalHistoryLimit: int(*input.TerminalHistoryLimit),
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func validTerminalHistoryLimit(value *float64) bool {
+	if value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) || math.Trunc(*value) != *value {
+		return false
+	}
+	return *value == 0 ||
+		(*value >= session.MinTerminalHistoryLimit &&
+			*value <= session.MaxTerminalHistoryLimit &&
+			math.Mod(*value, session.MinTerminalHistoryLimit) == 0)
 }
 
 func validFontSize(value float64) bool {

@@ -52,30 +52,52 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 			cancelCWDRefresh()
 		}
 	}()
-	history, output, unsubscribe := terminal.Subscribe()
+	history, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
 	defer unsubscribe()
 	outputDone := make(chan struct{})
 	go func() {
 		defer close(outputDone)
-		if len(history) > 0 {
-			payload, _ := json.Marshal(serverMessage{Type: "history", Data: history})
-			if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+		writeContext, cancelWrites := interruptTerminalWritesOnLag(
+			ctx,
+			lagged,
+			func() {
+				_ = connection.Close(
+					websocket.StatusTryAgainLater,
+					"terminal output fell behind; reconnect",
+				)
+			},
+		)
+		defer cancelWrites()
+		for _, chunk := range history {
+			payload, _ := json.Marshal(serverMessage{Type: "history", Data: chunk})
+			if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 				return
 			}
+		}
+		payload, _ := json.Marshal(serverMessage{Type: "history_end"})
+		if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+			return
 		}
 		for {
 			select {
 			case data, ok := <-output:
 				if !ok {
+					select {
+					case <-lagged:
+						return
+					default:
+					}
 					exitCode := s.sessionExitCode(id)
 					payload, _ := json.Marshal(serverMessage{Type: "exit", ExitCode: exitCode})
-					_ = connection.Write(ctx, websocket.MessageText, payload)
+					_ = connection.Write(writeContext, websocket.MessageText, payload)
 					return
 				}
 				payload, _ := json.Marshal(serverMessage{Type: "output", Data: data})
-				if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
 					return
 				}
+			case <-lagged:
+				return
 			case <-ctx.Done():
 				return
 			}
@@ -130,6 +152,23 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
+}
+
+func interruptTerminalWritesOnLag(
+	parent context.Context,
+	lagged <-chan struct{},
+	closeConnection func(),
+) (context.Context, context.CancelFunc) {
+	writeContext, cancel := context.WithCancel(parent)
+	go func() {
+		select {
+		case <-lagged:
+			go closeConnection()
+			cancel()
+		case <-writeContext.Done():
+		}
+	}()
+	return writeContext, cancel
 }
 
 func (s *Server) refreshCWDWhileCommandSettles(ctx context.Context, id string) {
