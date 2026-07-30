@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/ryotarai/euphony/internal/annotation"
+	"github.com/ryotarai/euphony/internal/apiclient"
+	"github.com/ryotarai/euphony/internal/server"
 )
 
 func TestAutomationCLIPrintsStableSuccessJSON(t *testing.T) {
@@ -32,6 +39,240 @@ func TestAutomationCLIPrintsStableSuccessJSON(t *testing.T) {
 	const want = "{\"ok\":true,\"result\":{\"terminals\":[]}}\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestAnnotateCLIWaitsForCommentsAndPrintsStableJSON(t *testing.T) {
+	documentPath := filepath.Join(t.TempDir(), "review.md")
+	if err := os.WriteFile(documentPath, []byte("# Review\n\nSelect this."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var createBody map[string]any
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/annotations":
+			if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"annotation":{"id":"annotation-1","terminalId":"terminal-1","filename":"review.md","format":"markdown","content":"# Review\n\nSelect this.","createdAt":"2026-07-30T00:00:00Z"}}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/annotations/annotation-1/wait":
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"annotationId":"annotation-1","comments":[{"kind":"selection","body":"Be specific.","quote":"Select this.","startOffset":8,"endOffset":20},{"kind":"global","body":"Approved otherwise."}]}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("EUPHONY_URL", api.URL)
+	t.Setenv("EUPHONY_TERMINAL_ID", "terminal-1")
+	var stdout, stderr bytes.Buffer
+
+	err := run([]string{"annotate", documentPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run() error = %v, stderr = %s", err, stderr.String())
+	}
+	if createBody["terminalId"] != "terminal-1" ||
+		createBody["filename"] != "review.md" ||
+		createBody["format"] != "markdown" ||
+		createBody["content"] != "# Review\n\nSelect this." {
+		t.Fatalf("create request = %#v", createBody)
+	}
+	var envelope struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			AnnotationID string `json:"annotationId"`
+			Path         string `json:"path"`
+			Comments     []struct {
+				Kind string `json:"kind"`
+				Body string `json:"body"`
+			} `json:"comments"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(&stdout).Decode(&envelope); err != nil {
+		t.Fatalf("decode stdout: %v; output = %s", err, stdout.String())
+	}
+	if !envelope.OK || envelope.Result.AnnotationID != "annotation-1" ||
+		envelope.Result.Path != documentPath || len(envelope.Result.Comments) != 2 ||
+		envelope.Result.Comments[0].Kind != "selection" ||
+		stderr.Len() != 0 {
+		t.Fatalf("stdout = %#v, stderr = %q", envelope, stderr.String())
+	}
+}
+
+func TestAnnotateCLIAcceptsOneMiBThroughTheRealServer(t *testing.T) {
+	apiServer, err := server.New(server.Config{Token: "secret", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = apiServer.Close(t.Context()) })
+	httpServer := httptest.NewServer(apiServer.Handler())
+	t.Cleanup(httpServer.Close)
+	client, err := apiclient.New(apiclient.Config{
+		BaseURL: httpServer.URL,
+		Token:   "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.CreateTerminal(t.Context(), apiclient.CreateTerminalRequest{
+		Name: "Boundary",
+		CWD:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentPath := filepath.Join(t.TempDir(), "boundary.md")
+	if err := os.WriteFile(
+		documentPath,
+		bytes.Repeat([]byte("a"), 1024*1024),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EUPHONY_URL", httpServer.URL)
+	t.Setenv("EUPHONY_TOKEN", "secret")
+	t.Setenv("EUPHONY_SOCKET", t.TempDir()+"/missing.sock")
+	t.Setenv("EUPHONY_TERMINAL_ID", created.Terminal.ID)
+	var stdout, stderr bytes.Buffer
+	finished := make(chan error, 1)
+	go func() {
+		finished <- run(
+			[]string{"annotate", documentPath},
+			bytes.NewReader(nil),
+			&stdout,
+			&stderr,
+		)
+	}()
+	var current *annotation.Session
+	deadline := time.Now().Add(3 * time.Second)
+	for current == nil && time.Now().Before(deadline) {
+		current, err = client.CurrentAnnotation(t.Context(), created.Terminal.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current == nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if current == nil {
+		t.Fatal("one MiB annotation was not created")
+	}
+	if _, err := client.CompleteAnnotation(t.Context(), current.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatalf("run() error = %v, stderr = %s", err, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"comments":[]`)) {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestAnnotateCLIValidatesInputBeforeCallingAPI(t *testing.T) {
+	apiCalls := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		t.Fatalf("unexpected API request: %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("EUPHONY_URL", api.URL)
+	temp := t.TempDir()
+	textPath := filepath.Join(temp, "review.txt")
+	invalidPath := filepath.Join(temp, "invalid.md")
+	largePath := filepath.Join(temp, "large.html")
+	if err := os.WriteFile(textPath, []byte("Review"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invalid := []byte{0xff, 0xfe}
+	if utf8.Valid(invalid) {
+		t.Fatal("invalid UTF-8 fixture is valid")
+	}
+	if err := os.WriteFile(invalidPath, invalid, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(largePath, bytes.Repeat([]byte("x"), 1024*1024+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name       string
+		args       []string
+		terminalID string
+	}{
+		{name: "missing path", args: []string{"annotate"}, terminalID: "terminal-1"},
+		{name: "missing terminal", args: []string{"annotate", textPath}},
+		{name: "unsupported extension", args: []string{"annotate", textPath}, terminalID: "terminal-1"},
+		{name: "invalid utf8", args: []string{"annotate", invalidPath}, terminalID: "terminal-1"},
+		{name: "too large", args: []string{"annotate", largePath}, terminalID: "terminal-1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("EUPHONY_TERMINAL_ID", test.terminalID)
+			var stdout, stderr bytes.Buffer
+			err := run(test.args, bytes.NewReader(nil), &stdout, &stderr)
+			if err == nil || stdout.Len() != 0 || !strings.Contains(stderr.String(), `"ok":false`) {
+				t.Fatalf("run() = %v, stdout = %q, stderr = %q", err, stdout.String(), stderr.String())
+			}
+		})
+	}
+	if apiCalls != 0 {
+		t.Fatalf("API calls = %d, want 0", apiCalls)
+	}
+}
+
+func TestAnnotateCLICancelsActiveReviewWhenWaitContextEnds(t *testing.T) {
+	documentPath := filepath.Join(t.TempDir(), "review.html")
+	if err := os.WriteFile(documentPath, []byte("<p>Review</p>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waiting := make(chan struct{}, 1)
+	canceled := make(chan struct{}, 1)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/annotations":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"annotation":{"id":"annotation-1","terminalId":"terminal-1","filename":"review.html","format":"html","content":"<p>Review</p>","createdAt":"2026-07-30T00:00:00Z"}}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/annotations/annotation-1/wait":
+			waiting <- struct{}{}
+			<-r.Context().Done()
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/annotations/annotation-1":
+			canceled <- struct{}{}
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"id":"annotation-1"}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("EUPHONY_URL", api.URL)
+	t.Setenv("EUPHONY_TERMINAL_ID", "terminal-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- runAutomationContext(
+			ctx,
+			[]string{"annotate", documentPath},
+			bytes.NewReader(nil),
+			io.Discard,
+			io.Discard,
+		)
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		t.Fatal("annotation wait did not start")
+	}
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("annotation was not canceled")
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("runAutomationContext() error = nil after cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runAutomationContext() did not return")
 	}
 }
 

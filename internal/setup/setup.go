@@ -1,6 +1,7 @@
 package setup
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+//go:embed skills/euphony-annotate/SKILL.md
+var annotationSkill []byte
 
 type Config struct {
 	HomeDir    string
@@ -63,14 +67,15 @@ func Install(config Config) (Result, error) {
 
 func installAgent(config Config, agent string) error {
 	var path string
+	var directory string
 	if agent == "codex" {
-		directory := config.CodexDir
+		directory = config.CodexDir
 		if directory == "" {
 			directory = filepath.Join(config.HomeDir, ".codex")
 		}
 		path = filepath.Join(directory, "hooks.json")
 	} else {
-		directory := config.ClaudeDir
+		directory = config.ClaudeDir
 		if directory == "" {
 			directory = filepath.Join(config.HomeDir, ".claude")
 		}
@@ -112,9 +117,15 @@ func installAgent(config Config, agent string) error {
 		return err
 	}
 	if agent == "codex" {
-		return enableCodexHooks(filepath.Join(filepath.Dir(path), "config.toml"))
+		if err := enableCodexHooks(filepath.Join(filepath.Dir(path), "config.toml")); err != nil {
+			return err
+		}
 	}
-	return nil
+	return writeAtomic(
+		filepath.Join(directory, "skills", "euphony-annotate", "SKILL.md"),
+		annotationSkill,
+		0o600,
+	)
 }
 
 func readJSONObject(path string) (map[string]any, os.FileMode, error) {

@@ -79,6 +79,7 @@ euphony terminal run TERMINAL_ID 'go test ./...'
 euphony terminal wait-output --match PASS --timeout 30000 TERMINAL_ID
 euphony agent prompt --wait --until waiting TERMINAL_ID 'Fix the failing test'
 euphony selection get
+euphony annotate ./proposal.md
 ```
 
 Use `--url` and `--token` for TCP instead:
@@ -91,6 +92,12 @@ Finite commands return stable JSON success or error envelopes. Successful
 output is written to stdout with exit status 0. API errors are written to
 stderr with exit status 1; CLI usage errors use exit status 2. Event and
 terminal observation commands emit newline-delimited JSON.
+
+`euphony annotate` is available inside an Euphony terminal. It opens a
+Markdown or HTML file as the pane's third tab and waits while the user adds
+text-selection or document-wide comments. Sending comments closes the tab and
+returns the structured review as JSON on stdout, so a Codex or Claude process
+can apply the feedback before continuing.
 
 The OpenAPI 3.1 schema is bundled with the server:
 

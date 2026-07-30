@@ -1,5 +1,5 @@
 import { ApiClient } from "./api";
-import type { SelectionSnapshot } from "./types";
+import type { AnnotationSession, SelectionSnapshot } from "./types";
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
@@ -113,4 +113,105 @@ test("parses split NDJSON event chunks without losing records", async () => {
   });
 
   expect(events).toEqual(["terminal.created", "selection.changed"]);
+});
+test("reads and completes a terminal annotation through v1", async () => {
+  const annotation: AnnotationSession = {
+    id: "annotation-1",
+    terminalId: "terminal-1",
+    filename: "review.md",
+    format: "markdown",
+    content: "# Review",
+    createdAt: "2026-07-30T00:00:00Z",
+  };
+  const comments = [
+    {
+      kind: "selection" as const,
+      body: "Clarify this.",
+      quote: "Review",
+      startOffset: 2,
+      endOffset: 8,
+    },
+  ];
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() =>
+      jsonResponse({ ok: true, result: { annotation } }),
+    )
+    .mockImplementationOnce(() =>
+      jsonResponse({
+        ok: true,
+        result: { annotationId: annotation.id, comments },
+      }),
+    );
+  const api = new ApiClient("token");
+
+  expect(await api.getCurrentAnnotation("terminal-1")).toEqual(annotation);
+  expect(await api.completeAnnotation(annotation.id, comments)).toEqual({
+    annotationId: annotation.id,
+    comments,
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/v1/terminals/terminal-1/annotation",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/v1/annotations/annotation-1/complete",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ comments }),
+    }),
+  );
+});
+
+test("requests older and appended agent log pages with cursors", async () => {
+  const transcript = {
+    agent: "codex",
+    sessionId: "session-1",
+    entries: [],
+    startCursor: "100",
+    endCursor: "200",
+    nextCursor: "100",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify(transcript), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ETag: 'W/"older"' },
+    }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({
+      ...transcript,
+      startCursor: "200",
+      endCursor: "220",
+      nextCursor: undefined,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ETag: 'W/"newer"' },
+    }));
+  const api = new ApiClient("token");
+
+  await api.getAgentLog("terminal/one", { before: "100" });
+  await api.getAgentLog("terminal/one", {
+    after: "200",
+    etag: 'W/"older"',
+  });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/sessions/terminal%2Fone/agent-log?before=100",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions/terminal%2Fone/agent-log?after=200",
+    expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "If-None-Match": 'W/"older"',
+      }),
+    }),
+  );
 });

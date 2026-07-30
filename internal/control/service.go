@@ -105,6 +105,10 @@ func (s *Service) Heartbeat() Event {
 	return s.events.heartbeat()
 }
 
+func (s *Service) Publish(eventType string, data any) Event {
+	return s.events.publish(eventType, data)
+}
+
 func (s *Service) handleSessionChange(change session.Change) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()

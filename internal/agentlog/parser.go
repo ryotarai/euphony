@@ -18,6 +18,23 @@ type parser struct {
 }
 
 func Parse(agent string, reader io.Reader) ([]Entry, error) {
+	return parse(agent, reader, 0, func(lineNumber int, _ int64, index int) string {
+		return fmt.Sprintf("%d-%d", lineNumber, index)
+	})
+}
+
+func ParseAt(agent string, reader io.Reader, startOffset int64) ([]Entry, error) {
+	return parse(agent, reader, startOffset, func(_ int, lineOffset int64, index int) string {
+		return fmt.Sprintf("%d-%d", lineOffset, index)
+	})
+}
+
+func parse(
+	agent string,
+	reader io.Reader,
+	startOffset int64,
+	entryID func(lineNumber int, lineOffset int64, index int) string,
+) ([]Entry, error) {
 	if agent != "claude" && agent != "codex" {
 		return nil, fmt.Errorf("unsupported agent %q", agent)
 	}
@@ -25,6 +42,7 @@ func Parse(agent string, reader io.Reader) ([]Entry, error) {
 	buffered := bufio.NewReaderSize(reader, 64<<10)
 	entries := make([]Entry, 0)
 	lineNumber := 0
+	lineOffset := startOffset
 	for {
 		line, readErr := buffered.ReadBytes('\n')
 		if len(line) == 0 && errors.Is(readErr, io.EOF) {
@@ -40,13 +58,14 @@ func Parse(agent string, reader io.Reader) ([]Entry, error) {
 				parsed = state.parseCodex(record)
 			}
 			for index := range parsed {
-				parsed[index].ID = fmt.Sprintf("%d-%d", lineNumber, index)
+				parsed[index].ID = entryID(lineNumber, lineOffset, index)
 				if parsed[index].Kind == "tool" || parsed[index].Kind == "tool_result" {
 					parsed[index].Content = truncateContent(parsed[index].Content)
 				}
 				entries = append(entries, parsed[index])
 			}
 		}
+		lineOffset += int64(len(line))
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				break

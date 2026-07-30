@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/selection"
@@ -102,6 +103,13 @@ type ReplaceSelectionRequest struct {
 	Filters           selection.Filters `json:"filters"`
 	PinnedFilters     selection.Filters `json:"pinnedFilters"`
 	ExpectedRevision  *uint64           `json:"expectedRevision,omitempty"`
+}
+
+type CreateAnnotationRequest struct {
+	TerminalID string            `json:"terminalId"`
+	Filename   string            `json:"filename"`
+	Format     annotation.Format `json:"format"`
+	Content    string            `json:"content"`
 }
 
 type TerminalFrame struct {
@@ -338,6 +346,52 @@ func (c *Client) Events(ctx context.Context, types []string) (io.ReadCloser, err
 	return c.open(ctx, http.MethodGet, path, nil)
 }
 
+func (c *Client) CreateAnnotation(
+	ctx context.Context,
+	request CreateAnnotationRequest,
+) (annotation.Session, error) {
+	var result struct {
+		Annotation annotation.Session `json:"annotation"`
+	}
+	err := c.request(ctx, http.MethodPost, "/api/v1/annotations", request, &result)
+	return result.Annotation, err
+}
+
+func (c *Client) CurrentAnnotation(
+	ctx context.Context,
+	terminalID string,
+) (*annotation.Session, error) {
+	var result struct {
+		Annotation *annotation.Session `json:"annotation"`
+	}
+	err := c.request(ctx, http.MethodGet, terminalPath(terminalID, "/annotation"), nil, &result)
+	return result.Annotation, err
+}
+
+func (c *Client) WaitAnnotation(
+	ctx context.Context,
+	id string,
+) (annotation.Result, error) {
+	var result annotation.Result
+	err := c.request(ctx, http.MethodGet, annotationPath(id, "/wait"), nil, &result)
+	return result, err
+}
+
+func (c *Client) CompleteAnnotation(
+	ctx context.Context,
+	id string,
+	comments []annotation.Comment,
+) (annotation.Result, error) {
+	var result annotation.Result
+	err := c.request(ctx, http.MethodPost, annotationPath(id, "/complete"),
+		map[string]any{"comments": comments}, &result)
+	return result, err
+}
+
+func (c *Client) CancelAnnotation(ctx context.Context, id string) error {
+	return c.request(ctx, http.MethodDelete, annotationPath(id, ""), nil, nil)
+}
+
 func (c *Client) TerminalStream(
 	ctx context.Context,
 	id, mode string,
@@ -481,6 +535,10 @@ func terminalPath(id, suffix string) string {
 
 func agentPath(id, suffix string) string {
 	return "/api/v1/agents/" + url.PathEscape(id) + suffix
+}
+
+func annotationPath(id, suffix string) string {
+	return "/api/v1/annotations/" + url.PathEscape(id) + suffix
 }
 
 func DurationMilliseconds(duration time.Duration) int {

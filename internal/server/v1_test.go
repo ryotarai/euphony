@@ -109,6 +109,11 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 		"/api/v1/agents/{id}/wait":           "post",
 		"/api/v1/selection":                  "put",
 		"/api/v1/selection/actions":          "post",
+		"/api/v1/annotations":                "post",
+		"/api/v1/annotations/{id}/wait":      "get",
+		"/api/v1/annotations/{id}/complete":  "post",
+		"/api/v1/annotations/{id}":           "delete",
+		"/api/v1/terminals/{id}/annotation":  "get",
 	} {
 		operations, ok := document.Paths[path]
 		if !ok {
@@ -131,5 +136,13 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 	}
 	if _, ok := document.Components.Schemas["TerminalClientFrame"]; !ok {
 		t.Fatal("schema missing TerminalClientFrame")
+	}
+	for _, schema := range []string{
+		"Annotation", "AnnotationComment", "AnnotationResult",
+		"CreateAnnotationRequest", "CompleteAnnotationRequest",
+	} {
+		if _, ok := document.Components.Schemas[schema]; !ok {
+			t.Errorf("schema missing %s", schema)
+		}
 	}
 }

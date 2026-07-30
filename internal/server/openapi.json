@@ -485,6 +485,108 @@
           }
         }
       }
+    },
+    "/api/v1/annotations": {
+      "post": {
+        "operationId": "createAnnotation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateAnnotationRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/AnnotationCreated"
+          },
+          "400": {"$ref": "#/components/responses/Error"},
+          "404": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/terminals/{id}/annotation": {
+      "parameters": [
+        {"$ref": "#/components/parameters/TerminalID"}
+      ],
+      "get": {
+        "operationId": "getCurrentAnnotation",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CurrentAnnotation"
+          },
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/annotations/{id}/wait": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string"}
+        }
+      ],
+      "get": {
+        "operationId": "waitForAnnotation",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AnnotationResult"
+          },
+          "404": {"$ref": "#/components/responses/Error"},
+          "410": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/annotations/{id}/complete": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string"}
+        }
+      ],
+      "post": {
+        "operationId": "completeAnnotation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CompleteAnnotationRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AnnotationResult"
+          },
+          "400": {"$ref": "#/components/responses/Error"},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/annotations/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string"}
+        }
+      ],
+      "delete": {
+        "operationId": "cancelAnnotation",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AnnotationCanceled"
+          },
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
     }
   },
   "components": {
@@ -505,6 +607,38 @@
       }
     },
     "responses": {
+      "AnnotationCreated": {
+        "description": "Annotation created",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AnnotationCreatedEnvelope"}
+          }
+        }
+      },
+      "CurrentAnnotation": {
+        "description": "Current annotation or null",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/CurrentAnnotationEnvelope"}
+          }
+        }
+      },
+      "AnnotationResult": {
+        "description": "Submitted annotation comments",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AnnotationResultEnvelope"}
+          }
+        }
+      },
+      "AnnotationCanceled": {
+        "description": "Annotation canceled",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/AnnotationCanceledEnvelope"}
+          }
+        }
+      },
       "Accepted": {
         "description": "Input accepted",
         "content": {
@@ -631,6 +765,65 @@
       }
     },
     "schemas": {
+      "Annotation": {
+        "type": "object",
+        "required": ["id", "terminalId", "filename", "format", "content", "createdAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "terminalId": {"type": "string"},
+          "filename": {"type": "string", "minLength": 1},
+          "format": {"type": "string", "enum": ["markdown", "html"]},
+          "content": {"type": "string", "minLength": 1, "maxLength": 1048576},
+          "createdAt": {"type": "string", "format": "date-time"}
+        },
+        "additionalProperties": false
+      },
+      "AnnotationComment": {
+        "type": "object",
+        "required": ["kind", "body"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["selection", "global"]},
+          "body": {"type": "string", "minLength": 1},
+          "quote": {"type": "string", "minLength": 1},
+          "startOffset": {"type": "integer", "minimum": 0},
+          "endOffset": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      },
+      "AnnotationResult": {
+        "type": "object",
+        "required": ["annotationId", "comments"],
+        "properties": {
+          "annotationId": {"type": "string"},
+          "comments": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/AnnotationComment"}
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAnnotationRequest": {
+        "type": "object",
+        "required": ["terminalId", "filename", "format", "content"],
+        "properties": {
+          "terminalId": {"type": "string", "minLength": 1},
+          "filename": {"type": "string", "minLength": 1},
+          "format": {"type": "string", "enum": ["markdown", "html"]},
+          "content": {"type": "string", "minLength": 1, "maxLength": 1048576}
+        },
+        "additionalProperties": false
+      },
+      "CompleteAnnotationRequest": {
+        "type": "object",
+        "required": ["comments"],
+        "properties": {
+          "comments": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/AnnotationComment"}
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateTerminalRequest": {
         "type": "object",
         "properties": {
@@ -866,6 +1059,74 @@
           },
           "result": {}
         }
+      },
+      "AnnotationCreatedEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["annotation"],
+                "properties": {
+                  "annotation": {"$ref": "#/components/schemas/Annotation"}
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "CurrentAnnotationEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["annotation"],
+                "properties": {
+                  "annotation": {
+                    "anyOf": [
+                      {"$ref": "#/components/schemas/Annotation"},
+                      {"type": "null"}
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "AnnotationResultEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {"$ref": "#/components/schemas/AnnotationResult"}
+            }
+          }
+        ]
+      },
+      "AnnotationCanceledEnvelope": {
+        "allOf": [
+          {"$ref": "#/components/schemas/SuccessEnvelope"},
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {"id": {"type": "string"}},
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
       },
       "StatusEnvelope": {
         "allOf": [
@@ -1189,11 +1450,12 @@
           "id": {"type": "string"},
           "kind": {
             "type": "string",
-            "enum": ["message", "thinking", "tool", "tool_result"]
+            "enum": ["message", "thinking", "tool", "tool_result", "tool_group"]
           },
           "role": {"type": "string"},
           "title": {"type": "string"},
           "content": {"type": "string"},
+          "toolCalls": {"type": "integer", "minimum": 1},
           "timestamp": {"type": "string"}
         },
         "additionalProperties": false
@@ -1207,7 +1469,10 @@
           "entries": {
             "type": "array",
             "items": {"$ref": "#/components/schemas/AgentTranscriptEntry"}
-          }
+          },
+          "startCursor": {"type": "string", "pattern": "^[0-9]+$"},
+          "endCursor": {"type": "string", "pattern": "^[0-9]+$"},
+          "nextCursor": {"type": "string", "pattern": "^[0-9]+$"}
         },
         "additionalProperties": false
       },

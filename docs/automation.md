@@ -114,6 +114,49 @@ send input into a returned shell or another foreground program.
 
 Use `-` as the prompt argument to read up to 1 MiB from stdin.
 
+## Annotation command
+
+```text
+euphony annotate FILE
+```
+
+Run this command from a Codex or Claude process inside an Euphony terminal.
+`EUPHONY_TERMINAL_ID` associates the review with the correct pane. Supported
+extensions are `.md`, `.markdown`, `.html`, and `.htm`; the file must contain
+valid UTF-8 and must not exceed 1 MiB.
+
+The command uploads the current file contents through the local API, opens an
+Annotation source as the pane's third tab, and waits. The user can comment on
+selected rendered text, add global comments, or send an empty comment list as
+explicit approval. When the user chooses **Send comments**, stdout receives:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "annotationId": "annotation-id",
+    "path": "/absolute/path/to/proposal.md",
+    "comments": [
+      {
+        "kind": "selection",
+        "body": "Clarify this claim.",
+        "quote": "selected rendered text",
+        "startOffset": 42,
+        "endOffset": 64
+      },
+      {
+        "kind": "global",
+        "body": "The overall structure works."
+      }
+    ]
+  }
+}
+```
+
+Selection offsets refer to the rendered document text; `quote` is the primary
+source-location hint. Interrupting the command best-effort cancels the review
+and removes the Annotation tab.
+
 ## Shared selection commands
 
 The selection is stored once by the server and shared by every browser and
@@ -168,9 +211,10 @@ euphony events subscribe \
 
 Event records contain `sequence`, `occurredAt`, `type`, and `data`. Initial
 types are `terminal.created`, `terminal.updated`, `terminal.deleted`,
-`agent.updated`, and `selection.changed`. Heartbeats keep idle subscriptions
-observable. A subscriber that cannot keep up receives `subscriber_lagged` and
-is disconnected.
+`agent.updated`, `selection.changed`, `annotation.created`,
+`annotation.completed`, and `annotation.canceled`. Heartbeats keep idle
+subscriptions observable. A subscriber that cannot keep up receives
+`subscriber_lagged` and is disconnected.
 
 Fetch the raw OpenAPI 3.1 document with:
 

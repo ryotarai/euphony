@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ryotarai/euphony/internal/agentlog"
+	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
 	webassets "github.com/ryotarai/euphony/web"
@@ -31,6 +33,7 @@ type Server struct {
 	tickets       *ticketStore
 	terminalSizes *terminalSizeCoordinator
 	agentLogs     *agentlog.Resolver
+	annotations   *annotation.Store
 }
 
 func New(config Config) (*Server, error) {
@@ -65,6 +68,7 @@ func New(config Config) (*Server, error) {
 		tickets:       tickets,
 		terminalSizes: newTerminalSizeCoordinator(),
 		agentLogs:     agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
+		annotations:   annotation.NewStore(time.Now, uuid.NewString),
 	}
 
 	public := http.NewServeMux()
@@ -87,6 +91,11 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/v1/terminals/{id}/run", server.v1RunTerminal)
 	protected.HandleFunc("POST /api/v1/terminals/{id}/wait-output", server.v1WaitTerminalOutput)
 	protected.HandleFunc("POST /api/v1/terminals/{id}/tickets", server.v1CreateTerminalTicket)
+	protected.HandleFunc("GET /api/v1/terminals/{id}/annotation", server.v1CurrentAnnotation)
+	protected.HandleFunc("POST /api/v1/annotations", server.v1CreateAnnotation)
+	protected.HandleFunc("GET /api/v1/annotations/{id}/wait", server.v1WaitAnnotation)
+	protected.HandleFunc("POST /api/v1/annotations/{id}/complete", server.v1CompleteAnnotation)
+	protected.HandleFunc("DELETE /api/v1/annotations/{id}", server.v1CancelAnnotation)
 	protected.HandleFunc("GET /api/v1/agents", server.v1ListAgents)
 	protected.HandleFunc("GET /api/v1/agents/{id}", server.v1GetAgent)
 	protected.HandleFunc("POST /api/v1/agents/{id}/start", server.v1StartAgent)

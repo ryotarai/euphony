@@ -372,6 +372,7 @@ export function App({
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [annotationRevision, setAnnotationRevision] = useState(0);
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const [pinnedIDs, setPinnedIDs] = useState<string[]>([]);
   const [focusedID, setFocusedID] = useState<string | null>(null);
@@ -805,6 +806,7 @@ export function App({
         if (controller.signal.aborted) return;
         applySessionSnapshot(items);
         acceptServerSelection(selection);
+        setAnnotationRevision((current) => current + 1);
       } finally {
         refreshRunning = false;
       }
@@ -835,6 +837,14 @@ export function App({
               if (typeof snapshot?.revision === "number") {
                 acceptServerSelection(snapshot);
               }
+              return;
+            }
+            if (
+              event.type === "annotation.created" ||
+              event.type === "annotation.completed" ||
+              event.type === "annotation.canceled"
+            ) {
+              setAnnotationRevision((current) => current + 1);
               return;
             }
             if (
@@ -2289,6 +2299,9 @@ export function App({
                   layoutVersion={panes.length}
                   tabShortcut={settings.paneTabShortcut}
                   agentLogFontSize={previewSettings.agentLogFontSize}
+                  annotationRevision={
+                    syncSelection && syncEvents ? annotationRevision : null
+                  }
                   onDeselect={() => selectSession(pane.id, true, true, false)}
                   renderTerminal={(paneLayoutVersion, terminalActive) =>
                     renderTerminal(
