@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -72,6 +73,9 @@ func TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent(t *testing.T) {
 		if !strings.HasPrefix(string(skill), "---\nname: euphony-annotate\n") ||
 			!strings.Contains(string(skill), "euphony annotate") {
 			t.Fatalf("installed skill %s is invalid:\n%s", path, skill)
+		}
+		if !bytes.Equal(skill, annotationSkill) {
+			t.Fatalf("installed skill %s differs from the bundled skill", path)
 		}
 	}
 	configTOML, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))

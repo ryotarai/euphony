@@ -943,6 +943,31 @@ test("the new terminal dialog owns focus and closes with Escape", async () => {
   expect(screen.queryByRole("dialog", { name: "New terminal" })).not.toBeInTheDocument();
 });
 
+test("opens Quick Actions with Command-K but not Control-K", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+  await screen.findByRole("button", { name: "Select Codex" });
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  expect(
+    screen.queryByRole("dialog", { name: "Quick Actions" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  expect(
+    await screen.findByRole("dialog", { name: "Quick Actions" }),
+  ).toBeVisible();
+});
+
 test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),

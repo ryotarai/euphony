@@ -949,6 +949,18 @@ test("uses a flush black workspace with only a divider between panes", async ({ 
   expect(layout.dividerDelta).toBeLessThanOrEqual(0.5);
 });
 
+test("opens Quick Actions with Command-K but not Control-K", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Terminal");
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Control+K");
+  await expect(page.getByRole("dialog", { name: "Quick Actions" })).toHaveCount(0);
+
+  await page.keyboard.press("Meta+K");
+  await expect(page.getByRole("dialog", { name: "Quick Actions" })).toBeVisible();
+});
+
 test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Left");
