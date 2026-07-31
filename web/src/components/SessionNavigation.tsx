@@ -98,12 +98,17 @@ function sessionLabel(session: Session) {
   return session.agentTitle?.trim() || session.processName?.trim() || session.name;
 }
 
+function sidebarCwd(session: Session) {
+  return session.repoRoot?.trim() || session.cwd;
+}
+
 function groupSessionsByCwd(sessions: Session[]) {
   const groups = new Map<string, Session[]>();
   for (const session of sessions) {
-    const group = groups.get(session.cwd);
+    const cwd = sidebarCwd(session);
+    const group = groups.get(cwd);
     if (group) group.push(session);
-    else groups.set(session.cwd, [session]);
+    else groups.set(cwd, [session]);
   }
   return [...groups].map(([cwd, groupedSessions]) => ({
     cwd,

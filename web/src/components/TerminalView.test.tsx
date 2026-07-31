@@ -2,12 +2,14 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   fitTerminalIfVisible,
+  loadWebglRenderer,
   openTerminalLink,
   terminalScrollback,
   TerminalView,
   type TerminalDriver,
   type WebSocketLike,
 } from "./TerminalView";
+import type { ITerminalAddon } from "@xterm/xterm";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
@@ -72,6 +74,60 @@ test("maps finite and unlimited history limits to xterm scrollback rows", () => 
   expect(terminalScrollback(1024 * 1024)).toBe(8192);
   expect(terminalScrollback(4095 * 1024 * 1024)).toBe(100000);
   expect(terminalScrollback(0)).toBe(4294967295);
+});
+
+test("loads the WebGL addon into an xterm terminal", () => {
+  const addon: ITerminalAddon = {
+    activate: () => undefined,
+    dispose: () => undefined,
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRenderer({ loadAddon }, () => addon)).toBe(true);
+  expect(loadAddon).toHaveBeenCalledOnce();
+  expect(loadAddon).toHaveBeenCalledWith(addon);
+});
+
+test("disposes the WebGL addon after a context loss", () => {
+  let onContextLoss: (() => void) | undefined;
+  const dispose = vi.fn();
+  const addon = {
+    activate: () => undefined,
+    dispose,
+    onContextLoss: (listener: () => void) => {
+      onContextLoss = listener;
+      return { dispose: () => undefined };
+    },
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRenderer({ loadAddon }, () => addon)).toBe(true);
+  expect(onContextLoss).toBeDefined();
+
+  onContextLoss?.();
+
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
+test("keeps the DOM renderer when WebGL addon loading fails", () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const loadAddon = vi.fn(() => {
+    throw new Error("WebGL is unavailable");
+  });
+
+  expect(
+    loadWebglRenderer(
+      { loadAddon },
+      () => ({
+        activate: () => undefined,
+        dispose: () => undefined,
+      }),
+    ),
+  ).toBe(false);
+  expect(warning).toHaveBeenCalledWith(
+    "WebGL terminal renderer unavailable; using DOM renderer",
+    expect.any(Error),
+  );
 });
 
 test("opens an HTTP terminal link with one popup navigation", () => {
