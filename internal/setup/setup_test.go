@@ -9,6 +9,58 @@ import (
 	"testing"
 )
 
+func TestInspectReportsAgentsWhenIntegrationIsMissing(t *testing.T) {
+	config := setupTestConfig(t, "codex", "claude")
+
+	status, err := Inspect(config)
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	if got := strings.Join(status.NeedsSetup, ","); got != "codex,claude" {
+		t.Fatalf("NeedsSetup = %q, want codex,claude", got)
+	}
+}
+
+func TestInspectReportsNoAgentsAfterInstall(t *testing.T) {
+	config := setupTestConfig(t, "codex", "claude")
+	if _, err := Install(config); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	status, err := Inspect(config)
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	if len(status.NeedsSetup) != 0 {
+		t.Fatalf("NeedsSetup = %v, want none", status.NeedsSetup)
+	}
+}
+
+func TestInspectReportsOutdatedSkillWithoutModifyingIt(t *testing.T) {
+	config := setupTestConfig(t, "codex", "claude")
+	if _, err := Install(config); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	skillPath := filepath.Join(
+		config.ClaudeDir, "skills", "euphony-annotate", "SKILL.md",
+	)
+	outdated := []byte("outdated\n")
+	if err := os.WriteFile(skillPath, outdated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := Inspect(config)
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	if got := strings.Join(status.NeedsSetup, ","); got != "claude" {
+		t.Fatalf("NeedsSetup = %q, want claude", got)
+	}
+	if got := readFile(t, skillPath); !bytes.Equal(got, outdated) {
+		t.Fatalf("Inspect() changed skill to %q", got)
+	}
+}
+
 func TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(home, "bin")
@@ -137,6 +189,49 @@ func TestInstallRejectsInvalidHooksWithoutOverwritingSettings(t *testing.T) {
 	}
 }
 
+func TestInstallReplacesCompactCodexHooksAssignment(t *testing.T) {
+	for _, existing := range []string{
+		"hooks=false",
+		"hooks= false # disabled for now",
+	} {
+		t.Run(existing, func(t *testing.T) {
+			config := setupTestConfig(t, "codex")
+			if err := os.MkdirAll(config.CodexDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(config.CodexDir, "config.toml")
+			if err := os.WriteFile(
+				configPath,
+				[]byte("[features]\n"+existing+"\napps = true\n"),
+				0o600,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := Install(config); err != nil {
+				t.Fatalf("Install() error = %v", err)
+			}
+			data := readFile(t, configPath)
+			var hookAssignments []string
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, found := strings.Cut(line, "=")
+				if found && strings.TrimSpace(key) == "hooks" {
+					hookAssignments = append(hookAssignments, strings.TrimSpace(value))
+				}
+			}
+			if len(hookAssignments) != 1 || hookAssignments[0] != "true" {
+				t.Fatalf(
+					"hooks assignments = %v, want one true assignment; config:\n%s",
+					hookAssignments, data,
+				)
+			}
+			if !bytes.Contains(data, []byte("apps = true")) {
+				t.Fatalf("Install() removed neighboring setting:\n%s", data)
+			}
+		})
+	}
+}
+
 func readJSON(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -157,4 +252,27 @@ func readFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func setupTestConfig(t *testing.T, agents ...string) Config {
+	t.Helper()
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range agents {
+		if err := os.WriteFile(
+			filepath.Join(binDir, agent), []byte("#!/bin/sh\n"), 0o755,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Config{
+		HomeDir:    home,
+		CodexDir:   filepath.Join(home, ".codex"),
+		ClaudeDir:  filepath.Join(home, ".claude"),
+		Executable: "/opt/euphony/bin/euphony",
+		Path:       binDir,
+	}
 }

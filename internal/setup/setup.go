@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,10 @@ type Config struct {
 
 type Result struct {
 	Installed []string
+}
+
+type Status struct {
+	NeedsSetup []string
 }
 
 type hookSpec struct {
@@ -48,6 +53,26 @@ var agentHooks = map[string][]hookSpec{
 	},
 }
 
+func Inspect(config Config) (Status, error) {
+	if config.HomeDir == "" || config.Executable == "" {
+		return Status{}, errors.New("home directory and executable are required")
+	}
+	var status Status
+	for _, agent := range []string{"codex", "claude"} {
+		if _, err := findExecutable(agent, config.Path); err != nil {
+			continue
+		}
+		needed, err := agentNeedsSetup(config, agent)
+		if err != nil {
+			return status, fmt.Errorf("inspect %s setup: %w", agent, err)
+		}
+		if needed {
+			status.NeedsSetup = append(status.NeedsSetup, agent)
+		}
+	}
+	return status, nil
+}
+
 func Install(config Config) (Result, error) {
 	if config.HomeDir == "" || config.Executable == "" {
 		return Result{}, errors.New("home directory and executable are required")
@@ -63,6 +88,62 @@ func Install(config Config) (Result, error) {
 		result.Installed = append(result.Installed, agent)
 	}
 	return result, nil
+}
+
+func agentNeedsSetup(config Config, agent string) (bool, error) {
+	var path string
+	var directory string
+	if agent == "codex" {
+		directory = config.CodexDir
+		if directory == "" {
+			directory = filepath.Join(config.HomeDir, ".codex")
+		}
+		path = filepath.Join(directory, "hooks.json")
+	} else {
+		directory = config.ClaudeDir
+		if directory == "" {
+			directory = filepath.Join(config.HomeDir, ".claude")
+		}
+		path = filepath.Join(directory, "settings.json")
+	}
+	document, _, err := readJSONObject(path)
+	if err != nil {
+		return false, err
+	}
+	hooksValue, exists := document["hooks"]
+	hooks, valid := hooksValue.(map[string]any)
+	if exists && !valid {
+		return false, fmt.Errorf("%s hooks must be a JSON object", agent)
+	}
+	if !exists {
+		return true, nil
+	}
+	for _, spec := range agentHooks[agent] {
+		command := shellQuote(config.Executable) + " hook " + agent + " " + spec.status
+		entries, _ := hooks[spec.event].([]any)
+		if !containsCommand(entries, command) {
+			return true, nil
+		}
+	}
+	if agent == "codex" {
+		enabled, err := codexHooksEnabled(filepath.Join(directory, "config.toml"))
+		if err != nil {
+			return false, err
+		}
+		if !enabled {
+			return true, nil
+		}
+	}
+	skill, err := os.ReadFile(
+		filepath.Join(directory, "skills", "euphony-annotate", "SKILL.md"),
+	)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !bytes.Equal(skill, annotationSkill), nil
 }
 
 func installAgent(config Config, agent string) error {
@@ -161,6 +242,34 @@ func containsCommand(entries []any, command string) bool {
 	return false
 }
 
+func codexHooksEnabled(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	inFeatures := false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inFeatures = trimmed == "[features]"
+			continue
+		}
+		if !inFeatures {
+			continue
+		}
+		key, value, found := strings.Cut(trimmed, "=")
+		if !found || strings.TrimSpace(key) != "hooks" {
+			continue
+		}
+		value, _, _ = strings.Cut(value, "#")
+		return strings.TrimSpace(value) == "true", nil
+	}
+	return false, nil
+}
+
 func enableCodexHooks(path string) error {
 	data, err := os.ReadFile(path)
 	mode := os.FileMode(0o600)
@@ -193,7 +302,8 @@ func enableCodexHooks(path string) error {
 	} else {
 		found := false
 		for index := features + 1; index < nextSection; index++ {
-			if strings.HasPrefix(strings.TrimSpace(lines[index]), "hooks =") {
+			key, _, assignment := strings.Cut(strings.TrimSpace(lines[index]), "=")
+			if assignment && strings.TrimSpace(key) == "hooks" {
 				lines[index] = "hooks = true"
 				found = true
 				break
