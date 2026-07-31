@@ -2593,6 +2593,25 @@ export function App({
     });
   };
 
+  const emptyState = (
+    <div className="empty-state">
+      <div className="empty-state-card">
+        <span className="empty-state-kicker">Terminal workspace</span>
+        <h2 className="empty-state-title">No signal yet.</h2>
+        <p className="empty-state-description">
+          Start a terminal to begin a session.
+        </p>
+        <Button
+          type="button"
+          className="empty-state-action"
+          onClick={() => void createSession()}
+        >
+          Start a terminal
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <main
       className="workspace"
@@ -2628,18 +2647,25 @@ export function App({
                 role="status"
                 aria-label="Automatic deselection"
               >
-                <p>
-                  <strong>{notice.name} is now running.</strong>{" "}
-                  It will be removed in 10 seconds.
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => cancelRunningDeselect(notice.id)}
-                >
-                  Cancel
-                </Button>
+                <div className="running-deselect-toast-copy">
+                  <strong className="running-deselect-toast-title">
+                    {notice.name} is now running.
+                  </strong>
+                  <p className="running-deselect-toast-description">
+                    {" "}It will be removed in 10 seconds.
+                  </p>
+                </div>
+                <div className="running-deselect-toast-actions">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="running-deselect-toast-action"
+                    onClick={() => cancelRunningDeselect(notice.id)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -2720,17 +2746,11 @@ export function App({
               }))}
             />
             {panes.length === 0 && (
-              <div className="empty-state">
-                <p>No signal yet.</p>
-                <button onClick={() => void createSession()}>Start a terminal</button>
-              </div>
+              emptyState
             )}
           </>
         ) : (
-          <div className="empty-state">
-            <p>No signal yet.</p>
-            <button onClick={() => void createSession()}>Start a terminal</button>
-          </div>
+          emptyState
         )}
       </section>
       {prefixActive && (

@@ -1667,7 +1667,12 @@ test("pane rail checkboxes remove selected terminals and allow an empty workspac
   await user.click(screen.getByRole("checkbox", { name: "Deselect Codex" }));
 
   expectTerminalPaneHidden("Codex terminal pane");
-  expect(screen.getByText("No signal yet.")).toBeVisible();
+  const emptyStateTitle = screen.getByRole("heading", { name: "No signal yet." });
+  expect(emptyStateTitle).toHaveClass("empty-state-title");
+  expect(emptyStateTitle.closest(".empty-state-card")).not.toBeNull();
+  const startButton = screen.getByRole("button", { name: "Start a terminal" });
+  expect(startButton).toHaveClass("empty-state-action");
+  expect(startButton).toHaveAttribute("data-slot", "button");
   parameters = new URLSearchParams(window.location.search);
   expect(parameters.getAll("terminal")).toEqual([]);
   expect(parameters.has("focus")).toBe(false);
@@ -2041,6 +2046,15 @@ test("delays deselecting a selected terminal when its agent starts running", asy
     });
 
     expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.getByText("Terminal is now running.")).toHaveClass(
+      "running-deselect-toast-title",
+    );
+    expect(screen.getByText("It will be removed in 10 seconds.")).toHaveClass(
+      "running-deselect-toast-description",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass(
+      "running-deselect-toast-action",
+    );
     expect(screen.getByRole("status", { name: "Automatic deselection" })).toHaveTextContent(
       "Terminal is now running. It will be removed in 10 seconds.",
     );

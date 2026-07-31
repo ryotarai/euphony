@@ -137,7 +137,6 @@ input {
 }
 
 .auth-panel button,
-.empty-state button,
 .signal-status button {
   min-height: 44px;
   color: #111417;
@@ -538,22 +537,14 @@ input {
 .running-deselect-toast p {
   min-width: 0;
   margin: 0;
-  color: #9da9af;
-  font-size: 0.76rem;
-  line-height: 1.45;
 }
 
 .running-deselect-toast strong {
   display: block;
-  color: #b8f34a;
-  font-weight: 650;
 }
 
 .running-deselect-toast button {
   min-height: 30px;
-  color: #b8f34a;
-  background: #111417;
-  border-color: #394149;
 }
 
 .terminal-stage > [role="alert"] {
@@ -1710,6 +1701,108 @@ input:focus-visible,
   border-radius: var(--radius-md);
   box-shadow: 0 0.75rem 2.5rem rgb(0 0 0 / 45%);
   font-size: 0.72rem;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.empty-state-card {
+  width: min(27rem, 100%);
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+  color: var(--popover-foreground);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 48%);
+}
+
+.empty-state-kicker {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 550;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.empty-state-title {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.empty-state-description {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.empty-state-action {
+  justify-self: start;
+  min-height: 2.25rem;
+  margin-top: 0.25rem;
+  border-radius: var(--radius-md);
+}
+
+.running-deselect-toast {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 48%);
+}
+
+.running-deselect-toast-copy {
+  display: grid;
+  align-content: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.9rem 1rem;
+}
+
+.running-deselect-toast-title {
+  color: var(--foreground);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.running-deselect-toast-description {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.running-deselect-toast-actions {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  background: var(--muted);
+  border-left: 1px solid var(--border);
+}
+
+.running-deselect-toast-action {
+  min-height: 2rem;
+  color: var(--foreground);
+  background: var(--background);
+  border-color: var(--border);
+}
+
+.running-deselect-toast-action:hover {
+  color: var(--foreground);
+  background: var(--accent);
 }
 
 .prefix-command-guide {
@@ -3869,5 +3962,22 @@ input {
   .connection-status {
     top: 0.5rem;
     right: 0.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .empty-state {
+    padding: 1rem;
+  }
+
+  .running-deselect-toast {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .running-deselect-toast-actions {
+    justify-content: flex-end;
+    padding: 0.65rem 0.75rem;
+    border-top: 1px solid var(--border);
+    border-left: 0;
   }
 }
