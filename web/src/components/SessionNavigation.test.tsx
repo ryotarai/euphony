@@ -65,14 +65,18 @@ const sessions: Session[] = [
   },
 ];
 
+const legacySidebarProps = {
+  statusFilters: [],
+  onStatusFilter: () => undefined,
+};
+
 test("composes terminal navigation from the shadcn sidebar without a monogram", () => {
   render(
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -88,9 +92,8 @@ test("reports whether more terminal tree content remains below", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -121,9 +124,8 @@ test("opens and closes the mobile drawer with keyboard focus restoration", async
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -146,9 +148,8 @@ test("selecting a mobile session closes the drawer", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={onSelect}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -170,9 +171,8 @@ test("opening settings from mobile closes the terminal drawer", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
       onOpenSettings={onOpenSettings}
@@ -187,88 +187,74 @@ test("opening settings from mobile closes the terminal drawer", async () => {
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 
-test("groups terminals by status then cwd and exposes group selection controls", async () => {
-  const onStatusFilter = vi.fn();
-  const onStatusSelect = vi.fn();
-  const onCwdFilter = vi.fn();
-  const onCwdSelect = vi.fn();
-  const onSelect = vi.fn();
-  const user = userEvent.setup();
+test("renders a cwd-first tree with lifecycle icons and trailing attention", () => {
+  const grouped: Session[] = [
+    {
+      ...sessions[0],
+      cwd: "/workspace/project",
+      agentStatus: "running",
+    },
+    {
+      ...sessions[1],
+      id: "blocked",
+      name: "Permission request",
+      cwd: "/workspace/project",
+      agent: "codex",
+      agentStatus: "blocked",
+      agentTitle: "Permission request",
+      needsAttention: true,
+    },
+    { ...sessions[2], cwd: "/workspace/shell" },
+  ];
   render(
     <SessionNavigation
-      sessions={sessions}
+      sessions={grouped}
       selectedIDs={["one"]}
-      statusFilters={[]}
-      onSelect={onSelect}
-      onStatusFilter={onStatusFilter}
-      onStatusSelect={onStatusSelect}
-      cwdFilters={["running\u0000/Users/ryotarai/work/euphony"]}
-      onCwdFilter={onCwdFilter}
-      onCwdSelect={onCwdSelect}
+      {...legacySidebarProps}
+      onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
   );
 
-  const runningHeading = screen.getByRole("heading", { name: "Running" });
-  const cwdHeading = screen.getByRole("heading", { name: "~/work/euphony" });
-  const codexButton = screen.getByRole("button", { name: "Select Codex" });
-  expect(runningHeading).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Exited" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Terminal" })).toBeVisible();
-  expect(
-    runningHeading.compareDocumentPosition(cwdHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  expect(
-    cwdHeading.compareDocumentPosition(codexButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  expect(screen.getByText("Implement v0.2")).toBeVisible();
-  const terminalButton = screen.getByRole("button", { name: "Select Terminal" });
-  expect(within(codexButton).queryByText("Codex")).not.toBeInTheDocument();
-  expect(within(terminalButton).getByText("Terminal")).toBeVisible();
-  expect(within(codexButton).getByRole("img", { name: "Codex" })).toBeVisible();
-  expect(
-    within(screen.getByRole("button", { name: "Select Claude" })).getByRole("img", {
-      name: "Claude",
-    }),
-  ).toBeVisible();
-  expect(within(terminalButton).queryByRole("img")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
+    "/workspace/project",
+    "/workspace/shell",
+  ]);
+  expect(screen.queryByRole("heading", { name: "Running" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /Show all/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Running" })).toHaveClass("session-status-running");
+  expect(screen.getByRole("img", { name: "Blocked" })).toHaveTextContent("🚫");
 
-  await user.click(screen.getByRole("checkbox", { name: "Show all Running terminals" }));
-  expect(onStatusFilter).toHaveBeenCalledWith("running", true);
-
-  await user.click(screen.getByRole("button", { name: "Show only Running terminals" }));
-  expect(onStatusSelect).toHaveBeenCalledWith("running");
-
-  const cwdCheckbox = screen.getByRole("checkbox", {
-    name: "Include all terminals in ~/work/euphony",
+  const attentionButton = screen.getByRole("button", {
+    name: "Select Permission request",
   });
-  expect(cwdCheckbox).toBeChecked();
-  await user.click(cwdCheckbox);
-  expect(onCwdFilter).toHaveBeenCalledWith(
-    "running",
-    "/Users/ryotarai/work/euphony",
-    false,
+  const attentionDot = attentionButton.querySelector(".attention-dot");
+  expect(attentionDot).toBeVisible();
+  expect(attentionDot).toHaveAttribute("aria-hidden", "true");
+  expect(attentionButton).toHaveAccessibleDescription("Needs attention");
+  expect(screen.getByRole("button", { name: "Select Terminal" }))
+    .not.toHaveAccessibleDescription("Needs attention");
+});
+
+test("creates a terminal from the cwd heading", async () => {
+  const onCreate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      {...legacySidebarProps}
+      onSelect={() => undefined}
+      onCreate={onCreate}
+      onDelete={() => undefined}
+    />,
   );
 
   await user.click(
-    screen.getByRole("button", {
-      name: "Show only Running terminals in ~/work/euphony",
-    }),
+    screen.getByRole("button", { name: "Create terminal in ~/work/euphony" }),
   );
-  expect(onCwdSelect).toHaveBeenCalledWith(
-    "running",
-    "/Users/ryotarai/work/euphony",
-  );
-
-  expect(screen.getByRole("checkbox", { name: "Include Codex in split" })).toBeChecked();
-  expect(
-    screen.getByRole("checkbox", { name: "Include Codex in split" }).closest("ul"),
-  ).toHaveClass("cwd-terminal-list");
-  const terminalCheckbox = screen.getByRole("checkbox", { name: "Include Terminal in split" });
-  expect(terminalCheckbox).not.toBeChecked();
-  await user.click(terminalCheckbox);
-  expect(onSelect).toHaveBeenCalledWith("three", true, false);
+  expect(onCreate).toHaveBeenCalledWith("/Users/ryotarai/work/euphony");
 });
 
 test("forwards Alt-clicks, but not Shift-clicks, on terminal checkboxes as pin requests", () => {
@@ -277,9 +263,8 @@ test("forwards Alt-clicks, but not Shift-clicks, on terminal checkboxes as pin r
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={onSelect}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -291,50 +276,11 @@ test("forwards Alt-clicks, but not Shift-clicks, on terminal checkboxes as pin r
   expect(terminalCheckbox).toHaveAttribute("title", "Option-click to pin");
 
   fireEvent.click(terminalCheckbox, { altKey: true });
-
   expect(onSelect).toHaveBeenCalledWith("three", true, true);
 
   onSelect.mockClear();
   fireEvent.click(terminalCheckbox, { shiftKey: true });
-
   expect(onSelect).toHaveBeenCalledWith("three", true, false);
-});
-
-test("forwards Alt-clicks on selected status and cwd checkboxes as pin requests", () => {
-  const onStatusFilter = vi.fn();
-  const onCwdFilter = vi.fn();
-  render(
-    <SessionNavigation
-      sessions={sessions}
-      selectedIDs={["one"]}
-      statusFilters={["running"]}
-      cwdFilters={[]}
-      onSelect={() => undefined}
-      onStatusFilter={onStatusFilter}
-      onCwdFilter={onCwdFilter}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-    />,
-  );
-
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
-    { altKey: true },
-  );
-  fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: "Include all terminals in ~/work/euphony",
-    }),
-    { altKey: true },
-  );
-
-  expect(onStatusFilter).toHaveBeenCalledWith("running", true, true);
-  expect(onCwdFilter).toHaveBeenCalledWith(
-    "running",
-    "/Users/ryotarai/work/euphony",
-    true,
-    true,
-  );
 });
 
 test("marks pinned terminal checkboxes and explains direct removal", () => {
@@ -342,10 +288,9 @@ test("marks pinned terminal checkboxes and explains direct removal", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one", "three"]}
+      {...legacySidebarProps}
       pinnedIDs={["three"]}
-      statusFilters={[]}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -357,158 +302,6 @@ test("marks pinned terminal checkboxes and explains direct removal", () => {
   expect(screen.getByTitle("Pinned — click to remove")).toBeVisible();
 });
 
-test("marks pinned status and inherited cwd checkboxes without a pin icon", () => {
-  render(
-    <SessionNavigation
-      sessions={sessions}
-      selectedIDs={["one"]}
-      statusFilters={["running"]}
-      pinnedStatusFilters={["running"]}
-      cwdFilters={[]}
-      pinnedCwdFilters={[]}
-      onSelect={() => undefined}
-      onStatusFilter={() => undefined}
-      onCwdFilter={() => undefined}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-    />,
-  );
-
-  expect(
-    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
-  ).toHaveAttribute("data-pinned", "true");
-  expect(
-    screen.getByRole("checkbox", {
-      name: "Include all terminals in ~/work/euphony",
-    }),
-  ).toHaveAttribute("data-pinned", "true");
-  expect(
-    screen.getByRole("checkbox", { name: "Include Terminal in split" }),
-  ).not.toHaveAttribute("data-pinned");
-  expect(document.querySelector(".pane-checkbox-pin")).not.toBeInTheDocument();
-});
-
-test("inherits status selection into cwd controls and marks partial selection", () => {
-  const runningElsewhere: Session = {
-    ...sessions[0],
-    id: "four",
-    name: "Other",
-    cwd: "/tmp",
-  };
-  const { rerender } = render(
-    <SessionNavigation
-      sessions={[sessions[0], runningElsewhere]}
-      selectedIDs={["one", "four"]}
-      statusFilters={["running"]}
-      cwdFilters={[]}
-      onSelect={() => undefined}
-      onStatusFilter={() => undefined}
-      onCwdFilter={() => undefined}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-    />,
-  );
-
-  expect(
-    screen.getByRole("checkbox", {
-      name: "Include all terminals in ~/work/euphony",
-    }),
-  ).toBeChecked();
-  expect(
-    screen.getByRole("checkbox", { name: "Include all terminals in /tmp" }),
-  ).toBeChecked();
-
-  rerender(
-    <SessionNavigation
-      sessions={[sessions[0], runningElsewhere]}
-      selectedIDs={["one"]}
-      statusFilters={[]}
-      cwdFilters={["running\u0000/Users/ryotarai/work/euphony"]}
-      onSelect={() => undefined}
-      onStatusFilter={() => undefined}
-      onCwdFilter={() => undefined}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-    />,
-  );
-
-  expect(
-    screen.getByRole("checkbox", { name: "Show all Running terminals" }),
-  ).toHaveAttribute("aria-checked", "mixed");
-  expect(
-    screen.getByRole("checkbox", {
-      name: "Include all terminals in ~/work/euphony",
-    }),
-  ).toBeChecked();
-  expect(
-    screen.getByRole("checkbox", { name: "Include all terminals in /tmp" }),
-  ).not.toBeChecked();
-});
-
-test("groups terminals by their exact cwd within each ordered status", () => {
-  const grouped: Session[] = [
-    { ...sessions[0], id: "running", repoRoot: "/workspace/project" },
-    {
-      ...sessions[0],
-      id: "attention",
-      name: "Needs review",
-      cwd: "/workspace/project/tmp/worktrees/fix",
-      repoRoot: "/workspace/project",
-      agentStatus: "waiting",
-      needsAttention: true,
-    },
-    {
-      ...sessions[0],
-      id: "waiting",
-      name: "Waiting",
-      repoRoot: "/workspace/project",
-      agentStatus: "waiting",
-    },
-    {
-      ...sessions[0],
-      id: "blocked",
-      name: "Blocked",
-      repoRoot: "/workspace/project",
-      agentStatus: "blocked",
-    },
-  ];
-  render(
-    <SessionNavigation
-      sessions={grouped}
-      selectedIDs={["running"]}
-      statusFilters={[]}
-      onSelect={() => undefined}
-      onStatusFilter={() => undefined}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-    />,
-  );
-
-  const statusNames = screen.getAllByRole("heading").map((heading) => heading.textContent);
-  expect(statusNames).toEqual([
-    "Blocked",
-    "~/work/euphony",
-    "Running",
-    "~/work/euphony",
-    "Waiting",
-    "/workspace/project/tmp/worktrees/fix",
-    "~/work/euphony",
-    "Terminal",
-  ]);
-  const attentionButton = screen.getByRole("button", {
-    name: "Select Needs review",
-  });
-  const attentionDot = attentionButton.querySelector(".attention-dot");
-  expect(attentionDot).toBeVisible();
-  expect(attentionDot).toHaveAttribute("aria-hidden", "true");
-  expect(attentionButton).toHaveAccessibleDescription("Needs attention");
-  expect(screen.getByRole("button", { name: "Select Waiting" }))
-    .not.toHaveAccessibleDescription("Needs attention");
-  expect(
-    screen.queryByRole("checkbox", { name: "Show all Need attention terminals" }),
-  ).not.toBeInTheDocument();
-});
-
 test("collapses and restores the desktop sidebar", async () => {
   const onSettingsChange = vi.fn();
   const user = userEvent.setup();
@@ -516,9 +309,8 @@ test("collapses and restores the desktop sidebar", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
       settings={settings}
@@ -552,9 +344,8 @@ test("uses a compact 256px sidebar by default", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
     />,
@@ -571,9 +362,8 @@ test("resizes the desktop sidebar by dragging its separator", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
       settings={settings}
@@ -597,9 +387,8 @@ test("opens settings from the desktop sidebar", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      statusFilters={[]}
+      {...legacySidebarProps}
       onSelect={() => undefined}
-      onStatusFilter={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
       settings={settings}
