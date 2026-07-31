@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -15,9 +16,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/ryotarai/euphony/internal/agenthook"
 	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/server"
@@ -44,7 +47,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 		return runAutomation(args, stdin, stdout, stderr)
 	}
-	return runServer()
+	return runServer(stdin, stdout)
 }
 
 func runSetup(stdout io.Writer) error {
@@ -56,24 +59,38 @@ func runSetup(stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result, err := euphonysetup.Install(euphonysetup.Config{
+	config := euphonysetup.Config{
 		HomeDir:    home,
 		CodexDir:   os.Getenv("CODEX_HOME"),
 		ClaudeDir:  os.Getenv("CLAUDE_CONFIG_DIR"),
 		Executable: executable,
 		Path:       os.Getenv("PATH"),
-	})
+	}
+	writeSetupExplanation(stdout)
+	result, err := installAgentSetup(config, stdout)
 	if err != nil {
 		return err
 	}
 	if len(result.Installed) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No supported coding agents found.")
-		return nil
-	}
-	for _, agent := range result.Installed {
-		_, _ = fmt.Fprintf(stdout, "Installed %s hooks.\n", agent)
 	}
 	return nil
+}
+
+func installAgentSetup(
+	config euphonysetup.Config, stdout io.Writer,
+) (euphonysetup.Result, error) {
+	result, err := euphonysetup.Install(config)
+	if err != nil {
+		return result, err
+	}
+	if len(result.Installed) == 0 {
+		return result, nil
+	}
+	for _, agent := range result.Installed {
+		_, _ = fmt.Fprintf(stdout, "Installed %s hooks and skills.\n", agent)
+	}
+	return result, nil
 }
 
 func runHook(args []string, stdin io.Reader) error {
@@ -91,7 +108,12 @@ func runHook(args []string, stdin io.Reader) error {
 	return nil
 }
 
-func runServer() error {
+func runServer(stdin io.Reader, stdout io.Writer) error {
+	if isTerminalReader(stdin) {
+		if err := offerAgentSetupOnStartup(stdin, stdout); err != nil {
+			log.Printf("Agent setup warning: %v", err)
+		}
+	}
 	address := os.Getenv("EUPHONY_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"
@@ -198,6 +220,110 @@ func runServer() error {
 		return unixShutdownErr
 	}
 	return sessionErr
+}
+
+func offerAgentSetupOnStartup(stdin io.Reader, stdout io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory for agent setup: %w", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable for agent setup: %w", err)
+	}
+	return maybeOfferAgentSetup(euphonysetup.Config{
+		HomeDir:    home,
+		CodexDir:   os.Getenv("CODEX_HOME"),
+		ClaudeDir:  os.Getenv("CLAUDE_CONFIG_DIR"),
+		Executable: executable,
+		Path:       os.Getenv("PATH"),
+	}, stdin, stdout)
+}
+
+func maybeOfferAgentSetup(
+	config euphonysetup.Config, stdin io.Reader, stdout io.Writer,
+) error {
+	declinedPath := setupPromptDeclinedPath(config.HomeDir)
+	if _, err := os.Stat(declinedPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check setup prompt preference: %w", err)
+	}
+	status, err := euphonysetup.Inspect(config)
+	if err != nil {
+		return err
+	}
+	if len(status.NeedsSetup) == 0 {
+		return nil
+	}
+
+	writeSetupExplanation(stdout)
+	reader := bufio.NewReader(stdin)
+	for {
+		_, _ = fmt.Fprint(
+			stdout,
+			"Euphony hooks or skills are missing or outdated. Install them now? (Y/n) ",
+		)
+		response, readErr := reader.ReadString('\n')
+		response = strings.ToLower(strings.TrimSpace(response))
+		switch response {
+		case "", "y", "yes":
+			if readErr != nil && errors.Is(readErr, io.EOF) {
+				_, _ = fmt.Fprintln(stdout)
+				return nil
+			}
+			_, err := installAgentSetup(config, stdout)
+			return err
+		case "n", "no":
+			if err := persistSetupPromptDecline(declinedPath); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(
+				stdout,
+				"Skipped. Run 'euphony setup' to install hooks and skills later.",
+			)
+			return nil
+		default:
+			if readErr != nil {
+				return fmt.Errorf("read setup response: %w", readErr)
+			}
+			_, _ = fmt.Fprintln(stdout, "Please answer y or n.")
+		}
+	}
+}
+
+func writeSetupExplanation(stdout io.Writer) {
+	_, _ = fmt.Fprintln(stdout, "Euphony can install coding-agent integrations:")
+	_, _ = fmt.Fprintln(
+		stdout, "  Hooks: report agent status and session metadata to Euphony.",
+	)
+	_, _ = fmt.Fprintln(
+		stdout,
+		"  Skill: lets coding agents ask you to annotate Markdown and HTML files in Euphony.",
+	)
+	_, _ = fmt.Fprintln(stdout, "Existing agent settings are preserved.")
+}
+
+func setupPromptDeclinedPath(home string) string {
+	return filepath.Join(home, ".local", "euphony", "setup-prompt-declined")
+}
+
+func persistSetupPromptDecline(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create setup preference directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte("declined\n"), 0o600); err != nil {
+		return fmt.Errorf("save setup prompt preference: %w", err)
+	}
+	return nil
+}
+
+func isTerminalReader(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return false
+	}
+	return isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())
 }
 
 func agentLogRoots(home, codexDirectory, claudeDirectory string) (string, string) {

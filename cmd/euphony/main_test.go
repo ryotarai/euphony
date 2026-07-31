@@ -1,10 +1,151 @@
 package main
 
 import (
+	"bytes"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
+
+func TestMaybeOfferAgentSetupDeclinePersistsAndSuppressesLaterOffers(t *testing.T) {
+	config := startupSetupTestConfig(t)
+	var output bytes.Buffer
+
+	if err := maybeOfferAgentSetup(
+		config, strings.NewReader("n\n"), &output,
+	); err != nil {
+		t.Fatalf("maybeOfferAgentSetup() error = %v", err)
+	}
+	if !strings.Contains(output.String(), "Install them now? (Y/n)") ||
+		!strings.Contains(output.String(), "Run 'euphony setup'") {
+		t.Fatalf("output = %q", output.String())
+	}
+	for _, explanation := range []string{
+		"Hooks: report agent status and session metadata to Euphony.",
+		"Skill: lets coding agents ask you to annotate Markdown and HTML files in Euphony.",
+		"Existing agent settings are preserved.",
+	} {
+		if !strings.Contains(output.String(), explanation) {
+			t.Fatalf("output does not explain %q: %q", explanation, output.String())
+		}
+	}
+	if _, err := os.Stat(setupPromptDeclinedPath(config.HomeDir)); err != nil {
+		t.Fatalf("decline marker: %v", err)
+	}
+
+	if err := os.MkdirAll(config.CodexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(config.CodexDir, "hooks.json"), []byte(`{"hooks":[]}`), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := maybeOfferAgentSetup(
+		config, strings.NewReader("y\n"), &output,
+	); err != nil {
+		t.Fatalf("second maybeOfferAgentSetup() error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("second output = %q, want empty", output.String())
+	}
+}
+
+func TestMaybeOfferAgentSetupAcceptsDefaultAndYes(t *testing.T) {
+	for _, response := range []string{"\n", "yes\n"} {
+		t.Run(strings.TrimSpace(response), func(t *testing.T) {
+			config := startupSetupTestConfig(t)
+			var output bytes.Buffer
+
+			if err := maybeOfferAgentSetup(
+				config, strings.NewReader(response), &output,
+			); err != nil {
+				t.Fatalf("maybeOfferAgentSetup() error = %v", err)
+			}
+			skill, err := os.ReadFile(filepath.Join(
+				config.CodexDir, "skills", "euphony-annotate", "SKILL.md",
+			))
+			if err != nil {
+				t.Fatalf("read installed skill: %v", err)
+			}
+			if !bytes.Contains(skill, []byte("name: euphony-annotate")) {
+				t.Fatalf("installed skill = %q", skill)
+			}
+			if !strings.Contains(output.String(), "Installed codex hooks and skills.") {
+				t.Fatalf("output = %q", output.String())
+			}
+		})
+	}
+}
+
+func TestMaybeOfferAgentSetupRetriesInvalidResponse(t *testing.T) {
+	config := startupSetupTestConfig(t)
+	var output bytes.Buffer
+
+	if err := maybeOfferAgentSetup(
+		config, strings.NewReader("later\ny\n"), &output,
+	); err != nil {
+		t.Fatalf("maybeOfferAgentSetup() error = %v", err)
+	}
+	if got := strings.Count(output.String(), "(Y/n)"); got != 2 {
+		t.Fatalf("prompt count = %d, want 2; output = %q", got, output.String())
+	}
+	if !strings.Contains(output.String(), "Please answer y or n.") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestMaybeOfferAgentSetupIsSilentWhenIntegrationIsCurrent(t *testing.T) {
+	config := startupSetupTestConfig(t)
+	if _, err := euphonysetup.Install(config); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	var output bytes.Buffer
+
+	if err := maybeOfferAgentSetup(
+		config, strings.NewReader("n\n"), &output,
+	); err != nil {
+		t.Fatalf("maybeOfferAgentSetup() error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want empty", output.String())
+	}
+	if _, err := os.Stat(setupPromptDeclinedPath(config.HomeDir)); !os.IsNotExist(err) {
+		t.Fatalf("decline marker exists after silent check: %v", err)
+	}
+}
+
+func TestRunSetupExplainsIntegrationsBeforeInstalling(t *testing.T) {
+	config := startupSetupTestConfig(t)
+	t.Setenv("HOME", config.HomeDir)
+	t.Setenv("CODEX_HOME", config.CodexDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", config.ClaudeDir)
+	t.Setenv("PATH", config.Path)
+	var output bytes.Buffer
+
+	if err := runSetup(&output); err != nil {
+		t.Fatalf("runSetup() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"Hooks: report agent status and session metadata to Euphony.",
+		"Skill: lets coding agents ask you to annotate Markdown and HTML files in Euphony.",
+		"Existing agent settings are preserved.",
+		"Installed codex hooks and skills.",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output does not contain %q: %q", expected, text)
+		}
+	}
+	if strings.Index(text, "Hooks:") > strings.Index(text, "Installed codex") {
+		t.Fatalf("explanation follows installation result: %q", text)
+	}
+}
 
 func TestResolveTokenGeneratesSecureTokenWhenUnset(t *testing.T) {
 	token, generated, err := resolveToken("")
@@ -59,5 +200,26 @@ func TestAgentLogRootsRespectConfiguredAgentHomes(t *testing.T) {
 	if codex != filepath.Join("/home/me", ".codex", "sessions") ||
 		claude != filepath.Join("/home/me", ".claude", "projects") {
 		t.Fatalf("default agentLogRoots() = %q, %q", codex, claude)
+	}
+}
+
+func startupSetupTestConfig(t *testing.T) euphonysetup.Config {
+	t.Helper()
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(binDir, "codex"), []byte("#!/bin/sh\n"), 0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return euphonysetup.Config{
+		HomeDir:    home,
+		CodexDir:   filepath.Join(home, ".codex"),
+		ClaudeDir:  filepath.Join(home, ".claude"),
+		Executable: "/opt/euphony/bin/euphony",
+		Path:       binDir,
 	}
 }

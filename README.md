@@ -54,17 +54,28 @@ one terminal automatically.
 
 ## Coding agent setup
 
-Install hooks for supported coding agents found on `PATH`:
+On interactive startup, Euphony checks supported coding agents found on
+`PATH`. If their integration is missing or outdated, it explains what will be
+installed before asking for confirmation:
+
+- Hooks report agent status and session metadata to Euphony.
+- The skill lets coding agents ask you to annotate Markdown and HTML files in
+  Euphony.
+- Existing agent settings are preserved.
+
+Press Enter or answer `y` to install. Answering `n` skips setup and permanently
+suppresses the startup offer. Setup remains available manually:
 
 ```sh
 euphony setup
 ```
 
-The command currently detects Codex and Claude Code. It preserves existing
-hooks, can be run repeatedly without adding duplicates, and enables Codex's
-lifecycle hook feature. It respects `CODEX_HOME` and `CLAUDE_CONFIG_DIR`.
-Agents started inside an Euphony terminal inherit the terminal identifier,
-hook endpoint, and authentication token used by the installed hooks.
+The command prints the same explanation, then installs integrations for Codex
+and Claude Code. It preserves existing hooks, can be run repeatedly without
+adding duplicates, and enables Codex's lifecycle hook feature. It respects
+`CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Agents started inside an Euphony terminal
+inherit the terminal identifier, hook endpoint, and authentication token used
+by the installed hooks.
 
 ## Automation API and CLI
 

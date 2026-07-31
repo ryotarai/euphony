@@ -58,3 +58,5 @@
   Ping/Pong; do not rely on JavaScript heartbeat timers for liveness.
 - Exercise public automation features through the built CLI against both the
   Unix socket and TCP API; do not treat handler-only tests as transport proof.
+- Before asking users to install integrations, explain what each hook or skill
+  does and that existing settings are preserved.

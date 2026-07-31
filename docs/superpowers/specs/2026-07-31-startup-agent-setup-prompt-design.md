@@ -38,6 +38,10 @@ are preserved by the existing installer.
 Before creating the server, an interactive launch with pending setup prints:
 
 ```text
+Euphony can install coding-agent integrations:
+  Hooks: report agent status and session metadata to Euphony.
+  Skill: lets coding agents ask you to annotate Markdown and HTML files in Euphony.
+Existing agent settings are preserved.
 Euphony hooks or skills are missing or outdated. Install them now? (Y/n) 
 ```
 
@@ -49,6 +53,10 @@ Skipped. Run 'euphony setup' to install hooks and skills later.
 ```
 
 Other input prints a short English validation message and asks again.
+
+The explicit `euphony setup` command prints the same explanation before it
+installs anything. This gives the user purpose and preservation context whether
+setup begins automatically or manually.
 
 The marker lives at
 `~/.local/euphony/setup-prompt-declined`. Once present, startup inspection and
