@@ -110,7 +110,7 @@ async function createSession(
   page: Page,
   name: string,
   cwd?: string,
-): Promise<{ id: string; name: string }> {
+): Promise<{ id: string; name: string; processName?: string }> {
   const response = await page.request.post("/api/sessions", {
     headers: {
       Authorization: "Bearer test-token",
@@ -226,13 +226,21 @@ test("renders a cwd-first tree and creates a terminal from its cwd", async ({
   page,
 }, testInfo) => {
   await clearSessions(page);
-  await createSession(page, "Shell", "/tmp");
+  const shell = await createSession(page, "Shell", "/tmp");
   await createSession(page, "Project", "/Users/ryotarai/work/euphony");
   await page.goto("/?token=test-token");
 
   await expect(page.getByRole("heading", { name: "/tmp" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "~/work/euphony" })).toBeVisible();
   await expect(page.getByRole("img", { name: "Terminal" })).toHaveCount(2);
+  expect(shell.processName).toBeTruthy();
+  await expect(
+    page
+      .getByRole("button", { name: "Select Shell" })
+      .getByText(shell.processName!, { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("img", { name: "Codex" })).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "Claude" })).toHaveCount(0);
   await expect(
     page.getByRole("checkbox", { name: /Show all .* terminals/ }),
   ).toHaveCount(0);
@@ -320,14 +328,15 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Focused");
   const blocked = await createSession(page, "Permission request");
-  await reportAgent(page, blocked.id, "codex", "Permission request", "running");
+  await reportAgent(page, blocked.id, "codex", "Review changes", "running");
   await page.goto("/?token=test-token");
+  await expect(page.getByText("Review changes", { exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Select Permission request" })
     .click({ modifiers: ["Meta"] });
   await page.getByLabel("Focused pane", { exact: true }).click();
 
-  await reportAgent(page, blocked.id, "codex", "Permission request", "blocked");
+  await reportAgent(page, blocked.id, "codex", "Review changes", "blocked");
 
   const blockedButton = page.getByRole("button", {
     name: "Select Permission request",
@@ -1366,8 +1375,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await page.goto("/?token=test-token");
   const codexItem = page.getByRole("button", { name: "Select Codex" });
   const claudeItem = page.getByRole("button", { name: "Select Claude" });
-  await expect(codexItem.getByRole("img", { name: "Codex" })).toBeVisible();
-  await expect(claudeItem.getByRole("img", { name: "Claude" })).toBeVisible();
+  await expect(codexItem.getByText("Review persistence", { exact: true })).toBeVisible();
+  await expect(claudeItem.getByText("Check shortcuts", { exact: true })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Codex" })).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "Claude" })).toHaveCount(0);
   await expect(codexItem).not.toContainText("Codex");
   await expect(codexItem).not.toContainText("~/work/euphony");
   await expect(page.getByRole("heading", { name: "~/work/euphony" }).first()).toBeVisible();

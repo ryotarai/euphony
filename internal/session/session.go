@@ -4,10 +4,28 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"golang.org/x/sys/unix"
 )
+
+// foregroundProcessName reduces a ps command line to the executable name
+// shown beside a terminal. Login shells conventionally prefix argv[0] with a
+// dash, while arguments are intentionally omitted from the label.
+func foregroundProcessName(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	name := strings.Trim(fields[0], "'\"")
+	name = strings.TrimPrefix(name, "-")
+	if name == "" {
+		return ""
+	}
+	return filepath.Base(name)
+}
 
 var ErrForegroundUnsupported = errors.New("foreground process inspection is unsupported")
 

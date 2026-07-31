@@ -814,6 +814,7 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
     ...plainTerminalSession,
     id: "cwd-created",
     cwd: secondRunningSession.cwd,
+    processName: "sh",
   };
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
@@ -846,9 +847,11 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
       body: JSON.stringify({ name: "Terminal", cwd: "/workspace/website" }),
     }),
   );
-  expect(
-    await screen.findByRole("button", { name: "Select Terminal" }),
-  ).toHaveAttribute("aria-current", "true");
+  const selectedTerminal = await screen.findByRole("button", {
+    name: "Select Terminal",
+  });
+  expect(selectedTerminal).toHaveAttribute("aria-current", "true");
+  expect(within(selectedTerminal).getByText("sh", { exact: true })).toBeInTheDocument();
 });
 
 test("creates a terminal in the focused terminal cwd, selects it, and confirms deletion", async () => {

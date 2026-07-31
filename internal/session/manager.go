@@ -42,6 +42,7 @@ type Metadata struct {
 	State               State      `json:"state"`
 	CWD                 string     `json:"cwd"`
 	RepoRoot            string     `json:"repoRoot"`
+	ProcessName         string     `json:"processName,omitempty"`
 	Agent               string     `json:"agent,omitempty"`
 	AgentStatus         string     `json:"agentStatus,omitempty"`
 	NeedsAttention      bool       `json:"needsAttention,omitempty"`
@@ -133,7 +134,8 @@ type entry struct {
 	// prompt the reader is looking at, so it wins for one sampling interval —
 	// after which the process is asked again and either confirms it or corrects
 	// a claim that has gone stale.
-	cwdReportedAt time.Time
+	cwdReportedAt              time.Time
+	foregroundProcessSampledAt time.Time
 }
 
 // defaultCWDSampleInterval bounds how often a terminal's working directory is
@@ -142,18 +144,20 @@ type entry struct {
 // through the automation API, or restored after a restart, which would
 // otherwise keep displaying a directory it left long ago.
 const defaultCWDSampleInterval = 5 * time.Second
+const defaultForegroundProcessSampleInterval = 500 * time.Millisecond
 
 type Manager struct {
-	mu                sync.RWMutex
-	shell             string
-	hooks             HookConfig
-	sessions          map[string]*entry
-	store             metadataStore
-	closing           bool
-	settings          Settings
-	onChange          func(Change)
-	changeSequence    uint64
-	cwdSampleInterval time.Duration
+	mu                              sync.RWMutex
+	shell                           string
+	hooks                           HookConfig
+	sessions                        map[string]*entry
+	store                           metadataStore
+	closing                         bool
+	settings                        Settings
+	onChange                        func(Change)
+	changeSequence                  uint64
+	cwdSampleInterval               time.Duration
+	foregroundProcessSampleInterval time.Duration
 
 	workspaceSelection    selection.State
 	hasWorkspaceSelection bool
@@ -206,6 +210,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	return &Manager{
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
 		settings: DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
+		foregroundProcessSampleInterval: defaultForegroundProcessSampleInterval,
 	}
 }
 
@@ -324,6 +329,9 @@ func restoredCommand(shell string, metadata Metadata) *exec.Cmd {
 }
 
 func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
+	if metadata.ProcessName == "" && len(command.Args) > 0 {
+		metadata.ProcessName = foregroundProcessName(command.Args[0])
+	}
 	command.Dir = metadata.CWD
 	command.Env = append(os.Environ(),
 		"TERM=xterm-256color",
@@ -626,6 +634,7 @@ func (m *Manager) watch(item *entry) {
 func (m *Manager) List() []Metadata {
 	m.refreshCodexTitles()
 	m.refreshWorkingDirectories()
+	m.refreshForegroundProcessNames()
 	return m.ListCurrent()
 }
 
@@ -673,6 +682,64 @@ func (m *Manager) refreshWorkingDirectories() {
 		}
 		_, _ = m.updateCWDNotReportedSince(candidate.id, cwd, true, now)
 	}
+}
+
+func (m *Manager) refreshForegroundProcessNames() {
+	type sample struct {
+		id      string
+		session *Session
+	}
+	now := time.Now()
+	var due []sample
+	var changes []Change
+	m.mu.Lock()
+	for id, item := range m.sessions {
+		if item.metadata.State != StateRunning {
+			if item.metadata.ProcessName == "" {
+				continue
+			}
+			before := item.metadata
+			item.metadata.ProcessName = ""
+			after := item.metadata
+			changes = append(changes, m.nextChangeLocked(ChangeUpdated, &before, &after))
+			continue
+		}
+		if !item.foregroundProcessSampledAt.IsZero() &&
+			now.Sub(item.foregroundProcessSampledAt) < m.foregroundProcessSampleInterval {
+			continue
+		}
+		if item.session == nil {
+			continue
+		}
+		item.foregroundProcessSampledAt = now
+		due = append(due, sample{id: id, session: item.session})
+	}
+	m.mu.Unlock()
+	for _, change := range changes {
+		m.emitChange(change)
+	}
+	for _, candidate := range due {
+		name, err := candidate.session.ForegroundCommandName()
+		if err != nil || name == "" {
+			continue
+		}
+		m.updateForegroundProcessName(candidate.id, name)
+	}
+}
+
+func (m *Manager) updateForegroundProcessName(id, name string) {
+	m.mu.Lock()
+	item, ok := m.sessions[id]
+	if !ok || item.metadata.State != StateRunning || item.metadata.ProcessName == name {
+		m.mu.Unlock()
+		return
+	}
+	before := item.metadata
+	item.metadata.ProcessName = name
+	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	m.mu.Unlock()
+	m.emitChange(change)
 }
 
 // ListCurrent returns the current metadata without running refresh hooks.

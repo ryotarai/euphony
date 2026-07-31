@@ -9,3 +9,7 @@ func (s *Session) ForegroundIsShell() (bool, error) {
 func (s *Session) ForegroundCommand() (string, error) {
 	return "", ErrForegroundUnsupported
 }
+
+func (s *Session) ForegroundCommandName() (string, error) {
+	return "", ErrForegroundUnsupported
+}
