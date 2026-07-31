@@ -16,6 +16,10 @@ const defaultSettings: Settings = {
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,
+  terminalLineHeight: 1.25,
+  terminalCursorStyle: "bar",
+  terminalCursorBlink: false,
+  terminalScrollSensitivity: 3,
 };
 
 const runningSession: Session = {
@@ -2608,6 +2612,99 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         terminalFontFamily: "Iosevka, monospace",
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
+      }),
+    }),
+  );
+});
+
+test("previews, cancels, and saves terminal appearance settings", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(
+        session,
+        _api,
+        _active,
+        _layoutVersion,
+        _onConnectionChange,
+        _reconnectSignal,
+        _fontFamily,
+        _fontSize,
+        _terminalHistoryLimit,
+        _sourceVisible,
+        lineHeight,
+        cursorStyle,
+        cursorBlink,
+        scrollSensitivity,
+      ) => (
+        <div
+          aria-label={`${session.id} terminal pane`}
+          data-line-height={lineHeight}
+          data-cursor-style={cursorStyle}
+          data-cursor-blink={cursorBlink}
+          data-scroll-sensitivity={scrollSensitivity}
+        />
+      )}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  fireEvent.change(within(dialog).getByLabelText("Terminal line height"), {
+    target: { value: "1.5" },
+  });
+  await user.selectOptions(within(dialog).getByLabelText("Cursor style"), "underline");
+  await user.click(within(dialog).getByRole("checkbox", { name: "Cursor blink" }));
+  fireEvent.change(within(dialog).getByLabelText("Scroll sensitivity"), {
+    target: { value: "5" },
+  });
+  const terminalPane = screen.getByLabelText("session-1 terminal pane");
+  expect(terminalPane).toHaveAttribute("data-line-height", "1.5");
+  expect(terminalPane).toHaveAttribute("data-cursor-style", "underline");
+  expect(terminalPane).toHaveAttribute("data-cursor-blink", "true");
+  expect(terminalPane).toHaveAttribute("data-scroll-sensitivity", "5");
+
+  await user.keyboard("{Escape}");
+  expect(terminalPane).toHaveAttribute("data-line-height", "1.25");
+  expect(terminalPane).toHaveAttribute("data-cursor-style", "bar");
+  expect(terminalPane).toHaveAttribute("data-cursor-blink", "false");
+  expect(terminalPane).toHaveAttribute("data-scroll-sensitivity", "3");
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
+  fireEvent.change(within(reopenedDialog).getByLabelText("Terminal line height"), {
+    target: { value: "1.5" },
+  });
+  await user.selectOptions(
+    within(reopenedDialog).getByLabelText("Cursor style"),
+    "underline",
+  );
+  await user.click(within(reopenedDialog).getByRole("checkbox", { name: "Cursor blink" }));
+  fireEvent.change(within(reopenedDialog).getByLabelText("Scroll sensitivity"), {
+    target: { value: "5" },
+  });
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({
+        ...defaultSettings,
+        terminalLineHeight: 1.5,
+        terminalCursorStyle: "underline",
+        terminalCursorBlink: true,
+        terminalScrollSensitivity: 5,
       }),
     }),
   );

@@ -62,8 +62,15 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
+  TerminalCursorStyle,
 } from "./types";
-import { defaultTerminalFontFamily } from "./settings";
+import {
+  defaultTerminalCursorBlink,
+  defaultTerminalCursorStyle,
+  defaultTerminalFontFamily,
+  defaultTerminalLineHeight,
+  defaultTerminalScrollSensitivity,
+} from "./settings";
 
 const tokenKey = "euphony.token";
 const recentQuickActionsKey = "euphony.recentQuickActions";
@@ -92,6 +99,10 @@ interface AppProps {
     fontSize: number,
     terminalHistoryLimit: number,
     sourceVisible: boolean,
+    lineHeight: number,
+    cursorStyle: TerminalCursorStyle,
+    cursorBlink: boolean,
+    scrollSensitivity: number,
   ) => ReactNode;
 }
 
@@ -106,6 +117,10 @@ const defaultSettings: Settings = {
   agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
   autoSelectAttention: true,
+  terminalLineHeight: defaultTerminalLineHeight,
+  terminalCursorStyle: defaultTerminalCursorStyle,
+  terminalCursorBlink: defaultTerminalCursorBlink,
+  terminalScrollSensitivity: defaultTerminalScrollSensitivity,
 };
 
 function historyLimitDraft(limit: number): string {
@@ -133,6 +148,24 @@ function parseFontSize(value: string): number | null {
 function parseTerminalFontFamily(value: string): string | null {
   const trimmed = value.trim();
   return trimmed && Array.from(trimmed).length <= 256 ? trimmed : null;
+}
+
+function parseTerminalLineHeight(value: string): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 2) return null;
+  const nearestStep = Math.round(parsed * 20) / 20;
+  return Math.abs(parsed - nearestStep) < 1e-9 ? parsed : null;
+}
+
+function parseTerminalCursorStyle(value: string): TerminalCursorStyle | null {
+  return value === "bar" || value === "block" || value === "underline"
+    ? value
+    : null;
+}
+
+function parseTerminalScrollSensitivity(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 5 ? parsed : null;
 }
 
 function sessionActivity(session: Session) {
@@ -376,6 +409,10 @@ export function App({
     fontSize,
     terminalHistoryLimit,
     sourceVisible,
+    lineHeight,
+    cursorStyle,
+    cursorBlink,
+    scrollSensitivity,
   ) => (
     <TerminalView
       key={session.id}
@@ -389,6 +426,10 @@ export function App({
       fontFamily={fontFamily}
       fontSize={fontSize}
       terminalHistoryLimit={terminalHistoryLimit}
+      lineHeight={lineHeight}
+      cursorStyle={cursorStyle}
+      cursorBlink={cursorBlink}
+      scrollSensitivity={scrollSensitivity}
     />
   ),
 }: AppProps) {
@@ -423,6 +464,18 @@ export function App({
   const [terminalFontFamilyDraft, setTerminalFontFamilyDraft] = useState(
     settings.terminalFontFamily,
   );
+  const [terminalLineHeightDraft, setTerminalLineHeightDraft] = useState(
+    String(settings.terminalLineHeight),
+  );
+  const [terminalCursorStyleDraft, setTerminalCursorStyleDraft] = useState<string>(
+    settings.terminalCursorStyle,
+  );
+  const [terminalCursorBlinkDraft, setTerminalCursorBlinkDraft] = useState(
+    settings.terminalCursorBlink,
+  );
+  const [terminalScrollSensitivityDraft, setTerminalScrollSensitivityDraft] = useState(
+    String(settings.terminalScrollSensitivity),
+  );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
     terminalFontSize: String(settings.terminalFontSize),
@@ -434,6 +487,9 @@ export function App({
       | "paneTabShortcut"
       | "terminalHistoryLimit"
       | "terminalFontFamily"
+      | "terminalLineHeight"
+      | "terminalCursorStyle"
+      | "terminalScrollSensitivity"
       | FontSizeSetting;
     message: string;
   } | null>(null);
@@ -508,8 +564,25 @@ export function App({
         settings.terminalFontFamily,
       agentLogFontSize:
         parseFontSize(fontSizeDrafts.agentLogFontSize) ?? settings.agentLogFontSize,
+      terminalLineHeight:
+        parseTerminalLineHeight(terminalLineHeightDraft) ?? settings.terminalLineHeight,
+      terminalCursorStyle:
+        parseTerminalCursorStyle(terminalCursorStyleDraft) ?? settings.terminalCursorStyle,
+      terminalCursorBlink: terminalCursorBlinkDraft,
+      terminalScrollSensitivity:
+        parseTerminalScrollSensitivity(terminalScrollSensitivityDraft) ??
+        settings.terminalScrollSensitivity,
     };
-  }, [fontSizeDrafts, settings, settingsOpen, terminalFontFamilyDraft]);
+  }, [
+    fontSizeDrafts,
+    settings,
+    settingsOpen,
+    terminalCursorBlinkDraft,
+    terminalCursorStyleDraft,
+    terminalFontFamilyDraft,
+    terminalLineHeightDraft,
+    terminalScrollSensitivityDraft,
+  ]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
     setConnectionStates((current) =>
       current[sessionID] === state ? current : { ...current, [sessionID]: state },
@@ -716,6 +789,10 @@ export function App({
       setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
       setAutoSelectAttentionDraft(loaded.autoSelectAttention);
       setTerminalFontFamilyDraft(loaded.terminalFontFamily);
+      setTerminalLineHeightDraft(String(loaded.terminalLineHeight));
+      setTerminalCursorStyleDraft(loaded.terminalCursorStyle);
+      setTerminalCursorBlinkDraft(loaded.terminalCursorBlink);
+      setTerminalScrollSensitivityDraft(String(loaded.terminalScrollSensitivity));
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -2024,6 +2101,10 @@ export function App({
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setAutoSelectAttentionDraft(settings.autoSelectAttention);
     setTerminalFontFamilyDraft(settings.terminalFontFamily);
+    setTerminalLineHeightDraft(String(settings.terminalLineHeight));
+    setTerminalCursorStyleDraft(settings.terminalCursorStyle);
+    setTerminalCursorBlinkDraft(settings.terminalCursorBlink);
+    setTerminalScrollSensitivityDraft(String(settings.terminalScrollSensitivity));
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -2097,6 +2178,32 @@ export function App({
       });
       return;
     }
+    const terminalLineHeight = parseTerminalLineHeight(terminalLineHeightDraft);
+    if (terminalLineHeight === null) {
+      setSettingsError({
+        field: "terminalLineHeight",
+        message: "Choose a value from 1.00 to 2.00 in 0.05 increments.",
+      });
+      return;
+    }
+    const terminalCursorStyle = parseTerminalCursorStyle(terminalCursorStyleDraft);
+    if (terminalCursorStyle === null) {
+      setSettingsError({
+        field: "terminalCursorStyle",
+        message: "Choose Bar, Block, or Underline.",
+      });
+      return;
+    }
+    const terminalScrollSensitivity = parseTerminalScrollSensitivity(
+      terminalScrollSensitivityDraft,
+    );
+    if (terminalScrollSensitivity === null) {
+      setSettingsError({
+        field: "terminalScrollSensitivity",
+        message: "Choose a whole number from 1 to 5.",
+      });
+      return;
+    }
     await persistSettings({
       ...settings,
       prefix,
@@ -2107,6 +2214,10 @@ export function App({
       agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
       autoSelectAttention: autoSelectAttentionDraft,
+      terminalLineHeight,
+      terminalCursorStyle,
+      terminalCursorBlink: terminalCursorBlinkDraft,
+      terminalScrollSensitivity,
     });
     setSettingsOpen(false);
   }
@@ -2384,6 +2495,10 @@ export function App({
                       previewSettings.terminalFontSize,
                       settings.terminalHistoryLimit,
                       sourceVisible,
+                      previewSettings.terminalLineHeight,
+                      previewSettings.terminalCursorStyle,
+                      previewSettings.terminalCursorBlink,
+                      previewSettings.terminalScrollSensitivity,
                     )
                   }
                 />
@@ -2517,7 +2632,7 @@ export function App({
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Configure workspace shortcuts, selection, text sizing, and terminal history.
+              Configure workspace shortcuts, selection, text sizing, terminal appearance, and history.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -2679,6 +2794,118 @@ export function App({
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>
+              <section
+                className="terminal-appearance-section"
+                aria-labelledby="terminal-appearance-heading"
+              >
+                <div className="settings-section-heading">
+                  <h3 id="terminal-appearance-heading">Terminal appearance</h3>
+                  <span>Comfort &amp; control</span>
+                </div>
+                <div className="terminal-appearance-fields">
+                  <Field data-invalid={settingsError?.field === "terminalLineHeight"}>
+                    <FieldLabel htmlFor="terminalLineHeight">
+                      Terminal line height
+                    </FieldLabel>
+                    <div className="settings-number-input">
+                      <Input
+                        id="terminalLineHeight"
+                        name="terminalLineHeight"
+                        type="number"
+                        min={1}
+                        max={2}
+                        step={0.05}
+                        inputMode="decimal"
+                        value={terminalLineHeightDraft}
+                        onChange={(event) => {
+                          setTerminalLineHeightDraft(event.target.value);
+                          if (settingsError?.field === "terminalLineHeight") {
+                            setSettingsError(null);
+                          }
+                        }}
+                        aria-invalid={settingsError?.field === "terminalLineHeight"}
+                      />
+                      <span aria-hidden="true">×</span>
+                    </div>
+                    <FieldDescription>
+                      Vertical space between terminal rows, from 1.00× to 2.00×.
+                    </FieldDescription>
+                    {settingsError?.field === "terminalLineHeight" && (
+                      <FieldError>{settingsError.message}</FieldError>
+                    )}
+                  </Field>
+                  <Field
+                    data-invalid={settingsError?.field === "terminalScrollSensitivity"}
+                  >
+                    <FieldLabel htmlFor="terminalScrollSensitivity">
+                      Scroll sensitivity
+                    </FieldLabel>
+                    <Input
+                      id="terminalScrollSensitivity"
+                      name="terminalScrollSensitivity"
+                      type="number"
+                      min={1}
+                      max={5}
+                      step={1}
+                      inputMode="numeric"
+                      value={terminalScrollSensitivityDraft}
+                      onChange={(event) => {
+                        setTerminalScrollSensitivityDraft(event.target.value);
+                        if (settingsError?.field === "terminalScrollSensitivity") {
+                          setSettingsError(null);
+                        }
+                      }}
+                      aria-invalid={settingsError?.field === "terminalScrollSensitivity"}
+                    />
+                    <FieldDescription>
+                      Wheel movement multiplier from 1 to 5.
+                    </FieldDescription>
+                    {settingsError?.field === "terminalScrollSensitivity" && (
+                      <FieldError>{settingsError.message}</FieldError>
+                    )}
+                  </Field>
+                </div>
+                <Field data-invalid={settingsError?.field === "terminalCursorStyle"}>
+                  <FieldLabel htmlFor="terminalCursorStyle">Cursor style</FieldLabel>
+                  <select
+                    id="terminalCursorStyle"
+                    name="terminalCursorStyle"
+                    className="settings-select"
+                    value={terminalCursorStyleDraft}
+                    onChange={(event) => {
+                      setTerminalCursorStyleDraft(event.target.value);
+                      if (settingsError?.field === "terminalCursorStyle") {
+                        setSettingsError(null);
+                      }
+                    }}
+                    aria-invalid={settingsError?.field === "terminalCursorStyle"}
+                  >
+                    <option value="bar">Bar</option>
+                    <option value="block">Block</option>
+                    <option value="underline">Underline</option>
+                  </select>
+                  <FieldDescription>
+                    Choose the shape used by the active terminal cursor.
+                  </FieldDescription>
+                  {settingsError?.field === "terminalCursorStyle" && (
+                    <FieldError>{settingsError.message}</FieldError>
+                  )}
+                </Field>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="terminalCursorBlink"
+                    checked={terminalCursorBlinkDraft}
+                    onCheckedChange={(checked) =>
+                      setTerminalCursorBlinkDraft(Boolean(checked))}
+                  />
+                  <FieldContent>
+                    <FieldLabel htmlFor="terminalCursorBlink">Cursor blink</FieldLabel>
+                    <FieldDescription>
+                      Animate the cursor while the terminal is focused.
+                    </FieldDescription>
+                  </FieldContent>
+                </Field>
+              </section>
             </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>

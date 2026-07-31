@@ -29,6 +29,10 @@ const settings: Settings = {
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,
+  terminalLineHeight: 1.25,
+  terminalCursorStyle: "bar",
+  terminalCursorBlink: false,
+  terminalScrollSensitivity: 3,
 };
 
 const sessions: Session[] = [
