@@ -480,15 +480,22 @@ terminalScrollSensitivity: 3,
 
 In persists sidebar controls, settings, and tmux-style commands, fill line
 height with 1.5, choose underline, check blink, and fill sensitivity with 5.
-Assert the live terminal rows use the configured line-height CSS and the
-Settings dialog reopens with the same values after reload:
+Capture the first terminal row's height after applying the font-only controls,
+then assert with `expect.poll` that the row becomes taller after applying the
+1.5 line-height setting. xterm.js uses the line-height option for cell
+geometry, so the browser's computed `line-height` property remains `normal`.
+Also assert the Settings dialog reopens with the same values after reload:
 
 ~~~ts
 await settingsDialog.getByLabel("Terminal line height").fill("1.5");
 await settingsDialog.getByLabel("Cursor style").selectOption("underline");
 await settingsDialog.getByRole("checkbox", { name: "Cursor blink" }).check();
 await settingsDialog.getByLabel("Scroll sensitivity").fill("5");
-await expect(page.locator(".xterm-rows").first()).toHaveCSS("line-height", "25.5px");
+await expect
+  .poll(async () => page.locator(".xterm-rows").first().evaluate(
+    (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
+  ))
+  .toBeGreaterThan(fontOnlyRowHeight);
 ~~~
 
 After reload, assert the input, select, checkbox, and sensitivity value before
