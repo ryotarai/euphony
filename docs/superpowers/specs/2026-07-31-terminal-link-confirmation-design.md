@@ -48,4 +48,3 @@ same warning style as xterm.js's default implementation.
 - A Playwright scenario will emit an OSC 8 link in a real terminal, click the
   rendered link, and assert that a popup opens directly without a browser
   confirmation dialog.
-

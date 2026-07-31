@@ -245,4 +245,3 @@ git diff main...HEAD --check
 
 Expected: only the design, implementation, and tests for terminal-link
 navigation are present, with no whitespace errors.
-
