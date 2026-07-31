@@ -226,6 +226,42 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
     .not.toHaveAccessibleDescription("Needs attention");
 });
 
+test("groups linked worktrees under their main Git directory", async () => {
+  const onCreate = vi.fn();
+  const user = userEvent.setup();
+  const worktreeSessions: Session[] = [
+    {
+      ...sessions[0],
+      id: "worktree-one",
+      cwd: "/repo/.worktrees/one",
+      repoRoot: "/repo",
+    },
+    {
+      ...sessions[1],
+      id: "worktree-two",
+      cwd: "/repo/.worktrees/two",
+      repoRoot: "/repo",
+    },
+  ];
+
+  render(
+    <SessionNavigation
+      sessions={worktreeSessions}
+      selectedIDs={[]}
+      onSelect={() => undefined}
+      onCreate={onCreate}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(screen.getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
+    "/repo",
+  ]);
+
+  await user.click(screen.getByRole("button", { name: "Create terminal in /repo" }));
+  expect(onCreate).toHaveBeenCalledWith("/repo");
+});
+
 test("labels rows with agent titles, process names, and fallback names", () => {
   const labeled = [
     {
