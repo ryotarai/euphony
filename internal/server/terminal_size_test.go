@@ -3,6 +3,8 @@ package server
 import (
 	"errors"
 	"reflect"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -353,5 +355,36 @@ func TestTerminalSizeCoordinatorDoesNotBlockDifferentTerminalsWhileResizeIsPendi
 	}
 	if got := readTerminalDimensions(t, b.updates); got != (terminalDimensions{Cols: 100, Rows: 30}) {
 		t.Fatalf("terminal B dimensions = %#v, want 100x30", got)
+	}
+}
+
+func TestTerminalSizeCoordinatorStopsLastClientSafelyWhileReporting(t *testing.T) {
+	const iterations = 2_000
+	for iteration := 0; iteration < iterations; iteration++ {
+		coordinator := newTerminalSizeCoordinator()
+		report, _, _, stop := coordinator.subscribe(
+			"terminal",
+			terminalDimensions{Cols: 80, Rows: 24},
+			func(uint16, uint16, func()) error { return nil },
+		)
+
+		start := make(chan struct{})
+		var wait sync.WaitGroup
+		wait.Add(2)
+		go func() {
+			defer wait.Done()
+			<-start
+			stop()
+		}()
+		go func() {
+			defer wait.Done()
+			<-start
+			for attempt := 0; attempt < 8; attempt++ {
+				_ = report(80, 24)
+				runtime.Gosched()
+			}
+		}()
+		close(start)
+		wait.Wait()
 	}
 }
