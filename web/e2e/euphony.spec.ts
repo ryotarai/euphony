@@ -322,8 +322,8 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await expect(page.getByRole("heading", { name: "Agent log entry 105" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Agent log entry 01" })).toHaveCount(0);
   await expect(page.getByText("3 tool calls")).toBeVisible();
-  await expect(page.getByText("secret command 1")).toHaveCount(0);
-  await expect(page.getByText("secret result 1")).toHaveCount(0);
+  await expect(page.getByText("secret command 1")).toBeHidden();
+  await expect(page.getByText("secret result 1")).toBeHidden();
   const table = page.getByRole("table");
   const tableCell = table.getByRole("cell", { name: "go test ./..." });
   await expect(table.getByRole("columnheader", { name: "Command" })).toBeVisible();
@@ -385,6 +385,15 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await expect.poll(() => viewport.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight < 4,
   )).toBe(true);
+  await page.getByText("3 tool calls").click();
+  const firstExecution = page
+    .getByRole("article", { name: "exec_command" })
+    .filter({ hasText: "secret command 1" });
+  await expect(firstExecution.getByText("secret command 1")).toBeVisible();
+  await expect(firstExecution.getByText("secret result 1")).toBeVisible();
+  await firstExecution.scrollIntoViewIfNeeded();
+  await expect(firstExecution).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath("agent-log-tool-trace.png") });
   await page.screenshot({ path: testInfo.outputPath("agent-log-tab.png") });
 });
 

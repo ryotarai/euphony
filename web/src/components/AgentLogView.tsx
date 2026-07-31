@@ -126,13 +126,95 @@ function DetailEntry({ entry }: { entry: AgentLogEntry }) {
   );
 }
 
+interface ToolExecution {
+  call?: AgentLogEntry;
+  result?: AgentLogEntry;
+}
+
+function pairToolEntries(entries: AgentLogEntry[]): ToolExecution[] {
+  const executions: ToolExecution[] = [];
+  const callsById = new Map<string, ToolExecution>();
+
+  for (const entry of entries) {
+    if (entry.kind === "tool") {
+      const execution = { call: entry };
+      executions.push(execution);
+      const callId = entry.callId?.trim();
+      if (callId) callsById.set(callId, execution);
+      continue;
+    }
+    if (entry.kind !== "tool_result") continue;
+
+    const callId = entry.callId?.trim();
+    const keyedExecution = callId ? callsById.get(callId) : undefined;
+    if (keyedExecution && !keyedExecution.result) {
+      keyedExecution.result = entry;
+      continue;
+    }
+    if (!callId) {
+      const unkeyedExecution = executions.find(
+        (execution) => execution.call && !execution.result,
+      );
+      if (unkeyedExecution) {
+        unkeyedExecution.result = entry;
+        continue;
+      }
+    }
+    executions.push({ result: entry });
+  }
+
+  return executions;
+}
+
+function toolEntryContent(entry?: AgentLogEntry): string {
+  return entry?.content?.length ? entry.content : "(empty)";
+}
+
 function ToolGroupEntry({ entry }: { entry: AgentLogEntry }) {
   const count = entry.toolCalls ?? 0;
+  const executions = pairToolEntries(entry.entries ?? []);
   return (
-    <div className="agent-log-tool-group" data-kind="tool_group">
-      <span>{count} tool {count === 1 ? "call" : "calls"}</span>
-      {entry.timestamp && <time dateTime={entry.timestamp}>{entryTime(entry.timestamp)}</time>}
-    </div>
+    <details className="agent-log-tool-group" data-kind="tool_group">
+      <summary>
+        <span>{count} tool {count === 1 ? "call" : "calls"}</span>
+        {entry.timestamp && <time dateTime={entry.timestamp}>{entryTime(entry.timestamp)}</time>}
+      </summary>
+      <div className="agent-log-tool-executions">
+        {executions.map((execution, index) => {
+          const toolName =
+            execution.call?.title || execution.result?.title || "Tool result";
+          const headingId = `agent-log-tool-${entry.id}-${index + 1}`;
+          const timestamp = execution.call?.timestamp ?? execution.result?.timestamp;
+          return (
+            <article
+              className="agent-log-tool-execution"
+              aria-labelledby={headingId}
+              key={`${execution.call?.id ?? "result"}-${execution.result?.id ?? index}`}
+            >
+              <header>
+                <span className="agent-log-tool-sequence">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <h3 id={headingId}>{toolName}</h3>
+                {timestamp && <time dateTime={timestamp}>{entryTime(timestamp)}</time>}
+              </header>
+              <div className="agent-log-tool-region">
+                <span>Call</span>
+                <pre>{toolEntryContent(execution.call)}</pre>
+              </div>
+              <div className="agent-log-tool-region">
+                <span>Result</span>
+                <pre>
+                  {execution.result
+                    ? toolEntryContent(execution.result)
+                    : "Waiting for result…"}
+                </pre>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -210,6 +292,7 @@ function mergeAdjacentToolGroups(entries: AgentLogEntry[]): AgentLogEntry[] {
       merged[merged.length - 1] = {
         ...previous,
         toolCalls: (previous.toolCalls ?? 0) + (entry.toolCalls ?? 0),
+        entries: [...(previous.entries ?? []), ...(entry.entries ?? [])],
       };
       continue;
     }
@@ -257,12 +340,18 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     const adjustment = prependAdjustmentRef.current;
     const viewport = viewportRef.current;
     if (!adjustment || !viewport) return;
-    const frame = window.requestAnimationFrame(() => {
-      viewport.scrollTop =
-        adjustment.scrollTop + viewport.scrollHeight - adjustment.scrollHeight;
-      prependAdjustmentRef.current = null;
+    let adjustmentFrame = 0;
+    const layoutFrame = window.requestAnimationFrame(() => {
+      adjustmentFrame = window.requestAnimationFrame(() => {
+        viewport.scrollTop =
+          adjustment.scrollTop + viewport.scrollHeight - adjustment.scrollHeight;
+        prependAdjustmentRef.current = null;
+      });
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(layoutFrame);
+      if (adjustmentFrame) window.cancelAnimationFrame(adjustmentFrame);
+    };
   }, [log?.startCursor]);
 
   useEffect(() => {
