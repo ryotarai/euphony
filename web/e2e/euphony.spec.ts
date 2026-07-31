@@ -30,6 +30,10 @@ async function clearSessions(page: Page) {
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
       autoSelectAttention: true,
+      terminalLineHeight: 1.25,
+      terminalCursorStyle: "bar",
+      terminalCursorBlink: false,
+      terminalScrollSensitivity: 3,
     },
   });
   expect(settingsResponse.ok()).toBe(true);
@@ -1542,6 +1546,14 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("Terminal", { exact: true }).fill("17");
   await settingsDialog.getByLabel("Terminal font").fill('"Courier New", monospace');
   await settingsDialog.getByLabel("Agent log").fill("16");
+  await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
+  const fontOnlyRowHeight = await page.locator(".xterm-rows").first().evaluate(
+    (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
+  );
+  await settingsDialog.getByLabel("Terminal line height").fill("1.5");
+  await settingsDialog.getByLabel("Cursor style").selectOption("underline");
+  await settingsDialog.getByRole("checkbox", { name: "Cursor blink" }).check();
+  await settingsDialog.getByLabel("Scroll sensitivity").fill("5");
   const autoSelectAttention = settingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
   });
@@ -1557,6 +1569,11 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
     "--agent-log-font-size",
     "16px",
   );
+  await expect
+    .poll(async () => page.locator(".xterm-rows").first().evaluate(
+      (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
+    ))
+    .toBeGreaterThan(fontOnlyRowHeight);
   await page.screenshot({ path: testInfo.outputPath("font-size-settings.png") });
   await page.getByRole("button", { name: "Save settings" }).click();
   await page.reload();
@@ -1569,6 +1586,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
     '"Courier New", monospace',
   );
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
+  await expect(savedSettingsDialog.getByLabel("Terminal line height")).toHaveValue("1.5");
+  await expect(savedSettingsDialog.getByLabel("Cursor style")).toHaveValue("underline");
+  await expect(savedSettingsDialog.getByRole("checkbox", { name: "Cursor blink" })).toBeChecked();
+  await expect(savedSettingsDialog.getByLabel("Scroll sensitivity")).toHaveValue("5");
   await expect(savedSettingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
   })).not.toBeChecked();

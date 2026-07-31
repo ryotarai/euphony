@@ -32,6 +32,10 @@ async function clearSessions(page: Page) {
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
       autoSelectAttention: true,
+      terminalLineHeight: 1.25,
+      terminalCursorStyle: "bar",
+      terminalCursorBlink: false,
+      terminalScrollSensitivity: 3,
     },
   });
   expect(settingsResponse.ok()).toBe(true);
