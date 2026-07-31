@@ -185,6 +185,8 @@ test("opens OSC 8 terminal links without a confirmation dialog", async ({ page }
     .last();
   await expect(linkText).toBeVisible();
   let dialogSeen = false;
+  const popups: Page[] = [];
+  page.on("popup", (popup) => popups.push(popup));
   page.on("dialog", async (dialog) => {
     dialogSeen = true;
     await dialog.dismiss();
@@ -194,6 +196,7 @@ test("opens OSC 8 terminal links without a confirmation dialog", async ({ page }
   const popup = await popupPromise;
 
   await expect.poll(() => popup.url()).toBe("https://example.com/docs");
+  await expect.poll(() => popups.length).toBe(1);
   expect(dialogSeen).toBe(false);
 });
 

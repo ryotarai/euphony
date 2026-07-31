@@ -100,7 +100,7 @@ export function openTerminalLink(uri: string): void {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
 
-  const newWindow = window.open();
+  const newWindow = window.open(parsed.href, "_blank", "noopener,noreferrer");
   if (!newWindow) {
     console.warn("Opening link blocked as opener could not be cleared");
     return;
@@ -110,7 +110,6 @@ export function openTerminalLink(uri: string): void {
   } catch {
     // Some browser shells may reject changing opener.
   }
-  newWindow.location.href = parsed.href;
 }
 
 function defaultTerminal(

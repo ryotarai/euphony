@@ -74,7 +74,7 @@ test("maps finite and unlimited history limits to xterm scrollback rows", () => 
   expect(terminalScrollback(0)).toBe(4294967295);
 });
 
-test("opens an HTTP terminal link without confirmation", () => {
+test("opens an HTTP terminal link with one popup navigation", () => {
   const popup = { location: { href: "" }, opener: window } as unknown as Window;
   const open = vi.spyOn(window, "open").mockReturnValue(popup);
   const confirm = vi.spyOn(window, "confirm");
@@ -82,9 +82,14 @@ test("opens an HTTP terminal link without confirmation", () => {
   openTerminalLink("https://example.com/docs");
 
   expect(confirm).not.toHaveBeenCalled();
-  expect(open).toHaveBeenCalledWith();
+  expect(open).toHaveBeenCalledOnce();
+  expect(open).toHaveBeenCalledWith(
+    "https://example.com/docs",
+    "_blank",
+    "noopener,noreferrer",
+  );
   expect(popup.opener).toBeNull();
-  expect(popup.location.href).toBe("https://example.com/docs");
+  expect(popup.location.href).toBe("");
 });
 
 test("does not open non-HTTP terminal links", () => {
