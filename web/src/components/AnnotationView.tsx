@@ -129,6 +129,10 @@ export function AnnotationView({
     const reader = readerRef.current;
     const selection = window.getSelection();
     if (!root || !reader || !selection) return;
+    if (root.querySelector('.annotation-mermaid[aria-busy="true"]')) {
+      setPendingSelection(null);
+      return;
+    }
     const anchor = selectionAnchor(root, selection);
     if (!anchor) {
       setPendingSelection(null);

@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import type { ApiClient } from "../api";
@@ -30,6 +37,29 @@ const markdownAnnotation: AnnotationSession = {
   createdAt: "2026-07-30T00:00:00Z",
 };
 
+function deferredMermaidRender() {
+  let resolve!: (result: { svg: string }) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<{ svg: string }>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  mermaidMocks.render.mockReturnValueOnce(promise);
+  return { reject, resolve };
+}
+
+function selectText(element: HTMLElement, startOffset: number, endOffset: number) {
+  const text = element.firstChild;
+  if (!text) throw new Error("missing selectable text");
+  const selection = window.getSelection();
+  if (!selection) throw new Error("selection unsupported");
+  const range = document.createRange();
+  range.setStart(text, startOffset);
+  range.setEnd(text, endOffset);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 test("renders Mermaid fenced code as an annotation diagram", async () => {
   const { api } = apiWithComplete();
   render(
@@ -50,10 +80,95 @@ test("renders Mermaid fenced code as an annotation diagram", async () => {
     />,
   );
 
-  const diagram = await screen.findByRole("figure", { name: "Mermaid diagram" });
+  const diagram = screen.getByRole("figure", { name: "Mermaid diagram" });
   expect(diagram).toHaveClass("annotation-mermaid");
-  expect(diagram.querySelector("svg")).toBeVisible();
+  await waitFor(() => expect(diagram.querySelector("svg")).toBeVisible());
   expect(diagram.querySelector("code.language-mermaid")).toBeNull();
+  expect(mermaidMocks.render).toHaveBeenCalledWith(
+    expect.any(String),
+    "flowchart LR\n  Draft --> Review",
+  );
+});
+
+test("blocks annotation selection until a Mermaid diagram renders", async () => {
+  const renderResult = deferredMermaidRender();
+  const { api } = apiWithComplete();
+  render(
+    <AnnotationView
+      annotation={{
+        ...markdownAnnotation,
+        content: [
+          "```mermaid",
+          "flowchart LR",
+          "  Draft --> Review",
+          "```",
+          "",
+          "Select after the diagram.",
+        ].join("\n"),
+      }}
+      api={api}
+      onCompleted={() => undefined}
+    />,
+  );
+
+  const sentence = screen.getByText("Select after the diagram.");
+  selectText(sentence, 0, 12);
+  fireEvent.mouseUp(sentence);
+  expect(screen.queryByRole("button", { name: "Comment" })).toBeNull();
+
+  await act(async () => {
+    renderResult.resolve({
+      svg: '<svg role="img" aria-label="Draft to review diagram"></svg>',
+    });
+  });
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("figure", { name: "Mermaid diagram" })
+        .querySelector("svg"),
+    ).toBeVisible(),
+  );
+
+  selectText(sentence, 0, 12);
+  fireEvent.mouseUp(sentence);
+  expect(screen.getByRole("button", { name: "Comment" })).toBeVisible();
+});
+
+test("allows annotation selection after Mermaid rendering fails", async () => {
+  const renderResult = deferredMermaidRender();
+  const { api } = apiWithComplete();
+  render(
+    <AnnotationView
+      annotation={{
+        ...markdownAnnotation,
+        content: [
+          "```mermaid",
+          "flowchart invalid",
+          "```",
+          "",
+          "Select after the source.",
+        ].join("\n"),
+      }}
+      api={api}
+      onCompleted={() => undefined}
+    />,
+  );
+
+  const sentence = screen.getByText("Select after the source.");
+  selectText(sentence, 0, 12);
+  fireEvent.mouseUp(sentence);
+  expect(screen.queryByRole("button", { name: "Comment" })).toBeNull();
+
+  await act(async () => {
+    renderResult.reject(new Error("Invalid diagram"));
+  });
+  expect(
+    await screen.findByText("Diagram could not be rendered."),
+  ).toBeVisible();
+
+  selectText(sentence, 0, 12);
+  fireEvent.mouseUp(sentence);
+  expect(screen.getByRole("button", { name: "Comment" })).toBeVisible();
 });
 
 function apiWithComplete(implementation = vi.fn().mockResolvedValue({
