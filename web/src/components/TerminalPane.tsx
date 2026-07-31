@@ -347,7 +347,11 @@ export function TerminalPane({
               <span className="attention-dot" aria-hidden="true" />
             </span>
           )}
-          <span className="terminal-tab-source" aria-hidden="true">
+          <span
+            className="terminal-tab-source"
+            aria-hidden="true"
+            style={{ opacity: 0 }}
+          >
             {sourceLabel(source)}
             {secondarySource && ` + ${sourceLabel(secondarySource)}`}
           </span>

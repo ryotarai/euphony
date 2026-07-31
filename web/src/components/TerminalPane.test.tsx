@@ -163,7 +163,7 @@ test("opens a secondary source with Command-click without changing the primary s
     .toHaveAttribute("aria-valuenow", "50");
   expect(activeStates.at(-1)).toBe(false);
   expect(sourceVisibilities.at(-1)).toBe(false);
-  expect(screen.getByText("Terminal + Workspace files")).toBeVisible();
+  expect(screen.getByText("Terminal + Workspace files")).not.toBeVisible();
 });
 
 test("opens a keyboard-accessible secondary source with Command-Enter", () => {
