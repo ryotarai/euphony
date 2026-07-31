@@ -302,9 +302,29 @@ function SessionNavigationContent({
   resizing: boolean;
   setResizing(resizing: boolean): void;
 }) {
-  const { isMobile, setOpenMobile, state } = useSidebar();
+  const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
+
+  useEffect(() => {
+    if (isMobile) return;
+    const toggleWithCommandB = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "b" ||
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+      event.preventDefault();
+      toggleSidebar();
+    };
+    window.addEventListener("keydown", toggleWithCommandB, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", toggleWithCommandB, { capture: true });
+  }, [isMobile, toggleSidebar]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -358,10 +378,14 @@ function SessionNavigationContent({
         mobileDescription="Browse and select terminal sessions."
       >
         <SidebarHeader>
-          <SidebarTrigger
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-expanded={!collapsed}
-          />
+          {!collapsed && (
+            <SidebarTrigger
+              aria-label="Collapse sidebar"
+              aria-expanded="true"
+              aria-keyshortcuts="Meta+B"
+              title="Collapse sidebar (⌘B)"
+            />
+          )}
         </SidebarHeader>
         <SidebarContent>
           <SessionList {...props} settings={settings} />
@@ -406,6 +430,16 @@ function SessionNavigationContent({
         )}
       </Sidebar>
 
+      {!isMobile && collapsed && (
+        <SidebarTrigger
+          className="sidebar-expand"
+          aria-label="Expand sidebar"
+          aria-expanded="false"
+          aria-keyshortcuts="Meta+B"
+          title="Expand sidebar (⌘B)"
+        />
+      )}
+
       <header className="mobile-header">
         <SidebarTrigger
           className="menu-button"
@@ -448,7 +482,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
 
   return (
     <SidebarProvider
-      className="contents"
+      className="sidebar-provider"
       open={!collapsed}
       onOpenChange={setOpen}
       keyboardShortcut={null}

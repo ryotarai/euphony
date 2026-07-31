@@ -56,6 +56,8 @@
   PTY to the terminal track's live width and restore it when the split closes.
 - Bound browser-owned terminal size claims with server-driven WebSocket
   Ping/Pong; do not rely on JavaScript heartbeat timers for liveness.
+- Toggle the desktop sidebar with Meta+B only; keep Control+B available for
+  terminal prefix commands.
 - Exercise public automation features through the built CLI against both the
   Unix socket and TCP API; do not treat handler-only tests as transport proof.
 - Before asking users to install integrations, explain what each hook or skill

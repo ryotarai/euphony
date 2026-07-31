@@ -1500,7 +1500,42 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   ).toBeFocused();
 
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
-  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  const expandSidebar = page.getByRole("button", { name: "Expand sidebar" });
+  await expect(expandSidebar).toBeVisible();
+  await expect.poll(async () =>
+    page.locator(".terminal-stage").evaluate((stage) =>
+      stage.getBoundingClientRect().left
+    )
+  ).toBe(0);
+  const collapsedLayout = await page.evaluate(() => {
+    const stage = document.querySelector<HTMLElement>(".terminal-stage")
+      ?.getBoundingClientRect();
+    const expand = document.querySelector<HTMLElement>(
+      '[aria-label="Expand sidebar"]',
+    )?.getBoundingClientRect();
+    if (!stage || !expand) throw new Error("Collapsed sidebar layout is missing.");
+    return {
+      stageLeft: stage.left,
+      stageRight: stage.right,
+      viewportWidth: window.innerWidth,
+      expandLeft: expand.left,
+      expandRight: expand.right,
+    };
+  });
+  expect(collapsedLayout.stageLeft).toBe(0);
+  expect(collapsedLayout.stageRight).toBe(collapsedLayout.viewportWidth);
+  expect(collapsedLayout.expandLeft).toBeGreaterThanOrEqual(0);
+  expect(collapsedLayout.expandRight).toBeLessThanOrEqual(
+    collapsedLayout.viewportWidth,
+  );
+  await page.screenshot({ path: testInfo.outputPath("collapsed-sidebar.png") });
+
+  await page.keyboard.press("Control+B");
+  await expect(expandSidebar).toBeVisible();
+  await page.keyboard.press("Meta+B");
+  await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+  await page.keyboard.press("Meta+B");
+  await expect(expandSidebar).toBeVisible();
   await page.reload();
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
 });

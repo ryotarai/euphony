@@ -8,10 +8,12 @@ without intercepting Control-B.
 
 ## Root Cause
 
-`SidebarProvider` renders a full-width flex wrapper inside the workspace grid.
-The `contents` utility passed by `SessionNavigation` competes with the
-provider's built-in `flex` class, so the wrapper can continue contributing a
-grid column after the off-canvas sidebar gap reaches zero.
+`SidebarProvider` correctly renders as `display: contents`, and the off-canvas
+sidebar gap reaches zero width. However, the outer desktop `Sidebar` element is
+itself the promoted workspace grid item. Chrome keeps that grid item at the
+previous sidebar width even though its in-flow gap child is zero-width. A
+Playwright diagnostic measured the provider at zero, the gap at zero, and the
+outer sidebar grid item at 420px.
 
 The only desktop trigger currently lives inside the fixed sidebar container.
 Collapsing moves that container and its trigger to a negative horizontal
@@ -22,11 +24,11 @@ missing on-screen control.
 ## Design
 
 Keep the current shadcn off-canvas sidebar and persisted `sidebarCollapsed`
-setting. Give the provider wrapper a dedicated Euphony class whose desktop CSS
-uses `display: contents`, making only the sidebar gap participate in the
-workspace grid. When collapsed, render a second `SidebarTrigger` outside the
-off-canvas container. Position it at the left edge of the pane tab bar and add
-matching tab-bar inset so it never overlaps the Terminal tab.
+setting. Give the provider wrapper a dedicated Euphony class and explicitly
+transition its outer desktop sidebar child between the configured width and
+zero. When collapsed, render a second `SidebarTrigger` outside the off-canvas
+container. Position it at the left edge of the pane tab bar and add matching
+tab-bar inset so it never overlaps the Terminal tab.
 
 Use the provider's existing `toggleSidebar` state path for both buttons and the
 keyboard shortcut. Configure the shortcut as Command-B only: require

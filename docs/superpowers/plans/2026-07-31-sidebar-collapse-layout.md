@@ -4,7 +4,7 @@
 
 **Goal:** Release all sidebar width when collapsed, keep its expand control on-screen, and toggle it with Meta-B but not Control-B.
 
-**Architecture:** Retain the controlled shadcn sidebar and persisted settings. Make the provider transparent to the desktop grid, render a collapsed-state trigger outside the off-canvas container, and route an exact Meta-B shortcut through the existing sidebar context.
+**Architecture:** Retain the controlled shadcn sidebar and persisted settings. Explicitly collapse the outer sidebar grid item, render a collapsed-state trigger outside the off-canvas container, and route an exact Meta-B shortcut through the existing sidebar context.
 
 **Tech Stack:** React 19, TypeScript, Tailwind CSS 4, Vitest, Testing Library, Playwright
 
@@ -20,6 +20,7 @@
 ### Task 1: Repair desktop sidebar collapse and keyboard access
 
 **Files:**
+- Modify: `AGENTS.md:55-62`
 - Modify: `web/src/components/SessionNavigation.tsx:300-470`
 - Modify: `web/src/components/SessionNavigation.test.tsx:480-525`
 - Modify: `web/src/styles.css:1327-1335`
@@ -71,8 +72,10 @@ expect(collapsedLayout.expandRight).toBeLessThanOrEqual(
 );
 ```
 
-Also use `page.keyboard.press("Meta+B")` to expand and collapse, then
-`page.keyboard.press("Control+B")` to prove the prefix guide still opens.
+Also use `page.keyboard.press("Control+B")` to prove the sidebar remains
+collapsed, then `page.keyboard.press("Meta+B")` to expand and collapse. Other
+end-to-end cases already verify Control-B prefix handling when that prefix is
+configured; this scenario changes the configured prefix to Control-A.
 
 - [ ] **Step 3: Run the focused tests and verify RED**
 
@@ -116,10 +119,10 @@ useEffect(() => {
 }, [toggleSidebar]);
 ```
 
-Render `.sidebar-expand` outside `<Sidebar>` while collapsed. In CSS, set the
-desktop provider to `display: contents`, fix the expand button into the tab-bar
-corner, and inset `.terminal-pane-tabs` only while the workspace contains that
-button.
+Render `.sidebar-expand` outside `<Sidebar>` while collapsed. In CSS, keep the
+provider at `display: contents`, transition its outer sidebar child to zero
+width for `data-state="collapsed"`, fix the expand button into the tab-bar
+corner, and inset the tab rail only while the workspace contains that button.
 
 - [ ] **Step 5: Run focused tests and verify GREEN**
 
