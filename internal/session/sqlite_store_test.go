@@ -116,7 +116,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		defaults.InterfaceFontSize != 16 || defaults.TerminalFontSize != 14 ||
 		defaults.TerminalFontFamily != DefaultTerminalFontFamily ||
 		defaults.AgentLogFontSize != 14 || defaults.TerminalHistoryLimit != 1048576 ||
-		!defaults.AutoSelectAttention {
+		!defaults.AutoSelectAttention || !defaults.AutoDeselectRunning {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 	want := Settings{
@@ -124,7 +124,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 		TerminalFontFamily:   "JetBrains Mono, monospace",
-		TerminalHistoryLimit: 0, AutoSelectAttention: false,
+		TerminalHistoryLimit: 0, AutoSelectAttention: false, AutoDeselectRunning: false,
 	}
 	if err := store.SaveSettings(context.Background(), want); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
@@ -305,7 +305,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
 		TerminalFontFamily:   DefaultTerminalFontFamily,
-		TerminalHistoryLimit: 1048576, AutoSelectAttention: true,
+		TerminalHistoryLimit: 1048576, AutoSelectAttention: true, AutoDeselectRunning: true,
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)
