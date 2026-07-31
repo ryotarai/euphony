@@ -1908,16 +1908,6 @@ input {
   opacity: 0.5;
 }
 
-.terminal-tab-source {
-  overflow: hidden;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .terminal-tab-meta {
   display: flex;
   min-width: 0;

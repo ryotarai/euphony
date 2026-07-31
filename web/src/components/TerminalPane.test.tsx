@@ -163,7 +163,7 @@ test("opens a secondary source with Command-click without changing the primary s
     .toHaveAttribute("aria-valuenow", "50");
   expect(activeStates.at(-1)).toBe(false);
   expect(sourceVisibilities.at(-1)).toBe(true);
-  expect(screen.getByText("Terminal + Workspace files")).not.toBeVisible();
+  expect(screen.queryByText("Terminal + Workspace files")).not.toBeInTheDocument();
 });
 
 test("reports Terminal as visible without activating it on the secondary side", async () => {
