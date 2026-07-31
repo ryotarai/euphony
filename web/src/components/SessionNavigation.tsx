@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useRef,
   useState,
 } from "react";
 import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
@@ -312,12 +311,11 @@ function SessionNavigationContent({
   const { isMobile, setOpenMobile, state } = useSidebar();
   const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
-  const terminalTreeRef = useRef<HTMLDivElement>(null);
+  const [terminalTree, setTerminalTree] = useState<HTMLDivElement | null>(null);
   const [hasTerminalTreeOverflowBelow, setHasTerminalTreeOverflowBelow] =
     useState(false);
 
   const updateTerminalTreeOverflow = useCallback(() => {
-    const terminalTree = terminalTreeRef.current;
     if (!terminalTree) return;
     const hasOverflowBelow =
       terminalTree.scrollTop + terminalTree.clientHeight <
@@ -325,12 +323,15 @@ function SessionNavigationContent({
     setHasTerminalTreeOverflowBelow((current) =>
       current === hasOverflowBelow ? current : hasOverflowBelow
     );
-  }, []);
+  }, [terminalTree]);
 
   useLayoutEffect(() => {
+    if (!terminalTree) {
+      setHasTerminalTreeOverflowBelow(false);
+      return;
+    }
     updateTerminalTreeOverflow();
-    const terminalTree = terminalTreeRef.current;
-    if (!terminalTree || typeof ResizeObserver === "undefined") return;
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(updateTerminalTreeOverflow);
     observer.observe(terminalTree);
     if (terminalTree.firstElementChild) {
@@ -341,6 +342,7 @@ function SessionNavigationContent({
     collapsed,
     props.sessions,
     sidebarWidth,
+    terminalTree,
     updateTerminalTreeOverflow,
   ]);
 
@@ -402,7 +404,7 @@ function SessionNavigationContent({
           />
         </SidebarHeader>
         <SidebarContent
-          ref={terminalTreeRef}
+          ref={setTerminalTree}
           className="terminal-tree-scroll"
           data-overflow-bottom={hasTerminalTreeOverflowBelow || undefined}
           onScroll={updateTerminalTreeOverflow}
