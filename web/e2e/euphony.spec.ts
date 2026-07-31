@@ -30,6 +30,7 @@ async function clearSessions(page: Page) {
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
       autoSelectAttention: true,
+      autoDeselectRunning: true,
     },
   });
   expect(settingsResponse.ok()).toBe(true);
@@ -1061,6 +1062,25 @@ test("follows a focused terminal when polling identifies it as a Claude agent", 
   expect(new URL(page.url()).searchParams.getAll("cwd")).toEqual([]);
 });
 
+test("deselects a terminal when its agent starts running", async ({ page }) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  await createSession(page, "Second", "/tmp");
+
+  await page.goto("/?token=test-token");
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Deselect First" })).toBeChecked();
+  await page.getByLabel("First pane", { exact: true }).click();
+
+  await reportAgent(page, first.id, "claude", "Working", "running");
+
+  await expect(page.getByLabel("First terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No signal yet.")).toBeVisible();
+  const parameters = new URL(page.url()).searchParams;
+  expect(parameters.getAll("terminal")).toEqual([]);
+  expect(parameters.has("focus")).toBe(false);
+});
+
 test("inherits status filters into nested cwd controls and supports child overrides", async ({
   page,
 }, testInfo) => {
@@ -1545,8 +1565,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const autoSelectAttention = settingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
   });
+  const autoDeselectRunning = settingsDialog.getByRole("checkbox", {
+    name: "Auto-deselect running agent terminals",
+  });
   await expect(autoSelectAttention).toBeChecked();
+  await expect(autoDeselectRunning).toBeChecked();
   await autoSelectAttention.uncheck();
+  await autoDeselectRunning.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS(
@@ -1571,6 +1596,9 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(savedSettingsDialog.getByLabel("Agent log")).toHaveValue("16");
   await expect(savedSettingsDialog.getByRole("checkbox", {
     name: "Auto-select attention terminals",
+  })).not.toBeChecked();
+  await expect(savedSettingsDialog.getByRole("checkbox", {
+    name: "Auto-deselect running agent terminals",
   })).not.toBeChecked();
   await savedSettingsDialog.getByRole("checkbox", { name: "Unlimited history" }).check();
   await expect(savedSettingsDialog.getByLabel("History buffer")).toBeDisabled();

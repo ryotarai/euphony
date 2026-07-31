@@ -106,6 +106,7 @@ const defaultSettings: Settings = {
   agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
   autoSelectAttention: true,
+  autoDeselectRunning: true,
 };
 
 function historyLimitDraft(limit: number): string {
@@ -229,6 +230,21 @@ export function agentLaunchTransitions(
       Boolean(session.agent) &&
       previousActivity.get(session.id) === "terminal" &&
       sessionActivity(session) !== "terminal",
+  );
+}
+
+export function agentRunningTransitions(
+  previous: Session[],
+  next: Session[],
+): Session[] {
+  const previousStatuses = new Map(
+    previous.map((session) => [session.id, session.agentStatus]),
+  );
+  return next.filter(
+    (session) =>
+      Boolean(session.agent) &&
+      session.agentStatus === "running" &&
+      previousStatuses.get(session.id) !== "running",
   );
 }
 
@@ -420,6 +436,9 @@ export function App({
   const [autoSelectAttentionDraft, setAutoSelectAttentionDraft] = useState(
     settings.autoSelectAttention,
   );
+  const [autoDeselectRunningDraft, setAutoDeselectRunningDraft] = useState(
+    settings.autoDeselectRunning,
+  );
   const [terminalFontFamilyDraft, setTerminalFontFamilyDraft] = useState(
     settings.terminalFontFamily,
   );
@@ -460,6 +479,7 @@ export function App({
   const previousSessionsRef = useRef<Session[]>([]);
   const previousSessionOrderRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
+  const pendingAgentRunningIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const selectionRevisionRef = useRef<number | null>(null);
@@ -520,6 +540,9 @@ export function App({
     const transitions = attentionTransitions(previous, items);
     pendingAgentLaunchIDsRef.current = new Set(
       agentLaunchTransitions(previous, items).map((session) => session.id),
+    );
+    pendingAgentRunningIDsRef.current = new Set(
+      agentRunningTransitions(previous, items).map((session) => session.id),
     );
     pendingAttentionSelectionIDsRef.current = new Set(
       transitions.map((session) => session.id),
@@ -715,6 +738,7 @@ export function App({
       setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
       setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
       setAutoSelectAttentionDraft(loaded.autoSelectAttention);
+      setAutoDeselectRunningDraft(loaded.autoDeselectRunning);
       setTerminalFontFamilyDraft(loaded.terminalFontFamily);
     }).catch((error: unknown) => {
       if (active) {
@@ -1036,6 +1060,38 @@ export function App({
     pendingAttentionSelectionIDsRef.current.clear();
     attentionIDs.forEach((id) => filterSelectedIDsRef.current.delete(id));
 
+    const runningTransitionIDs = [...pendingAgentRunningIDsRef.current];
+    pendingAgentRunningIDsRef.current.clear();
+    for (const id of runningTransitionIDs) {
+      pendingAgentLaunchIDsRef.current.delete(id);
+    }
+    if (settings.autoDeselectRunning && runningTransitionIDs.length > 0) {
+      const runningIDs = new Set(runningTransitionIDs);
+      const next = selectedIDs.filter(
+        (id) => pinnedIDs.includes(id) || !runningIDs.has(id),
+      );
+      if (next.join("\0") !== selectedIDs.join("\0")) {
+        for (const id of runningTransitionIDs) {
+          manualSelectedIDsRef.current.delete(id);
+          filterSelectedIDsRef.current.delete(id);
+        }
+        const nextFocus =
+          focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
+        if (syncSelection) markLocalSelectionMutation();
+        setSelectedIDs(next);
+        setFocusedID(nextFocus);
+        writeWorkspaceToURL(
+          next,
+          pinnedIDs,
+          nextFocus,
+          statusFilters,
+          cwdFilters,
+          "replace",
+        );
+        return;
+      }
+    }
+
     if (syncSelection) {
       const promotedID =
         focusedID &&
@@ -1193,6 +1249,7 @@ export function App({
     pinnedIDs,
     focusedID,
     settings.autoSelectAttention,
+    settings.autoDeselectRunning,
   ]);
 
   useEffect(() => {
@@ -2023,6 +2080,7 @@ export function App({
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setAutoSelectAttentionDraft(settings.autoSelectAttention);
+    setAutoDeselectRunningDraft(settings.autoDeselectRunning);
     setTerminalFontFamilyDraft(settings.terminalFontFamily);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
@@ -2107,6 +2165,7 @@ export function App({
       agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
       autoSelectAttention: autoSelectAttentionDraft,
+      autoDeselectRunning: autoDeselectRunningDraft,
     });
     setSettingsOpen(false);
   }
@@ -2607,6 +2666,22 @@ export function App({
                   </FieldLabel>
                   <FieldDescription>
                     Add them to the workspace without moving focus.
+                  </FieldDescription>
+                </FieldContent>
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="auto-deselect-running"
+                  checked={autoDeselectRunningDraft}
+                  onCheckedChange={(checked) =>
+                    setAutoDeselectRunningDraft(Boolean(checked))}
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="auto-deselect-running">
+                    Auto-deselect running agent terminals
+                  </FieldLabel>
+                  <FieldDescription>
+                    Remove them from the workspace when their agent starts running.
                   </FieldDescription>
                 </FieldContent>
               </Field>
