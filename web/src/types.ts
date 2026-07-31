@@ -32,6 +32,7 @@ export interface Settings {
   agentLogFontSize: number;
   terminalHistoryLimit: number;
   autoSelectAttention: boolean;
+  autoDeselectRunning: boolean;
 }
 
 export interface CwdSelectionFilter {

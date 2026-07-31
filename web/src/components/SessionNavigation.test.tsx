@@ -29,6 +29,7 @@ const settings: Settings = {
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,
+  autoDeselectRunning: true,
 };
 
 const sessions: Session[] = [

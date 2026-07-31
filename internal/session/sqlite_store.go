@@ -83,7 +83,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_font_family TEXT NOT NULL DEFAULT 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
 			agent_log_font_size INTEGER NOT NULL DEFAULT 14,
 			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576,
-			auto_select_attention INTEGER NOT NULL DEFAULT 1
+			auto_select_attention INTEGER NOT NULL DEFAULT 1,
+			auto_deselect_running INTEGER NOT NULL DEFAULT 1
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -157,6 +158,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE settings ADD COLUMN auto_select_attention INTEGER NOT NULL DEFAULT 1",
 		); err != nil {
 			return fmt.Errorf("add auto-select attention setting: %w", err)
+		}
+	}
+	hasAutoDeselectRunning, err := s.hasColumn(ctx, "settings", "auto_deselect_running")
+	if err != nil {
+		return err
+	}
+	if !hasAutoDeselectRunning {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN auto_deselect_running INTEGER NOT NULL DEFAULT 1",
+		); err != nil {
+			return fmt.Errorf("add auto-deselect running setting: %w", err)
 		}
 	}
 	hasTerminalFontFamily, err := s.hasColumn(ctx, "settings", "terminal_font_family")
@@ -251,11 +263,11 @@ func (s *SQLiteStore) hasColumn(ctx context.Context, table, column string) (bool
 
 func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
-	var collapsed, autoSelectAttention int
+	var collapsed, autoSelectAttention, autoDeselectRunning int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
-			terminal_history_limit, auto_select_attention
+			terminal_history_limit, auto_select_attention, auto_deselect_running
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -268,12 +280,14 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&result.AgentLogFontSize,
 		&result.TerminalHistoryLimit,
 		&autoSelectAttention,
+		&autoDeselectRunning,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
 	}
 	result.SidebarCollapsed = collapsed != 0
 	result.AutoSelectAttention = autoSelectAttention != 0
+	result.AutoDeselectRunning = autoDeselectRunning != 0
 	return result, nil
 }
 
@@ -286,15 +300,19 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	if settings.AutoSelectAttention {
 		autoSelectAttention = 1
 	}
+	autoDeselectRunning := 0
+	if settings.AutoDeselectRunning {
+		autoDeselectRunning = 1
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
-			terminal_history_limit = ?, auto_select_attention = ?
+			terminal_history_limit = ?, auto_select_attention = ?, auto_deselect_running = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
-		settings.TerminalHistoryLimit, autoSelectAttention)
+		settings.TerminalHistoryLimit, autoSelectAttention, autoDeselectRunning)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
