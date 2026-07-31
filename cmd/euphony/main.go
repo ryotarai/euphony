@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -122,6 +123,11 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
+	tcpListener, actualAddress, err := listenTCP(address)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tcpListener.Close() }()
 	databasePath := os.Getenv("EUPHONY_DB")
 	codexDirectory := os.Getenv("CODEX_HOME")
 	claudeDirectory := os.Getenv("CLAUDE_CONFIG_DIR")
@@ -152,7 +158,7 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	srv, err := server.New(server.Config{
 		Token:              token,
 		Shell:              os.Getenv("SHELL"),
-		HookURL:            "http://" + address + "/api/hooks/terminal",
+		HookURL:            "http://" + actualAddress + "/api/hooks/terminal",
 		DatabasePath:       databasePath,
 		CodexSessionIndex:  filepath.Join(codexDirectory, "session_index.jsonl"),
 		CodexSessionsRoot:  codexSessionsRoot,
@@ -163,17 +169,19 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	}
 	socketPath, err := localapi.DefaultSocketPath()
 	if err != nil {
+		_ = srv.Close(context.Background())
 		return err
 	}
 	unixListener, cleanupSocket, err := localapi.Listen(socketPath)
 	if err != nil {
+		_ = srv.Close(context.Background())
 		return err
 	}
 	defer cleanupSocket()
 
-	log.Printf("Euphony listening on http://%s and unix://%s", address, socketPath)
+	log.Printf("Euphony listening on http://%s and unix://%s", actualAddress, socketPath)
 	httpServer := &http.Server{
-		Addr:              address,
+		Addr:              actualAddress,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -183,13 +191,23 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	}
 	result := make(chan error, 2)
 	go func() {
-		result <- httpServer.ListenAndServe()
+		result <- httpServer.Serve(tcpListener)
 	}()
 	go func() {
 		result <- unixServer.Serve(unixListener)
 	}()
+	readyFile := os.Getenv("EUPHONY_READY_FILE")
+	if readyFile != "" {
+		if err := writeReadyFile(readyFile, "http://"+actualAddress); err != nil {
+			_ = httpServer.Close()
+			_ = unixServer.Close()
+			_ = srv.Close(context.Background())
+			return err
+		}
+		defer func() { _ = os.Remove(readyFile) }()
+	}
 	if generatedToken {
-		url := browserURL(address, token)
+		url := browserURL(actualAddress, token)
 		if err := openBrowser(url); err != nil {
 			log.Printf("Open %s in a browser: %v", url, err)
 		}
@@ -224,6 +242,41 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 		return unixShutdownErr
 	}
 	return sessionErr
+}
+
+func listenTCP(address string) (net.Listener, string, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, "", fmt.Errorf("listen on %s: %w", address, err)
+	}
+	return listener, listener.Addr().String(), nil
+}
+
+func writeReadyFile(path, baseURL string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create readiness directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".euphony-ready-*")
+	if err != nil {
+		return fmt.Errorf("create readiness file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("protect readiness file: %w", err)
+	}
+	if _, err := io.WriteString(temporary, baseURL+"\n"); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write readiness file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close readiness file: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("publish readiness file: %w", err)
+	}
+	return nil
 }
 
 func runAgentSetupPreflight(

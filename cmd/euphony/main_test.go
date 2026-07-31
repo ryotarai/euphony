@@ -218,6 +218,38 @@ func TestBrowserURLIncludesEscapedToken(t *testing.T) {
 	}
 }
 
+func TestListenTCPResolvesEphemeralAddress(t *testing.T) {
+	listener, address, err := listenTCP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listenTCP() error = %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	if address == "127.0.0.1:0" || !strings.HasPrefix(address, "127.0.0.1:") {
+		t.Fatalf("listenTCP() address = %q, want an assigned loopback port", address)
+	}
+}
+
+func TestWriteReadyFileCreatesPrivateAtomicURLFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "ready")
+	if err := writeReadyFile(path, "http://127.0.0.1:43210"); err != nil {
+		t.Fatalf("writeReadyFile() error = %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read readiness file: %v", err)
+	}
+	if string(content) != "http://127.0.0.1:43210\n" {
+		t.Fatalf("readiness content = %q", content)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat readiness file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("readiness mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
 func TestAgentLogRootsRespectConfiguredAgentHomes(t *testing.T) {
 	codex, claude := agentLogRoots(
 		"/home/me", "/profiles/codex", "/profiles/claude",
