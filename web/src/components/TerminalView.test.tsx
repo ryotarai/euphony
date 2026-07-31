@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   fitTerminalIfVisible,
+  openTerminalLink,
   terminalScrollback,
   TerminalView,
   type TerminalDriver,
@@ -71,6 +72,27 @@ test("maps finite and unlimited history limits to xterm scrollback rows", () => 
   expect(terminalScrollback(1024 * 1024)).toBe(8192);
   expect(terminalScrollback(4095 * 1024 * 1024)).toBe(100000);
   expect(terminalScrollback(0)).toBe(4294967295);
+});
+
+test("opens an HTTP terminal link without confirmation", () => {
+  const popup = { location: { href: "" }, opener: window } as unknown as Window;
+  const open = vi.spyOn(window, "open").mockReturnValue(popup);
+  const confirm = vi.spyOn(window, "confirm");
+
+  openTerminalLink("https://example.com/docs");
+
+  expect(confirm).not.toHaveBeenCalled();
+  expect(open).toHaveBeenCalledWith();
+  expect(popup.opener).toBeNull();
+  expect(popup.location.href).toBe("https://example.com/docs");
+});
+
+test("does not open non-HTTP terminal links", () => {
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+  openTerminalLink("javascript:alert(1)");
+
+  expect(open).not.toHaveBeenCalled();
 });
 
 test("updates scrollback without reconnecting the terminal", async () => {

@@ -77,6 +77,28 @@ export function terminalScrollback(historyLimit: number): number {
   );
 }
 
+export function openTerminalLink(uri: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+
+  const newWindow = window.open();
+  if (!newWindow) {
+    console.warn("Opening link blocked as opener could not be cleared");
+    return;
+  }
+  try {
+    newWindow.opener = null;
+  } catch {
+    // Some browser shells may reject changing opener.
+  }
+  newWindow.location.href = parsed.href;
+}
+
 function defaultTerminal(
   fontFamily: string,
   fontSize: number,
@@ -90,6 +112,9 @@ function defaultTerminal(
     fontFamily,
     fontSize,
     lineHeight: 1.25,
+    linkHandler: {
+      activate: (_event, uri) => openTerminalLink(uri),
+    },
     scrollback,
     scrollSensitivity: 3,
     theme: {
