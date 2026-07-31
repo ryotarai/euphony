@@ -226,6 +226,67 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
     .not.toHaveAccessibleDescription("Needs attention");
 });
 
+test("orders terminal rows by attention and lifecycle priority", () => {
+  const ordered = [
+    {
+      ...sessions[0],
+      id: "terminal",
+      name: "Terminal",
+      agentStatus: undefined,
+      agentTitle: "",
+    },
+    {
+      ...sessions[0],
+      id: "running",
+      name: "Running",
+      agentStatus: "running",
+      agentTitle: "",
+    },
+    {
+      ...sessions[0],
+      id: "waiting",
+      name: "Waiting",
+      agentStatus: "waiting",
+      agentTitle: "",
+    },
+    {
+      ...sessions[0],
+      id: "blocked",
+      name: "Blocked",
+      agentStatus: "blocked",
+      agentTitle: "",
+    },
+    {
+      ...sessions[0],
+      id: "attention",
+      name: "Needs review",
+      agentStatus: "waiting",
+      agentTitle: "",
+      needsAttention: true,
+    },
+  ];
+  render(
+    <SessionNavigation
+      sessions={ordered}
+      selectedIDs={[]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  const labels = screen
+    .getByLabelText("Terminal sessions")
+    .querySelectorAll<HTMLButtonElement>(".session-select");
+  expect([...labels].map((button) => button.getAttribute("aria-label"))).toEqual([
+    "Select Needs review",
+    "Select Blocked",
+    "Select Waiting",
+    "Select Running",
+    "Select Terminal",
+  ]);
+});
+
 test("labels rows with agent titles, process names, and fallback names", () => {
   const labeled = [
     {

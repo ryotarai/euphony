@@ -68,6 +68,18 @@ function activity(session: Session) {
   return session.state === "running" ? "terminal" : session.state;
 }
 
+const terminalRowPriority = new Map([
+  ["blocked", 1],
+  ["waiting", 2],
+  ["running", 3],
+  ["terminal", 4],
+]);
+
+function terminalPriority(session: Session) {
+  if (session.needsAttention) return 0;
+  return terminalRowPriority.get(activity(session)) ?? 100;
+}
+
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
@@ -95,7 +107,9 @@ function groupSessionsByCwd(sessions: Session[]) {
   }
   return [...groups].map(([cwd, groupedSessions]) => ({
     cwd,
-    sessions: groupedSessions,
+    sessions: [...groupedSessions].sort(
+      (left, right) => terminalPriority(left) - terminalPriority(right),
+    ),
   }));
 }
 
