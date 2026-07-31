@@ -397,17 +397,6 @@ input {
   text-align: left;
 }
 
-.session-agent-icon {
-  width: 1.12rem;
-  height: 1.12rem;
-  object-fit: contain;
-  opacity: 0.82;
-}
-
-.session-select[aria-current="true"] .session-agent-icon {
-  opacity: 1;
-}
-
 .session-select[aria-current="true"] {
   color: #dce5e8;
   background: #242b32;
@@ -1147,11 +1136,6 @@ input:focus-visible {
   background: #273854;
 }
 
-.session-agent-icon {
-  width: 1rem;
-  height: 1rem;
-}
-
 .terminal-identity {
   gap: 0.12rem;
 }
@@ -1512,14 +1496,6 @@ input:focus-visible,
 .session-select[aria-current="true"] {
   color: var(--sidebar-accent-foreground);
   background: var(--sidebar-accent);
-}
-
-.session-agent-icon {
-  width: 1rem;
-  height: 1rem;
-  flex: 0 0 auto;
-  object-fit: contain;
-  opacity: 0.8;
 }
 
 .session-status-icon {

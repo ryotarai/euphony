@@ -226,6 +226,47 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
     .not.toHaveAccessibleDescription("Needs attention");
 });
 
+test("labels rows with agent titles, process names, and fallback names", () => {
+  const labeled = [
+    {
+      ...sessions[0],
+      id: "title",
+      cwd: "/workspace/labels",
+      agentTitle: "Review changes",
+      processName: "codex",
+    },
+    {
+      ...sessions[1],
+      id: "process",
+      cwd: "/workspace/labels",
+      agentTitle: "   ",
+      processName: "ps",
+    },
+    {
+      ...sessions[2],
+      id: "fallback",
+      cwd: "/workspace/labels",
+      name: "Fallback terminal",
+      processName: "",
+    },
+  ];
+  render(
+    <SessionNavigation
+      sessions={labeled}
+      selectedIDs={[]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(screen.getByText("Review changes")).toBeInTheDocument();
+  expect(screen.getByText("ps")).toBeInTheDocument();
+  expect(screen.getByText("Fallback terminal")).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "Claude" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "Codex" })).not.toBeInTheDocument();
+});
+
 test("creates a terminal from the cwd heading", async () => {
   const onCreate = vi.fn();
   const user = userEvent.setup();

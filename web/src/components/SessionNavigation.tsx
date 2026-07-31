@@ -16,8 +16,6 @@ import {
   SquareTerminalIcon,
   Trash2Icon,
 } from "lucide-react";
-import claudeIcon from "../assets/claude.svg";
-import openAIIcon from "../assets/openai.svg";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Sidebar,
@@ -84,10 +82,8 @@ export function cwdFilterKey(status: string, cwd: string) {
   return `${status}\u0000${cwd}`;
 }
 
-function agentIcon(session: Session) {
-  if (session.agent === "codex") return { source: openAIIcon, label: "Codex" };
-  if (session.agent === "claude") return { source: claudeIcon, label: "Claude" };
-  return null;
+function sessionLabel(session: Session) {
+  return session.agentTitle?.trim() || session.processName?.trim() || session.name;
 }
 
 function groupSessionsByCwd(sessions: Session[]) {
@@ -167,7 +163,6 @@ function SessionList(props: SessionNavigationProps) {
           <SidebarGroupContent>
             <SidebarMenu className="cwd-terminal-list">
               {cwdSessions.map((session) => {
-                const icon = agentIcon(session);
                 const selected = props.selectedIDs.includes(session.id);
                 const pinned = props.pinnedIDs?.includes(session.id) ?? false;
                 const attentionDescriptionID = session.needsAttention
@@ -211,16 +206,9 @@ function SessionList(props: SessionNavigationProps) {
                       }
                     >
                       {sessionStatusIcon(activity(session))}
-                      {icon && (
-                        <img
-                          className="session-agent-icon"
-                          src={icon.source}
-                          alt={icon.label}
-                        />
-                      )}
                       <span className="terminal-identity">
                         <span className="agent-title">
-                          {session.agentTitle || session.name}
+                          {sessionLabel(session)}
                         </span>
                       </span>
                       {session.needsAttention && (
@@ -458,7 +446,7 @@ function SessionNavigationContent({
           className="menu-button"
           aria-label="Open terminal menu"
         />
-        <span>{selected?.name ?? "Euphony"}</span>
+        <span>{selected ? sessionLabel(selected) : "Euphony"}</span>
       </header>
     </>
   );

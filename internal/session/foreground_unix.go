@@ -47,3 +47,11 @@ func (s *Session) ForegroundCommand() (string, error) {
 	}
 	return strings.TrimSpace(string(output)), nil
 }
+
+func (s *Session) ForegroundCommandName() (string, error) {
+	command, err := s.ForegroundCommand()
+	if err != nil {
+		return "", err
+	}
+	return foregroundProcessName(command), nil
+}
