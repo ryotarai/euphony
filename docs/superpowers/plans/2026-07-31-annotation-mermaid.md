@@ -202,7 +202,82 @@ git add web/e2e/automation.spec.ts
 git commit -m "test(web): cover Mermaid annotation workflow"
 ```
 
-### Task 3: Integrate the Verified Branch
+### Task 3: Advertise Mermaid in the Annotation Skill
+
+**Files:**
+- Modify: `internal/setup/setup_test.go`
+- Modify: `internal/setup/skills/euphony-annotate/SKILL.md`
+
+**Interfaces:**
+- Consumes: `annotationSkill`, the embedded `euphony-annotate` skill installed
+  byte-for-byte for Codex and Claude.
+- Produces: installed skill guidance that explicitly permits fenced `mermaid`
+  blocks in Markdown review files and shows the supported syntax.
+
+- [ ] **Step 1: Write the failing installed-artifact test**
+
+Extend the existing installed skill assertions in
+`TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent`:
+
+```go
+if !strings.Contains(string(skill), "```mermaid") {
+    t.Fatalf("installed skill %s does not document Mermaid diagrams:\n%s", path, skill)
+}
+```
+
+This catches an `euphony setup` build that distributes the annotation skill
+without the Mermaid capability requested by the user.
+
+- [ ] **Step 2: Run the focused setup test and verify RED**
+
+Run:
+
+```bash
+go test ./internal/setup -run TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent
+```
+
+Expected: FAIL because the currently bundled skill does not contain a
+`mermaid` fence.
+
+- [ ] **Step 3: Add concise Mermaid guidance**
+
+Add a `Markdown Diagrams` section after the main workflow. State that Markdown
+review files may include fenced `mermaid` blocks and that Euphony renders them
+as diagrams in the Annotation document. Include one minimal example:
+
+````markdown
+```mermaid
+flowchart LR
+  Draft --> Review --> Revise
+```
+````
+
+Do not add a Mermaid language reference, change the skill trigger, or change
+HTML guidance.
+
+- [ ] **Step 4: Verify the installed skill**
+
+Run:
+
+```bash
+go test ./internal/setup -run TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent
+python3 /Users/ryotarai/.codex/skills/.system/skill-creator/scripts/quick_validate.py internal/setup/skills/euphony-annotate
+```
+
+Expected: the Go test passes for both installed Codex and Claude skill copies,
+and skill validation exits 0.
+
+- [ ] **Step 5: Commit the skill guidance**
+
+```bash
+git add docs/superpowers/specs/2026-07-31-annotation-mermaid-design.md \
+  docs/superpowers/plans/2026-07-31-annotation-mermaid.md \
+  internal/setup/setup_test.go \
+  internal/setup/skills/euphony-annotate/SKILL.md
+git commit -m "docs(skill): advertise Mermaid annotations"
+```
+
+### Task 4: Integrate the Verified Branch
 
 **Files:**
 - Verify: all files changed by Tasks 1 and 2

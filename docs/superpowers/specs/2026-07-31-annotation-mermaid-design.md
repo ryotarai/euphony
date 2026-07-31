@@ -43,6 +43,14 @@ context-independent so Agent Log and Annotation render the same diagram
 without leaking Agent Log font-size variables into Annotation. No new controls,
 cards, colors, or motion are introduced.
 
+## Agent Skill Guidance
+
+The bundled `euphony-annotate` skill explicitly tells agents that Markdown
+review files may contain fenced `mermaid` blocks and that Euphony renders them
+as diagrams in the Annotation document. A minimal flowchart example makes the
+supported fence syntax discoverable without expanding the skill into a Mermaid
+language reference.
+
 ## Testing
 
 - A React test proves a valid Mermaid fence in an Annotation renders an SVG
@@ -53,6 +61,8 @@ cards, colors, or motion are introduced.
   failed-render source fallback for the shared component.
 - The annotation CLI Playwright scenario includes a real Mermaid fence and
   verifies an SVG is visible in the Annotation document.
+- The setup test proves the installed Codex and Claude skill artifact includes
+  Mermaid fence guidance and remains byte-identical to the bundled skill.
 - The focused unit tests, web typecheck, production build, full Go suite, and
   focused Playwright scenario run before integration.
 
