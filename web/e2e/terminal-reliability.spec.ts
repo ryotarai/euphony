@@ -155,6 +155,39 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
   await expect(cursor).not.toHaveClass(/xterm-cursor-blink/);
 });
 
+test("opens OSC 8 terminal links without a confirmation dialog", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Link terminal");
+  await page.goto("/?token=test-token");
+
+  const terminal = page.getByLabel("Link terminal terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await terminal.click();
+  await terminal.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.type(
+    "printf '\\033]8;;https://example.com/docs\\033\\\\Example link\\033]8;;\\033\\\\\\n'",
+  );
+  await page.keyboard.press("Enter");
+
+  const linkText = terminal
+    .locator(".xterm-rows span")
+    .filter({ hasText: "Example link" })
+    .last();
+  await expect(linkText).toBeVisible();
+  let dialogSeen = false;
+  page.on("dialog", async (dialog) => {
+    dialogSeen = true;
+    await dialog.dismiss();
+  });
+  const popupPromise = page.waitForEvent("popup");
+  await linkText.click({ force: true });
+  const popup = await popupPromise;
+
+  await expect.poll(() => popup.url()).toBe("https://example.com/docs");
+  expect(dialogSeen).toBe(false);
+});
+
 test("shares the smallest terminal size across differently sized browsers", async ({
   browser,
   page,
