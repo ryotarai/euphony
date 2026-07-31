@@ -26,7 +26,7 @@
 - Consumes: the existing `SessionNavigation` props and session metadata.
 - Produces: a regression assertion for the rendered `Select …` button order.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a test that renders five sessions in the same cwd in the opposite order and
 asserts the desired order:
@@ -70,7 +70,7 @@ test("orders terminal rows by attention and lifecycle priority", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+- [x] **Step 2: Run the focused test to verify it fails**
 
 Run:
 
@@ -81,7 +81,7 @@ cd web && npm test -- --run src/components/SessionNavigation.test.tsx
 Expected: FAIL because the current implementation preserves the input order
 inside the cwd group.
 
-- [ ] **Step 3: Commit the failing test**
+- [x] **Step 3: Commit the failing test**
 
 ```bash
 git add web/src/components/SessionNavigation.test.tsx
@@ -99,7 +99,7 @@ git commit -m "test: specify terminal list priority"
 - Produces: cwd groups whose child sessions render in the specified priority
   order while preserving equal-priority input order.
 
-- [ ] **Step 1: Add the explicit priority comparator**
+- [x] **Step 1: Add the explicit priority comparator**
 
 Define the built-in status priority map near `activity`:
 
@@ -117,14 +117,14 @@ function terminalPriority(session: Session) {
 }
 ```
 
-- [ ] **Step 2: Sort only child rows inside each cwd group**
+- [x] **Step 2: Sort only child rows inside each cwd group**
 
 When producing each group, copy and sort the group's sessions by
 `terminalPriority`. Use the comparator result only; JavaScript's stable sort
 must preserve the original order for equal priorities. Keep the outer map's
 first-seen cwd order unchanged.
 
-- [ ] **Step 3: Run the focused test to verify it passes**
+- [x] **Step 3: Run the focused test to verify it passes**
 
 Run:
 
@@ -134,7 +134,7 @@ cd web && npm test -- --run src/components/SessionNavigation.test.tsx
 
 Expected: the component suite passes with zero failures.
 
-- [ ] **Step 4: Commit the implementation**
+- [x] **Step 4: Commit the implementation**
 
 ```bash
 git add web/src/components/SessionNavigation.tsx web/src/components/SessionNavigation.test.tsx
@@ -151,7 +151,7 @@ git commit -m "fix: order terminal rows by attention and status"
 - Produces: fresh evidence from unit tests, type checking, build, and browser
   verification where applicable.
 
-- [ ] **Step 1: Run the full web verification**
+- [x] **Step 1: Run the full web verification**
 
 Run from `web`:
 
@@ -161,7 +161,7 @@ npm run typecheck
 npm run build
 ```
 
-- [ ] **Step 2: Run browser verification**
+- [x] **Step 2: Run browser verification**
 
 Run from `web` with one worker:
 
@@ -172,7 +172,7 @@ npm run e2e -- --workers=1
 The existing browser suite should continue to render the cwd-first sidebar and
 its status/attention markers.
 
-- [ ] **Step 3: Inspect the diff and commit status**
+- [x] **Step 3: Inspect the diff and commit status**
 
 Run:
 
