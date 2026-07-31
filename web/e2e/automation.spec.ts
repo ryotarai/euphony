@@ -205,7 +205,7 @@ test("reviews annotations from the blocking CLI over Unix and TCP", async ({
   const markdownPath = `/tmp/euphony-annotation-${port}.md`;
   await writeFile(
     markdownPath,
-    "# Release proposal\n\nSelect this passage for feedback.\n",
+    "# Release proposal\n\n```mermaid\nflowchart LR\n  Draft --> Review\n```\n\nSelect this passage for feedback.\n",
   );
   await cli([
     "terminal",
@@ -216,6 +216,9 @@ test("reviews annotations from the blocking CLI over Unix and TCP", async ({
   await expect(page.getByRole("tab", { name: "Annotation" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Release proposal" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".annotation-document .annotation-mermaid svg"),
   ).toBeVisible();
 
   const passage = page.getByText("Select this passage for feedback.");
