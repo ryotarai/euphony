@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  isValidElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import DOMPurify from "dompurify";
 import { CheckIcon, MessageSquarePlusIcon, Trash2Icon } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ApiClient } from "../api";
 import { selectionAnchor, type AnnotationSelectionAnchor } from "../annotationSelection";
@@ -14,6 +21,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface AnnotationViewProps {
   annotation: AnnotationSession;
@@ -51,6 +59,24 @@ const forbiddenHTMLTags = [
   "math",
   "canvas",
 ];
+
+const markdownComponents: Components = {
+  pre: ({ node: _node, children, ...props }) => {
+    const code = Array.isArray(children) ? children[0] : children;
+    if (
+      isValidElement<{ className?: string; children?: ReactNode }>(code) &&
+      code.props.className === "language-mermaid"
+    ) {
+      return (
+        <MermaidDiagram
+          className="annotation-mermaid"
+          source={String(code.props.children).replace(/\n$/, "")}
+        />
+      );
+    }
+    return <pre {...props}>{children}</pre>;
+  },
+};
 
 export function AnnotationView({
   annotation,
@@ -103,6 +129,10 @@ export function AnnotationView({
     const reader = readerRef.current;
     const selection = window.getSelection();
     if (!root || !reader || !selection) return;
+    if (root.querySelector('.annotation-mermaid[aria-busy="true"]')) {
+      setPendingSelection(null);
+      return;
+    }
     const anchor = selectionAnchor(root, selection);
     if (!anchor) {
       setPendingSelection(null);
@@ -203,7 +233,7 @@ export function AnnotationView({
             onMouseUp={captureSelection}
             onScroll={() => setPendingSelection(null)}
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {annotation.content}
             </ReactMarkdown>
           </article>

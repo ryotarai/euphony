@@ -126,6 +126,9 @@ func TestInstallDetectsAgentsPreservesSettingsAndIsIdempotent(t *testing.T) {
 			!strings.Contains(string(skill), "euphony annotate") {
 			t.Fatalf("installed skill %s is invalid:\n%s", path, skill)
 		}
+		if !strings.Contains(string(skill), "```mermaid") {
+			t.Fatalf("installed skill %s does not document Mermaid diagrams:\n%s", path, skill)
+		}
 		if !bytes.Equal(skill, annotationSkill) {
 			t.Fatalf("installed skill %s differs from the bundled skill", path)
 		}

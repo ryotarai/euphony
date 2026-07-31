@@ -23,6 +23,16 @@ Request review in the Euphony pane associated with the current agent.
 7. Apply relevant feedback and continue the task. An empty comments array is
    explicit approval.
 
+## Markdown Diagrams
+
+Markdown review files may include fenced `mermaid` blocks. Euphony renders
+them as diagrams in the Annotation document.
+
+```mermaid
+flowchart LR
+  Draft --> Review --> Revise
+```
+
 ## Temporary Review File
 
 Use a temporary directory so the review file can retain the extension required
