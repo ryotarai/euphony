@@ -10,6 +10,7 @@ export interface Session {
   agentStatus?: string;
   needsAttention?: boolean;
   agentTitle?: string;
+  processName?: string;
   createdAt: string;
   exitedAt?: string;
   exitCode?: number;

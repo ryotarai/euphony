@@ -955,6 +955,49 @@ func TestForegroundIsShellTracksPTYForegroundProcessGroup(t *testing.T) {
 	})
 }
 
+func TestForegroundProcessNameNormalizesCommand(t *testing.T) {
+
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: "/usr/bin/ps -ef", want: "ps"},
+		{command: "codex resume abc", want: "codex"},
+		{command: "-zsh", want: "zsh"},
+		{command: "   ", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			if got := foregroundProcessName(tt.command); got != tt.want {
+				t.Fatalf("foregroundProcessName(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestListRefreshesForegroundProcessName(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.foregroundProcessSampleInterval = 0
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	metadata, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatal("Get() did not return the created terminal")
+	}
+	if _, err := running.Write([]byte("sleep 2\n")); err != nil {
+		t.Fatalf("Write(sleep) error = %v", err)
+	}
+
+	waitFor(t, time.Second, func() bool {
+		items := manager.List()
+		return len(items) == 1 && items[0].ProcessName == "sleep"
+	})
+}
+
 func TestSessionUnlimitedHistoryRetainsAllBytes(t *testing.T) {
 	running := &Session{
 		historyLimit: 0,
