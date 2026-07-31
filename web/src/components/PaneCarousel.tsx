@@ -23,6 +23,7 @@ export interface PaneCarouselItem {
   id: string;
   label: string;
   content: ReactNode;
+  cached?: boolean;
 }
 
 interface PaneCarouselProps {
@@ -43,13 +44,17 @@ export function PaneCarousel({
   const previousVisibleCountRef = useRef<number | undefined>(undefined);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [offset, setOffset] = useState(0);
-  const visibleCount = visiblePaneCount(viewportWidth, panes.length);
-  const maxOffset = Math.max(0, panes.length - visibleCount);
-  const paneKey = useMemo(
-    () => panes.map((pane) => pane.id).join("\0"),
+  const displayedPanes = useMemo(
+    () => panes.filter((pane) => !pane.cached),
     [panes],
   );
-  const focusedIndex = panes.findIndex((pane) => pane.id === focusedID);
+  const visibleCount = visiblePaneCount(viewportWidth, displayedPanes.length);
+  const maxOffset = Math.max(0, displayedPanes.length - visibleCount);
+  const paneKey = useMemo(
+    () => displayedPanes.map((pane) => pane.id).join("\0"),
+    [displayedPanes],
+  );
+  const focusedIndex = displayedPanes.findIndex((pane) => pane.id === focusedID);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -112,15 +117,19 @@ export function PaneCarousel({
       data-visible-count={visibleCount}
     >
       <div className="pane-carousel-track" style={railStyle}>
-        {panes.map((pane, index) => {
+        {panes.map((pane) => {
+          const index = displayedPanes.findIndex((displayedPane) => displayedPane.id === pane.id);
+          const displayed = index >= 0;
           const visible =
-            index >= offset && index < offset + visibleCount;
+            displayed && index >= offset && index < offset + visibleCount;
           return (
             <div
               key={pane.id}
               className="terminal-pane"
               data-active={focusedID === pane.id}
               data-visible={visible}
+              data-cached={pane.cached ? "true" : undefined}
+              hidden={pane.cached}
               aria-hidden={!visible}
               aria-label={pane.label}
               onMouseDown={() => onFocus(pane.id)}

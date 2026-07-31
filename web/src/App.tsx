@@ -459,6 +459,7 @@ export function App({
   const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
   const previousSessionOrderRef = useRef<Session[]>([]);
+  const openedTerminalIDsRef = useRef<Set<string>>(new Set());
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
@@ -812,6 +813,17 @@ export function App({
       active = false;
     };
   }, [api, syncSelection]);
+
+  useLayoutEffect(() => {
+    if (!sessions) return;
+    const availableIDs = new Set(sessions.map((session) => session.id));
+    for (const id of [...openedTerminalIDsRef.current]) {
+      if (!availableIDs.has(id)) openedTerminalIDsRef.current.delete(id);
+    }
+    for (const id of selectedIDs) {
+      if (availableIDs.has(id)) openedTerminalIDsRef.current.add(id);
+    }
+  }, [sessions, selectedIDs]);
 
   useEffect(() => {
     if (!api || !sessions) return;
@@ -2141,6 +2153,12 @@ export function App({
   const panes = selectedIDs
     .map((id) => sessions.find((item) => item.id === id))
     .filter((item): item is Session => Boolean(item));
+  const selectedIDSet = new Set(selectedIDs);
+  const cachedPanes = [...openedTerminalIDsRef.current]
+    .filter((id) => !selectedIDSet.has(id))
+    .map((id) => sessions.find((item) => item.id === id))
+    .filter((item): item is Session => Boolean(item));
+  const mountedPanes = [...panes, ...cachedPanes];
   const selected = sessions.find((item) => item.id === focusedID) ?? panes[0];
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")
@@ -2353,43 +2371,52 @@ export function App({
             Terminal exited{exitedCount > 1 ? ` · ${exitedCount} panes` : ""}
           </div>
         ) : null}
-        {panes.length > 0 && api ? (
-          <PaneCarousel
-            focusedID={focusedID}
-            onFocus={focusPane}
-            panes={panes.map((pane) => ({
-              id: pane.id,
-              label: `${pane.name} pane`,
-              content: (
-                <TerminalPane
-                  session={pane}
-                  api={api}
-                  active={focusedID === pane.id}
-                  layoutVersion={panes.length}
-                  tabShortcut={settings.paneTabShortcut}
-                  agentLogFontSize={previewSettings.agentLogFontSize}
-                  annotationRevision={
-                    syncSelection && syncEvents ? annotationRevision : null
-                  }
-                  onDeselect={() => selectSession(pane.id, true, true, false)}
-                  renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
-                    renderTerminal(
-                      pane,
-                      api,
-                      terminalActive,
-                      paneLayoutVersion,
-                      handleConnectionChange,
-                      reconnectSignals[pane.id] ?? 0,
-                      previewSettings.terminalFontFamily,
-                      previewSettings.terminalFontSize,
-                      settings.terminalHistoryLimit,
-                      sourceVisible,
-                    )
-                  }
-                />
-              ),
-            }))}
-          />
+        {mountedPanes.length > 0 && api ? (
+          <>
+            <PaneCarousel
+              focusedID={focusedID}
+              onFocus={focusPane}
+              panes={mountedPanes.map((pane) => ({
+                id: pane.id,
+                label: `${pane.name} pane`,
+                cached: !selectedIDSet.has(pane.id),
+                content: (
+                  <TerminalPane
+                    session={pane}
+                    api={api}
+                    active={focusedID === pane.id}
+                    layoutVersion={panes.length}
+                    tabShortcut={settings.paneTabShortcut}
+                    agentLogFontSize={previewSettings.agentLogFontSize}
+                    annotationRevision={
+                      syncSelection && syncEvents ? annotationRevision : null
+                    }
+                    onDeselect={() => selectSession(pane.id, true, true, false)}
+                    renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
+                      renderTerminal(
+                        pane,
+                        api,
+                        terminalActive,
+                        paneLayoutVersion,
+                        handleConnectionChange,
+                        reconnectSignals[pane.id] ?? 0,
+                        previewSettings.terminalFontFamily,
+                        previewSettings.terminalFontSize,
+                        settings.terminalHistoryLimit,
+                        sourceVisible,
+                      )
+                    }
+                  />
+                ),
+              }))}
+            />
+            {panes.length === 0 && (
+              <div className="empty-state">
+                <p>No signal yet.</p>
+                <button onClick={() => void createSession()}>Start a terminal</button>
+              </div>
+            )}
+          </>
         ) : (
           <div className="empty-state">
             <p>No signal yet.</p>

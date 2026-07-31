@@ -40,6 +40,32 @@ test("fits only whole panes at the minimum pane width", () => {
   expect(visiblePaneCount(1080, 3)).toBe(3);
 });
 
+test("keeps cached panes mounted without including them in carousel layout", () => {
+  vi.stubGlobal("ResizeObserver", ControlledResizeObserver);
+  const cachedPanes = [
+    panes[0],
+    { ...panes[1], cached: true },
+  ];
+
+  render(
+    <PaneCarousel
+      panes={cachedPanes}
+      focusedID="one"
+      onFocus={vi.fn()}
+    />,
+  );
+
+  act(() => reportWidth(720));
+
+  expect(document.querySelector(".pane-carousel")).toHaveAttribute(
+    "data-visible-count",
+    "1",
+  );
+  expect(pane("One pane")).toHaveAttribute("data-visible", "true");
+  expect(pane("Two pane")).toHaveAttribute("hidden");
+  expect(screen.getByText("two terminal")).toBeInTheDocument();
+});
+
 test("moves the visible window by one mounted pane", async () => {
   vi.stubGlobal("ResizeObserver", ControlledResizeObserver);
   const user = userEvent.setup();

@@ -143,9 +143,10 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
   await createSession(page, "Static cursor");
   await page.goto("/?token=test-token");
 
-  const terminal = page.getByLabel("Static cursor terminal", { exact: true });
+  const pane = page.getByLabel("Static cursor pane", { exact: true });
+  const terminal = pane.getByLabel("Static cursor terminal", { exact: true });
   await expect(terminal).toBeVisible();
-  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await expect(pane.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
 
   const cursor = page.locator(".xterm-cursor");
@@ -153,6 +154,39 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
   await expect(cursor).toBeVisible();
   await expect(cursor).toHaveClass(/xterm-cursor-bar/);
   await expect(cursor).not.toHaveClass(/xterm-cursor-blink/);
+});
+
+test("keeps an opened terminal connection alive while switching sessions", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First");
+  await createSession(page, "Second");
+  await replaceSharedSelection(page, first.id);
+
+  let firstSocketCount = 0;
+  page.on("websocket", (socket) => {
+    if (socket.url().includes(`/api/sessions/${first.id}/terminal`)) {
+      firstSocketCount += 1;
+    }
+  });
+
+  await page.goto("/?token=test-token");
+  const firstTerminal = page.getByLabel("First terminal", { exact: true });
+  await expect(firstTerminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute(
+    "data-connection",
+    "connected",
+  );
+  await expect.poll(() => firstSocketCount).toBe(1);
+
+  await page.getByRole("button", { name: "Select Second" }).click();
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
+  await expect(firstTerminal).toBeHidden();
+
+  await page.getByRole("button", { name: "Select First" }).click();
+  await expect(firstTerminal).toBeVisible();
+  expect(firstSocketCount).toBe(1);
 });
 
 test("shares the smallest terminal size across differently sized browsers", async ({
@@ -402,9 +436,10 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   const claude = await createSession(page, "Claude");
   await page.goto("/?token=test-token");
   await page.getByRole("button", { name: "Select Claude" }).click();
-  const terminal = page.getByLabel("Claude terminal", { exact: true });
+  const pane = page.getByLabel("Claude pane", { exact: true });
+  const terminal = pane.getByLabel("Claude terminal", { exact: true });
   await expect(terminal).toBeVisible();
-  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  await expect(pane.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
   await page.keyboard.type("claude");
   await page.keyboard.press("Enter");
@@ -417,9 +452,9 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   const leftCheckbox = page.getByRole("checkbox", { name: "Include Left in split" });
   for (let iteration = 0; iteration < 30; iteration += 1) {
     await leftCheckbox.click();
-    await expect(page.locator(".terminal-pane")).toHaveCount(2);
+    await expect(page.locator('.terminal-pane:not([hidden])')).toHaveCount(2);
     await leftCheckbox.click();
-    await expect(page.locator(".terminal-pane")).toHaveCount(1);
+    await expect(page.locator('.terminal-pane:not([hidden])')).toHaveCount(1);
   }
 
   const result = await page.evaluate((sessionID) => {
@@ -447,8 +482,9 @@ test("keeps table columns aligned for full-width Japanese punctuation", async ({
   await page.goto("/?token=test-token");
   await page.getByRole("button", { name: "Select Table" }).click();
 
-  const terminal = page.getByLabel("Table terminal", { exact: true });
-  await expect(page.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
+  const pane = page.getByLabel("Table pane", { exact: true });
+  const terminal = pane.getByLabel("Table terminal", { exact: true });
+  await expect(pane.locator(".terminal-view")).toHaveAttribute("data-connection", "connected");
   await terminal.click();
   await page.keyboard.insertText(
     'printf "%s\\n" "│ 漢字 │ aa │" "│ （） │ aa │" "│ 、。 │ aa │" "│ ＡＢ │ aa │"',
