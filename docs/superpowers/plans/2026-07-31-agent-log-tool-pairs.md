@@ -208,7 +208,7 @@ Expected: PASS.
 
 ---
 
-### Task 3: Verify and integrate
+### Task 3: Verify before integration
 
 **Files:**
 
@@ -216,8 +216,8 @@ Expected: PASS.
 
 **Interfaces:**
 
-- Produces: a verified commit on `codex/agent-log-tool-pairs`.
-- Produces: a clean automatic merge into the base `main` branch.
+- Produces: fresh verification evidence for `codex/agent-log-tool-pairs`.
+- Produces: a clean diff package ready for the final whole-branch review.
 
 - [ ] **Step 1: Run focused and full verification**
 
@@ -243,14 +243,17 @@ Expected: every command exits zero with no test failures.
 Check `git diff --check`, inspect the complete diff, confirm the OpenAPI and
 TypeScript fields agree, and verify no unrelated files changed.
 
-- [ ] **Step 3: Commit and merge**
+- [ ] **Step 3: Record the verified branch state**
 
-Commit implementation with:
+Record the current implementation commits and clean worktree:
 
 ```bash
-git add internal/agentlog internal/server/openapi.json web/src web/e2e/euphony.spec.ts
-git commit -m "feat: expand paired tool activity in agent logs"
+git log --oneline "$(git merge-base main HEAD)"..HEAD
+git status --short
 ```
 
-Then merge `codex/agent-log-tool-pairs` into `main` from the base checkout
-without modifying or discarding unrelated base-worktree changes.
+Do not create another implementation commit or merge yet. The
+`subagent-driven-development` final whole-branch review runs next. After that
+review is clean, `finishing-a-development-branch` merges
+`codex/agent-log-tool-pairs` into `main` from the base checkout without
+modifying or discarding unrelated base-worktree changes.
