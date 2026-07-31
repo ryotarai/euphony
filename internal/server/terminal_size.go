@@ -202,7 +202,6 @@ func (c *terminalSizeCoordinator) unsubscribe(terminalID string, clientID uint64
 	}
 	delete(group.clients, clientID)
 	if len(group.clients) == 0 {
-		delete(c.groups, terminalID)
 		return
 	}
 	if !client.reported {
