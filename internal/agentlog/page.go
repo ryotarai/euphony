@@ -71,8 +71,13 @@ func ReadPage(
 	}, nil
 }
 
-func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
-	if after < 0 {
+func ReadAfter(
+	agent string,
+	file *os.File,
+	after int64,
+	recordLimit int,
+) (Page, error) {
+	if after < 0 || recordLimit <= 0 {
 		return Page{}, fmt.Errorf("invalid agent log cursor")
 	}
 	info, err := file.Stat()
@@ -103,6 +108,10 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 			end = limitedEnd
 		}
 	}
+	end, err = boundedPageEnd(file, after, end, recordLimit)
+	if err != nil {
+		return Page{}, err
+	}
 	entries, err := ParseAt(
 		agent,
 		io.NewSectionReader(file, after, end-after),
@@ -119,11 +128,46 @@ func ReadAfter(agent string, file *os.File, after int64) (Page, error) {
 	}, nil
 }
 
+func boundedPageEnd(
+	file *os.File,
+	after int64,
+	before int64,
+	recordLimit int,
+) (int64, error) {
+	buffer := make([]byte, reverseScanChunkBytes)
+	cursor := after
+	boundaries := 0
+	for cursor < before {
+		length := int64(len(buffer))
+		if remaining := before - cursor; remaining < length {
+			length = remaining
+		}
+		n, err := file.ReadAt(buffer[:length], cursor)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("scan transcript: %w", err)
+		}
+		for index := 0; index < n; index++ {
+			if buffer[index] != '\n' {
+				continue
+			}
+			boundaries++
+			if boundaries == recordLimit {
+				return cursor + int64(index) + 1, nil
+			}
+		}
+		if n == 0 {
+			break
+		}
+		cursor += int64(n)
+	}
+	return before, nil
+}
+
 func CompactTools(entries []Entry) []Entry {
 	compacted := make([]Entry, 0, len(entries))
 	var group Entry
 	flush := func() {
-		if group.ToolCalls > 0 {
+		if len(group.Entries) > 0 {
 			compacted = append(compacted, group)
 		}
 		group = Entry{}
@@ -134,17 +178,17 @@ func CompactTools(entries []Entry) []Entry {
 			compacted = append(compacted, entry)
 			continue
 		}
-		if entry.Kind != "tool" {
-			continue
-		}
-		if group.ToolCalls == 0 {
+		if len(group.Entries) == 0 {
 			group = Entry{
 				ID:        entry.ID,
 				Kind:      "tool_group",
 				Timestamp: entry.Timestamp,
 			}
 		}
-		group.ToolCalls++
+		group.Entries = append(group.Entries, entry)
+		if entry.Kind == "tool" {
+			group.ToolCalls++
+		}
 	}
 	flush()
 	return compacted

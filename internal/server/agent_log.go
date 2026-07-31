@@ -106,7 +106,7 @@ func (s *Server) loadAgentTranscriptPage(
 
 	var page agentlog.Page
 	if after != nil && *after <= info.Size() {
-		page, err = agentlog.ReadAfter(agent, file, *after)
+		page, err = agentlog.ReadAfter(agent, file, *after, agentLogPageRecords)
 	} else {
 		end := info.Size()
 		if before != nil {

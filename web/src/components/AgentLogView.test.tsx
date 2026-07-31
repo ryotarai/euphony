@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import type { ApiClient } from "../api";
 import type { AgentTranscript, Session } from "../types";
 import { AgentLogView } from "./AgentLogView";
@@ -19,6 +19,11 @@ beforeEach(() => {
   mermaidMocks.render.mockReset().mockResolvedValue({
     svg: '<svg role="img" aria-label="Plan to build diagram"></svg>',
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const session: Session = {
@@ -82,7 +87,136 @@ test("renders normalized transcript as safe semantic HTML", async () => {
   expect(screen.getByText("<script>alert('no')</script>")).toBeInTheDocument();
   expect(document.querySelector("script")).toBeNull();
   expect(screen.getByText("3 tool calls")).toBeInTheDocument();
-  expect(screen.getByText("3 tool calls").closest("details")).toBeNull();
+  expect(screen.getByText("3 tool calls").closest("details")).toBeInTheDocument();
+});
+
+test("expands tool activity and pairs each call with its matching result", async () => {
+  const user = userEvent.setup();
+  const pairedLog: AgentTranscript = {
+    ...initialLog,
+    entries: [
+      {
+        id: "tools-1",
+        kind: "tool_group",
+        toolCalls: 2,
+        entries: [
+          {
+            id: "call-1",
+            kind: "tool",
+            callId: "call-1",
+            title: "exec_command",
+            content: "secret command 1",
+          },
+          {
+            id: "call-2",
+            kind: "tool",
+            callId: "call-2",
+            title: "read_file",
+            content: "secret command 2",
+          },
+          {
+            id: "result-2",
+            kind: "tool_result",
+            callId: "call-2",
+            title: "read_file",
+            content: "secret result 2",
+          },
+          {
+            id: "result-1",
+            kind: "tool_result",
+            callId: "call-1",
+            title: "exec_command",
+            content: "secret result 1",
+          },
+        ],
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({
+      log: pairedLog,
+      etag: 'W/"paired"',
+    }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  const disclosure = await screen.findByText("2 tool calls");
+  expect(disclosure.closest("details")).not.toHaveAttribute("open");
+  expect(screen.queryByText("secret command 1")).not.toBeVisible();
+
+  await user.click(disclosure);
+
+  const firstExecution = screen.getByRole("article", { name: /exec_command/ });
+  const secondExecution = screen.getByRole("article", { name: /read_file/ });
+  expect(within(firstExecution).getByText("secret command 1")).toBeVisible();
+  expect(within(firstExecution).getByText("secret result 1")).toBeVisible();
+  expect(within(firstExecution).queryByText("secret result 2")).not.toBeInTheDocument();
+  expect(within(secondExecution).getByText("secret command 2")).toBeVisible();
+  expect(within(secondExecution).getByText("secret result 2")).toBeVisible();
+});
+
+test("pairs multiple unkeyed results with the earliest unmatched calls without rescanning executions", async () => {
+  const originalFind = Array.prototype.find;
+  let executionSearches = 0;
+  vi.spyOn(Array.prototype, "find").mockImplementation(function (
+    this: unknown[],
+    predicate: (value: unknown, index: number, obj: unknown[]) => unknown,
+    thisArg?: unknown,
+  ) {
+    const values = this;
+    if (
+      values.some(
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          !("kind" in value) &&
+          ("call" in value || "result" in value),
+      )
+    ) {
+      executionSearches++;
+    }
+    return originalFind.call(values, predicate, thisArg);
+  });
+  const user = userEvent.setup();
+  const unkeyedLog: AgentTranscript = {
+    ...initialLog,
+    entries: [
+      {
+        id: "tools-unkeyed",
+        kind: "tool_group",
+        toolCalls: 3,
+        entries: [
+          { id: "call-a", kind: "tool", title: "first_tool", content: "call A" },
+          { id: "call-b", kind: "tool", title: "second_tool", content: "call B" },
+          { id: "call-c", kind: "tool", title: "third_tool", content: "call C" },
+          { id: "result-a", kind: "tool_result", content: "result A" },
+          { id: "result-b", kind: "tool_result", content: "result B" },
+          { id: "result-c", kind: "tool_result", content: "result C" },
+        ],
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({
+      log: unkeyedLog,
+      etag: 'W/"unkeyed"',
+    }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+  await user.click(await screen.findByText("3 tool calls"));
+
+  expect(
+    within(screen.getByRole("article", { name: /first_tool/ })).getByText("result A"),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("article", { name: /second_tool/ })).getByText("result B"),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("article", { name: /third_tool/ })).getByText("result C"),
+  ).toBeVisible();
+  expect(executionSearches).toBe(0);
 });
 
 test("renders Mermaid fenced code as a diagram", async () => {
@@ -204,6 +338,21 @@ test("loads older entries from the top and preserves the reading position", asyn
     get: () => scrollHeight,
   });
   fireEvent.scroll(viewport, { target: { scrollTop: 250 } });
+  let scrollTop = viewport.scrollTop;
+  const scrollAssignments: number[] = [];
+  Object.defineProperty(viewport, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = value;
+      scrollAssignments.push(value);
+    },
+  });
+  const animationFrames: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    animationFrames.push(callback);
+    return animationFrames.length;
+  });
 
   await user.click(screen.getByRole("button", { name: "Load more" }));
 
@@ -212,7 +361,14 @@ test("loads older entries from the top and preserves the reading position", asyn
   expect(getAgentLog).toHaveBeenNthCalledWith(2, "terminal-1", {
     before: "100",
   });
-  await waitFor(() => expect(viewport.scrollTop).toBe(850));
+  expect(animationFrames.length).toBeGreaterThan(0);
+  const firstFrame = animationFrames.splice(0);
+  act(() => firstFrame.forEach((callback) => callback(0)));
+  expect(scrollAssignments).not.toContain(850);
+  expect(animationFrames.length).toBeGreaterThan(0);
+  const secondFrame = animationFrames.splice(0);
+  act(() => secondFrame.forEach((callback) => callback(16)));
+  expect(viewport.scrollTop).toBe(850);
   expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
 });
 
@@ -395,6 +551,71 @@ test("appends only records after the observed live edge", async () => {
   });
   expect(screen.getByText("Newest message")).toBeInTheDocument();
   expect(screen.getByText("5 tool calls")).toBeInTheDocument();
+  vi.useRealTimers();
+});
+
+test("pairs a call with its result after adjacent live pages merge", async () => {
+  vi.useFakeTimers();
+  const firstPage: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "100",
+    endCursor: "200",
+    entries: [
+      {
+        id: "call-group",
+        kind: "tool_group",
+        toolCalls: 1,
+        entries: [
+          {
+            id: "call-page-1",
+            kind: "tool",
+            callId: "page-boundary-call",
+            title: "exec_command",
+            content: "page one command",
+          },
+        ],
+      },
+    ],
+  };
+  const secondPage: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "200",
+    endCursor: "240",
+    entries: [
+      {
+        id: "result-group",
+        kind: "tool_group",
+        entries: [
+          {
+            id: "result-page-2",
+            kind: "tool_result",
+            callId: "page-boundary-call",
+            title: "exec_command",
+            content: "page two result",
+          },
+        ],
+      },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: firstPage, etag: 'W/"first"' })
+    .mockResolvedValueOnce({ log: secondPage, etag: 'W/"second"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await act(async () => Promise.resolve());
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+  });
+
+  fireEvent.click(screen.getByText("1 tool call"));
+  const execution = screen.getByRole("article", { name: /exec_command/ });
+  expect(within(execution).getByText("page one command")).toBeVisible();
+  expect(within(execution).getByText("page two result")).toBeVisible();
   vi.useRealTimers();
 });
 

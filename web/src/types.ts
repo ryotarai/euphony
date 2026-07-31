@@ -108,7 +108,9 @@ export interface AgentLogEntry {
   role?: "user" | "assistant";
   title?: string;
   content?: string;
+  callId?: string;
   toolCalls?: number;
+  entries?: AgentLogEntry[];
   timestamp?: string;
 }
 

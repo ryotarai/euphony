@@ -1,13 +1,15 @@
 package agentlog
 
 type Entry struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Role      string `json:"role,omitempty"`
-	Title     string `json:"title,omitempty"`
-	Content   string `json:"content,omitempty"`
-	ToolCalls int    `json:"toolCalls,omitempty"`
-	Timestamp string `json:"timestamp,omitempty"`
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	Role      string  `json:"role,omitempty"`
+	Title     string  `json:"title,omitempty"`
+	Content   string  `json:"content,omitempty"`
+	CallID    string  `json:"callId,omitempty"`
+	ToolCalls int     `json:"toolCalls,omitempty"`
+	Entries   []Entry `json:"entries,omitempty"`
+	Timestamp string  `json:"timestamp,omitempty"`
 }
 
 type Transcript struct {

@@ -130,12 +130,12 @@ func (p *parser) parseClaude(record map[string]json.RawMessage) []Entry {
 				p.toolNames[callID] = name
 			}
 			entries = append(entries, Entry{
-				Kind: "tool", Title: name, Content: formatJSON(block["input"]), Timestamp: timestamp,
+				Kind: "tool", CallID: callID, Title: name, Content: formatJSON(block["input"]), Timestamp: timestamp,
 			})
 		case "tool_result":
 			callID := rawString(block["tool_use_id"])
 			entries = append(entries, Entry{
-				Kind: "tool_result", Title: p.toolNames[callID],
+				Kind: "tool_result", CallID: callID, Title: p.toolNames[callID],
 				Content: textContent(block["content"]), Timestamp: timestamp,
 			})
 		}
@@ -200,12 +200,12 @@ func (p *parser) parseCodex(record map[string]json.RawMessage) []Entry {
 			content = payload["input"]
 		}
 		return []Entry{{
-			Kind: "tool", Title: name, Content: formatJSON(content), Timestamp: timestamp,
+			Kind: "tool", CallID: callID, Title: name, Content: formatJSON(content), Timestamp: timestamp,
 		}}
 	case "function_call_output", "custom_tool_call_output":
 		callID := rawString(payload["call_id"])
 		return []Entry{{
-			Kind: "tool_result", Title: p.toolNames[callID],
+			Kind: "tool_result", CallID: callID, Title: p.toolNames[callID],
 			Content: textContent(payload["output"]), Timestamp: timestamp,
 		}}
 	}

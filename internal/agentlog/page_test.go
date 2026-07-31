@@ -128,7 +128,7 @@ func TestReadAfterReturnsOnlyAppendedRecords(t *testing.T) {
 		t.Fatalf("WriteAt() error = %v", err)
 	}
 
-	page, err := ReadAfter("claude", file, int64(len(initial)))
+	page, err := ReadAfter("claude", file, int64(len(initial)), 100)
 	if err != nil {
 		t.Fatalf("ReadAfter() error = %v", err)
 	}
@@ -159,7 +159,7 @@ func TestReadAfterKeepsNormalRecordsWholeAtTheByteLimit(t *testing.T) {
 	}
 	defer file.Close()
 
-	firstPage, err := ReadAfter("claude", file, 0)
+	firstPage, err := ReadAfter("claude", file, 0, 100)
 	if err != nil {
 		t.Fatalf("first ReadAfter() error = %v", err)
 	}
@@ -173,7 +173,7 @@ func TestReadAfterKeepsNormalRecordsWholeAtTheByteLimit(t *testing.T) {
 		)
 	}
 
-	secondPage, err := ReadAfter("claude", file, firstPage.EndCursor)
+	secondPage, err := ReadAfter("claude", file, firstPage.EndCursor, 100)
 	if err != nil {
 		t.Fatalf("second ReadAfter() error = %v", err)
 	}
@@ -185,6 +185,41 @@ func TestReadAfterKeepsNormalRecordsWholeAtTheByteLimit(t *testing.T) {
 			secondPage.EndCursor,
 			len(secondPage.Entries),
 		)
+	}
+}
+
+func TestReadAfterAdvancesAcrossASingleOversizedRecordInBoundedChunks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	record := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"` +
+		strings.Repeat("x", maxAgentLogPageBytes*2) +
+		`"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(record), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer file.Close()
+
+	var cursor int64
+	for pageNumber := 1; cursor < int64(len(record)); pageNumber++ {
+		page, err := ReadAfter("claude", file, cursor, 100)
+		if err != nil {
+			t.Fatalf("ReadAfter() page %d error = %v", pageNumber, err)
+		}
+		if page.StartCursor != cursor ||
+			page.EndCursor <= cursor ||
+			page.ReadBytes > maxAgentLogPageBytes {
+			t.Fatalf("ReadAfter() page %d = %#v", pageNumber, page)
+		}
+		cursor = page.EndCursor
+		if pageNumber > 3 {
+			t.Fatalf("ReadAfter() did not reach the record end, cursor = %d", cursor)
+		}
+	}
+	if cursor != int64(len(record)) {
+		t.Fatalf("final cursor = %d, want %d", cursor, len(record))
 	}
 }
 
@@ -201,7 +236,7 @@ func TestReadAfterDoesNotAdvancePastAnIncompleteJSONLRecord(t *testing.T) {
 	}
 	defer file.Close()
 
-	incomplete, err := ReadAfter("claude", file, int64(len(initial)))
+	incomplete, err := ReadAfter("claude", file, int64(len(initial)), 100)
 	if err != nil {
 		t.Fatalf("incomplete ReadAfter() error = %v", err)
 	}
@@ -218,7 +253,7 @@ func TestReadAfterDoesNotAdvancePastAnIncompleteJSONLRecord(t *testing.T) {
 	); err != nil {
 		t.Fatalf("WriteAt() error = %v", err)
 	}
-	complete, err := ReadAfter("claude", file, incomplete.EndCursor)
+	complete, err := ReadAfter("claude", file, incomplete.EndCursor, 100)
 	if err != nil {
 		t.Fatalf("complete ReadAfter() error = %v", err)
 	}
@@ -256,32 +291,31 @@ func TestCompleteJSONLEndBoundsANewlineFreeOversizedRecord(t *testing.T) {
 	}
 }
 
-func TestCompactToolsCountsCallsAndDropsPayloadsAndResults(t *testing.T) {
+func TestCompactToolsPreservesConsecutiveToolDetails(t *testing.T) {
 	entries := []Entry{
-		{ID: "1-0", Kind: "message", Content: "Before"},
-		{ID: "2-0", Kind: "tool", Title: "exec", Content: "secret argument", Timestamp: "t1"},
-		{ID: "3-0", Kind: "tool_result", Title: "exec", Content: "secret result"},
-		{ID: "4-0", Kind: "tool", Title: "read", Content: "secret path"},
-		{ID: "5-0", Kind: "tool_result", Title: "read", Content: "secret file"},
-		{ID: "6-0", Kind: "tool", Title: "test", Content: "secret command"},
-		{ID: "7-0", Kind: "tool_result", Title: "test", Content: "secret output"},
-		{ID: "8-0", Kind: "message", Content: "After"},
+		{ID: "2-0", Kind: "tool", CallID: "call-1", Title: "exec", Content: `{"command":"go test"}`},
+		{ID: "3-0", Kind: "tool_result", CallID: "call-1", Title: "exec", Content: "ok"},
 	}
 
 	got := CompactTools(entries)
 	want := []Entry{
-		{ID: "1-0", Kind: "message", Content: "Before"},
-		{ID: "2-0", Kind: "tool_group", ToolCalls: 3, Timestamp: "t1"},
-		{ID: "8-0", Kind: "message", Content: "After"},
+		{
+			ID: "2-0", Kind: "tool_group", ToolCalls: 1,
+			Entries: entries,
+		},
 	}
 	if !entriesEqual(got, want) {
 		t.Fatalf("CompactTools() = %#v, want %#v", got, want)
 	}
+}
 
-	resultOnly := CompactTools([]Entry{
-		{ID: "9-0", Kind: "tool_result", Content: "not returned"},
-	})
-	if len(resultOnly) != 0 {
-		t.Fatalf("result-only CompactTools() = %#v, want empty", resultOnly)
+func TestCompactToolsPreservesAResultOnlyPageFragment(t *testing.T) {
+	result := Entry{ID: "9-0", Kind: "tool_result", CallID: "call-1", Title: "exec", Content: "not returned"}
+	got := CompactTools([]Entry{result})
+	want := []Entry{{
+		ID: "9-0", Kind: "tool_group", Entries: []Entry{result},
+	}}
+	if !entriesEqual(got, want) {
+		t.Fatalf("result-only CompactTools() = %#v, want %#v", got, want)
 	}
 }
