@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,12 +90,19 @@ func TestAgentLogEndpointPagesNewestOlderAndAppendedRecords(t *testing.T) {
 		t.Fatalf("older transcript = %#v", olderLog)
 	}
 
-	appended := `{"type":"assistant","message":{"role":"assistant","content":"Message 106"}}` + "\n"
+	var appended strings.Builder
+	for index := 106; index <= 210; index++ {
+		fmt.Fprintf(
+			&appended,
+			"{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Message %03d\"}}\n",
+			index,
+		)
+	}
 	file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatalf("OpenFile() error = %v", err)
 	}
-	_, writeErr := file.WriteString(appended)
+	_, writeErr := file.WriteString(appended.String())
 	closeErr := file.Close()
 	if writeErr != nil || closeErr != nil {
 		t.Fatalf("append errors = %v, %v", writeErr, closeErr)
@@ -112,10 +121,57 @@ func TestAgentLogEndpointPagesNewestOlderAndAppendedRecords(t *testing.T) {
 	if err := json.NewDecoder(addition.Body).Decode(&additionLog); err != nil {
 		t.Fatalf("decode appended transcript: %v", err)
 	}
-	if len(additionLog.Entries) != 1 ||
+	if len(additionLog.Entries) != agentLogPageRecords ||
 		additionLog.Entries[0].Content != "Message 106" ||
+		additionLog.Entries[99].Content != "Message 205" ||
 		additionLog.StartCursor != newestLog.EndCursor {
-		t.Fatalf("appended transcript = %#v", additionLog)
+		t.Fatalf("first appended transcript = %#v", additionLog)
+	}
+	firstEnd, err := strconv.ParseInt(additionLog.EndCursor, 10, 64)
+	if err != nil {
+		t.Fatalf("parse first appended end cursor: %v", err)
+	}
+	if firstEnd >= int64(len(content)+appended.Len()) {
+		t.Fatalf(
+			"first appended end cursor = %d, want before %d",
+			firstEnd,
+			len(content)+appended.Len(),
+		)
+	}
+
+	remainder := performAgentLogRequestPath(
+		t,
+		srv,
+		terminal.ID,
+		"?after="+additionLog.EndCursor,
+		addition.Header().Get("ETag"),
+	)
+	if remainder.Code != http.StatusOK {
+		t.Fatalf("remainder status = %d, body = %s", remainder.Code, remainder.Body.String())
+	}
+	var remainderLog agentlog.Transcript
+	if err := json.NewDecoder(remainder.Body).Decode(&remainderLog); err != nil {
+		t.Fatalf("decode appended remainder: %v", err)
+	}
+	if len(remainderLog.Entries) != 5 ||
+		remainderLog.Entries[0].Content != "Message 206" ||
+		remainderLog.Entries[4].Content != "Message 210" ||
+		remainderLog.StartCursor != additionLog.EndCursor {
+		t.Fatalf("appended remainder = %#v", remainderLog)
+	}
+
+	allAppended := append(
+		append([]agentlog.Entry(nil), additionLog.Entries...),
+		remainderLog.Entries...,
+	)
+	if len(allAppended) != 105 {
+		t.Fatalf("combined appended records = %d, want 105", len(allAppended))
+	}
+	for index, entry := range allAppended {
+		want := fmt.Sprintf("Message %03d", index+106)
+		if entry.Content != want {
+			t.Fatalf("combined appended record %d = %q, want %q", index, entry.Content, want)
+		}
 	}
 }
 

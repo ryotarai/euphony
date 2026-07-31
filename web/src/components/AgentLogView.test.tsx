@@ -156,6 +156,69 @@ test("expands tool activity and pairs each call with its matching result", async
   expect(within(secondExecution).getByText("secret result 2")).toBeVisible();
 });
 
+test("pairs multiple unkeyed results with the earliest unmatched calls without rescanning executions", async () => {
+  const originalFind = Array.prototype.find;
+  let executionSearches = 0;
+  vi.spyOn(Array.prototype, "find").mockImplementation(function (
+    this: unknown[],
+    predicate: (value: unknown, index: number, obj: unknown[]) => unknown,
+    thisArg?: unknown,
+  ) {
+    const values = this;
+    if (
+      values.some(
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          !("kind" in value) &&
+          ("call" in value || "result" in value),
+      )
+    ) {
+      executionSearches++;
+    }
+    return originalFind.call(values, predicate, thisArg);
+  });
+  const user = userEvent.setup();
+  const unkeyedLog: AgentTranscript = {
+    ...initialLog,
+    entries: [
+      {
+        id: "tools-unkeyed",
+        kind: "tool_group",
+        toolCalls: 3,
+        entries: [
+          { id: "call-a", kind: "tool", title: "first_tool", content: "call A" },
+          { id: "call-b", kind: "tool", title: "second_tool", content: "call B" },
+          { id: "call-c", kind: "tool", title: "third_tool", content: "call C" },
+          { id: "result-a", kind: "tool_result", content: "result A" },
+          { id: "result-b", kind: "tool_result", content: "result B" },
+          { id: "result-c", kind: "tool_result", content: "result C" },
+        ],
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({
+      log: unkeyedLog,
+      etag: 'W/"unkeyed"',
+    }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+  await user.click(await screen.findByText("3 tool calls"));
+
+  expect(
+    within(screen.getByRole("article", { name: /first_tool/ })).getByText("result A"),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("article", { name: /second_tool/ })).getByText("result B"),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("article", { name: /third_tool/ })).getByText("result C"),
+  ).toBeVisible();
+  expect(executionSearches).toBe(0);
+});
+
 test("renders Mermaid fenced code as a diagram", async () => {
   const mermaidLog: AgentTranscript = {
     ...initialLog,

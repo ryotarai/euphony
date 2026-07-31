@@ -134,11 +134,14 @@ interface ToolExecution {
 function pairToolEntries(entries: AgentLogEntry[]): ToolExecution[] {
   const executions: ToolExecution[] = [];
   const callsById = new Map<string, ToolExecution>();
+  const callsInSourceOrder: ToolExecution[] = [];
+  let nextUnkeyedCall = 0;
 
   for (const entry of entries) {
     if (entry.kind === "tool") {
       const execution = { call: entry };
       executions.push(execution);
+      callsInSourceOrder.push(execution);
       const callId = entry.callId?.trim();
       if (callId) callsById.set(callId, execution);
       continue;
@@ -152,11 +155,16 @@ function pairToolEntries(entries: AgentLogEntry[]): ToolExecution[] {
       continue;
     }
     if (!callId) {
-      const unkeyedExecution = executions.find(
-        (execution) => execution.call && !execution.result,
-      );
+      while (
+        nextUnkeyedCall < callsInSourceOrder.length &&
+        callsInSourceOrder[nextUnkeyedCall].result
+      ) {
+        nextUnkeyedCall++;
+      }
+      const unkeyedExecution = callsInSourceOrder[nextUnkeyedCall];
       if (unkeyedExecution) {
         unkeyedExecution.result = entry;
+        nextUnkeyedCall++;
         continue;
       }
     }
