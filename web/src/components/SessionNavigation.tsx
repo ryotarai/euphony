@@ -403,7 +403,10 @@ function SessionNavigationContent({
         <SidebarFooter>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton tooltip="New terminal" onClick={props.onCreate}>
+              <SidebarMenuButton
+                tooltip="New terminal"
+                onClick={() => props.onCreate()}
+              >
                 <PlusIcon aria-hidden="true" />
                 <span>New terminal</span>
               </SidebarMenuButton>
