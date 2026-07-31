@@ -4,8 +4,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
-import { defaultTerminalFontFamily } from "../settings";
-import type { Session } from "../types";
+import {
+  defaultTerminalCursorBlink,
+  defaultTerminalCursorStyle,
+  defaultTerminalFontFamily,
+  defaultTerminalLineHeight,
+  defaultTerminalScrollSensitivity,
+} from "../settings";
+import type { Session, TerminalCursorStyle } from "../types";
 
 export interface TerminalDriver {
   readonly cols?: number;
@@ -44,11 +50,19 @@ interface TerminalViewProps {
   terminalHistoryLimit?: number;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  cursorStyle?: TerminalCursorStyle;
+  cursorBlink?: boolean;
+  scrollSensitivity?: number;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
   createTerminal?: (
     fontFamily: string,
     fontSize: number,
     scrollback: number,
+    lineHeight: number,
+    cursorStyle: TerminalCursorStyle,
+    cursorBlink: boolean,
+    scrollSensitivity: number,
   ) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
@@ -81,17 +95,21 @@ function defaultTerminal(
   fontFamily: string,
   fontSize: number,
   scrollback: number,
+  lineHeight: number,
+  cursorStyle: TerminalCursorStyle,
+  cursorBlink: boolean,
+  scrollSensitivity: number,
 ): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal({
-    cursorBlink: false,
-    cursorStyle: "bar",
     allowTransparency: true,
     fontFamily,
     fontSize,
-    lineHeight: 1.25,
+    lineHeight,
+    cursorStyle,
+    cursorBlink,
     scrollback,
-    scrollSensitivity: 3,
+    scrollSensitivity,
     theme: {
       background: "#050505",
       foreground: "#f5f5f5",
@@ -180,6 +198,10 @@ export function TerminalView({
   terminalHistoryLimit = 1024 * 1024,
   fontFamily = defaultTerminalFontFamily,
   fontSize = 14,
+  lineHeight = defaultTerminalLineHeight,
+  cursorStyle = defaultTerminalCursorStyle,
+  cursorBlink = defaultTerminalCursorBlink,
+  scrollSensitivity = defaultTerminalScrollSensitivity,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -231,6 +253,10 @@ export function TerminalView({
       fontFamily,
       fontSize,
       terminalScrollback(terminalHistoryLimit),
+      lineHeight,
+      cursorStyle,
+      cursorBlink,
+      scrollSensitivity,
     );
     terminalRef.current = terminal;
     terminal.open(host);
@@ -492,6 +518,10 @@ export function TerminalView({
     createTerminal,
     fontFamily,
     fontSize,
+    lineHeight,
+    cursorStyle,
+    cursorBlink,
+    scrollSensitivity,
     reconnectSignal,
     session.id,
   ]);
