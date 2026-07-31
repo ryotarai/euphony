@@ -129,7 +129,7 @@ export function PaneCarousel({
               data-active={focusedID === pane.id}
               data-visible={visible}
               data-cached={pane.cached ? "true" : undefined}
-              hidden={pane.cached}
+              inert={!visible}
               aria-hidden={!visible}
               aria-label={pane.label}
               onMouseDown={() => onFocus(pane.id)}

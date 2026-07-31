@@ -224,6 +224,14 @@ test("keeps an opened terminal connection alive while switching sessions", async
   await page.getByRole("button", { name: "Select Second" }).click();
   await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
   await expect(firstTerminal).toBeHidden();
+  const firstPane = page.getByLabel("First pane", { exact: true });
+  await expect(firstPane).toHaveAttribute("data-cached", "true");
+  await expect(firstPane).not.toHaveAttribute("hidden");
+  await expect(firstPane).toHaveAttribute("inert");
+  await expect(firstPane).toHaveCSS("display", "block");
+  await expect(firstPane).toHaveCSS("visibility", "hidden");
+  expect(await firstTerminal.evaluate((host) => host.getBoundingClientRect().width))
+    .toBeGreaterThan(0);
 
   await page.getByRole("button", { name: "Select First" }).click();
   await expect(firstTerminal).toBeVisible();
@@ -492,9 +500,9 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   const leftCheckbox = page.getByRole("checkbox", { name: "Include Left in split" });
   for (let iteration = 0; iteration < 30; iteration += 1) {
     await leftCheckbox.click();
-    await expect(page.locator('.terminal-pane:not([hidden])')).toHaveCount(2);
+    await expect(page.locator('.terminal-pane[data-visible="true"]')).toHaveCount(2);
     await leftCheckbox.click();
-    await expect(page.locator('.terminal-pane:not([hidden])')).toHaveCount(1);
+    await expect(page.locator('.terminal-pane[data-visible="true"]')).toHaveCount(1);
   }
 
   const result = await page.evaluate((sessionID) => {

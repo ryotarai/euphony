@@ -62,7 +62,8 @@ test("keeps cached panes mounted without including them in carousel layout", () 
     "1",
   );
   expect(pane("One pane")).toHaveAttribute("data-visible", "true");
-  expect(pane("Two pane")).toHaveAttribute("hidden");
+  expect(pane("Two pane")).not.toHaveAttribute("hidden");
+  expect(pane("Two pane")).toHaveAttribute("inert");
   expect(screen.getByText("two terminal")).toBeInTheDocument();
 });
 
