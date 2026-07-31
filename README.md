@@ -20,6 +20,22 @@ make build
 The command produces `bin/euphony`. The executable contains the complete
 frontend; Node.js is not needed at runtime.
 
+### macOS app
+
+On macOS, Xcode Command Line Tools are also required to build the native app
+shell:
+
+```sh
+make macos-app
+open bin/Euphony.app
+```
+
+The app bundles the Go server and opens the existing workspace in a native
+WebKit window. It starts a private loopback-only server on an automatically
+selected port and stops that server when the app quits. The app uses the same
+persistent database as the CLI by default; set `EUPHONY_DB` before launching
+the app when a different database is needed.
+
 ## Run
 
 Start the server:
