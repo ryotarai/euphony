@@ -93,6 +93,130 @@ func TestServicePublishesSelectionWhenAgentStatusEntersDynamicFilter(t *testing.
 	}
 }
 
+func TestServiceSelectsSuccessorAfterFocusedTerminalDeletion(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	if _, err := manager.Create(t.Context(), "First", t.TempDir()); err != nil {
+		t.Fatalf("Create() first error = %v", err)
+	}
+	middle, err := manager.Create(t.Context(), "Middle", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() middle error = %v", err)
+	}
+	last, err := manager.Create(t.Context(), "Last", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() last error = %v", err)
+	}
+
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := service.ApplySelection(context.Background(), selection.Action{
+		Type:              selection.ActionReplaceState,
+		TerminalIDs:       []string{middle.ID},
+		FocusedTerminalID: middle.ID,
+	}); err != nil {
+		t.Fatalf("ApplySelection() error = %v", err)
+	}
+	events, unsubscribe := service.SubscribeEvents([]string{"selection.changed"})
+	defer unsubscribe()
+
+	if err := manager.Delete(middle.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	select {
+	case event := <-events:
+		snapshot, ok := event.Data.(selection.Snapshot)
+		if !ok {
+			t.Fatalf("event Data = %T, want selection.Snapshot", event.Data)
+		}
+		if !reflect.DeepEqual(snapshot.TerminalIDs, []string{last.ID}) ||
+			snapshot.FocusedTerminalID != last.ID {
+			t.Fatalf("selection after deletion = %#v", snapshot)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for selection.changed")
+	}
+}
+
+func TestServiceSelectsPredecessorAfterLastFocusedTerminalDeletion(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	first, err := manager.Create(t.Context(), "First", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() first error = %v", err)
+	}
+	last, err := manager.Create(t.Context(), "Last", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() last error = %v", err)
+	}
+
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := service.ApplySelection(context.Background(), selection.Action{
+		Type:              selection.ActionReplaceState,
+		TerminalIDs:       []string{last.ID},
+		FocusedTerminalID: last.ID,
+	}); err != nil {
+		t.Fatalf("ApplySelection() error = %v", err)
+	}
+	events, unsubscribe := service.SubscribeEvents([]string{"selection.changed"})
+	defer unsubscribe()
+
+	if err := manager.Delete(last.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	select {
+	case event := <-events:
+		snapshot, ok := event.Data.(selection.Snapshot)
+		if !ok {
+			t.Fatalf("event Data = %T, want selection.Snapshot", event.Data)
+		}
+		if !reflect.DeepEqual(snapshot.TerminalIDs, []string{first.ID}) ||
+			snapshot.FocusedTerminalID != first.ID {
+			t.Fatalf("selection after deletion = %#v", snapshot)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for selection.changed")
+	}
+}
+
+func TestServiceKeepsIntentionalEmptySelectionAfterUnrelatedDeletion(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	first, err := manager.Create(t.Context(), "First", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() first error = %v", err)
+	}
+	second, err := manager.Create(t.Context(), "Second", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() second error = %v", err)
+	}
+
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := service.ApplySelection(context.Background(), selection.Action{
+		Type: selection.ActionReplaceState,
+	}); err != nil {
+		t.Fatalf("ApplySelection() error = %v", err)
+	}
+	if err := manager.Delete(first.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	snapshot := service.Selection()
+	if len(snapshot.TerminalIDs) != 0 || snapshot.FocusedTerminalID != "" {
+		t.Fatalf("selection after deleting unrelated terminal = %#v, want empty; remaining = %s", snapshot, second.ID)
+	}
+}
+
 func TestServiceIgnoresOutOfOrderSessionChanges(t *testing.T) {
 	manager := session.NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(t.Context()) })

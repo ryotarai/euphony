@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -122,7 +123,8 @@ func (s *Service) handleSessionChange(change session.Change) {
 }
 
 func (s *Service) reconcileFromSessions(change *session.Change) {
-	terminals := projectTerminals(s.sessions.ListCurrent())
+	metadata := s.sessions.ListCurrent()
+	terminals := projectTerminals(metadata)
 	s.mu.Lock()
 	previousSnapshot := s.snapshot
 	next := s.selection
@@ -134,7 +136,17 @@ func (s *Service) reconcileFromSessions(change *session.Change) {
 		}, terminals)
 	} else {
 		var cleaned bool
-		next, cleaned = selection.Reconcile(next, terminals)
+		if change != nil && change.Kind == session.ChangeDeleted && change.Before != nil {
+			next, cleaned = selection.ReconcileAfterTerminalDeletion(
+				next,
+				previousSnapshot,
+				change.Before.ID,
+				replacementTerminalID(*change.Before, metadata),
+				terminals,
+			)
+		} else {
+			next, cleaned = selection.Reconcile(next, terminals)
+		}
 		resolved := selection.Resolve(next, terminals)
 		if !cleaned && !snapshotsEqualIgnoringRevision(previousSnapshot, resolved) {
 			next.Revision++
@@ -204,6 +216,19 @@ func projectTerminals(metadata []session.Metadata) []selection.Terminal {
 		})
 	}
 	return result
+}
+
+func replacementTerminalID(deleted session.Metadata, remaining []session.Metadata) string {
+	index := sort.Search(len(remaining), func(index int) bool {
+		return !remaining[index].CreatedAt.Before(deleted.CreatedAt)
+	})
+	if index < len(remaining) {
+		return remaining[index].ID
+	}
+	if len(remaining) == 0 {
+		return ""
+	}
+	return remaining[len(remaining)-1].ID
 }
 
 func shouldPromoteFocusedAgent(snapshot selection.Snapshot, change *session.Change) bool {
