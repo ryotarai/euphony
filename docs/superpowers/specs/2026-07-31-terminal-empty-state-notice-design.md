@@ -7,9 +7,9 @@ Bring the empty terminal workspace and automatic-deselection notice into the sam
 ## Design direction
 
 - Keep the existing black workspace palette and use the dialog's popover surface, border, radius, and muted footer treatment as the shared visual vocabulary.
-- Render the empty state as a compact centered card with a small context label, a clear empty-state title, supporting copy, and the existing `Start a terminal` action using the shared `Button` component.
+- Render the empty state as a compact centered card with a small context label, the existing `No signal yet.` title, supporting copy, and the existing `Start a terminal` action using the shared `Button` component.
 - Restyle the automatic-deselection notice as a non-modal dialog-like notice: quiet popover surface, rounded border, title/description hierarchy, and a footer-like action area. Keep its current timer and `Cancel` behavior unchanged.
-- Preserve all existing English copy used by tests and users unless a new supporting label is required for hierarchy. Do not change session creation, deselection, or API behavior.
+- Preserve the existing English copy used by tests and users; only add a short supporting sentence and context label for hierarchy. Do not change session creation, deselection, or API behavior.
 
 ## Accessibility and responsive behavior
 
