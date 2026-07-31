@@ -43,7 +43,12 @@ function loadMermaid(): Promise<Mermaid> {
   return mermaidPromise;
 }
 
-export function MermaidDiagram({ source }: { source: string }) {
+interface MermaidDiagramProps {
+  source: string;
+  className?: string;
+}
+
+export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
   const reactId = useId();
   const diagramId = `agent-log-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [state, setState] = useState<DiagramState>({ status: "loading", source });
@@ -72,7 +77,7 @@ export function MermaidDiagram({ source }: { source: string }) {
   if (currentState.status === "rendered") {
     return (
       <figure
-        className="agent-log-mermaid"
+        className={["markdown-mermaid", className].filter(Boolean).join(" ")}
         aria-label="Mermaid diagram"
         dangerouslySetInnerHTML={{ __html: currentState.svg }}
       />
@@ -81,15 +86,15 @@ export function MermaidDiagram({ source }: { source: string }) {
 
   return (
     <figure
-      className="agent-log-mermaid"
+      className={["markdown-mermaid", className].filter(Boolean).join(" ")}
       aria-label="Mermaid diagram"
       aria-busy={currentState.status === "loading"}
     >
-      <pre className="agent-log-mermaid-source">
+      <pre className="markdown-mermaid-source">
         <code>{source}</code>
       </pre>
       {currentState.status === "failed" && (
-        <figcaption className="agent-log-mermaid-error">
+        <figcaption className="markdown-mermaid-error">
           Diagram could not be rendered.
         </figcaption>
       )}

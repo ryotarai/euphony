@@ -2185,7 +2185,7 @@ input {
   white-space: pre-wrap;
 }
 
-.agent-log-mermaid {
+.markdown-mermaid {
   width: 100%;
   max-width: 100%;
   margin: 0.9em 0;
@@ -2196,25 +2196,25 @@ input {
   border-radius: 0.25rem;
 }
 
-.agent-log-mermaid svg {
+.markdown-mermaid svg {
   display: block;
   min-width: min(34rem, 100%);
   height: auto;
   margin: 0 auto;
 }
 
-.agent-log-mermaid .agent-log-mermaid-source {
+.markdown-mermaid .markdown-mermaid-source {
   margin: 0;
   padding: 0;
   background: transparent;
   border: 0;
 }
 
-.agent-log-mermaid-error {
+.markdown-mermaid-error {
   margin-top: 0.65rem;
   color: var(--muted-foreground);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: calc(var(--agent-log-font-size) * 0.786);
+  font-size: 0.75rem;
 }
 
 .agent-log-markdown blockquote {

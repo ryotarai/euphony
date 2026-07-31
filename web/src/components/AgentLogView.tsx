@@ -54,7 +54,12 @@ const markdownComponents: Components = {
       isValidElement<{ className?: string; children?: ReactNode }>(code) &&
       code.props.className === "language-mermaid"
     ) {
-      return <MermaidDiagram source={String(code.props.children).replace(/\n$/, "")} />;
+      return (
+        <MermaidDiagram
+          className="agent-log-mermaid"
+          source={String(code.props.children).replace(/\n$/, "")}
+        />
+      );
     }
     return (
       <pre {...props}>

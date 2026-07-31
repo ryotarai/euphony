@@ -5,6 +5,22 @@ import type { ApiClient } from "../api";
 import type { AnnotationSession } from "../types";
 import { AnnotationView } from "./AnnotationView";
 
+const mermaidMocks = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(),
+}));
+
+vi.mock("mermaid", () => ({
+  default: mermaidMocks,
+}));
+
+beforeEach(() => {
+  mermaidMocks.initialize.mockClear();
+  mermaidMocks.render.mockReset().mockResolvedValue({
+    svg: '<svg role="img" aria-label="Draft to review diagram"></svg>',
+  });
+});
+
 const markdownAnnotation: AnnotationSession = {
   id: "annotation-1",
   terminalId: "terminal-1",
@@ -13,6 +29,32 @@ const markdownAnnotation: AnnotationSession = {
   content: "# Proposal\n\nSelect this sentence.\n\n| A | B |\n| - | - |\n| 1 | 2 |\n",
   createdAt: "2026-07-30T00:00:00Z",
 };
+
+test("renders Mermaid fenced code as an annotation diagram", async () => {
+  const { api } = apiWithComplete();
+  render(
+    <AnnotationView
+      annotation={{
+        ...markdownAnnotation,
+        content: [
+          "# Diagram",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  Draft --> Review",
+          "```",
+        ].join("\n"),
+      }}
+      api={api}
+      onCompleted={() => undefined}
+    />,
+  );
+
+  const diagram = await screen.findByRole("figure", { name: "Mermaid diagram" });
+  expect(diagram).toHaveClass("annotation-mermaid");
+  expect(diagram.querySelector("svg")).toBeVisible();
+  expect(diagram.querySelector("code.language-mermaid")).toBeNull();
+});
 
 function apiWithComplete(implementation = vi.fn().mockResolvedValue({
   annotationId: "annotation-1",
