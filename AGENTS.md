@@ -46,6 +46,9 @@
   multi-megabyte files stay cheap to poll.
 - Keep CJK punctuation spacing untrimmed inside terminal renderers so every
   full-width glyph occupies the same cell geometry.
+- Keep mounted xterm panes measurable when they are not visible; use layout-
+  preserving visibility and inertness instead of `hidden`/`display: none`, so
+  xterm width measurement and full-width glyph layout remain stable.
 - Center a negotiated shared terminal grid in quiet, unmarked letterbox space;
   do not imitate tmux's dotted filler or scale terminal cells.
 - Keep a terminal's negotiated size claim while switching to a non-terminal

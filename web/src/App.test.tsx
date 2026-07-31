@@ -66,7 +66,11 @@ const plainTerminalSession: Session = {
 
 function expectTerminalPaneHidden(label: string) {
   const pane = screen.queryByLabelText(label);
-  if (pane) expect(pane).not.toBeVisible();
+  if (pane) {
+    const container = pane.closest(".terminal-pane");
+    expect(container).toHaveAttribute("data-visible", "false");
+    expect(container).toHaveAttribute("inert");
+  }
 }
 
 test("uses the server selection as authoritative and persists browser changes", async () => {
@@ -186,7 +190,7 @@ test("keeps terminal views alive across terminal switches", async () => {
   expect(mounts.get("session-1")).toBe(1);
   expect(unmounts.get("session-1") ?? 0).toBe(0);
   expect(document.querySelector('[aria-label="Codex pane"]'))
-    .toHaveAttribute("hidden");
+    .toHaveAttribute("data-visible", "false");
 
   await user.click(screen.getByRole("button", { name: "Select Codex" }));
   expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
