@@ -30,12 +30,14 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		defaults.TerminalFontSize != 14 || defaults.AgentLogFontSize != 14 ||
 		defaults.TerminalFontFamily != session.DefaultTerminalFontFamily ||
 		defaults.TerminalHistoryLimit != 1048576 || !defaults.AutoSelectAttention ||
-		!defaults.AutoDeselectRunning {
+		!defaults.AutoDeselectRunning ||
+		defaults.TerminalLineHeight != 1.25 || defaults.TerminalCursorStyle != "bar" ||
+		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 
 	response = performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"autoSelectAttention":false,"autoDeselectRunning":false}`)
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"autoSelectAttention":false,"autoDeselectRunning":false,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -47,6 +49,8 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 		TerminalFontFamily:   "JetBrains Mono, monospace",
 		TerminalHistoryLimit: 0, AutoSelectAttention: false, AutoDeselectRunning: false,
+		TerminalLineHeight: 1.5, TerminalCursorStyle: "underline",
+		TerminalCursorBlink: true, TerminalScrollSensitivity: 5,
 	}) {
 		t.Fatalf("updated settings = %#v", updated)
 	}
@@ -97,6 +101,28 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 			t.Fatalf("PATCH body %s status = %d, want 400", body, response.Code)
 		}
 	}
+
+	validBody := `{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3}`
+	for _, body := range []string{
+		strings.Replace(validBody, `"terminalLineHeight":1.25`, `"terminalLineHeight":0.95`, 1),
+		strings.Replace(validBody, `"terminalLineHeight":1.25`, `"terminalLineHeight":2.05`, 1),
+		strings.Replace(validBody, `"terminalLineHeight":1.25`, `"terminalLineHeight":1.01`, 1),
+		strings.Replace(validBody, `"terminalCursorStyle":"bar"`, `"terminalCursorStyle":"dot"`, 1),
+		strings.Replace(validBody, `"terminalCursorStyle":"bar"`, `"terminalCursorStyle":""`, 1),
+		strings.Replace(validBody, `"terminalCursorBlink":false`, `"terminalCursorBlink":"yes"`, 1),
+		strings.Replace(validBody, `"terminalScrollSensitivity":3`, `"terminalScrollSensitivity":0`, 1),
+		strings.Replace(validBody, `"terminalScrollSensitivity":3`, `"terminalScrollSensitivity":6`, 1),
+		strings.Replace(validBody, `"terminalScrollSensitivity":3`, `"terminalScrollSensitivity":3.5`, 1),
+		strings.Replace(validBody, `,"terminalLineHeight":1.25`, "", 1),
+		strings.Replace(validBody, `,"terminalCursorStyle":"bar"`, "", 1),
+		strings.Replace(validBody, `,"terminalCursorBlink":false`, "", 1),
+		strings.Replace(validBody, `,"terminalScrollSensitivity":3`, "", 1),
+	} {
+		response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("terminal appearance body %s status = %d, want 400", body, response.Code)
+		}
+	}
 }
 
 func TestSettingsAPIRoundsFractionalSidebarWidth(t *testing.T) {
@@ -110,7 +136,7 @@ func TestSettingsAPIRoundsFractionalSidebarWidth(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close(t.Context()) })
 
 	response := performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+Q","paneTabShortcut":"Meta+L","sidebarWidth":229.96875,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":8388608,"autoSelectAttention":true,"autoDeselectRunning":true}`)
+		`{"prefix":"Ctrl+Q","paneTabShortcut":"Meta+L","sidebarWidth":229.96875,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":8388608,"autoSelectAttention":true,"autoDeselectRunning":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}

@@ -134,7 +134,7 @@ test("updates scrollback without reconnecting the terminal", async () => {
   expect(createSocket).toHaveBeenCalledTimes(1);
 });
 
-test("creates and recreates xterm with the configured font", async () => {
+test("creates and recreates xterm with configured font and appearance", async () => {
   const socket = new FakeSocket();
   const terminal: TerminalDriver = {
     open: () => undefined,
@@ -148,7 +148,15 @@ test("creates and recreates xterm with the configured font", async () => {
     onResize: () => () => undefined,
     dispose: () => undefined,
   };
-  const receivedFonts: Array<[string, number]> = [];
+  const receivedOptions: Array<[
+    string,
+    number,
+    number,
+    number,
+    string,
+    boolean,
+    number,
+  ]> = [];
   const api = {
     createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
   } as unknown as ApiClient;
@@ -158,15 +166,29 @@ test("creates and recreates xterm with the configured font", async () => {
       api={api}
       fontFamily="JetBrains Mono, monospace"
       fontSize={18}
-      createTerminal={(fontFamily, fontSize) => {
-        receivedFonts.push([fontFamily, fontSize]);
+      lineHeight={1.5}
+      cursorStyle="underline"
+      cursorBlink
+      scrollSensitivity={5}
+      createTerminal={(fontFamily, fontSize, scrollback, lineHeight, cursorStyle, cursorBlink, scrollSensitivity) => {
+        receivedOptions.push([
+          fontFamily,
+          fontSize,
+          scrollback,
+          lineHeight,
+          cursorStyle,
+          cursorBlink,
+          scrollSensitivity,
+        ]);
         return terminal;
       }}
       createSocket={() => socket}
     />,
   );
 
-  expect(receivedFonts).toEqual([["JetBrains Mono, monospace", 18]]);
+  expect(receivedOptions).toEqual([
+    ["JetBrains Mono, monospace", 18, 8192, 1.5, "underline", true, 5],
+  ]);
 
   rerender(
     <TerminalView
@@ -174,8 +196,20 @@ test("creates and recreates xterm with the configured font", async () => {
       api={api}
       fontFamily="Iosevka, monospace"
       fontSize={20}
-      createTerminal={(fontFamily, fontSize) => {
-        receivedFonts.push([fontFamily, fontSize]);
+      lineHeight={1.75}
+      cursorStyle="block"
+      cursorBlink={false}
+      scrollSensitivity={2}
+      createTerminal={(fontFamily, fontSize, scrollback, lineHeight, cursorStyle, cursorBlink, scrollSensitivity) => {
+        receivedOptions.push([
+          fontFamily,
+          fontSize,
+          scrollback,
+          lineHeight,
+          cursorStyle,
+          cursorBlink,
+          scrollSensitivity,
+        ]);
         return terminal;
       }}
       createSocket={() => socket}
@@ -183,9 +217,9 @@ test("creates and recreates xterm with the configured font", async () => {
   );
 
   await waitFor(() =>
-    expect(receivedFonts).toEqual([
-      ["JetBrains Mono, monospace", 18],
-      ["Iosevka, monospace", 20],
+    expect(receivedOptions).toEqual([
+      ["JetBrains Mono, monospace", 18, 8192, 1.5, "underline", true, 5],
+      ["Iosevka, monospace", 20, 8192, 1.75, "block", false, 2],
     ]),
   );
 });

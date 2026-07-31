@@ -20,17 +20,21 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Prefix               string   `json:"prefix"`
-		PaneTabShortcut      string   `json:"paneTabShortcut"`
-		SidebarWidth         float64  `json:"sidebarWidth"`
-		SidebarCollapsed     bool     `json:"sidebarCollapsed"`
-		InterfaceFontSize    float64  `json:"interfaceFontSize"`
-		TerminalFontSize     float64  `json:"terminalFontSize"`
-		TerminalFontFamily   string   `json:"terminalFontFamily"`
-		AgentLogFontSize     float64  `json:"agentLogFontSize"`
-		TerminalHistoryLimit *float64 `json:"terminalHistoryLimit"`
-		AutoSelectAttention  *bool    `json:"autoSelectAttention"`
-		AutoDeselectRunning  *bool    `json:"autoDeselectRunning"`
+		Prefix                    string   `json:"prefix"`
+		PaneTabShortcut           string   `json:"paneTabShortcut"`
+		SidebarWidth              float64  `json:"sidebarWidth"`
+		SidebarCollapsed          bool     `json:"sidebarCollapsed"`
+		InterfaceFontSize         float64  `json:"interfaceFontSize"`
+		TerminalFontSize          float64  `json:"terminalFontSize"`
+		TerminalFontFamily        string   `json:"terminalFontFamily"`
+		AgentLogFontSize          float64  `json:"agentLogFontSize"`
+		TerminalHistoryLimit      *float64 `json:"terminalHistoryLimit"`
+		AutoSelectAttention       *bool    `json:"autoSelectAttention"`
+		AutoDeselectRunning       *bool    `json:"autoDeselectRunning"`
+		TerminalLineHeight        float64  `json:"terminalLineHeight"`
+		TerminalCursorStyle       string   `json:"terminalCursorStyle"`
+		TerminalCursorBlink       *bool    `json:"terminalCursorBlink"`
+		TerminalScrollSensitivity float64  `json:"terminalScrollSensitivity"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -47,22 +51,30 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validFontSize(input.AgentLogFontSize) ||
 		terminalFontFamily == "" || utf8.RuneCountInString(terminalFontFamily) > 256 ||
 		!validTerminalHistoryLimit(input.TerminalHistoryLimit) ||
-		input.AutoSelectAttention == nil || input.AutoDeselectRunning == nil {
+		input.AutoSelectAttention == nil || input.AutoDeselectRunning == nil ||
+		!validTerminalLineHeight(input.TerminalLineHeight) ||
+		!validTerminalCursorStyle(input.TerminalCursorStyle) ||
+		input.TerminalCursorBlink == nil ||
+		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
 	}
 	settings := session.Settings{
-		Prefix:               input.Prefix,
-		PaneTabShortcut:      input.PaneTabShortcut,
-		SidebarWidth:         int(math.Round(input.SidebarWidth)),
-		SidebarCollapsed:     input.SidebarCollapsed,
-		InterfaceFontSize:    int(input.InterfaceFontSize),
-		TerminalFontSize:     int(input.TerminalFontSize),
-		TerminalFontFamily:   terminalFontFamily,
-		AgentLogFontSize:     int(input.AgentLogFontSize),
-		TerminalHistoryLimit: int(*input.TerminalHistoryLimit),
-		AutoSelectAttention:  *input.AutoSelectAttention,
-		AutoDeselectRunning:  *input.AutoDeselectRunning,
+		Prefix:                    input.Prefix,
+		PaneTabShortcut:           input.PaneTabShortcut,
+		SidebarWidth:              int(math.Round(input.SidebarWidth)),
+		SidebarCollapsed:          input.SidebarCollapsed,
+		InterfaceFontSize:         int(input.InterfaceFontSize),
+		TerminalFontSize:          int(input.TerminalFontSize),
+		TerminalFontFamily:        terminalFontFamily,
+		AgentLogFontSize:          int(input.AgentLogFontSize),
+		TerminalHistoryLimit:      int(*input.TerminalHistoryLimit),
+		AutoSelectAttention:       *input.AutoSelectAttention,
+		AutoDeselectRunning:       *input.AutoDeselectRunning,
+		TerminalLineHeight:        input.TerminalLineHeight,
+		TerminalCursorStyle:       input.TerminalCursorStyle,
+		TerminalCursorBlink:       *input.TerminalCursorBlink,
+		TerminalScrollSensitivity: int(input.TerminalScrollSensitivity),
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")
@@ -84,6 +96,23 @@ func validTerminalHistoryLimit(value *float64) bool {
 func validFontSize(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
 		value >= 10 && value <= 24 && math.Trunc(value) == value
+}
+
+func validTerminalLineHeight(value float64) bool {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 1 || value > 2 {
+		return false
+	}
+	scaled := value * 20
+	return math.Abs(scaled-math.Round(scaled)) < 1e-9
+}
+
+func validTerminalCursorStyle(value string) bool {
+	return value == "bar" || value == "block" || value == "underline"
+}
+
+func validTerminalScrollSensitivity(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
+		math.Trunc(value) == value && value >= 1 && value <= 5
 }
 
 func shortcutsEqual(left, right string) bool {

@@ -28,7 +28,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { Session, Settings } from "../types";
-import { defaultTerminalFontFamily } from "../settings";
+import {
+  defaultTerminalCursorBlink,
+  defaultTerminalCursorStyle,
+  defaultTerminalFontFamily,
+  defaultTerminalLineHeight,
+  defaultTerminalScrollSensitivity,
+} from "../settings";
 
 const defaultSidebarWidth = 256;
 const minimumSidebarWidth = 180;
@@ -509,6 +515,10 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalHistoryLimit: 1024 * 1024,
     autoSelectAttention: true,
     autoDeselectRunning: true,
+    terminalLineHeight: defaultTerminalLineHeight,
+    terminalCursorStyle: defaultTerminalCursorStyle,
+    terminalCursorBlink: defaultTerminalCursorBlink,
+    terminalScrollSensitivity: defaultTerminalScrollSensitivity,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

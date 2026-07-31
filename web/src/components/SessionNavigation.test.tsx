@@ -30,6 +30,10 @@ const settings: Settings = {
   terminalHistoryLimit: 1024 * 1024,
   autoSelectAttention: true,
   autoDeselectRunning: true,
+  terminalLineHeight: 1.25,
+  terminalCursorStyle: "bar",
+  terminalCursorBlink: false,
+  terminalScrollSensitivity: 3,
 };
 
 const sessions: Session[] = [

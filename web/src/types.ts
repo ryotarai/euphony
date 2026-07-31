@@ -21,6 +21,8 @@ export interface ApiErrorBody {
   message: string;
 }
 
+export type TerminalCursorStyle = "bar" | "block" | "underline";
+
 export interface Settings {
   prefix: string;
   paneTabShortcut: string;
@@ -33,6 +35,10 @@ export interface Settings {
   terminalHistoryLimit: number;
   autoSelectAttention: boolean;
   autoDeselectRunning: boolean;
+  terminalLineHeight: number;
+  terminalCursorStyle: TerminalCursorStyle;
+  terminalCursorBlink: boolean;
+  terminalScrollSensitivity: number;
 }
 
 export interface CwdSelectionFilter {
