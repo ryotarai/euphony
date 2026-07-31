@@ -72,36 +72,48 @@ type AgentUpdate struct {
 }
 
 type Settings struct {
-	Prefix               string `json:"prefix"`
-	PaneTabShortcut      string `json:"paneTabShortcut"`
-	SidebarWidth         int    `json:"sidebarWidth"`
-	SidebarCollapsed     bool   `json:"sidebarCollapsed"`
-	InterfaceFontSize    int    `json:"interfaceFontSize"`
-	TerminalFontSize     int    `json:"terminalFontSize"`
-	TerminalFontFamily   string `json:"terminalFontFamily"`
-	AgentLogFontSize     int    `json:"agentLogFontSize"`
-	TerminalHistoryLimit int    `json:"terminalHistoryLimit"`
-	AutoSelectAttention  bool   `json:"autoSelectAttention"`
+	Prefix                    string  `json:"prefix"`
+	PaneTabShortcut           string  `json:"paneTabShortcut"`
+	SidebarWidth              int     `json:"sidebarWidth"`
+	SidebarCollapsed          bool    `json:"sidebarCollapsed"`
+	InterfaceFontSize         int     `json:"interfaceFontSize"`
+	TerminalFontSize          int     `json:"terminalFontSize"`
+	TerminalFontFamily        string  `json:"terminalFontFamily"`
+	AgentLogFontSize          int     `json:"agentLogFontSize"`
+	TerminalHistoryLimit      int     `json:"terminalHistoryLimit"`
+	AutoSelectAttention       bool    `json:"autoSelectAttention"`
+	TerminalLineHeight        float64 `json:"terminalLineHeight"`
+	TerminalCursorStyle       string  `json:"terminalCursorStyle"`
+	TerminalCursorBlink       bool    `json:"terminalCursorBlink"`
+	TerminalScrollSensitivity int     `json:"terminalScrollSensitivity"`
 }
 
 const (
-	DefaultTerminalFontFamily   = `Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace`
-	DefaultTerminalHistoryLimit = 1024 * 1024
-	MinTerminalHistoryLimit     = 1024 * 1024
-	MaxTerminalHistoryLimit     = 4095 * 1024 * 1024
+	DefaultTerminalFontFamily        = `Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace`
+	DefaultTerminalHistoryLimit      = 1024 * 1024
+	MinTerminalHistoryLimit          = 1024 * 1024
+	MaxTerminalHistoryLimit          = 4095 * 1024 * 1024
+	DefaultTerminalLineHeight        = 1.25
+	DefaultTerminalCursorStyle       = "bar"
+	DefaultTerminalCursorBlink       = false
+	DefaultTerminalScrollSensitivity = 3
 )
 
 func DefaultSettings() Settings {
 	return Settings{
-		Prefix:               "Ctrl+B",
-		PaneTabShortcut:      "Meta+L",
-		SidebarWidth:         304,
-		InterfaceFontSize:    16,
-		TerminalFontSize:     14,
-		TerminalFontFamily:   DefaultTerminalFontFamily,
-		AgentLogFontSize:     14,
-		TerminalHistoryLimit: DefaultTerminalHistoryLimit,
-		AutoSelectAttention:  true,
+		Prefix:                    "Ctrl+B",
+		PaneTabShortcut:           "Meta+L",
+		SidebarWidth:              304,
+		InterfaceFontSize:         16,
+		TerminalFontSize:          14,
+		TerminalFontFamily:        DefaultTerminalFontFamily,
+		AgentLogFontSize:          14,
+		TerminalHistoryLimit:      DefaultTerminalHistoryLimit,
+		AutoSelectAttention:       true,
+		TerminalLineHeight:        DefaultTerminalLineHeight,
+		TerminalCursorStyle:       DefaultTerminalCursorStyle,
+		TerminalCursorBlink:       DefaultTerminalCursorBlink,
+		TerminalScrollSensitivity: DefaultTerminalScrollSensitivity,
 	}
 }
 

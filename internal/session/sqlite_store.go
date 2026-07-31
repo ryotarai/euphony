@@ -83,7 +83,11 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_font_family TEXT NOT NULL DEFAULT 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
 			agent_log_font_size INTEGER NOT NULL DEFAULT 14,
 			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576,
-			auto_select_attention INTEGER NOT NULL DEFAULT 1
+			auto_select_attention INTEGER NOT NULL DEFAULT 1,
+			terminal_line_height REAL NOT NULL DEFAULT 1.25,
+			terminal_cursor_style TEXT NOT NULL DEFAULT 'bar',
+			terminal_cursor_blink INTEGER NOT NULL DEFAULT 0,
+			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -170,6 +174,50 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add terminal font family setting: %w", err)
 		}
 	}
+	hasTerminalLineHeight, err := s.hasColumn(ctx, "settings", "terminal_line_height")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalLineHeight {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN terminal_line_height REAL NOT NULL DEFAULT 1.25",
+		); err != nil {
+			return fmt.Errorf("add terminal line height setting: %w", err)
+		}
+	}
+	hasTerminalCursorStyle, err := s.hasColumn(ctx, "settings", "terminal_cursor_style")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalCursorStyle {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN terminal_cursor_style TEXT NOT NULL DEFAULT 'bar'",
+		); err != nil {
+			return fmt.Errorf("add terminal cursor style setting: %w", err)
+		}
+	}
+	hasTerminalCursorBlink, err := s.hasColumn(ctx, "settings", "terminal_cursor_blink")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalCursorBlink {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN terminal_cursor_blink INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add terminal cursor blink setting: %w", err)
+		}
+	}
+	hasTerminalScrollSensitivity, err := s.hasColumn(ctx, "settings", "terminal_scroll_sensitivity")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalScrollSensitivity {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3",
+		); err != nil {
+			return fmt.Errorf("add terminal scroll sensitivity setting: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name         string
 		defaultValue int
@@ -218,7 +266,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 8"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 9"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -251,11 +299,12 @@ func (s *SQLiteStore) hasColumn(ctx context.Context, table, column string) (bool
 
 func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
-	var collapsed, autoSelectAttention int
+	var collapsed, autoSelectAttention, terminalCursorBlink int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
-			terminal_history_limit, auto_select_attention
+			terminal_history_limit, auto_select_attention, terminal_line_height,
+			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -268,12 +317,17 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&result.AgentLogFontSize,
 		&result.TerminalHistoryLimit,
 		&autoSelectAttention,
+		&result.TerminalLineHeight,
+		&result.TerminalCursorStyle,
+		&terminalCursorBlink,
+		&result.TerminalScrollSensitivity,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
 	}
 	result.SidebarCollapsed = collapsed != 0
 	result.AutoSelectAttention = autoSelectAttention != 0
+	result.TerminalCursorBlink = terminalCursorBlink != 0
 	return result, nil
 }
 
@@ -286,15 +340,21 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	if settings.AutoSelectAttention {
 		autoSelectAttention = 1
 	}
+	terminalCursorBlink := 0
+	if settings.TerminalCursorBlink {
+		terminalCursorBlink = 1
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
-			terminal_history_limit = ?, auto_select_attention = ?
+			terminal_history_limit = ?, auto_select_attention = ?, terminal_line_height = ?,
+			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
-		settings.TerminalHistoryLimit, autoSelectAttention)
+		settings.TerminalHistoryLimit, autoSelectAttention, settings.TerminalLineHeight,
+		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
