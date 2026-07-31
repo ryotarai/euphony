@@ -42,7 +42,7 @@ Euphony can install coding-agent integrations:
   Hooks: report agent status and session metadata to Euphony.
   Skill: lets coding agents ask you to annotate Markdown and HTML files in Euphony.
 Existing agent settings are preserved.
-Euphony hooks or skills are missing or outdated. Install them now? (Y/n) 
+Euphony hooks or skills are missing or outdated. Install them now? (Y/n)
 ```
 
 An empty response, `y`, or `yes` runs the existing idempotent installer. `n` or

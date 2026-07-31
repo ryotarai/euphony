@@ -302,7 +302,8 @@ func enableCodexHooks(path string) error {
 	} else {
 		found := false
 		for index := features + 1; index < nextSection; index++ {
-			if strings.HasPrefix(strings.TrimSpace(lines[index]), "hooks =") {
+			key, _, assignment := strings.Cut(strings.TrimSpace(lines[index]), "=")
+			if assignment && strings.TrimSpace(key) == "hooks" {
 				lines[index] = "hooks = true"
 				found = true
 				break

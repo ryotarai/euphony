@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -144,6 +145,36 @@ func TestRunSetupExplainsIntegrationsBeforeInstalling(t *testing.T) {
 	}
 	if strings.Index(text, "Hooks:") > strings.Index(text, "Installed codex") {
 		t.Fatalf("explanation follows installation result: %q", text)
+	}
+}
+
+func TestRunAgentSetupPreflightSkipsNonInteractiveInput(t *testing.T) {
+	called := false
+
+	runAgentSetupPreflight(false, func() error {
+		called = true
+		return nil
+	}, func(error) {
+		t.Fatal("warning called for skipped preflight")
+	})
+
+	if called {
+		t.Fatal("offer called for non-interactive input")
+	}
+}
+
+func TestRunAgentSetupPreflightReportsOptionalFailureAndReturns(t *testing.T) {
+	setupErr := errors.New("setup failed")
+	var warning error
+
+	runAgentSetupPreflight(true, func() error {
+		return setupErr
+	}, func(err error) {
+		warning = err
+	})
+
+	if !errors.Is(warning, setupErr) {
+		t.Fatalf("warning = %v, want setup failure", warning)
 	}
 }
 

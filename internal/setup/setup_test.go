@@ -189,6 +189,49 @@ func TestInstallRejectsInvalidHooksWithoutOverwritingSettings(t *testing.T) {
 	}
 }
 
+func TestInstallReplacesCompactCodexHooksAssignment(t *testing.T) {
+	for _, existing := range []string{
+		"hooks=false",
+		"hooks= false # disabled for now",
+	} {
+		t.Run(existing, func(t *testing.T) {
+			config := setupTestConfig(t, "codex")
+			if err := os.MkdirAll(config.CodexDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(config.CodexDir, "config.toml")
+			if err := os.WriteFile(
+				configPath,
+				[]byte("[features]\n"+existing+"\napps = true\n"),
+				0o600,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := Install(config); err != nil {
+				t.Fatalf("Install() error = %v", err)
+			}
+			data := readFile(t, configPath)
+			var hookAssignments []string
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, found := strings.Cut(line, "=")
+				if found && strings.TrimSpace(key) == "hooks" {
+					hookAssignments = append(hookAssignments, strings.TrimSpace(value))
+				}
+			}
+			if len(hookAssignments) != 1 || hookAssignments[0] != "true" {
+				t.Fatalf(
+					"hooks assignments = %v, want one true assignment; config:\n%s",
+					hookAssignments, data,
+				)
+			}
+			if !bytes.Contains(data, []byte("apps = true")) {
+				t.Fatalf("Install() removed neighboring setting:\n%s", data)
+			}
+		})
+	}
+}
+
 func readJSON(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

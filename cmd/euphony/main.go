@@ -109,11 +109,15 @@ func runHook(args []string, stdin io.Reader) error {
 }
 
 func runServer(stdin io.Reader, stdout io.Writer) error {
-	if isTerminalReader(stdin) {
-		if err := offerAgentSetupOnStartup(stdin, stdout); err != nil {
+	runAgentSetupPreflight(
+		isTerminalReader(stdin),
+		func() error {
+			return offerAgentSetupOnStartup(stdin, stdout)
+		},
+		func(err error) {
 			log.Printf("Agent setup warning: %v", err)
-		}
-	}
+		},
+	)
 	address := os.Getenv("EUPHONY_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"
@@ -220,6 +224,17 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 		return unixShutdownErr
 	}
 	return sessionErr
+}
+
+func runAgentSetupPreflight(
+	interactive bool, offer func() error, warn func(error),
+) {
+	if !interactive {
+		return
+	}
+	if err := offer(); err != nil {
+		warn(err)
+	}
 }
 
 func offerAgentSetupOnStartup(stdin io.Reader, stdout io.Writer) error {
