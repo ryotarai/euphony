@@ -65,3 +65,9 @@
   Unix socket and TCP API; do not treat handler-only tests as transport proof.
 - Before asking users to install integrations, explain what each hook or skill
   does and that existing settings are preserved.
+- Keep derived terminal facts such as the working directory self-healing: sample
+  them from the live process on read, and never let a browser keystroke be the
+  only trigger, or a terminal driven through the automation API or restored after
+  a restart shows a directory it left long ago. An agent hook still wins, because
+  an agent knows its project directory where its process only knows the worktree
+  it entered.

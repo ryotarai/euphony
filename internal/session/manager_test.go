@@ -298,6 +298,84 @@ func TestUpdateCWDPreservesEquivalentLogicalPath(t *testing.T) {
 	}
 }
 
+func TestListSamplesTheWorkingDirectoryOfALiveProcess(t *testing.T) {
+	start := t.TempDir()
+	moved := t.TempDir()
+	manager := NewManager("/bin/sh")
+	manager.cwdSampleInterval = 0
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", start)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatal("Get() ok = false, want the created terminal")
+	}
+	if _, err := running.Write([]byte("cd " + moved + "\n")); err != nil {
+		t.Fatalf("Write(cd) error = %v", err)
+	}
+
+	waitFor(t, 5*time.Second, func() bool {
+		listed := manager.List()
+		return len(listed) == 1 && sameDirectory(t, listed[0].CWD, moved)
+	})
+}
+
+func TestListLeavesAFreshlyReportedWorkingDirectoryAlone(t *testing.T) {
+	start := t.TempDir()
+	reported := t.TempDir()
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", start)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateCWD(metadata.ID, reported); err != nil {
+		t.Fatalf("UpdateCWD() error = %v", err)
+	}
+
+	listed := manager.List()
+	if len(listed) != 1 || listed[0].CWD != reported {
+		t.Fatalf("List() cwd = %#v, want the reported %q", listed, reported)
+	}
+}
+
+func TestListKeepsTheWorkingDirectoryAnAgentReported(t *testing.T) {
+	start := t.TempDir()
+	reported := t.TempDir()
+	manager := NewManager("/bin/sh")
+	manager.cwdSampleInterval = 0
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", start)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "claude", Status: "running", CWD: reported,
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	listed := manager.List()
+	if len(listed) != 1 || listed[0].CWD != reported {
+		t.Fatalf("List() cwd = %#v, want the agent's %q", listed, reported)
+	}
+}
+
+// sameDirectory compares two paths that may disagree on symlink spelling: a
+// shell keeps the logical path it was handed while the kernel reports the
+// physical one, and macOS temporary directories differ by exactly that.
+func sameDirectory(t *testing.T, left, right string) bool {
+	t.Helper()
+	if left == right {
+		return true
+	}
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
+}
+
 func TestUpdateAgentMarksRunningToWaitingAsNeedingAttention(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

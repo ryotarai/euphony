@@ -122,18 +122,38 @@ func DefaultSettings() Settings {
 type entry struct {
 	metadata Metadata
 	session  *Session
+	// cwdFromAgent records that an agent hook named this terminal's working
+	// directory. An agent knows its project directory where its process only
+	// knows where it happens to stand — a worktree it entered, say — so without
+	// this the hook and the sampler would overwrite each other forever.
+	cwdFromAgent bool
+	cwdSampledAt time.Time
+	// cwdReportedAt is when the terminal last named its own directory over the
+	// WebSocket. That report is faster than a sample and describes the very
+	// prompt the reader is looking at, so it wins for one sampling interval —
+	// after which the process is asked again and either confirms it or corrects
+	// a claim that has gone stale.
+	cwdReportedAt time.Time
 }
 
+// defaultCWDSampleInterval bounds how often a terminal's working directory is
+// sampled from its live process. Keystrokes arriving over the terminal
+// WebSocket sample on demand; this backstop is what corrects a terminal driven
+// through the automation API, or restored after a restart, which would
+// otherwise keep displaying a directory it left long ago.
+const defaultCWDSampleInterval = 5 * time.Second
+
 type Manager struct {
-	mu             sync.RWMutex
-	shell          string
-	hooks          HookConfig
-	sessions       map[string]*entry
-	store          metadataStore
-	closing        bool
-	settings       Settings
-	onChange       func(Change)
-	changeSequence uint64
+	mu                sync.RWMutex
+	shell             string
+	hooks             HookConfig
+	sessions          map[string]*entry
+	store             metadataStore
+	closing           bool
+	settings          Settings
+	onChange          func(Change)
+	changeSequence    uint64
+	cwdSampleInterval time.Duration
 
 	workspaceSelection    selection.State
 	hasWorkspaceSelection bool
@@ -185,7 +205,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 	return &Manager{
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
-		settings: DefaultSettings(),
+		settings: DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
 	}
 }
 
@@ -391,6 +411,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	if cwd := strings.TrimSpace(update.CWD); cwd != "" {
 		item.metadata.CWD = cwd
 		item.metadata.RepoRoot = repositoryRoot(cwd)
+		item.cwdFromAgent = true
 	}
 	if m.store != nil {
 		if err := m.store.Save(context.Background(), item.metadata); err != nil {
@@ -443,7 +464,20 @@ func (m *Manager) UpdateCWD(id, cwd string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	return m.updateCWD(id, cwd, true)
+	metadata, err := m.updateCWD(id, cwd, true)
+	if err != nil {
+		return Metadata{}, err
+	}
+	m.noteCWDReport(id)
+	return metadata, nil
+}
+
+func (m *Manager) noteCWDReport(id string) {
+	m.mu.Lock()
+	if item, ok := m.sessions[id]; ok {
+		item.cwdReportedAt = time.Now()
+	}
+	m.mu.Unlock()
 }
 
 func normalizeReportedCWD(cwd string) (string, error) {
@@ -474,11 +508,27 @@ func normalizeReportedCWD(cwd string) (string, error) {
 }
 
 func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metadata, error) {
+	return m.updateCWDNotReportedSince(id, cwd, preserveEquivalentPath, time.Time{})
+}
+
+// updateCWDNotReportedSince drops the update when the terminal named its own
+// directory after sampledAt. Reading a process directory takes milliseconds, and
+// a report that arrives inside that window describes the later moment — so the
+// window has to be re-checked here, under the lock, and not only before the
+// sample was taken.
+func (m *Manager) updateCWDNotReportedSince(
+	id, cwd string, preserveEquivalentPath bool, sampledAt time.Time,
+) (Metadata, error) {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
+	}
+	if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
+		metadata := item.metadata
+		m.mu.Unlock()
+		return metadata, nil
 	}
 	if item.metadata.CWD == cwd {
 		metadata := item.metadata
@@ -575,7 +625,54 @@ func (m *Manager) watch(item *entry) {
 
 func (m *Manager) List() []Metadata {
 	m.refreshCodexTitles()
+	m.refreshWorkingDirectories()
 	return m.ListCurrent()
+}
+
+// refreshWorkingDirectories re-derives each terminal's working directory from
+// its live process. Sampling happens outside the lock: it shells out to lsof on
+// macOS, and holding the lock across that would stall every reader.
+func (m *Manager) refreshWorkingDirectories() {
+	type sample struct {
+		id  string
+		pid int
+	}
+	now := time.Now()
+	var due []sample
+	m.mu.Lock()
+	for id, item := range m.sessions {
+		if item.metadata.State != StateRunning || item.cwdFromAgent {
+			continue
+		}
+		if !item.cwdSampledAt.IsZero() && now.Sub(item.cwdSampledAt) < m.cwdSampleInterval {
+			continue
+		}
+		if !item.cwdReportedAt.IsZero() && now.Sub(item.cwdReportedAt) < m.cwdSampleInterval {
+			continue
+		}
+		if item.session == nil || item.session.command == nil {
+			continue
+		}
+		process := item.session.command.Process
+		if process == nil {
+			continue
+		}
+		item.cwdSampledAt = now
+		due = append(due, sample{id: id, pid: process.Pid})
+	}
+	m.mu.Unlock()
+
+	for _, candidate := range due {
+		cwd, err := processWorkingDirectory(candidate.pid)
+		if err != nil {
+			continue
+		}
+		cwd, err = normalizeReportedCWD(cwd)
+		if err != nil {
+			continue
+		}
+		_, _ = m.updateCWDNotReportedSince(candidate.id, cwd, true, now)
+	}
 }
 
 // ListCurrent returns the current metadata without running refresh hooks.
