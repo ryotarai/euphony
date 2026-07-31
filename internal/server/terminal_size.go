@@ -22,6 +22,8 @@ type terminalSizeClient struct {
 }
 
 type terminalSizeGroup struct {
+	mu          sync.Mutex
+	operations  int
 	apply       func(uint16, uint16, func()) error
 	clients     map[uint64]*terminalSizeClient
 	accepted    terminalDimensions
@@ -64,14 +66,19 @@ func (c *terminalSizeCoordinator) subscribe(
 	}
 	clientID := c.nextID
 	c.nextID++
+	group.operations++
+	c.mu.Unlock()
+
 	client := &terminalSizeClient{
 		updates: make(chan terminalDimensions, 1),
 	}
 	if len(publish) > 0 {
 		client.publish = publish[0]
 	}
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	defer c.releaseGroup(terminalID, group)
 	group.clients[clientID] = client
-	c.mu.Unlock()
 
 	report := func(cols, rows uint16) error {
 		return c.report(terminalID, clientID, terminalDimensions{
@@ -100,12 +107,13 @@ func (c *terminalSizeCoordinator) report(
 		return errInvalidTerminalDimensions
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	group, ok := c.groups[terminalID]
-	if !ok {
-		return errors.New("terminal size subscription is closed")
+	group, err := c.acquireGroup(terminalID)
+	if err != nil {
+		return err
 	}
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	defer c.releaseGroup(terminalID, group)
 	client, ok := group.clients[clientID]
 	if !ok {
 		return errors.New("terminal size subscription is closed")
@@ -145,12 +153,13 @@ func (c *terminalSizeCoordinator) release(
 	terminalID string,
 	clientID uint64,
 ) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	group, ok := c.groups[terminalID]
-	if !ok {
-		return errors.New("terminal size subscription is closed")
+	group, err := c.acquireGroup(terminalID)
+	if err != nil {
+		return err
 	}
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	defer c.releaseGroup(terminalID, group)
 	client, ok := group.clients[clientID]
 	if !ok {
 		return errors.New("terminal size subscription is closed")
@@ -180,12 +189,13 @@ func (c *terminalSizeCoordinator) release(
 }
 
 func (c *terminalSizeCoordinator) unsubscribe(terminalID string, clientID uint64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	group, ok := c.groups[terminalID]
-	if !ok {
+	group, err := c.acquireGroup(terminalID)
+	if err != nil {
 		return
 	}
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	defer c.releaseGroup(terminalID, group)
 	client, ok := group.clients[clientID]
 	if !ok {
 		return
@@ -212,6 +222,36 @@ func (c *terminalSizeCoordinator) unsubscribe(terminalID string, clientID uint64
 		group.accepted = previousAccepted
 		group.hasAccepted = previouslyAccepted
 		return
+	}
+}
+
+func (c *terminalSizeCoordinator) acquireGroup(
+	terminalID string,
+) (*terminalSizeGroup, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	group, ok := c.groups[terminalID]
+	if !ok {
+		return nil, errors.New("terminal size subscription is closed")
+	}
+	group.operations++
+	return group, nil
+}
+
+// releaseGroup must be called while group.mu is held so that group.clients is
+// stable while deciding whether the group can be removed.
+func (c *terminalSizeCoordinator) releaseGroup(
+	terminalID string,
+	group *terminalSizeGroup,
+) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	group.operations--
+	if group.operations != 0 || len(group.clients) != 0 {
+		return
+	}
+	if current, ok := c.groups[terminalID]; ok && current == group {
+		delete(c.groups, terminalID)
 	}
 }
 

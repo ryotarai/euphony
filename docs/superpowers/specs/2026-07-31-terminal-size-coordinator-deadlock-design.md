@@ -76,8 +76,9 @@ then releases its operation reference.
 ## Testing
 
 Add a coordinator unit test that blocks `apply` for terminal A, waits until the
-callback starts, and then reports a claim for terminal B with a bounded
-timeout. The report for B must complete and publish its dimensions before A is
-released. The test must fail before the change because the current global
-mutex is held by A. Run the existing terminal-size tests and the full Go test
-suite, including the race detector for the affected package.
+callback starts, and then subscribes terminal B with a bounded timeout. The
+subscription for B must complete while A is still blocked; a subsequent B
+claim must also publish its dimensions before A is released. The test must
+fail before the change because the current global mutex is held by A. Run the
+existing terminal-size tests and the full Go test suite, including the race
+detector for the affected package.

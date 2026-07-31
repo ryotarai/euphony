@@ -31,10 +31,11 @@
 Add `TestTerminalSizeCoordinatorDoesNotBlockDifferentTerminalsWhileResizeIsPending`.
 Use `apply` to block only terminal A after signaling `applyStarted`, and use a
 second `apply` for terminal B that calls `notify` immediately. Start A's
-`report` in a goroutine, wait for `applyStarted`, then call B's `report` in a
-goroutine and require it to return within 100 milliseconds. Read B's accepted
-dimensions to prove the transaction completed, release A, and assert A's
-goroutine returns without error.
+`report` in a goroutine, wait for `applyStarted`, then call B's `subscribe` in a
+goroutine and require it to return within 100 milliseconds while A remains
+blocked. Report B's claim and read its accepted dimensions to prove the
+transaction completed, release A, and assert A's goroutine returns without
+error.
 
 ```go
 func TestTerminalSizeCoordinatorDoesNotBlockDifferentTerminalsWhileResizeIsPending(t *testing.T) {

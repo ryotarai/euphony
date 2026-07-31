@@ -273,3 +273,85 @@ func TestTerminalSizeCoordinatorPublishesAcceptedSizeDuringResize(t *testing.T) 
 	}
 	assertNoTerminalDimensions(t, updates)
 }
+
+func TestTerminalSizeCoordinatorDoesNotBlockDifferentTerminalsWhileResizeIsPending(t *testing.T) {
+	applyStarted := make(chan struct{})
+	releaseApply := make(chan struct{})
+	apply := func(terminal string) func(uint16, uint16, func()) error {
+		return func(cols, rows uint16, notify func()) error {
+			if terminal == "a" {
+				close(applyStarted)
+				<-releaseApply
+			}
+			notify()
+			return nil
+		}
+	}
+	coordinator := newTerminalSizeCoordinator()
+	reportA, _, _, stopA := coordinator.subscribe(
+		"a",
+		terminalDimensions{Cols: 80, Rows: 24},
+		apply("a"),
+	)
+	defer stopA()
+
+	aDone := make(chan error, 1)
+	go func() {
+		aDone <- reportA(120, 40)
+	}()
+	select {
+	case <-applyStarted:
+	case <-time.After(time.Second):
+		t.Fatal("terminal A resize did not start")
+	}
+
+	type subscription struct {
+		report  func(uint16, uint16) error
+		updates <-chan terminalDimensions
+		stop    func()
+	}
+	bDone := make(chan subscription, 1)
+	go func() {
+		reportB, _, updatesB, stopB := coordinator.subscribe(
+			"b",
+			terminalDimensions{Cols: 80, Rows: 24},
+			apply("b"),
+		)
+		bDone <- subscription{report: reportB, updates: updatesB, stop: stopB}
+	}()
+	var b subscription
+	select {
+	case b = <-bDone:
+	case <-time.After(100 * time.Millisecond):
+		close(releaseApply)
+		select {
+		case <-aDone:
+		case <-time.After(time.Second):
+			t.Fatal("terminal A report did not finish after release")
+		}
+		select {
+		case b = <-bDone:
+			b.stop()
+		case <-time.After(time.Second):
+			t.Fatal("terminal B subscription did not finish after terminal A was released")
+		}
+		t.Fatal("terminal B report was blocked by terminal A resize")
+	}
+	defer b.stop()
+	if err := b.report(100, 30); err != nil {
+		t.Fatalf("terminal B report error = %v", err)
+	}
+
+	close(releaseApply)
+	select {
+	case err := <-aDone:
+		if err != nil {
+			t.Fatalf("terminal A report error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal A report did not finish after release")
+	}
+	if got := readTerminalDimensions(t, b.updates); got != (terminalDimensions{Cols: 100, Rows: 30}) {
+		t.Fatalf("terminal B dimensions = %#v, want 100x30", got)
+	}
+}
