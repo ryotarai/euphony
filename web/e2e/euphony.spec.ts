@@ -516,7 +516,11 @@ test("browses Git changes inside a terminal pane", async ({ page }, testInfo) =>
     const pane = page.getByLabel("Git review pane", { exact: true });
     await pane.getByRole("tab", { name: "Changes" }).click();
 
-    await expect(pane.getByText("main", { exact: true })).toBeVisible();
+    await expect(
+      pane.getByRole("region", { name: "Git changes" }).getByText("main", {
+        exact: true,
+      }),
+    ).toBeVisible();
     const appFile = pane.getByRole("button", { name: /src\/app\.ts, modified/ });
     await appFile.click();
     await expect(pane.getByText("export const state = 'before';")).toBeVisible();
