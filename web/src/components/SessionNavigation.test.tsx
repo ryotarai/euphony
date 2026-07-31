@@ -65,17 +65,11 @@ const sessions: Session[] = [
   },
 ];
 
-const legacySidebarProps = {
-  statusFilters: [],
-  onStatusFilter: () => undefined,
-};
-
 test("composes terminal navigation from the shadcn sidebar without a monogram", () => {
   render(
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -92,7 +86,6 @@ test("reports whether more terminal tree content remains below", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -124,7 +117,6 @@ test("opens and closes the mobile drawer with keyboard focus restoration", async
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -148,7 +140,6 @@ test("selecting a mobile session closes the drawer", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={onSelect}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -171,7 +162,6 @@ test("opening settings from mobile closes the terminal drawer", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -210,7 +200,6 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
     <SessionNavigation
       sessions={grouped}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -244,7 +233,6 @@ test("creates a terminal from the cwd heading", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={onCreate}
       onDelete={() => undefined}
@@ -263,7 +251,6 @@ test("forwards Alt-clicks, but not Shift-clicks, on terminal checkboxes as pin r
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={onSelect}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -288,7 +275,6 @@ test("marks pinned terminal checkboxes and explains direct removal", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one", "three"]}
-      {...legacySidebarProps}
       pinnedIDs={["three"]}
       onSelect={() => undefined}
       onCreate={() => undefined}
@@ -309,7 +295,6 @@ test("collapses and restores the desktop sidebar", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -344,7 +329,6 @@ test("uses a compact 256px sidebar by default", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -362,7 +346,6 @@ test("resizes the desktop sidebar by dragging its separator", () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
@@ -387,7 +370,6 @@ test("opens settings from the desktop sidebar", async () => {
     <SessionNavigation
       sessions={sessions}
       selectedIDs={["one"]}
-      {...legacySidebarProps}
       onSelect={() => undefined}
       onCreate={() => undefined}
       onDelete={() => undefined}
