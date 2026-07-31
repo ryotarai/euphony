@@ -222,35 +222,37 @@ test("follows the previous terminal when the focused shell exits", async ({ page
   expect(selectionEnvelope.result.focusedTerminalId).toBe(second.id);
 });
 
-test("shows empty status groups with interactive checkboxes", async ({
+test("renders a cwd-first tree and creates a terminal from its cwd", async ({
   page,
 }, testInfo) => {
   await clearSessions(page);
-  await createSession(page, "Shell");
+  await createSession(page, "Shell", "/tmp");
+  await createSession(page, "Project", "/Users/ryotarai/work/euphony");
   await page.goto("/?token=test-token");
 
-  for (const label of [
-    "Show all Blocked terminals",
-    "Show all Running terminals",
-    "Show all Waiting terminals",
-    "Show all Terminal terminals",
-  ]) {
-    await expect(page.getByRole("checkbox", { name: label })).toBeVisible();
-  }
+  await expect(page.getByRole("heading", { name: "/tmp" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "~/work/euphony" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Terminal" })).toHaveCount(2);
   await expect(
-    page.getByRole("checkbox", { name: "Show all Need attention terminals" }),
+    page.getByRole("checkbox", { name: /Show all .* terminals/ }),
   ).toHaveCount(0);
-  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(3);
-  await page.screenshot({ path: testInfo.outputPath("empty-status-groups.png") });
+  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("cwd-sidebar-tree.png") });
 
-  const running = page.getByRole("checkbox", {
-    name: "Show all Running terminals",
-  });
-  await running.click();
-
-  await expect(running).toBeChecked();
-  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["running"]);
-  await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create terminal in /tmp" }).click();
+  const createdTerminal = page.getByRole("button", { name: "Select Terminal" });
+  await expect(createdTerminal).toBeVisible();
+  await expect(createdTerminal).toHaveAttribute("title", "/tmp");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{
+      name: string;
+      cwd: string;
+    }>;
+    return sessions.find((session) => session.name === "Terminal")?.cwd;
+  }).toBe("/tmp");
 });
 
 test("keeps sidebar actions visible while the terminal tree scrolls", async ({
@@ -330,6 +332,7 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   const blockedButton = page.getByRole("button", {
     name: "Select Permission request",
   });
+  await expect(blockedButton.getByRole("img", { name: "Blocked" })).toBeVisible();
   const attentionDot = blockedButton.locator(".attention-dot");
   await expect(blockedButton).toHaveAccessibleDescription("Needs attention");
   await expect(attentionDot).toBeVisible();
@@ -338,11 +341,9 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   await expect(attentionDot).toHaveCSS("height", "6px");
   await expect(attentionDot).toHaveCSS("border-radius", "50%");
   await expect(attentionDot).toHaveCSS("background-color", "rgb(56, 189, 248)");
-  const paneAttention = page
-    .getByLabel("Permission request pane", { exact: true })
-    .getByRole("status", { name: "Needs attention" });
-  const paneAttentionDot = paneAttention.locator(".attention-dot");
-  await expect(paneAttention).toBeVisible();
+  const paneAttentionDot = page.locator(
+    ".pane-attention-indicator .attention-dot",
+  );
   await expect(paneAttentionDot).toHaveCSS("width", "6px");
   await expect(paneAttentionDot).toHaveCSS("height", "6px");
   await expect(paneAttentionDot).toHaveCSS("border-radius", "50%");
@@ -350,9 +351,6 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
     "background-color",
     "rgb(56, 189, 248)",
   );
-  await expect(
-    page.getByRole("checkbox", { name: "Show all Need attention terminals" }),
-  ).toHaveCount(0);
 });
 
 test("confirms before deleting a terminal", async ({ page }) => {
@@ -508,9 +506,7 @@ test("keeps the agent log open when a filtered running agent starts waiting", as
   await reportAgent(page, first.id, "codex", "Running task", "running");
   await reportAgent(page, second.id, "claude", "Waiting task");
 
-  await page.goto("/?token=test-token");
-  await page.getByRole("checkbox", { name: "Show all Running terminals" }).click();
-  await page.getByRole("checkbox", { name: "Show all Waiting terminals" }).click();
+  await page.goto("/?token=test-token&status=running&status=waiting");
   const firstPane = page.getByLabel("First pane", { exact: true });
   await firstPane.getByRole("tab", { name: "Agent log" }).click();
 
@@ -945,80 +941,13 @@ test("pins a terminal checkbox until that checkbox is clicked", async ({ page })
   expect(parameters.getAll("pin")).toEqual([]);
 });
 
-test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
-  await clearSessions(page);
-  const runningACwd = `/tmp/euphony-e2e-${e2ePort}-running-a`;
-  const runningBCwd = `/tmp/euphony-e2e-${e2ePort}-running-b`;
-  await mkdir(runningACwd, { recursive: true });
-  await mkdir(runningBCwd, { recursive: true });
-  const runningA = await createSession(page, "Running A", runningACwd);
-  const runningB = await createSession(page, "Running B", runningBCwd);
-  const waiting = await createSession(page, "Waiting", "/tmp");
-  await reportAgent(page, waiting.id, "codex", "Waiting", "waiting");
-  await replaceSharedSelection(page, [runningA.id], runningA.id);
-  await page.goto("/?token=test-token");
-
-  const terminalStatus = page.getByRole("checkbox", {
-    name: "Show all Terminal terminals",
-  });
-  await terminalStatus.click({ modifiers: ["Alt"] });
-  await expect(terminalStatus).toHaveAttribute("data-pinned", "true");
-  await expect(terminalStatus).toHaveCSS(
-    "background-color",
-    "rgb(245, 158, 11)",
-  );
-  await page.getByRole("button", { name: "Select Waiting" }).click();
-
-  await expect(page.getByLabel("Running A pane", { exact: true })).toHaveCount(1);
-  await expect(page.getByLabel("Running B pane", { exact: true })).toHaveCount(1);
-  await expect(page.getByLabel("Waiting pane", { exact: true })).toBeVisible();
-  expect(new URL(page.url()).searchParams.getAll("pin-status")).toEqual([
-    "terminal",
-  ]);
-  const pinnedStatusResponse = await page.request.get("/api/v1/selection", {
-    headers: { Authorization: "Bearer test-token" },
-  });
-  const pinnedStatusSelection = await pinnedStatusResponse.json() as {
-    result: {
-      pinnedFilters: {
-        statuses: string[];
-        cwds: Array<{ status: string; cwd: string }>;
-      };
-    };
-  };
-  expect(pinnedStatusSelection.result.pinnedFilters.statuses).toEqual([
-    "terminal",
-  ]);
-
-  await terminalStatus.click();
-  await expect(terminalStatus).not.toHaveAttribute("data-pinned");
-  const runningACwdCheckbox = page.getByRole("checkbox", {
-    name: `Include all terminals in ${runningACwd}`,
-  });
-  await runningACwdCheckbox.click({ modifiers: ["Alt"] });
-  await expect(runningACwdCheckbox).toHaveAttribute("data-pinned", "true");
-  await expect(runningACwdCheckbox).toHaveCSS(
-    "background-color",
-    "rgb(245, 158, 11)",
-  );
-  await page.getByRole("button", { name: "Select Waiting" }).click();
-
-  await expect(page.getByLabel("Running A pane", { exact: true })).toHaveCount(1);
-  await expect(page.getByLabel("Running B pane", { exact: true })).toBeHidden();
-  await expect(page.getByLabel("Waiting pane", { exact: true })).toBeVisible();
-  expect(new URL(page.url()).searchParams.getAll("pin-cwd")).toEqual([
-    `terminal\u0000${runningACwd}`,
-  ]);
-  await expect(page.locator(".pane-checkbox-pin")).toHaveCount(0);
-});
-
 test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
   await clearSessions(page);
   const left = await createSession(page, "Left", "/private/tmp");
   const right = await createSession(page, "Right", "/private/var");
 
   await page.goto("/?token=test-token");
-  await page.getByRole("checkbox", { name: "Show all Terminal terminals" }).click();
+  await page.getByRole("checkbox", { name: "Include Right in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
 
   const leftSelection = page.getByRole("checkbox", { name: "Deselect Left" });
@@ -1052,9 +981,6 @@ test("follows a focused terminal when polling identifies it as a Claude agent", 
   await createSession(page, "Second", "/tmp");
 
   await page.goto("/?token=test-token");
-  await page.getByRole("checkbox", { name: "Show all Terminal terminals" }).click();
-  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
   await page.getByLabel("First pane", { exact: true }).click();
 
   await reportAgent(page, first.id, "claude", "Waiting for review");
@@ -1092,129 +1018,41 @@ test("deselects a terminal when its agent starts running", async ({ page }) => {
   expect(parameters.has("focus")).toBe(false);
 });
 
-test("inherits status filters into nested cwd controls and supports child overrides", async ({
-  page,
-}, testInfo) => {
-  await clearSessions(page);
-  await createSession(page, "Tmp terminal", "/tmp");
-  await createSession(page, "Var terminal", "/var");
-
-  await page.goto("/?token=test-token");
-  const status = page.getByRole("checkbox", {
-    name: "Show all Terminal terminals",
-  });
-  await status.click();
-
-  const tmpCwd = page.getByRole("checkbox", {
-    name: /Include all terminals in \/(?:private\/)?tmp$/,
-  });
-  const varCwd = page.getByRole("checkbox", {
-    name: /Include all terminals in \/(?:private\/)?var$/,
-  });
-  await expect(tmpCwd).toBeChecked();
-  await expect(varCwd).toBeChecked();
-
-  const cwdX = (await tmpCwd.boundingBox())?.x;
-  const terminalX = (
-    await page.getByRole("checkbox", {
-      name: "Include Tmp terminal in split",
-    }).boundingBox()
-  )?.x;
-  expect(cwdX).toBeDefined();
-  expect(terminalX).toBeDefined();
-  expect(terminalX!).toBeGreaterThan(cwdX!);
-
-  await varCwd.click();
-  await expect(status).toHaveAttribute("aria-checked", "mixed");
-  await expect(status.locator(".lucide-minus")).toBeVisible();
-  await expect(tmpCwd).toBeChecked();
-  await expect(varCwd).not.toBeChecked();
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeHidden();
-
-  await varCwd.click();
-  await expect(status).toBeChecked();
-  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
-  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
-
-  await page.getByRole("checkbox", {
-    name: "Include Tmp terminal in split",
-  }).click();
-  await expect(status).toHaveAttribute("aria-checked", "mixed");
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeHidden();
-  await page.waitForTimeout(1_800);
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeHidden();
-  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", {
-    name: /Show only Terminal terminals in \/(?:private\/)?var$/,
-  }).click();
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeHidden();
-  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.getByRole("dialog", { name: "Settings" });
-  await expect(settings).toHaveAttribute("data-slot", "dialog-content");
-  await expect(page.getByLabel("Prefix")).toHaveAttribute("data-slot", "input");
-  await page.screenshot({ path: testInfo.outputPath("sidebar-settings.png") });
-});
-
-test("keeps terminal navigation rows compact", async ({ page }) => {
+test("keeps cwd and terminal navigation rows compact", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Compact terminal", "/tmp");
 
   await page.goto("/?token=test-token");
-  const status = page.locator(".status-heading").filter({
-    has: page.getByRole("button", { name: "Show only Terminal terminals" }),
-  });
-  const cwd = page.locator(".cwd-heading").filter({
-    has: page.getByRole("button", {
-      name: "Show only Terminal terminals in /tmp",
-    }),
-  });
+  const cwd = page.locator(".cwd-heading").filter({ hasText: "/tmp" });
   const terminal = page.getByRole("button", {
     name: "Select Compact terminal",
   });
 
-  const [statusBox, cwdBox, terminalBox] = await Promise.all([
-    status.boundingBox(),
+  const [cwdBox, terminalBox] = await Promise.all([
     cwd.boundingBox(),
     terminal.boundingBox(),
   ]);
-  expect(statusBox).not.toBeNull();
   expect(cwdBox).not.toBeNull();
   expect(terminalBox).not.toBeNull();
-  expect(statusBox!.height).toBeLessThanOrEqual(24);
   expect(cwdBox!.height).toBeLessThanOrEqual(26);
   expect(terminalBox!.height).toBeLessThanOrEqual(32);
 });
 
-test("uses 0.5rem indentation for each sidebar hierarchy level", async ({ page }) => {
+test("indents terminal rows beneath cwd headings", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Indented terminal", "/tmp");
 
   await page.goto("/?token=test-token");
-  const statusX = (
-    await page.getByRole("checkbox", {
-      name: "Show all Terminal terminals",
-    }).boundingBox()
-  )?.x;
-  const cwdX = (
-    await page.getByRole("checkbox", {
-      name: "Include all terminals in /tmp",
-    }).boundingBox()
-  )?.x;
+  const cwdX = (await page.locator(".cwd-heading").filter({ hasText: "/tmp" }).boundingBox())?.x;
   const terminalX = (
     await page.getByRole("checkbox", {
       name: "Include Indented terminal in split",
     }).boundingBox()
   )?.x;
 
-  expect(statusX).toBeDefined();
   expect(cwdX).toBeDefined();
   expect(terminalX).toBeDefined();
-  expect(cwdX! - statusX!).toBe(8);
-  expect(terminalX! - cwdX!).toBe(8);
+  expect(terminalX!).toBeGreaterThan(cwdX!);
 });
 
 test("uses a flush black workspace with only a divider between panes", async ({ page }) => {
@@ -1535,12 +1373,6 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(page.getByRole("heading", { name: "~/work/euphony" }).first()).toBeVisible();
   await page.getByRole("checkbox", { name: "Include Claude in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
-  await page.getByRole("button", {
-    name: "Show only Terminal terminals",
-    exact: true,
-  }).click();
-  await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Codex terminal", { exact: true })).toBeHidden();
   await codexItem.click();
   const codexPane = page.getByLabel("Codex pane", { exact: true });
   await codexPane.locator(".xterm-helper-textarea").focus();

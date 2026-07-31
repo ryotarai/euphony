@@ -5,10 +5,19 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
-import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
+import {
+  CircleCheckIcon,
+  CircleHelpIcon,
+  CirclePauseIcon,
+  CircleXIcon,
+  LoaderCircleIcon,
+  PlusIcon,
+  Settings2Icon,
+  SquareTerminalIcon,
+  Trash2Icon,
+} from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Sidebar,
@@ -48,16 +57,8 @@ interface SessionNavigationProps {
   sessions: Session[];
   selectedIDs: string[];
   pinnedIDs?: string[];
-  statusFilters: string[];
-  pinnedStatusFilters?: string[];
   onSelect(id: string, multiple: boolean, pin?: boolean): void;
-  onStatusFilter(status: string, checked: boolean, pin?: boolean): void;
-  onStatusSelect?(status: string): void;
-  cwdFilters?: string[];
-  pinnedCwdFilters?: string[];
-  onCwdFilter?(status: string, cwd: string, checked: boolean, pin?: boolean): void;
-  onCwdSelect?(status: string, cwd: string): void;
-  onCreate(): void;
+  onCreate(cwd?: string): void;
   onDelete(session: Session): void;
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
@@ -71,25 +72,6 @@ function activity(session: Session) {
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-const builtInActivities = [
-  "blocked",
-  "running",
-  "waiting",
-  "terminal",
-];
-
-const activityOrder = new Map(
-  builtInActivities.map((status, index) => [status, index]),
-);
-
-function orderedActivities(sessions: Session[]) {
-  return [...new Set([...builtInActivities, ...sessions.map(activity)])].sort(
-    (left, right) =>
-      (activityOrder.get(left) ?? 100) - (activityOrder.get(right) ?? 100) ||
-      left.localeCompare(right),
-  );
 }
 
 function displayPath(path: string) {
@@ -108,6 +90,52 @@ function agentIcon(session: Session) {
   return null;
 }
 
+function groupSessionsByCwd(sessions: Session[]) {
+  const groups = new Map<string, Session[]>();
+  for (const session of sessions) {
+    const group = groups.get(session.cwd);
+    if (group) group.push(session);
+    else groups.set(session.cwd, [session]);
+  }
+  return [...groups].map(([cwd, groupedSessions]) => ({
+    cwd,
+    sessions: groupedSessions,
+  }));
+}
+
+function sessionStatusIcon(status: string) {
+  const label = statusLabel(status);
+  const className = `session-status-icon session-status-${status}`;
+  const props = {
+    "aria-label": label,
+    className,
+    role: "img" as const,
+  };
+
+  switch (status) {
+    case "running":
+      return <LoaderCircleIcon {...props} />;
+    case "blocked":
+      return (
+        <span {...props}>
+          🚫
+        </span>
+      );
+    case "waiting":
+      return <CirclePauseIcon {...props} />;
+    case "terminal":
+      return <SquareTerminalIcon {...props} />;
+    case "starting":
+      return <LoaderCircleIcon {...props} />;
+    case "exited":
+      return <CircleCheckIcon {...props} />;
+    case "failed":
+      return <CircleXIcon {...props} />;
+    default:
+      return <CircleHelpIcon {...props} />;
+  }
+}
+
 function SessionList(props: SessionNavigationProps) {
   const { isMobile, setOpenMobile } = useSidebar();
 
@@ -119,183 +147,114 @@ function SessionList(props: SessionNavigationProps) {
 
   return (
     <nav className="session-list" aria-label="Terminal sessions">
-      {orderedActivities(props.sessions).map((status) => {
-        const statusSessions = props.sessions.filter(
-          (session) => activity(session) === status,
-        );
-        const cwds = [...new Set(statusSessions.map((session) => session.cwd))];
-        const statusSelected = props.statusFilters.includes(status);
-        const statusPinned = props.pinnedStatusFilters?.includes(status) ?? false;
-        const statusHasSelectedCwd = props.cwdFilters?.some((filter) =>
-          filter.startsWith(`${status}\u0000`)
-        ) ?? false;
-        return (
-          <SidebarGroup className="session-group" key={status}>
-            <SidebarGroupLabel className="status-heading">
-              <Checkbox
-                aria-label={`Show all ${statusLabel(status)} terminals`}
-                checked={statusSelected}
-                indeterminate={!statusSelected && statusHasSelectedCwd}
-                data-pinned={statusPinned || undefined}
-                title={
-                  statusPinned
-                    ? "Pinned — click to remove"
-                    : "Option-click to pin"
-                }
-                onClick={(event) => {
-                  if (event.altKey) {
-                    props.onStatusFilter(status, true, true);
-                  } else {
-                    props.onStatusFilter(status, !statusSelected);
-                  }
-                }}
-              />
-              <button
-                className="status-select"
-                aria-label={`Show only ${statusLabel(status)} terminals`}
-                onClick={() => props.onStatusSelect?.(status)}
-              >
-                <h2>{statusLabel(status)}</h2>
-                <Badge variant="secondary">{statusSessions.length}</Badge>
-              </button>
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              {statusSessions.length === 0 && (
-                <p className="status-empty">No terminal</p>
-              )}
-              {cwds.map((cwd) => {
-                const cwdSessions = statusSessions.filter(
-                  (session) => session.cwd === cwd,
-                );
-                const filterKey = cwdFilterKey(status, cwd);
-                const cwdSelected =
-                  statusSelected ||
-                  (props.cwdFilters?.includes(filterKey) ?? false);
-                const cwdPinned =
-                  statusPinned ||
-                  (props.pinnedCwdFilters?.includes(filterKey) ?? false);
+      {groupSessionsByCwd(props.sessions).map(({ cwd, sessions: cwdSessions }) => (
+        <SidebarGroup className="cwd-group" key={cwd}>
+          <SidebarGroupLabel className="cwd-heading" title={cwd}>
+            <h3>{displayPath(cwd)}</h3>
+            <button
+              className="cwd-create"
+              aria-label={`Create terminal in ${displayPath(cwd)}`}
+              title={`Create terminal in ${displayPath(cwd)}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onCreate(cwd);
+                if (isMobile) setOpenMobile(false);
+              }}
+            >
+              <PlusIcon aria-hidden="true" />
+            </button>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="cwd-terminal-list">
+              {cwdSessions.map((session) => {
+                const icon = agentIcon(session);
+                const selected = props.selectedIDs.includes(session.id);
+                const pinned = props.pinnedIDs?.includes(session.id) ?? false;
+                const attentionDescriptionID = session.needsAttention
+                  ? `attention-${session.id}`
+                  : undefined;
                 return (
-                  <SidebarGroup className="cwd-group" key={cwd}>
-                    <SidebarGroupLabel className="cwd-heading" title={cwd}>
-                      <Checkbox
-                        aria-label={`Include all terminals in ${displayPath(cwd)}`}
-                        checked={cwdSelected}
-                        data-pinned={cwdPinned || undefined}
-                        title={
-                          cwdPinned
-                            ? "Pinned — click to remove"
-                            : "Option-click to pin"
-                        }
-                        onClick={(event) => {
-                          if (event.altKey) {
-                            props.onCwdFilter?.(status, cwd, true, true);
-                          } else {
-                            props.onCwdFilter?.(status, cwd, !cwdSelected);
-                          }
-                        }}
-                      />
-                      <button
-                        className="cwd-select"
-                        aria-label={`Show only ${statusLabel(status)} terminals in ${displayPath(cwd)}`}
-                        onClick={() => props.onCwdSelect?.(status, cwd)}
-                      >
-                        <h3>{displayPath(cwd)}</h3>
-                      </button>
-                    </SidebarGroupLabel>
-                    <SidebarGroupContent>
-                      <SidebarMenu className="cwd-terminal-list">
-                        {cwdSessions.map((session) => {
-                          const icon = agentIcon(session);
-                          const selected = props.selectedIDs.includes(session.id);
-                          const pinned = props.pinnedIDs?.includes(session.id) ?? false;
-                          const attentionDescriptionID = session.needsAttention
-                            ? `attention-${session.id}`
-                            : undefined;
-                          return (
-                            <SidebarMenuItem
-                              className="session-channel"
-                              key={session.id}
-                              data-state={activity(session)}
-                            >
-                              <Checkbox
-                                className="pane-checkbox"
-                                aria-label={`Include ${session.name} in split`}
-                                checked={selected}
-                                data-pinned={pinned || undefined}
-                                title={
-                                  pinned
-                                    ? "Pinned — click to remove"
-                                    : "Option-click to pin"
-                                }
-                                onClick={(event) =>
-                                  selectSession(session.id, true, event.altKey)
-                                }
-                              />
-                              <SidebarMenuButton
-                                className="session-select"
-                                size="lg"
-                                isActive={selected}
-                                aria-label={`Select ${session.name}`}
-                                aria-pressed={selected}
-                                aria-current={selected ? "true" : undefined}
-                                aria-describedby={attentionDescriptionID}
-                                title={session.cwd}
-                                onClick={(event) =>
-                                  selectSession(
-                                    session.id,
-                                    event.metaKey || event.ctrlKey,
-                                  )
-                                }
-                              >
-                                {session.needsAttention && (
-                                  <>
-                                    <span
-                                      className="attention-dot"
-                                      aria-hidden="true"
-                                    />
-                                    <span
-                                      className="sr-only"
-                                      id={attentionDescriptionID}
-                                    >
-                                      Needs attention
-                                    </span>
-                                  </>
-                                )}
-                                {icon && (
-                                  <img
-                                    className="session-agent-icon"
-                                    src={icon.source}
-                                    alt={icon.label}
-                                  />
-                                )}
-                                <span className="terminal-identity">
-                                  <span className="agent-title">
-                                    {session.agentTitle || session.name}
-                                  </span>
-                                </span>
-                              </SidebarMenuButton>
-                              <SidebarMenuAction
-                                className="session-delete"
-                                showOnHover
-                                aria-label={`Delete ${session.name}`}
-                                title={`Delete ${session.name}`}
-                                onClick={() => props.onDelete(session)}
-                              >
-                                <Trash2Icon aria-hidden="true" />
-                                <span className="sr-only">Delete {session.name}</span>
-                              </SidebarMenuAction>
-                            </SidebarMenuItem>
-                          );
-                        })}
-                      </SidebarMenu>
-                    </SidebarGroupContent>
-                  </SidebarGroup>
+                  <SidebarMenuItem
+                    className="session-channel"
+                    key={session.id}
+                    data-state={activity(session)}
+                    data-attention={session.needsAttention || undefined}
+                  >
+                    <Checkbox
+                      className="pane-checkbox"
+                      aria-label={`Include ${session.name} in split`}
+                      checked={selected}
+                      data-pinned={pinned || undefined}
+                      title={
+                        pinned
+                          ? "Pinned — click to remove"
+                          : "Option-click to pin"
+                      }
+                      onClick={(event) =>
+                        selectSession(session.id, true, event.altKey)
+                      }
+                    />
+                    <SidebarMenuButton
+                      className="session-select"
+                      size="lg"
+                      isActive={selected}
+                      aria-label={`Select ${session.name}`}
+                      aria-pressed={selected}
+                      aria-current={selected ? "true" : undefined}
+                      aria-describedby={attentionDescriptionID}
+                      title={session.cwd}
+                      onClick={(event) =>
+                        selectSession(
+                          session.id,
+                          event.metaKey || event.ctrlKey,
+                        )
+                      }
+                    >
+                      {sessionStatusIcon(activity(session))}
+                      {icon && (
+                        <img
+                          className="session-agent-icon"
+                          src={icon.source}
+                          alt={icon.label}
+                        />
+                      )}
+                      <span className="terminal-identity">
+                        <span className="agent-title">
+                          {session.agentTitle || session.name}
+                        </span>
+                      </span>
+                      {session.needsAttention && (
+                        <>
+                          <span
+                            className="attention-dot"
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="sr-only"
+                            id={attentionDescriptionID}
+                          >
+                            Needs attention
+                          </span>
+                        </>
+                      )}
+                    </SidebarMenuButton>
+                    <SidebarMenuAction
+                      className="session-delete"
+                      showOnHover
+                      aria-label={`Delete ${session.name}`}
+                      title={`Delete ${session.name}`}
+                      onClick={() => props.onDelete(session)}
+                    >
+                      <Trash2Icon aria-hidden="true" />
+                      <span className="sr-only">Delete {session.name}</span>
+                    </SidebarMenuAction>
+                  </SidebarMenuItem>
                 );
               })}
-            </SidebarGroupContent>
-          </SidebarGroup>
-        );
-      })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ))}
     </nav>
   );
 }
@@ -444,7 +403,10 @@ function SessionNavigationContent({
         <SidebarFooter>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton tooltip="New terminal" onClick={props.onCreate}>
+              <SidebarMenuButton
+                tooltip="New terminal"
+                onClick={() => props.onCreate()}
+              >
                 <PlusIcon aria-hidden="true" />
                 <span>New terminal</span>
               </SidebarMenuButton>

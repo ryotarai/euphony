@@ -2604,18 +2604,10 @@ export function App({
         sessions={sessions}
         selectedIDs={selectedIDs}
         pinnedIDs={pinnedIDs}
-        statusFilters={statusFilters}
-        pinnedStatusFilters={pinnedStatusFilters}
-        cwdFilters={cwdFilters}
-        pinnedCwdFilters={pinnedCwdFilters}
         onSelect={(id, multiple, pin) =>
           selectSession(id, multiple, false, pin)
         }
-        onStatusFilter={updateStatusFilter}
-        onStatusSelect={selectStatus}
-        onCwdFilter={updateCwdFilter}
-        onCwdSelect={selectCwd}
-        onCreate={() => void createSession()}
+        onCreate={(cwd) => void createSession(false, cwd)}
         onDelete={setPendingDelete}
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
