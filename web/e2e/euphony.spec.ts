@@ -212,6 +212,67 @@ test("shows empty status groups with interactive checkboxes", async ({
   await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
 });
 
+test("keeps sidebar actions visible while the terminal tree scrolls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await clearSessions(page);
+  for (let index = 0; index < 30; index += 1) {
+    await createSession(page, `Overflow terminal ${index + 1}`, "/tmp");
+  }
+  await page.goto("/?token=test-token");
+
+  const tree = page.locator('[data-slot="sidebar-content"]');
+  const footer = page.locator('[data-slot="sidebar-footer"]');
+  const layout = await tree.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  const footerBox = await footer.boundingBox();
+
+  expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight);
+  expect(footerBox).not.toBeNull();
+  expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(720);
+  await expect(tree).toHaveAttribute("data-overflow-bottom", "true");
+
+  await tree.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await expect(tree).not.toHaveAttribute("data-overflow-bottom");
+});
+
+test("shows the overflow fade when the mobile terminal drawer opens", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 720 });
+  await clearSessions(page);
+  for (let index = 0; index < 30; index += 1) {
+    await createSession(page, `Mobile overflow terminal ${index + 1}`, "/tmp");
+  }
+  await page.goto("/?token=test-token");
+
+  await page.getByRole("button", { name: "Open terminal menu" }).click();
+  const drawer = page.getByRole("dialog", { name: "Terminal menu" });
+  const tree = drawer.locator('[data-slot="sidebar-content"]');
+  const footerBox = await drawer
+    .locator('[data-slot="sidebar-footer"]')
+    .boundingBox();
+
+  await expect(tree).toHaveAttribute("data-overflow-bottom", "true");
+  expect(footerBox).not.toBeNull();
+  expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(720);
+
+  await tree.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await expect(tree).not.toHaveAttribute("data-overflow-bottom");
+
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await page.getByRole("button", { name: "Open terminal menu" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Terminal menu" })
+      .locator('[data-slot="sidebar-content"]'),
+  ).toHaveAttribute("data-overflow-bottom", "true");
+});
+
 test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Focused");

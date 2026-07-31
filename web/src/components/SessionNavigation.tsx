@@ -1,4 +1,10 @@
-import { type CSSProperties, useEffect, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import claudeIcon from "../assets/claude.svg";
 import openAIIcon from "../assets/openai.svg";
@@ -305,6 +311,40 @@ function SessionNavigationContent({
   const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
+  const [terminalTree, setTerminalTree] = useState<HTMLDivElement | null>(null);
+  const [hasTerminalTreeOverflowBelow, setHasTerminalTreeOverflowBelow] =
+    useState(false);
+
+  const updateTerminalTreeOverflow = useCallback(() => {
+    if (!terminalTree) return;
+    const hasOverflowBelow =
+      terminalTree.scrollTop + terminalTree.clientHeight <
+      terminalTree.scrollHeight - 1;
+    setHasTerminalTreeOverflowBelow((current) =>
+      current === hasOverflowBelow ? current : hasOverflowBelow
+    );
+  }, [terminalTree]);
+
+  useLayoutEffect(() => {
+    if (!terminalTree) {
+      setHasTerminalTreeOverflowBelow(false);
+      return;
+    }
+    updateTerminalTreeOverflow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateTerminalTreeOverflow);
+    observer.observe(terminalTree);
+    if (terminalTree.firstElementChild) {
+      observer.observe(terminalTree.firstElementChild);
+    }
+    return () => observer.disconnect();
+  }, [
+    collapsed,
+    props.sessions,
+    sidebarWidth,
+    terminalTree,
+    updateTerminalTreeOverflow,
+  ]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -387,7 +427,12 @@ function SessionNavigationContent({
             />
           )}
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent
+          ref={setTerminalTree}
+          className="terminal-tree-scroll"
+          data-overflow-bottom={hasTerminalTreeOverflowBelow || undefined}
+          onScroll={updateTerminalTreeOverflow}
+        >
           <SessionList {...props} settings={settings} />
         </SidebarContent>
         <SidebarFooter>
