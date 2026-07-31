@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITerminalAddon } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
@@ -112,6 +113,19 @@ export function openTerminalLink(uri: string): void {
   }
 }
 
+export function loadWebglRenderer(
+  terminal: Pick<Terminal, "loadAddon">,
+  createAddon: () => ITerminalAddon = () => new WebglAddon(),
+): boolean {
+  try {
+    terminal.loadAddon(createAddon());
+    return true;
+  } catch (error) {
+    console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
+    return false;
+  }
+}
+
 function defaultTerminal(
   fontFamily: string,
   fontSize: number,
@@ -158,7 +172,10 @@ function defaultTerminal(
     get rows() {
       return terminal.rows;
     },
-    open: (element) => terminal.open(element),
+    open: (element) => {
+      terminal.open(element);
+      loadWebglRenderer(terminal);
+    },
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
