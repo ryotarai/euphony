@@ -78,6 +78,37 @@ test("composes terminal navigation from the shadcn sidebar without a monogram", 
   expect(screen.queryByText("EU")).not.toBeInTheDocument();
 });
 
+test("reports whether more terminal tree content remains below", () => {
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      statusFilters={[]}
+      onSelect={() => undefined}
+      onStatusFilter={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  const terminalTree = screen
+    .getByLabelText("Terminal sessions")
+    .closest('[data-slot="sidebar-content"]');
+  expect(terminalTree).not.toBeNull();
+  Object.defineProperties(terminalTree!, {
+    clientHeight: { configurable: true, value: 200 },
+    scrollHeight: { configurable: true, value: 500 },
+    scrollTop: { configurable: true, value: 0, writable: true },
+  });
+
+  fireEvent.scroll(terminalTree!);
+  expect(terminalTree).toHaveAttribute("data-overflow-bottom", "true");
+
+  terminalTree!.scrollTop = 300;
+  fireEvent.scroll(terminalTree!);
+  expect(terminalTree).not.toHaveAttribute("data-overflow-bottom");
+});
+
 test("opens and closes the mobile drawer with keyboard focus restoration", async () => {
   useMobileViewport();
   const user = userEvent.setup();

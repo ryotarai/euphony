@@ -163,10 +163,8 @@ input {
 }
 
 .desktop-sidebar {
-  position: relative;
   z-index: 2;
   min-width: 0;
-  height: 100%;
   background: #1b2026;
 }
 
@@ -263,10 +261,10 @@ input {
 .session-list {
   min-height: 0;
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 1rem;
-  overflow-y: auto;
+  overflow: visible;
   scrollbar-width: none;
 }
 
@@ -1334,13 +1332,37 @@ input:focus-visible,
   padding: 0.5rem;
 }
 
+.terminal-tree-scroll {
+  overscroll-behavior: contain;
+}
+
+.terminal-tree-scroll[data-overflow-bottom="true"] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 1.5rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 1.5rem),
+    transparent 100%
+  );
+}
+
+[data-slot="sidebar-footer"] {
+  flex: 0 0 auto;
+  background: var(--sidebar);
+}
+
 .session-list {
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
   padding: 0 0.25rem 0.375rem;
 }
 
