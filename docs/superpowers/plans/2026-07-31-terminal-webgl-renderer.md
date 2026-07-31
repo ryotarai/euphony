@@ -59,7 +59,7 @@ Expected: only the `@xterm/addon-webgl` dependency declaration and its lockfile 
 **Interfaces:**
 
 - Consumes: `Terminal.loadAddon(addon: ITerminalAddon)` from `@xterm/xterm` and `WebglAddon` from `@xterm/addon-webgl`.
-- Produces: `loadWebglRenderer(terminal: Pick<Terminal, "loadAddon">, createAddon?: () => ITerminalAddon): boolean` exported from `TerminalView.tsx`.
+- Produces: `loadWebglRenderer(terminal: Pick<Terminal, "loadAddon">, createAddon?: () => WebglRendererAddon): boolean` exported from `TerminalView.tsx`, where `WebglRendererAddon` extends `ITerminalAddon` with an optional `onContextLoss(listener: () => void)` callback.
 
 - [ ] **Step 1: Add the success-path failing test**
 
@@ -83,7 +83,38 @@ Run:
 
 Expected: FAIL because `loadWebglRenderer` is not exported yet.
 
-- [ ] **Step 2: Add the fallback-path failing test**
+- [ ] **Step 2: Add the context-loss failing test**
+
+Add a fake addon that records the callback and assert that invoking it disposes
+the addon:
+
+    test("disposes the WebGL addon after a context loss", () => {
+      let onContextLoss: (() => void) | undefined;
+      const dispose = vi.fn();
+      const addon = {
+        activate: () => undefined,
+        dispose,
+        onContextLoss: (listener: () => void) => {
+          onContextLoss = listener;
+          return { dispose: () => undefined };
+        },
+      };
+      const loadAddon = vi.fn();
+
+      expect(loadWebglRenderer({ loadAddon }, () => addon)).toBe(true);
+      expect(onContextLoss).toBeDefined();
+      onContextLoss?.();
+
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+Run:
+
+    npm test -- --run src/components/TerminalView.test.tsx -t "context loss"
+
+Expected: FAIL because the helper does not yet register the context-loss callback.
+
+- [ ] **Step 3: Add the fallback-path failing test**
 
 Add:
 
@@ -112,21 +143,23 @@ Run:
 
     npm test -- --run src/components/TerminalView.test.tsx -t "WebGL"
 
-Expected: both new tests fail for the missing helper, with no unrelated test failure.
+Expected: the WebGL success, context-loss, and fallback tests fail for the missing helper behavior, with no unrelated test failure.
 
-- [ ] **Step 3: Implement the minimal helper and production wiring**
+- [ ] **Step 4: Implement the minimal helper and production wiring**
 
 In `TerminalView.tsx`:
 
 1. Import `WebglAddon` from `@xterm/addon-webgl` and `type ITerminalAddon` from `@xterm/xterm`.
-2. Add the helper before `defaultTerminal`:
+2. Define `WebglRendererAddon` as an `ITerminalAddon` with an optional `onContextLoss` listener and add the helper before `defaultTerminal`:
 
     export function loadWebglRenderer(
       terminal: Pick<Terminal, "loadAddon">,
-      createAddon: () => ITerminalAddon = () => new WebglAddon(),
+      createAddon: () => WebglRendererAddon = () => new WebglAddon(),
     ): boolean {
       try {
-        terminal.loadAddon(createAddon());
+        const addon = createAddon();
+        addon.onContextLoss?.(() => addon.dispose());
+        terminal.loadAddon(addon);
         return true;
       } catch (error) {
         console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
@@ -137,13 +170,13 @@ In `TerminalView.tsx`:
 3. Call `loadWebglRenderer(terminal)` directly after `terminal.open(element)` in `defaultTerminal`.
 4. Keep `FitAddon` loaded as before. Do not change `TerminalDriver`, the React effect dependency list, or the terminal disposal path.
 
-- [ ] **Step 4: Run the focused green test suite**
+- [ ] **Step 5: Run the focused green test suite**
 
     npm test -- --run src/components/TerminalView.test.tsx
 
-Expected: the full `TerminalView` suite passes, including both WebGL tests.
+Expected: the full `TerminalView` suite passes, including WebGL success, context-loss, and fallback tests.
 
-- [ ] **Step 5: Commit the implementation**
+- [ ] **Step 6: Commit the implementation**
 
     git add web/src/components/TerminalView.tsx web/src/components/TerminalView.test.tsx
     git commit -m "perf(web): prefer xterm WebGL renderer"
@@ -152,7 +185,7 @@ Expected: the full `TerminalView` suite passes, including both WebGL tests.
 
 **Files:**
 
-- No additional files unless a verification command identifies a real regression.
+- Modify: `web/e2e/terminal-reliability.spec.ts`
 
 **Interfaces:**
 
@@ -177,7 +210,11 @@ Expected: `tsc -b --pretty false` exits with code 0.
 
 Expected: TypeScript compilation and Vite bundling exit with code 0, with no unresolved `@xterm/addon-webgl` import.
 
-- [ ] **Step 4: Run the existing terminal Playwright coverage when the Euphony test server is available**
+- [ ] **Step 4: Keep DOM-renderer-specific E2E assertions explicit**
+
+Add a `disableWebgl(page)` helper that overrides only `HTMLCanvasElement.getContext("webgl2")` in the cursor, OSC 8 link, and full-width punctuation tests. Call it before each test's `page.goto()` so those tests continue to verify the DOM renderer and its layout/interaction contracts while the default browser path uses WebGL.
+
+- [ ] **Step 5: Run the existing terminal Playwright coverage when the Euphony test server is available**
 
 From `web/`, run:
 
@@ -185,7 +222,7 @@ From `web/`, run:
 
 Expected: the existing terminal reliability scenarios pass. Confirm that the terminal remains visible and interactive; do not require WebGL-specific canvas markup because environments without a WebGL context are valid DOM-fallback environments.
 
-- [ ] **Step 5: Review the final diff and status**
+- [ ] **Step 6: Review the final diff and status**
 
     git diff HEAD~2..HEAD --stat
     git diff HEAD~2..HEAD --check

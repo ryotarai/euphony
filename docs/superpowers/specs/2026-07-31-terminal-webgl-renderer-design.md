@@ -49,6 +49,10 @@ behavior can be tested without constructing a real browser terminal. If addon
 construction or loading throws, log a warning and leave xterm's DOM renderer
 active. The helper must not throw to its caller.
 
+Register the addon's `onContextLoss` callback before loading it. Disposing the
+addon after a lost context lets xterm.js fall back to its DOM renderer instead
+of leaving a terminal with an unusable WebGL surface.
+
 ### Lifecycle
 
 The WebGL addon is loaded into the same xterm instance as `FitAddon`. The
@@ -57,10 +61,15 @@ disposes loaded addons when the terminal is disposed. No React state or effect
 dependency changes are needed, so renderer initialization does not reconnect a
 terminal or alter resize negotiation.
 
+The context-loss callback disposes only the WebGL addon. It does not close the
+terminal WebSocket or recreate the React terminal, so the existing xterm DOM
+renderer can continue receiving output.
+
 ### Test strategy
 
 - Unit test the renderer helper's success path: it creates/loads exactly one
   addon.
+- Unit test that a WebGL context loss disposes the addon.
 - Unit test the failure path: an addon creation or load error is caught, a
   warning is emitted, and the fake terminal remains usable.
 - Run the existing `TerminalView` unit suite to prove the injected terminal
@@ -68,16 +77,18 @@ terminal or alter resize negotiation.
 - Run TypeScript type checking and the production Vite build.
 - Run the relevant Playwright terminal reliability scenario when the local
   Euphony server is available; inspect the rendered terminal for a normal
-  output path and rely on the unit fallback test for environments without
-  WebGL.
+  output path. DOM-structure assertions explicitly disable WebGL so they
+  continue to cover the fallback renderer; canvas-backed scenarios cover the
+  default path. Environments without WebGL remain valid.
 
 ## Acceptance criteria
 
 1. A normal Chromium session attempts to load `WebglAddon` after opening each
    terminal.
-2. A WebGL initialization failure does not prevent the terminal from opening
+2. A WebGL context loss disposes the addon without closing the terminal.
+3. A WebGL initialization failure does not prevent the terminal from opening
    or receiving output.
-3. Existing unit tests remain green, and the new helper tests cover both
-   success and failure.
-4. `npm run typecheck` and `npm run build` succeed.
-5. No unrelated files or existing user changes are modified.
+4. Existing unit tests remain green, and the new helper tests cover success,
+   context loss, and failure.
+5. `npm run typecheck` and `npm run build` succeed.
+6. No unrelated files or existing user changes are modified.

@@ -75,6 +75,10 @@ interface TerminalGridGeometry {
   height: number;
 }
 
+type WebglRendererAddon = ITerminalAddon & {
+  onContextLoss?: (listener: () => void) => unknown;
+};
+
 const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
 const estimatedBytesPerScrollbackRow = 128;
@@ -115,10 +119,12 @@ export function openTerminalLink(uri: string): void {
 
 export function loadWebglRenderer(
   terminal: Pick<Terminal, "loadAddon">,
-  createAddon: () => ITerminalAddon = () => new WebglAddon(),
+  createAddon: () => WebglRendererAddon = () => new WebglAddon(),
 ): boolean {
   try {
-    terminal.loadAddon(createAddon());
+    const addon = createAddon();
+    addon.onContextLoss?.(() => addon.dispose());
+    terminal.loadAddon(addon);
     return true;
   } catch (error) {
     console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);

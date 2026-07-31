@@ -88,6 +88,27 @@ test("loads the WebGL addon into an xterm terminal", () => {
   expect(loadAddon).toHaveBeenCalledWith(addon);
 });
 
+test("disposes the WebGL addon after a context loss", () => {
+  let onContextLoss: (() => void) | undefined;
+  const dispose = vi.fn();
+  const addon = {
+    activate: () => undefined,
+    dispose,
+    onContextLoss: (listener: () => void) => {
+      onContextLoss = listener;
+      return { dispose: () => undefined };
+    },
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRenderer({ loadAddon }, () => addon)).toBe(true);
+  expect(onContextLoss).toBeDefined();
+
+  onContextLoss?.();
+
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
 test("keeps the DOM renderer when WebGL addon loading fails", () => {
   const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const loadAddon = vi.fn(() => {
