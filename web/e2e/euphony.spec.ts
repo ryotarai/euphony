@@ -386,6 +386,25 @@ test("confirms before deleting a terminal", async ({ page }) => {
   }).toBe(false);
 });
 
+test("centers the delete action within its terminal row", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Alignment check", "/tmp");
+  await page.goto("/?token=test-token");
+
+  const row = page.locator(".session-channel").filter({
+    has: page.getByRole("button", { name: "Select Alignment check" }),
+  });
+  const deleteButton = row.getByRole("button", { name: "Delete Alignment check" });
+  const rowBox = await row.boundingBox();
+  const deleteBox = await deleteButton.boundingBox();
+
+  expect(rowBox).not.toBeNull();
+  expect(deleteBox).not.toBeNull();
+  const rowCenter = rowBox!.y + rowBox!.height / 2;
+  const deleteCenter = deleteBox!.y + deleteBox!.height / 2;
+  expect(Math.abs(deleteCenter - rowCenter)).toBeLessThanOrEqual(1);
+});
+
 test("shows a live agent transcript and releases follow when the reader scrolls away", async ({
   page,
 }, testInfo) => {

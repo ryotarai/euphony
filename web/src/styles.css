@@ -459,7 +459,7 @@ input {
 
 .session-delete {
   position: absolute;
-  top: 0;
+  top: 50%;
   right: 0;
   width: 1.35rem;
   height: 1.35rem;
@@ -470,6 +470,7 @@ input {
   background: #1b2026;
   border-radius: 50%;
   opacity: 0;
+  transform: translateY(-50%);
   z-index: 2;
 }
 
