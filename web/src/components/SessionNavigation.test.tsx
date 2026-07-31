@@ -496,6 +496,19 @@ test("collapses and restores the desktop sidebar", async () => {
     "false",
   );
   expect(onSettingsChange).toHaveBeenCalledWith({ ...settings, sidebarCollapsed: true });
+
+  fireEvent.keyDown(window, { key: "b", metaKey: true });
+  expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(onSettingsChange).toHaveBeenLastCalledWith({
+    ...settings,
+    sidebarCollapsed: false,
+  });
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
 });
 
 test("uses a compact 256px sidebar by default", () => {
