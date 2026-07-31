@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITerminalAddon } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
@@ -74,6 +75,10 @@ interface TerminalGridGeometry {
   height: number;
 }
 
+type WebglRendererAddon = ITerminalAddon & {
+  onContextLoss?: (listener: () => void) => unknown;
+};
+
 const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
 const estimatedBytesPerScrollbackRow = 128;
@@ -109,6 +114,21 @@ export function openTerminalLink(uri: string): void {
     newWindow.opener = null;
   } catch {
     // Some browser shells may reject changing opener.
+  }
+}
+
+export function loadWebglRenderer(
+  terminal: Pick<Terminal, "loadAddon">,
+  createAddon: () => WebglRendererAddon = () => new WebglAddon(),
+): boolean {
+  try {
+    const addon = createAddon();
+    addon.onContextLoss?.(() => addon.dispose());
+    terminal.loadAddon(addon);
+    return true;
+  } catch (error) {
+    console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
+    return false;
   }
 }
 
@@ -158,7 +178,10 @@ function defaultTerminal(
     get rows() {
       return terminal.rows;
     },
-    open: (element) => terminal.open(element),
+    open: (element) => {
+      terminal.open(element);
+      loadWebglRenderer(terminal);
+    },
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
