@@ -2013,7 +2013,7 @@ test("keeps the agent log selected when a focused agent starts waiting", async (
   vi.useRealTimers();
 });
 
-test("deselects a selected terminal when its agent starts running by default", async () => {
+test("delays deselecting a selected terminal when its agent starts running", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     const otherTerminal = { ...plainTerminalSession, id: "session-other" };
@@ -2041,6 +2041,20 @@ test("deselects a selected terminal when its agent starts running by default", a
       await vi.advanceTimersByTimeAsync(1500);
     });
 
+    expect(await screen.findByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.getByRole("status", { name: "Automatic deselection" })).toHaveTextContent(
+      "Terminal is now running. It will be removed in 10 seconds.",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
     await waitFor(() => {
       expectTerminalPaneHidden("session-plain terminal pane");
     });
@@ -2048,6 +2062,48 @@ test("deselects a selected terminal when its agent starts running by default", a
     const parameters = new URLSearchParams(window.location.search);
     expect(parameters.getAll("terminal")).toEqual([]);
     expect(parameters.has("focus")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("cancels a pending running-agent deselection", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const otherTerminal = { ...plainTerminalSession, id: "session-other" };
+    const runningAgent = {
+      ...plainTerminalSession,
+      agent: "claude",
+      agentStatus: "running",
+      agentTitle: "Claude Code",
+    };
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => jsonResponse([plainTerminalSession, otherTerminal]))
+      .mockImplementation(() => jsonResponse([runningAgent, otherTerminal]));
+    render(
+      <App
+        syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      />,
+    );
+
+    await screen.findByLabelText("session-plain terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Automatic deselection" })).not.toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).getAll("terminal")).toEqual([
+      "session-plain",
+    ]);
   } finally {
     vi.useRealTimers();
   }

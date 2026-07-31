@@ -1078,7 +1078,14 @@ test("deselects a terminal when its agent starts running", async ({ page }) => {
 
   await reportAgent(page, first.id, "claude", "Working", "running");
 
-  await expect(page.getByLabel("First terminal", { exact: true })).toBeHidden();
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("status", { name: "Automatic deselection" }),
+  ).toContainText("First is now running. It will be removed in 10 seconds.");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeHidden({
+    timeout: 12_000,
+  });
   await expect(page.getByText("No signal yet.")).toBeVisible();
   const parameters = new URL(page.url()).searchParams;
   expect(parameters.getAll("terminal")).toEqual([]);

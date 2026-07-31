@@ -12,7 +12,7 @@ ten-second delay.
 
 - The existing automatic deselection setting remains enabled by default.
 - A selected, non-pinned terminal that transitions to `running` shows a toast:
-  `"<terminal name> is running. This terminal will be removed in 10 seconds."`
+  `"<terminal name> is now running. It will be removed in 10 seconds."`
 - The toast includes a `Cancel` button. Canceling removes the toast and keeps
   the terminal selected.
 - If the terminal is manually deselected, becomes non-running, becomes pinned,

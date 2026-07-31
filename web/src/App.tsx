@@ -83,6 +83,13 @@ const quickActionStatuses = [
 ] as const;
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
+const runningDeselectDelayMs = 10_000;
+
+interface RunningDeselectNotice {
+  id: string;
+  name: string;
+}
+
 interface AppProps {
   initialToken?: string;
   initialSettings?: Settings;
@@ -522,6 +529,9 @@ export function App({
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
+  const [runningDeselectNotices, setRunningDeselectNotices] = useState<
+    RunningDeselectNotice[]
+  >([]);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -537,6 +547,9 @@ export function App({
   const openedTerminalIDsRef = useRef<Set<string>>(new Set());
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAgentRunningIDsRef = useRef<Set<string>>(new Set());
+  const runningDeselectTimersRef = useRef<Map<string, number>>(new Map());
+  const expiredRunningDeselectIDsRef = useRef<Set<string>>(new Set());
+  const [runningDeselectExpiryVersion, setRunningDeselectExpiryVersion] = useState(0);
   const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const selectionRevisionRef = useRef<number | null>(null);
@@ -551,6 +564,26 @@ export function App({
   const selectionLocalVersionRef = useRef(0);
   const selectionSyncedLocalVersionRef = useRef(0);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const cancelRunningDeselect = useCallback((id: string) => {
+    const timer = runningDeselectTimersRef.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      runningDeselectTimersRef.current.delete(id);
+    }
+    setRunningDeselectNotices((current) =>
+      current.filter((notice) => notice.id !== id),
+    );
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of runningDeselectTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      runningDeselectTimersRef.current.clear();
+    };
+  }, []);
+
   function writeWorkspaceToURL(
     nextSelectedIDs: string[],
     nextPinnedIDs: string[],
@@ -1155,29 +1188,35 @@ export function App({
       pendingAgentLaunchIDsRef.current.delete(id);
     }
     if (settings.autoDeselectRunning && runningTransitionIDs.length > 0) {
-      const runningIDs = new Set(runningTransitionIDs);
-      const next = selectedIDs.filter(
-        (id) => pinnedIDs.includes(id) || !runningIDs.has(id),
-      );
-      if (next.join("\0") !== selectedIDs.join("\0")) {
-        for (const id of runningTransitionIDs) {
-          manualSelectedIDsRef.current.delete(id);
-          filterSelectedIDsRef.current.delete(id);
+      const notices: RunningDeselectNotice[] = [];
+      for (const id of runningTransitionIDs) {
+        const session = sessions?.find((item) => item.id === id);
+        if (
+          !session ||
+          !selectedIDs.includes(id) ||
+          pinnedIDs.includes(id) ||
+          runningDeselectTimersRef.current.has(id)
+        ) {
+          continue;
         }
-        const nextFocus =
-          focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
-        if (syncSelection) markLocalSelectionMutation();
-        setSelectedIDs(next);
-        setFocusedID(nextFocus);
-        writeWorkspaceToURL(
-          next,
-          pinnedIDs,
-          nextFocus,
-          statusFilters,
-          cwdFilters,
-          "replace",
-        );
-        return;
+        const timer = window.setTimeout(() => {
+          runningDeselectTimersRef.current.delete(id);
+          expiredRunningDeselectIDsRef.current.add(id);
+          setRunningDeselectNotices((current) =>
+            current.filter((notice) => notice.id !== id),
+          );
+          setRunningDeselectExpiryVersion((current) => current + 1);
+        }, runningDeselectDelayMs);
+        runningDeselectTimersRef.current.set(id, timer);
+        notices.push({ id, name: session.name });
+      }
+      if (notices.length > 0) {
+        setRunningDeselectNotices((current) => [
+          ...current,
+          ...notices.filter(
+            (notice) => !current.some((item) => item.id === notice.id),
+          ),
+        ]);
       }
     }
 
@@ -1338,6 +1377,83 @@ export function App({
     pinnedIDs,
     focusedID,
     settings.autoSelectAttention,
+    settings.autoDeselectRunning,
+  ]);
+
+  useEffect(() => {
+    const expiredIDs = [...expiredRunningDeselectIDsRef.current];
+    expiredRunningDeselectIDsRef.current.clear();
+    if (
+      expiredIDs.length === 0 ||
+      !settings.autoDeselectRunning ||
+      !sessions
+    ) {
+      return;
+    }
+    const runningIDs = new Set(
+      expiredIDs.filter((id) =>
+        sessions.some(
+          (session) => session.id === id && session.agentStatus === "running",
+        ),
+      ),
+    );
+    if (runningIDs.size === 0) return;
+    const next = selectedIDs.filter(
+      (id) => pinnedIDs.includes(id) || !runningIDs.has(id),
+    );
+    if (next.join("\0") === selectedIDs.join("\0")) return;
+    for (const id of runningIDs) {
+      manualSelectedIDsRef.current.delete(id);
+      filterSelectedIDsRef.current.delete(id);
+    }
+    const nextFocus =
+      focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
+    if (syncSelection) markLocalSelectionMutation();
+    setSelectedIDs(next);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(
+      next,
+      pinnedIDs,
+      nextFocus,
+      statusFilters,
+      cwdFilters,
+      "replace",
+    );
+  }, [
+    runningDeselectExpiryVersion,
+    sessions,
+    syncSelection,
+    statusFilters,
+    cwdFilters,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
+    settings.autoDeselectRunning,
+  ]);
+
+  useEffect(() => {
+    if (runningDeselectNotices.length === 0) return;
+    const activeSessions = new Map(
+      (sessions ?? []).map((session) => [session.id, session]),
+    );
+    const invalidIDs = runningDeselectNotices
+      .filter((notice) => {
+        const session = activeSessions.get(notice.id);
+        return (
+          !settings.autoDeselectRunning ||
+          !selectedIDs.includes(notice.id) ||
+          pinnedIDs.includes(notice.id) ||
+          session?.agentStatus !== "running"
+        );
+      })
+      .map((notice) => notice.id);
+    invalidIDs.forEach(cancelRunningDeselect);
+  }, [
+    cancelRunningDeselect,
+    runningDeselectNotices,
+    sessions,
+    selectedIDs,
+    pinnedIDs,
     settings.autoDeselectRunning,
   ]);
 
@@ -2509,6 +2625,33 @@ export function App({
         className="terminal-stage"
         data-multiple={panes.length > 1}
       >
+        {runningDeselectNotices.length > 0 && (
+          <div className="running-deselect-toasts">
+            {runningDeselectNotices.map((notice) => (
+              <div
+                key={notice.id}
+                className="running-deselect-toast"
+                data-slot="running-deselect-toast"
+                data-terminal-id={notice.id}
+                role="status"
+                aria-label="Automatic deselection"
+              >
+                <p>
+                  <strong>{notice.name} is now running.</strong>{" "}
+                  It will be removed in 10 seconds.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => cancelRunningDeselect(notice.id)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
           <div
