@@ -420,6 +420,71 @@ func TestReconcileRemovesDeletedTerminalsAndRepairsFocus(t *testing.T) {
 	}
 }
 
+func TestReconcileAfterTerminalDeletionSelectsReplacement(t *testing.T) {
+	terminals := []Terminal{{ID: "next"}, {ID: "last"}}
+	previous := Snapshot{
+		TerminalIDs:       []string{"deleted"},
+		FocusedTerminalID: "deleted",
+	}
+	state := State{
+		ManualTerminalIDs: []string{"deleted"},
+		FocusedTerminalID: "deleted",
+		Revision:          4,
+	}
+
+	next, changed := ReconcileAfterTerminalDeletion(
+		state,
+		previous,
+		"deleted",
+		"next",
+		terminals,
+	)
+	if !changed || !reflect.DeepEqual(next.ManualTerminalIDs, []string{"next"}) ||
+		next.FocusedTerminalID != "next" {
+		t.Fatalf("state = %#v, changed = %v", next, changed)
+	}
+}
+
+func TestReconcileAfterTerminalDeletionKeepsIntentionalEmptySelection(t *testing.T) {
+	state := State{Revision: 4}
+
+	next, changed := ReconcileAfterTerminalDeletion(
+		state,
+		Snapshot{},
+		"deleted",
+		"next",
+		[]Terminal{{ID: "next"}},
+	)
+	if changed || len(next.ManualTerminalIDs) != 0 || next.FocusedTerminalID != "" {
+		t.Fatalf("state = %#v, changed = %v", next, changed)
+	}
+}
+
+func TestReconcileAfterTerminalDeletionDoesNotBypassFilters(t *testing.T) {
+	state := State{
+		ManualTerminalIDs: []string{"deleted"},
+		FocusedTerminalID: "deleted",
+		StatusFilters:     []string{"waiting"},
+		Revision:          4,
+	}
+	previous := Snapshot{
+		TerminalIDs:       []string{"deleted"},
+		FocusedTerminalID: "deleted",
+		Filters:           Filters{Statuses: []string{"waiting"}},
+	}
+
+	next, changed := ReconcileAfterTerminalDeletion(
+		state,
+		previous,
+		"deleted",
+		"next",
+		[]Terminal{{ID: "next", Statuses: []string{"running"}}},
+	)
+	if !changed || len(next.ManualTerminalIDs) != 0 || next.FocusedTerminalID != "" {
+		t.Fatalf("state = %#v, changed = %v", next, changed)
+	}
+}
+
 func TestPromoteFocusedAgentKeepsPinsAndClearsOtherSelectionSources(t *testing.T) {
 	terminals := []Terminal{
 		{ID: "agent", CWD: "/repo", Statuses: []string{"running"}},

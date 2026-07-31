@@ -246,6 +246,16 @@ export function sessionsEqual(left: Session[], right: Session[]): boolean {
   });
 }
 
+export function replacementSession(
+  previous: Session[],
+  removedID: string,
+  remaining: Session[],
+): Session | undefined {
+  const previousIndex = previous.findIndex((session) => session.id === removedID);
+  if (previousIndex < 0) return remaining[0];
+  return remaining[previousIndex] ?? remaining[previousIndex - 1] ?? remaining[0];
+}
+
 function playAttentionTone() {
   if (typeof AudioContext === "undefined") return;
   const context = new AudioContext();
@@ -448,6 +458,7 @@ export function App({
   const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
   const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(new Set());
   const previousSessionsRef = useRef<Session[]>([]);
+  const previousSessionOrderRef = useRef<Session[]>([]);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
@@ -513,6 +524,7 @@ export function App({
     pendingAttentionSelectionIDsRef.current = new Set(
       transitions.map((session) => session.id),
     );
+    previousSessionOrderRef.current = previous;
     previousSessionsRef.current = items;
     setSessions((current) =>
       current && sessionsEqual(current, items) ? current : items,
@@ -755,6 +767,7 @@ export function App({
           selectionSyncReadyRef.current = true;
         }
         setSessions(items);
+        previousSessionOrderRef.current = items;
         previousSessionsRef.current = items;
         if (syncSelection) return;
         const workspace = workspaceFromURL(items);
@@ -975,7 +988,20 @@ export function App({
     if (!removed) return;
 
     let nextIDs = selectedIDs.filter((id) => available.has(id));
-    if (nextIDs.length === 0 && sessions[0]) nextIDs = [sessions[0].id];
+    const removedID = focusedID && !available.has(focusedID)
+      ? focusedID
+      : selectedIDs.find((id) => !available.has(id));
+    const replacement = removedID
+      ? replacementSession(previousSessionOrderRef.current, removedID, sessions)
+      : undefined;
+    if (
+      nextIDs.length === 0 &&
+      statusFilters.length === 0 &&
+      cwdFilters.length === 0 &&
+      replacement
+    ) {
+      nextIDs = [replacement.id];
+    }
     const nextPinnedIDs = pinnedIDs.filter((id) => available.has(id));
     const nextFocus =
       focusedID && nextIDs.includes(focusedID)
@@ -1938,13 +1964,21 @@ export function App({
         await api.deleteSession(item.id);
       }
       const remaining = sessions?.filter((candidate) => candidate.id !== item.id) ?? [];
+      const replacement = replacementSession(sessions ?? [], item.id, remaining);
       setSessions(remaining);
       if (deleted) {
         applyServerSelection(deleted.selection, "push");
         return;
       }
       let nextIDs = selectedIDs.filter((id) => id !== item.id);
-      if (nextIDs.length === 0 && remaining[0]) nextIDs = [remaining[0].id];
+      if (
+        nextIDs.length === 0 &&
+        statusFilters.length === 0 &&
+        cwdFilters.length === 0 &&
+        replacement
+      ) {
+        nextIDs = [replacement.id];
+      }
       const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;
       const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
       setSelectedIDs(nextIDs);

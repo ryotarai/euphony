@@ -1856,6 +1856,46 @@ test("removes a pin when polling removes its terminal", async () => {
   }
 });
 
+test("follows the previous terminal when the last terminal exits", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    history.replaceState(null, "", "/?terminal=session-3");
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
+      )
+      .mockImplementation(() =>
+        jsonResponse([runningSession, secondRunningSession]),
+      );
+    render(
+      <App
+        syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.id} terminal pane`} />
+        )}
+      />,
+    );
+
+    await screen.findByLabelText("session-3 terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("session-2 terminal pane")).toBeVisible(),
+    );
+    expect(screen.queryByText("No signal yet.")).not.toBeInTheDocument();
+    const parameters = new URLSearchParams(window.location.search);
+    expect(parameters.getAll("terminal")).toEqual(["session-2"]);
+    expect(parameters.get("focus")).toBe("session-2");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("keeps the agent log selected when a focused agent starts waiting", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const waitingSession = {

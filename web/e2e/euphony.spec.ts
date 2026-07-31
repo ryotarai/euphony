@@ -181,6 +181,42 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
+test("follows the previous terminal when the focused shell exits", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "First", "/tmp");
+  const second = await createSession(page, "Second", "/tmp");
+  const last = await createSession(page, "Last", "/tmp");
+  await replaceSharedSelection(page, [last.id], last.id);
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByLabel("Last terminal", { exact: true })).toBeVisible();
+  const runResponse = await page.request.post(
+    `/api/v1/terminals/${last.id}/run`,
+    {
+      headers: {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      },
+      data: { command: "exit" },
+    },
+  );
+  expect(runResponse.ok()).toBe(true);
+
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible({
+    timeout: 5_000,
+  });
+  await expect(page.getByLabel("Last terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No signal yet.", { exact: true })).toHaveCount(0);
+  const selectionResponse = await page.request.get("/api/v1/selection", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(selectionResponse.ok()).toBe(true);
+  const selectionEnvelope = await selectionResponse.json() as {
+    result: { focusedTerminalId: string };
+  };
+  expect(selectionEnvelope.result.focusedTerminalId).toBe(second.id);
+});
+
 test("shows empty status groups with interactive checkboxes", async ({
   page,
 }, testInfo) => {

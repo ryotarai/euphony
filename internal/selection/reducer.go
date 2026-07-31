@@ -166,6 +166,29 @@ func Reconcile(current State, terminals []Terminal) (State, bool) {
 	return next, true
 }
 
+func ReconcileAfterTerminalDeletion(
+	current State,
+	previous Snapshot,
+	deletedID, replacementID string,
+	terminals []Terminal,
+) (State, bool) {
+	next, changed := Reconcile(current, terminals)
+	if previous.FocusedTerminalID != deletedID ||
+		!slices.Equal(previous.TerminalIDs, []string{deletedID}) ||
+		replacementID == "" ||
+		len(current.StatusFilters) > 0 || len(current.CWDFilters) > 0 ||
+		len(current.PinnedFilters.Statuses) > 0 || len(current.PinnedFilters.CWDs) > 0 ||
+		len(Resolve(next, terminals).TerminalIDs) > 0 {
+		return next, changed
+	}
+	next.ManualTerminalIDs = []string{replacementID}
+	next.FocusedTerminalID = replacementID
+	if !changed {
+		next.Revision = current.Revision + 1
+	}
+	return next, true
+}
+
 func normalize(state State, terminals []Terminal) State {
 	state.ManualTerminalIDs = orderedIDs(state.ManualTerminalIDs, terminals)
 	state.PinnedTerminalIDs = orderedIDs(state.PinnedTerminalIDs, terminals)
