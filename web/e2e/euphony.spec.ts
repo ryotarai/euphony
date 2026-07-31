@@ -887,7 +887,7 @@ test("keeps the server selection authoritative across navigation and reload", as
   await expect(page).toHaveURL(new RegExp(`terminal=${first.id}`));
   await page.goBack();
   await expect(page.getByLabel("First terminal")).toBeVisible();
-  await expect(page.getByLabel("Second terminal")).toHaveCount(0);
+  await expect(page.getByLabel("Second terminal")).toBeHidden();
   await expect(page).toHaveURL(new RegExp(`terminal=${first.id}`));
 });
 
@@ -934,7 +934,7 @@ test("pins a terminal checkbox until that checkbox is clicked", async ({ page })
     .getByRole("checkbox", { name: "Include Left in split" })
     .click();
 
-  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeHidden();
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
   parameters = new URL(page.url()).searchParams;
   expect(parameters.getAll("terminal")).toEqual([right.id]);
@@ -1000,7 +1000,7 @@ test("pins status and cwd filters with amber checkboxes", async ({ page }) => {
   await page.getByRole("button", { name: "Select Waiting" }).click();
 
   await expect(page.getByLabel("Running A pane", { exact: true })).toHaveCount(1);
-  await expect(page.getByLabel("Running B pane", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Running B pane", { exact: true })).toBeHidden();
   await expect(page.getByLabel("Waiting pane", { exact: true })).toBeVisible();
   expect(new URL(page.url()).searchParams.getAll("pin-cwd")).toEqual([
     `terminal\u0000${runningACwd}`,
@@ -1026,10 +1026,10 @@ test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
   });
   await leftSelection.click();
 
-  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeHidden();
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
   await page.waitForTimeout(1_800);
-  await expect(page.getByLabel("Left terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeHidden();
   expect(new URL(page.url()).searchParams.getAll("terminal")).toEqual([right.id]);
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual([]);
 
@@ -1056,7 +1056,7 @@ test("follows a focused terminal when polling identifies it as a Claude agent", 
   await reportAgent(page, first.id, "claude", "Waiting for review");
 
   await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Second terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeHidden();
   expect(new URL(page.url()).searchParams.getAll("terminal")).toEqual([first.id]);
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual([]);
   expect(new URL(page.url()).searchParams.getAll("cwd")).toEqual([]);
@@ -1074,7 +1074,7 @@ test("deselects a terminal when its agent starts running", async ({ page }) => {
 
   await reportAgent(page, first.id, "claude", "Working", "running");
 
-  await expect(page.getByLabel("First terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeHidden();
   await expect(page.getByText("No signal yet.")).toBeVisible();
   const parameters = new URL(page.url()).searchParams;
   expect(parameters.getAll("terminal")).toEqual([]);
@@ -1119,7 +1119,7 @@ test("inherits status filters into nested cwd controls and supports child overri
   await expect(tmpCwd).toBeChecked();
   await expect(varCwd).not.toBeChecked();
   await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeHidden();
 
   await varCwd.click();
   await expect(status).toBeChecked();
@@ -1130,15 +1130,15 @@ test("inherits status filters into nested cwd controls and supports child overri
     name: "Include Tmp terminal in split",
   }).click();
   await expect(status).toHaveAttribute("aria-checked", "mixed");
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeHidden();
   await page.waitForTimeout(1_800);
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeHidden();
   await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
 
   await page.getByRole("button", {
     name: /Show only Terminal terminals in \/(?:private\/)?var$/,
   }).click();
-  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Tmp terminal terminal", { exact: true })).toBeHidden();
   await expect(page.getByLabel("Var terminal terminal", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Open settings" }).click();
@@ -1529,9 +1529,10 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
     exact: true,
   }).click();
   await expect(page.getByLabel("Shell terminal", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Codex terminal", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Codex terminal", { exact: true })).toBeHidden();
   await codexItem.click();
-  await page.locator(".xterm-helper-textarea").focus();
+  const codexPane = page.getByLabel("Codex pane", { exact: true });
+  await codexPane.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Meta+L");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   await page.keyboard.press("Meta+L");
@@ -1609,7 +1610,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(page.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Cancel" }).click();
   await page.getByRole("button", { name: "Select Codex" }).click();
-  await page.locator(".xterm-helper-textarea").focus();
+  await codexPane.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   await page.keyboard.press("Control+J");

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps } from "react";
+import { useEffect, type ComponentProps } from "react";
 import { App, agentRunningTransitions, attentionTransitions } from "./App";
 import type { Session, Settings } from "./types";
 
@@ -59,6 +59,11 @@ const plainTerminalSession: Session = {
   cwd: "/workspace/shell",
   createdAt: "2026-07-28T00:03:00Z",
 };
+
+function expectTerminalPaneHidden(label: string) {
+  const pane = screen.queryByLabelText(label);
+  if (pane) expect(pane).not.toBeVisible();
+}
 
 test("uses the server selection as authoritative and persists browser changes", async () => {
   history.replaceState(null, "", "/?terminal=session-2");
@@ -138,6 +143,51 @@ test("uses the server selection as authoritative and persists browser changes", 
     });
   });
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
+test("keeps terminal views alive across terminal switches", async () => {
+  const mounts = new Map<string, number>();
+  const unmounts = new Map<string, number>();
+  function TerminalLifetimeProbe({ id }: { id: string }) {
+    useEffect(() => {
+      mounts.set(id, (mounts.get(id) ?? 0) + 1);
+      return () => {
+        unmounts.set(id, (unmounts.get(id) ?? 0) + 1);
+      };
+    }, [id]);
+    return <div aria-label={`${id} terminal pane`} />;
+  }
+
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <TerminalLifetimeProbe id={session.id} />}
+    />,
+  );
+
+  expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Select Claude" }));
+  expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
+
+  expect(mounts.get("session-1")).toBe(1);
+  expect(unmounts.get("session-1") ?? 0).toBe(0);
+  expect(document.querySelector('[aria-label="Codex pane"]'))
+    .toHaveAttribute("hidden");
+
+  await user.click(screen.getByRole("button", { name: "Select Codex" }));
+  expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
+  expect(mounts.get("session-1")).toBe(1);
+  expect(unmounts.get("session-1") ?? 0).toBe(0);
 });
 
 test("serializes rapid shared-selection writes and rebases the latest state", async () => {
@@ -1256,7 +1306,7 @@ test("restores the selected session from the URL and follows browser navigation"
   );
 
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
-  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("Codex terminal pane");
 
   await user.click(screen.getByRole("button", { name: "Select Codex" }));
   expect(new URLSearchParams(window.location.search).get("terminal")).toBe("session-1");
@@ -1351,7 +1401,7 @@ test("keeps an Alt-pinned terminal selected until its checkbox is clicked", asyn
     screen.getByRole("checkbox", { name: "Include Codex in split" }),
   );
 
-  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("Codex terminal pane");
   expect(screen.getByLabelText("Claude terminal pane")).toBeVisible();
   parameters = new URLSearchParams(window.location.search);
   expect(parameters.getAll("terminal")).toEqual(["session-2"]);
@@ -1603,7 +1653,7 @@ test("pane rail checkboxes remove selected terminals and allow an empty workspac
 
   await user.click(screen.getByRole("checkbox", { name: "Deselect Claude" }));
 
-  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("Claude terminal pane");
   expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
   let parameters = new URLSearchParams(window.location.search);
   expect(parameters.getAll("terminal")).toEqual(["session-1"]);
@@ -1611,7 +1661,7 @@ test("pane rail checkboxes remove selected terminals and allow an empty workspac
 
   await user.click(screen.getByRole("checkbox", { name: "Deselect Codex" }));
 
-  expect(screen.queryByLabelText("Codex terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("Codex terminal pane");
   expect(screen.getByText("No signal yet.")).toBeVisible();
   parameters = new URLSearchParams(window.location.search);
   expect(parameters.getAll("terminal")).toEqual([]);
@@ -1647,7 +1697,7 @@ test("deselecting an unfocused pane preserves the current focus", async () => {
     hidden: true,
   }));
 
-  expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-2 terminal pane");
   expect(screen.getByLabelText("Terminal pane")).toHaveAttribute(
     "data-active",
     "true",
@@ -1694,7 +1744,7 @@ test("deselecting a filter-owned unfocused pane preserves the current focus", as
     hidden: true,
   }));
 
-  expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-3 terminal pane");
   expect(screen.getByLabelText("Fourth pane")).toHaveAttribute(
     "data-active",
     "true",
@@ -1786,7 +1836,7 @@ test("a checked activity group removes a terminal after its status changes", asy
   });
 
   await waitFor(() => {
-    expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+    expectTerminalPaneHidden("session-3 terminal pane");
   });
   expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
   vi.useRealTimers();
@@ -1984,7 +2034,7 @@ test("deselects a selected terminal when its agent starts running by default", a
     });
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("session-plain terminal pane")).not.toBeInTheDocument();
+      expectTerminalPaneHidden("session-plain terminal pane");
     });
     expect(screen.getByText("No signal yet.")).toBeVisible();
     const parameters = new URLSearchParams(window.location.search);
@@ -2115,7 +2165,7 @@ test.each(["claude", "codex"] as const)(
     });
 
     expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
-    expect(screen.queryByLabelText("session-other terminal pane")).not.toBeInTheDocument();
+    expectTerminalPaneHidden("session-other terminal pane");
     expect(new URLSearchParams(location.search).getAll("terminal")).toEqual(["session-plain"]);
     expect(new URLSearchParams(location.search).getAll("status")).toEqual([]);
     expect(new URLSearchParams(location.search).getAll("cwd")).toEqual([]);
@@ -2161,7 +2211,7 @@ test("a checked status and cwd group dynamically follows matching terminals", as
   });
 
   await waitFor(() => {
-    expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+    expectTerminalPaneHidden("session-1 terminal pane");
   });
   expect(screen.getByLabelText("session-replacement terminal pane")).toBeVisible();
   expect(new URLSearchParams(window.location.search).getAll("cwd")).toEqual([
@@ -2246,7 +2296,7 @@ test("unchecking an activity group removes only its terminal panes", async () =>
 
   expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
   for (const terminal of terminals) {
-    expect(screen.queryByLabelText(`${terminal.id} terminal pane`)).not.toBeInTheDocument();
+    expectTerminalPaneHidden(`${terminal.id} terminal pane`);
     expect(
       screen.getByRole("checkbox", { name: `Include ${terminal.name} in split` }),
     ).not.toBeChecked();
@@ -2276,7 +2326,7 @@ test("clicking a status label replaces the current pane selection", async () => 
 
   fireEvent.click(screen.getByRole("button", { name: "Show only Waiting terminals" }));
 
-  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-1 terminal pane");
   expect(screen.getByLabelText("session-2 terminal pane")).toBeVisible();
   expect(new URLSearchParams(window.location.search).getAll("status")).toEqual(["waiting"]);
 });
@@ -2300,8 +2350,8 @@ test("clicking a cwd label selects only terminals in that status and cwd", async
     }),
   );
 
-  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("session-2 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-1 terminal pane");
+  expectTerminalPaneHidden("session-2 terminal pane");
   expect(await screen.findByLabelText("session-3 terminal pane")).toBeVisible();
   const parameters = new URLSearchParams(window.location.search);
   expect(parameters.getAll("status")).toEqual([]);
@@ -2335,7 +2385,7 @@ test("a status selection checks its cwd groups and allows one cwd to be excluded
   fireEvent.click(apiCwd);
 
   expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
-  expect(screen.queryByLabelText("session-3 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-3 terminal pane");
   expect(
     screen.getByRole("checkbox", { name: "Show all Running terminals" }),
   ).toHaveAttribute("aria-checked", "mixed");
@@ -2378,7 +2428,7 @@ test("rechecking the only cwd restores its parent status as a dynamic filter", a
     name: "Include all terminals in /workspace/euphony",
   });
   fireEvent.click(cwd);
-  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-1 terminal pane");
 
   fireEvent.click(cwd);
   expect(
@@ -2413,7 +2463,7 @@ test("unchecking a terminal releases its ancestor status filter", async () => {
     screen.getByRole("checkbox", { name: "Include Codex in split" }),
   );
 
-  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-1 terminal pane");
   expect(screen.getByLabelText("session-3 terminal pane")).toBeVisible();
   expect(
     screen.getByRole("checkbox", { name: "Show all Running terminals" }),
@@ -2596,7 +2646,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   fireEvent.keyDown(window, { key: "b", ctrlKey: true });
   fireEvent.keyDown(window, { key: "c" });
   expect(await screen.findByLabelText("created-c terminal pane")).toBeVisible();
-  expect(screen.queryByLabelText("session-1 terminal pane")).not.toBeInTheDocument();
+  expectTerminalPaneHidden("session-1 terminal pane");
   expect(fetchMock).toHaveBeenNthCalledWith(
     2,
     "/api/sessions",
