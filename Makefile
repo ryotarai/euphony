@@ -1,4 +1,4 @@
-.PHONY: build dev test test-cli test-e2e
+.PHONY: build dev test test-cli test-e2e macos-app test-macos
 
 dev:
 	./scripts/dev.sh
@@ -19,3 +19,9 @@ test-cli:
 
 test-e2e:
 	cd web && npx playwright test --workers=1
+
+macos-app:
+	./scripts/build_macos_app.sh
+
+test-macos:
+	./scripts/test_macos_app.sh
