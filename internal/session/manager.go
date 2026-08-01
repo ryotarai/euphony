@@ -1,11 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/ryotarai/euphony/internal/agentlog"
 	"github.com/ryotarai/euphony/internal/selection"
 	"golang.org/x/sys/unix"
 )
@@ -124,8 +127,9 @@ func DefaultSettings() Settings {
 }
 
 type entry struct {
-	metadata Metadata
-	session  *Session
+	metadata       Metadata
+	session        *Session
+	interruptWatch *agentInterruptWatch
 	// cwdFromAgent records that an agent hook named this terminal's working
 	// directory. An agent knows its project directory where its process only
 	// knows where it happens to stand — a worktree it entered, say — so without
@@ -139,6 +143,18 @@ type entry struct {
 	// a claim that has gone stale.
 	cwdReportedAt              time.Time
 	foregroundProcessSampledAt time.Time
+}
+
+type agentInterruptTarget struct {
+	sessionID      string
+	transcriptPath string
+	turnID         string
+	offset         int64
+}
+
+type agentInterruptWatch struct {
+	target agentInterruptTarget
+	cancel context.CancelFunc
 }
 
 // defaultCWDSampleInterval bounds how often a terminal's working directory is
@@ -381,6 +397,57 @@ func (m *Manager) registerSession(id string, item *entry) {
 	m.mu.Unlock()
 }
 
+// WriteTerminal writes input to the PTY. A Ctrl-C only starts watching the
+// linked Codex transcript after the complete input has been written; the
+// agent remains running until Codex records that the turn was aborted.
+func (m *Manager) WriteTerminal(id string, data []byte) (int, error) {
+	m.mu.RLock()
+	item, ok := m.sessions[id]
+	if !ok {
+		m.mu.RUnlock()
+		return 0, ErrNotFound
+	}
+	metadata := item.metadata
+	terminal := item.session
+	m.mu.RUnlock()
+
+	var target agentInterruptTarget
+	if bytes.IndexByte(data, 0x03) >= 0 &&
+		metadata.Agent == "codex" && metadata.AgentStatus == "running" &&
+		metadata.AgentSessionID != "" && metadata.AgentTranscriptPath != "" {
+		target = agentInterruptTarget{
+			sessionID: metadata.AgentSessionID, transcriptPath: metadata.AgentTranscriptPath,
+		}
+		if info, err := os.Stat(target.transcriptPath); err == nil {
+			if !info.Mode().IsRegular() {
+				target = agentInterruptTarget{}
+			} else {
+				target.offset = info.Size()
+				target.turnID, err = agentlog.CodexTurnIDAt(
+					target.transcriptPath, target.offset,
+				)
+				if err != nil || target.turnID == "" {
+					target = agentInterruptTarget{}
+				}
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			target = agentInterruptTarget{}
+		}
+	}
+
+	written, err := terminal.Write(data)
+	if err != nil {
+		return written, err
+	}
+	if written != len(data) {
+		return written, io.ErrShortWrite
+	}
+	if target.transcriptPath != "" {
+		m.watchAgentInterrupt(id, target)
+	}
+	return written, nil
+}
+
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
@@ -388,6 +455,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
+	m.cancelAgentInterruptLocked(item)
 	before := item.metadata
 	item.metadata.Agent = strings.TrimSpace(update.Agent)
 	if resumeAgent := strings.TrimSpace(update.ResumeAgent); resumeAgent != "" {
@@ -441,6 +509,82 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		m.emitChange(*change)
 	}
 	return after, nil
+}
+
+func (m *Manager) watchAgentInterrupt(id string, target agentInterruptTarget) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	item, ok := m.sessions[id]
+	if !ok || !matchesAgentInterrupt(item.metadata, target) {
+		m.mu.Unlock()
+		cancel()
+		return
+	}
+	m.cancelAgentInterruptLocked(item)
+	watch := &agentInterruptWatch{target: target, cancel: cancel}
+	item.interruptWatch = watch
+	m.mu.Unlock()
+
+	go m.awaitCodexAbort(ctx, id, watch)
+}
+
+func (m *Manager) awaitCodexAbort(ctx context.Context, id string, watch *agentInterruptWatch) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		aborted, err := agentlog.CodexTurnAbortedSince(
+			watch.target.transcriptPath, watch.target.offset, watch.target.turnID,
+		)
+		if err == nil && aborted {
+			m.completeAgentInterrupt(id, watch)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) {
+	m.mu.Lock()
+	item, ok := m.sessions[id]
+	if !ok || item.interruptWatch != watch || !matchesAgentInterrupt(item.metadata, watch.target) {
+		m.mu.Unlock()
+		return
+	}
+	before := item.metadata
+	item.interruptWatch = nil
+	item.metadata.AgentStatus = "waiting"
+	item.metadata.NeedsAttention = true
+	if m.store != nil {
+		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+			item.metadata = before
+			item.interruptWatch = watch
+			m.mu.Unlock()
+			return
+		}
+	}
+	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	m.mu.Unlock()
+	watch.cancel()
+	m.emitChange(change)
+}
+
+func matchesAgentInterrupt(metadata Metadata, target agentInterruptTarget) bool {
+	return metadata.Agent == "codex" && metadata.AgentStatus == "running" &&
+		metadata.AgentSessionID == target.sessionID &&
+		metadata.AgentTranscriptPath == target.transcriptPath
+}
+
+func (m *Manager) cancelAgentInterruptLocked(item *entry) {
+	if item.interruptWatch == nil {
+		return
+	}
+	item.interruptWatch.cancel()
+	item.interruptWatch = nil
 }
 
 func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
@@ -617,6 +761,7 @@ func (m *Manager) watch(item *entry) {
 	var deleted *Change
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
+		m.cancelAgentInterruptLocked(item)
 		if !m.closing {
 			delete(m.sessions, item.metadata.ID)
 			if m.store != nil {
@@ -884,6 +1029,9 @@ func (m *Manager) Delete(id string) error {
 	if !ok {
 		return ErrNotFound
 	}
+	m.mu.Lock()
+	m.cancelAgentInterruptLocked(item)
+	m.mu.Unlock()
 	if m.store != nil {
 		if err := m.store.Delete(context.Background(), id); err != nil {
 			m.mu.Lock()
@@ -935,6 +1083,9 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Unlock()
 
 	for _, item := range items {
+		m.mu.Lock()
+		m.cancelAgentInterruptLocked(item)
+		m.mu.Unlock()
 		item.session.terminate()
 	}
 	for _, item := range items {

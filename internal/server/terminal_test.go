@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -85,6 +87,110 @@ func TestTerminalWebSocketPreservesSplitUTF8Bytes(t *testing.T) {
 			t.Fatalf("output data is not base64: %v; data = %q", err, message.Data)
 		}
 		combined = append(combined, decoded...)
+	}
+}
+
+func TestTerminalWebSocketWaitsForCodexAbortAfterCtrlC(t *testing.T) {
+	transcriptPath := filepath.Join(t.TempDir(), "rollout-session-1.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}`+"\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile(transcript) error = %v", err)
+	}
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", CodexSessionsRoot: filepath.Dir(transcriptPath),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Codex"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	if _, err := srv.sessions.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", TranscriptPath: transcriptPath,
+		Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	terminal, ok := srv.sessions.Get(metadata.ID)
+	if !ok {
+		t.Fatal("terminal was not found")
+	}
+	if _, err := terminal.Write([]byte("stty intr undef; printf 'interrupt-ready\\n'\n")); err != nil {
+		t.Fatalf("Write(disable interrupt) error = %v", err)
+	}
+	ready := false
+	interruptDeadline := time.Now().Add(time.Second)
+	for time.Now().Before(interruptDeadline) {
+		read, readErr := srv.control.ReadTerminal(metadata.ID, 1024)
+		if readErr == nil && strings.Contains(read.Text, "interrupt-ready") {
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("terminal did not finish interrupt setup")
+	}
+
+	connection := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer connection.CloseNow()
+	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.updated"})
+	defer unsubscribe()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	payload, _ := json.Marshal(clientMessage{Type: "input", Data: "\x03"})
+	if err := connection.Write(ctx, websocket.MessageText, payload); err != nil {
+		t.Fatalf("Write(ctrl-c) error = %v", err)
+	}
+
+	select {
+	case event := <-events:
+		t.Fatalf("agent.updated event = %#v, want no event before Codex abort", event.Data)
+	case <-time.After(200 * time.Millisecond):
+	}
+	updated, ok := srv.sessions.Metadata(metadata.ID)
+	if !ok || updated.AgentStatus != "running" {
+		t.Fatalf("agent status after Ctrl-C = %#v, want running until abort", updated)
+	}
+
+	appendAbort := func(turnID string) {
+		t.Helper()
+		file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatalf("OpenFile(transcript) error = %v", err)
+		}
+		_, writeErr := fmt.Fprintf(file, `{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":%q,"reason":"interrupted"}}`+"\n", turnID)
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			t.Fatalf("append Codex abort event: write = %v, close = %v", writeErr, closeErr)
+		}
+	}
+	appendAbort("turn-2")
+	select {
+	case event := <-events:
+		t.Fatalf("agent.updated event = %#v, want no event for another turn", event.Data)
+	case <-time.After(200 * time.Millisecond):
+	}
+	updated, ok = srv.sessions.Metadata(metadata.ID)
+	if !ok || updated.AgentStatus != "running" {
+		t.Fatalf("agent status after another turn abort = %#v, want running", updated)
+	}
+	appendAbort("turn-1")
+
+	select {
+	case event := <-events:
+		updated, ok := event.Data.(session.Metadata)
+		if !ok || updated.ID != metadata.ID || updated.AgentStatus != "waiting" || !updated.NeedsAttention {
+			t.Fatalf("agent.updated event = %#v, want waiting Codex metadata", event.Data)
+		}
+	case <-time.After(time.Second):
+		updated, _ := srv.sessions.Metadata(metadata.ID)
+		t.Fatalf("agent status = %q, want waiting after Codex abort", updated.AgentStatus)
 	}
 }
 

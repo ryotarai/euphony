@@ -135,7 +135,7 @@ func (s *Service) ReadTerminal(id string, maxBytes int) (TerminalRead, error) {
 }
 
 func (s *Service) SendTerminalInput(id string, input TerminalInput) error {
-	terminal, ok := s.sessions.Get(id)
+	_, ok := s.sessions.Get(id)
 	if !ok {
 		return ErrTerminalNotFound
 	}
@@ -171,8 +171,19 @@ func (s *Service) SendTerminalInput(id string, input TerminalInput) error {
 	if len(data) == 0 || len(data) > MaxTerminalInputBytes {
 		return ErrInvalidInput
 	}
-	_, err = terminal.Write(data)
-	return err
+	return s.SendTerminalBytes(id, data)
+}
+
+// SendTerminalBytes writes raw terminal input and lets the session manager
+// reconcile a Codex interrupt from its transcript. The WebSocket terminal path
+// uses this too, so browser input and automation share the same lifecycle.
+func (s *Service) SendTerminalBytes(id string, data []byte) error {
+	if _, err := s.sessions.WriteTerminal(id, data); errors.Is(err, session.ErrNotFound) {
+		return ErrTerminalNotFound
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) RunTerminal(id, command string) error {

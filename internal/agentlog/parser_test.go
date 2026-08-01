@@ -1,6 +1,8 @@
 package agentlog
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -155,6 +157,41 @@ func TestParseDoesNotTruncateAssistantMessages(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Content != content {
 		t.Fatalf("Parse() message length = %d, want %d", len(got[0].Content), len(content))
+	}
+}
+
+func TestCodexTurnAbortedSinceOnlyFindsAppendedAbortEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout-session.jsonl")
+	initial := `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}` + "\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	offset := int64(len(initial))
+	turnID, err := CodexTurnIDAt(path, offset)
+	if err != nil || turnID != "turn-1" {
+		t.Fatalf("CodexTurnIDAt() = %q, %v; want turn-1", turnID, err)
+	}
+	if aborted, err := CodexTurnAbortedSince(path, offset, turnID); err != nil || aborted {
+		t.Fatalf("CodexTurnAbortedSince(at end) = %t, %v; want false", aborted, err)
+	}
+
+	appended := `{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}` + "\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(appended); err != nil {
+		file.Close()
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if aborted, err := CodexTurnAbortedSince(path, offset, turnID); err != nil || !aborted {
+		t.Fatalf("CodexTurnAbortedSince(after) = %t, %v; want true", aborted, err)
+	}
+	if aborted, err := CodexTurnAbortedSince(path, offset, "turn-2"); err != nil || aborted {
+		t.Fatalf("CodexTurnAbortedSince(other turn) = %t, %v; want false", aborted, err)
 	}
 }
 
