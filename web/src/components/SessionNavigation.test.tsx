@@ -34,6 +34,7 @@ const settings: Settings = {
   terminalCursorStyle: "bar",
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
+  terminalOptionAsAlt: true,
 };
 
 const sessions: Session[] = [

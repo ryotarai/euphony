@@ -35,6 +35,7 @@ async function clearSessions(page: Page) {
       terminalCursorStyle: "bar",
       terminalCursorBlink: false,
       terminalScrollSensitivity: 3,
+      terminalOptionAsAlt: true,
     },
   });
   expect(settingsResponse.ok()).toBe(true);
@@ -1450,10 +1451,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const autoDeselectRunning = settingsDialog.getByRole("checkbox", {
     name: "Auto-deselect running agent terminals",
   });
+  const optionAsAlt = settingsDialog.getByRole("checkbox", { name: "Option as Alt" });
   await expect(autoSelectAttention).toBeChecked();
   await expect(autoDeselectRunning).toBeChecked();
+  await expect(optionAsAlt).toBeChecked();
   await autoSelectAttention.uncheck();
   await autoDeselectRunning.uncheck();
+  await optionAsAlt.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
   await expect(page.locator(".xterm-rows").first()).toHaveCSS(
@@ -1490,6 +1494,9 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   })).not.toBeChecked();
   await expect(savedSettingsDialog.getByRole("checkbox", {
     name: "Auto-deselect running agent terminals",
+  })).not.toBeChecked();
+  await expect(savedSettingsDialog.getByRole("checkbox", {
+    name: "Option as Alt",
   })).not.toBeChecked();
   await savedSettingsDialog.getByRole("checkbox", { name: "Unlimited history" }).check();
   await expect(savedSettingsDialog.getByLabel("History buffer")).toBeDisabled();

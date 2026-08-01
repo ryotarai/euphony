@@ -78,8 +78,10 @@ test("maps finite and unlimited history limits to xterm scrollback rows", () => 
 });
 
 test("treats macOS Option input as Alt in xterm", () => {
-  expect(terminalOptions("monospace", 14, 1000, 1, "block", true, 1))
+  expect(terminalOptions("monospace", 14, 1000, 1, "block", true, 1, true))
     .toMatchObject({ macOptionIsMeta: true });
+  expect(terminalOptions("monospace", 14, 1000, 1, "block", true, 1, false))
+    .toMatchObject({ macOptionIsMeta: false });
 });
 
 test("loads the WebGL addon into an xterm terminal", () => {
@@ -223,6 +225,7 @@ test("creates and recreates xterm with configured font and appearance", async ()
     string,
     boolean,
     number,
+    boolean,
   ]> = [];
   const api = {
     createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
@@ -237,7 +240,8 @@ test("creates and recreates xterm with configured font and appearance", async ()
       cursorStyle="underline"
       cursorBlink
       scrollSensitivity={5}
-      createTerminal={(fontFamily, fontSize, scrollback, lineHeight, cursorStyle, cursorBlink, scrollSensitivity) => {
+      optionAsAlt={false}
+      createTerminal={(fontFamily, fontSize, scrollback, lineHeight, cursorStyle, cursorBlink, scrollSensitivity, optionAsAlt) => {
         receivedOptions.push([
           fontFamily,
           fontSize,
@@ -246,6 +250,7 @@ test("creates and recreates xterm with configured font and appearance", async ()
           cursorStyle,
           cursorBlink,
           scrollSensitivity,
+          optionAsAlt,
         ]);
         return terminal;
       }}
@@ -254,7 +259,7 @@ test("creates and recreates xterm with configured font and appearance", async ()
   );
 
   expect(receivedOptions).toEqual([
-    ["JetBrains Mono, monospace", 18, 8192, 1.5, "underline", true, 5],
+    ["JetBrains Mono, monospace", 18, 8192, 1.5, "underline", true, 5, false],
   ]);
 
   rerender(
@@ -267,7 +272,8 @@ test("creates and recreates xterm with configured font and appearance", async ()
       cursorStyle="block"
       cursorBlink={false}
       scrollSensitivity={2}
-      createTerminal={(fontFamily, fontSize, scrollback, lineHeight, cursorStyle, cursorBlink, scrollSensitivity) => {
+      optionAsAlt
+      createTerminal={(fontFamily, fontSize, scrollback, lineHeight, cursorStyle, cursorBlink, scrollSensitivity, optionAsAlt) => {
         receivedOptions.push([
           fontFamily,
           fontSize,
@@ -276,6 +282,7 @@ test("creates and recreates xterm with configured font and appearance", async ()
           cursorStyle,
           cursorBlink,
           scrollSensitivity,
+          optionAsAlt,
         ]);
         return terminal;
       }}
@@ -285,8 +292,8 @@ test("creates and recreates xterm with configured font and appearance", async ()
 
   await waitFor(() =>
     expect(receivedOptions).toEqual([
-      ["JetBrains Mono, monospace", 18, 8192, 1.5, "underline", true, 5],
-      ["Iosevka, monospace", 20, 8192, 1.75, "block", false, 2],
+      ["JetBrains Mono, monospace", 18, 8192, 1.5, "underline", true, 5, false],
+      ["Iosevka, monospace", 20, 8192, 1.75, "block", false, 2, true],
     ]),
   );
 });

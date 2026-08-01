@@ -10,6 +10,7 @@ import {
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
   defaultTerminalLineHeight,
+  defaultTerminalOptionAsAlt,
   defaultTerminalScrollSensitivity,
 } from "../settings";
 import type { Session, TerminalCursorStyle } from "../types";
@@ -55,6 +56,7 @@ interface TerminalViewProps {
   cursorStyle?: TerminalCursorStyle;
   cursorBlink?: boolean;
   scrollSensitivity?: number;
+  optionAsAlt?: boolean;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
   createTerminal?: (
     fontFamily: string,
@@ -64,6 +66,7 @@ interface TerminalViewProps {
     cursorStyle: TerminalCursorStyle,
     cursorBlink: boolean,
     scrollSensitivity: number,
+    optionAsAlt: boolean,
   ) => TerminalDriver;
   createSocket?: (url: string) => WebSocketLike;
 }
@@ -140,6 +143,7 @@ export function terminalOptions(
   cursorStyle: TerminalCursorStyle,
   cursorBlink: boolean,
   scrollSensitivity: number,
+  optionAsAlt = defaultTerminalOptionAsAlt,
 ): ConstructorParameters<typeof Terminal>[0] {
   return {
     allowTransparency: true,
@@ -151,7 +155,7 @@ export function terminalOptions(
     linkHandler: {
       activate: (_event, uri) => openTerminalLink(uri),
     },
-    macOptionIsMeta: true,
+    macOptionIsMeta: optionAsAlt,
     scrollback,
     scrollSensitivity,
     theme: {
@@ -180,6 +184,7 @@ function defaultTerminal(
   cursorStyle: TerminalCursorStyle,
   cursorBlink: boolean,
   scrollSensitivity: number,
+  optionAsAlt: boolean,
 ): TerminalDriver {
   const fitAddon = new FitAddon();
   const terminal = new Terminal(terminalOptions(
@@ -190,6 +195,7 @@ function defaultTerminal(
     cursorStyle,
     cursorBlink,
     scrollSensitivity,
+    optionAsAlt,
   ));
   terminal.loadAddon(fitAddon);
   return {
@@ -270,6 +276,7 @@ export function TerminalView({
   cursorStyle = defaultTerminalCursorStyle,
   cursorBlink = defaultTerminalCursorBlink,
   scrollSensitivity = defaultTerminalScrollSensitivity,
+  optionAsAlt = defaultTerminalOptionAsAlt,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -325,6 +332,7 @@ export function TerminalView({
       cursorStyle,
       cursorBlink,
       scrollSensitivity,
+      optionAsAlt,
     );
     terminalRef.current = terminal;
     terminal.open(host);
@@ -590,6 +598,7 @@ export function TerminalView({
     cursorStyle,
     cursorBlink,
     scrollSensitivity,
+    optionAsAlt,
     reconnectSignal,
     session.id,
   ]);

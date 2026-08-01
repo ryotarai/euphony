@@ -7,3 +7,4 @@ export const defaultTerminalLineHeight = 1.25;
 export const defaultTerminalCursorStyle: TerminalCursorStyle = "bar";
 export const defaultTerminalCursorBlink = false;
 export const defaultTerminalScrollSensitivity = 3;
+export const defaultTerminalOptionAsAlt = true;
