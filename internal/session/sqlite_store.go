@@ -88,7 +88,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_line_height REAL NOT NULL DEFAULT 1.25,
 			terminal_cursor_style TEXT NOT NULL DEFAULT 'bar',
 			terminal_cursor_blink INTEGER NOT NULL DEFAULT 0,
-			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3
+			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3,
+			terminal_option_as_alt INTEGER NOT NULL DEFAULT 1
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -230,6 +231,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add terminal scroll sensitivity setting: %w", err)
 		}
 	}
+	hasTerminalOptionAsAlt, err := s.hasColumn(ctx, "settings", "terminal_option_as_alt")
+	if err != nil {
+		return err
+	}
+	if !hasTerminalOptionAsAlt {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN terminal_option_as_alt INTEGER NOT NULL DEFAULT 1",
+		); err != nil {
+			return fmt.Errorf("add terminal Option-as-Alt setting: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name         string
 		defaultValue int
@@ -311,13 +323,14 @@ func (s *SQLiteStore) hasColumn(ctx context.Context, table, column string) (bool
 
 func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
-	var collapsed, autoSelectAttention, autoDeselectRunning, terminalCursorBlink int
+	var collapsed, autoSelectAttention, autoDeselectRunning, terminalCursorBlink, terminalOptionAsAlt int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
 			terminal_history_limit, auto_select_attention, auto_deselect_running,
 			terminal_line_height,
-			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity
+			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity,
+			terminal_option_as_alt
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -335,6 +348,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&result.TerminalCursorStyle,
 		&terminalCursorBlink,
 		&result.TerminalScrollSensitivity,
+		&terminalOptionAsAlt,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
@@ -343,6 +357,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	result.AutoSelectAttention = autoSelectAttention != 0
 	result.AutoDeselectRunning = autoDeselectRunning != 0
 	result.TerminalCursorBlink = terminalCursorBlink != 0
+	result.TerminalOptionAsAlt = terminalOptionAsAlt != 0
 	return result, nil
 }
 
@@ -363,19 +378,25 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	if settings.TerminalCursorBlink {
 		terminalCursorBlink = 1
 	}
+	terminalOptionAsAlt := 0
+	if settings.TerminalOptionAsAlt {
+		terminalOptionAsAlt = 1
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
 			terminal_history_limit = ?, auto_select_attention = ?, auto_deselect_running = ?,
 			terminal_line_height = ?,
-			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?
+			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?,
+			terminal_option_as_alt = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
 		settings.TerminalHistoryLimit, autoSelectAttention, autoDeselectRunning,
 		settings.TerminalLineHeight,
-		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity)
+		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity,
+		terminalOptionAsAlt)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}

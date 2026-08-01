@@ -32,12 +32,13 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		defaults.TerminalHistoryLimit != 1048576 || !defaults.AutoSelectAttention ||
 		!defaults.AutoDeselectRunning ||
 		defaults.TerminalLineHeight != 1.25 || defaults.TerminalCursorStyle != "bar" ||
-		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 {
+		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 ||
+		!defaults.TerminalOptionAsAlt {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 
 	response = performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"autoSelectAttention":false,"autoDeselectRunning":false,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5}`)
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"autoSelectAttention":false,"autoDeselectRunning":false,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -50,7 +51,7 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		TerminalFontFamily:   "JetBrains Mono, monospace",
 		TerminalHistoryLimit: 0, AutoSelectAttention: false, AutoDeselectRunning: false,
 		TerminalLineHeight: 1.5, TerminalCursorStyle: "underline",
-		TerminalCursorBlink: true, TerminalScrollSensitivity: 5,
+		TerminalCursorBlink: true, TerminalScrollSensitivity: 5, TerminalOptionAsAlt: false,
 	}) {
 		t.Fatalf("updated settings = %#v", updated)
 	}
@@ -95,6 +96,7 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"   ","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"` + strings.Repeat("界", 257) + `","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true,"autoDeselectRunning":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3}`,
 	} {
 		response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)
 		if response.Code != http.StatusBadRequest {
@@ -102,7 +104,7 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		}
 	}
 
-	validBody := `{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3}`
+	validBody := `{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"autoSelectAttention":true,"autoDeselectRunning":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3,"terminalOptionAsAlt":true}`
 	for _, body := range []string{
 		strings.Replace(validBody, `"terminalLineHeight":1.25`, `"terminalLineHeight":0.95`, 1),
 		strings.Replace(validBody, `"terminalLineHeight":1.25`, `"terminalLineHeight":2.05`, 1),
@@ -117,6 +119,7 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		strings.Replace(validBody, `,"terminalCursorStyle":"bar"`, "", 1),
 		strings.Replace(validBody, `,"terminalCursorBlink":false`, "", 1),
 		strings.Replace(validBody, `,"terminalScrollSensitivity":3`, "", 1),
+		strings.Replace(validBody, `,"terminalOptionAsAlt":true`, "", 1),
 	} {
 		response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)
 		if response.Code != http.StatusBadRequest {
@@ -136,7 +139,7 @@ func TestSettingsAPIRoundsFractionalSidebarWidth(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close(t.Context()) })
 
 	response := performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+Q","paneTabShortcut":"Meta+L","sidebarWidth":229.96875,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":8388608,"autoSelectAttention":true,"autoDeselectRunning":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3}`)
+		`{"prefix":"Ctrl+Q","paneTabShortcut":"Meta+L","sidebarWidth":229.96875,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":8388608,"autoSelectAttention":true,"autoDeselectRunning":true,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3,"terminalOptionAsAlt":true}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}

@@ -35,6 +35,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorStyle       string   `json:"terminalCursorStyle"`
 		TerminalCursorBlink       *bool    `json:"terminalCursorBlink"`
 		TerminalScrollSensitivity float64  `json:"terminalScrollSensitivity"`
+		TerminalOptionAsAlt       *bool    `json:"terminalOptionAsAlt"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -55,7 +56,8 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validTerminalLineHeight(input.TerminalLineHeight) ||
 		!validTerminalCursorStyle(input.TerminalCursorStyle) ||
 		input.TerminalCursorBlink == nil ||
-		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) {
+		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) ||
+		input.TerminalOptionAsAlt == nil {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
 	}
@@ -75,6 +77,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorStyle:       input.TerminalCursorStyle,
 		TerminalCursorBlink:       *input.TerminalCursorBlink,
 		TerminalScrollSensitivity: int(input.TerminalScrollSensitivity),
+		TerminalOptionAsAlt:       *input.TerminalOptionAsAlt,
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")

@@ -88,6 +88,7 @@ type Settings struct {
 	TerminalCursorStyle       string  `json:"terminalCursorStyle"`
 	TerminalCursorBlink       bool    `json:"terminalCursorBlink"`
 	TerminalScrollSensitivity int     `json:"terminalScrollSensitivity"`
+	TerminalOptionAsAlt       bool    `json:"terminalOptionAsAlt"`
 }
 
 const (
@@ -99,6 +100,7 @@ const (
 	DefaultTerminalCursorStyle       = "bar"
 	DefaultTerminalCursorBlink       = false
 	DefaultTerminalScrollSensitivity = 3
+	DefaultTerminalOptionAsAlt       = true
 )
 
 func DefaultSettings() Settings {
@@ -117,6 +119,7 @@ func DefaultSettings() Settings {
 		TerminalCursorStyle:       DefaultTerminalCursorStyle,
 		TerminalCursorBlink:       DefaultTerminalCursorBlink,
 		TerminalScrollSensitivity: DefaultTerminalScrollSensitivity,
+		TerminalOptionAsAlt:       DefaultTerminalOptionAsAlt,
 	}
 }
 
