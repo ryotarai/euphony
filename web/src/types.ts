@@ -40,6 +40,7 @@ export interface Settings {
   terminalCursorStyle: TerminalCursorStyle;
   terminalCursorBlink: boolean;
   terminalScrollSensitivity: number;
+  terminalOptionAsAlt: boolean;
 }
 
 export interface CwdSelectionFilter {

@@ -69,6 +69,7 @@ import {
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
   defaultTerminalLineHeight,
+  defaultTerminalOptionAsAlt,
   defaultTerminalScrollSensitivity,
 } from "./settings";
 
@@ -110,6 +111,7 @@ interface AppProps {
     cursorStyle: TerminalCursorStyle,
     cursorBlink: boolean,
     scrollSensitivity: number,
+    optionAsAlt: boolean,
   ) => ReactNode;
 }
 
@@ -129,6 +131,7 @@ const defaultSettings: Settings = {
   terminalCursorStyle: defaultTerminalCursorStyle,
   terminalCursorBlink: defaultTerminalCursorBlink,
   terminalScrollSensitivity: defaultTerminalScrollSensitivity,
+  terminalOptionAsAlt: defaultTerminalOptionAsAlt,
 };
 
 function historyLimitDraft(limit: number): string {
@@ -436,6 +439,7 @@ export function App({
     cursorStyle,
     cursorBlink,
     scrollSensitivity,
+    optionAsAlt,
   ) => (
     <TerminalView
       key={session.id}
@@ -453,6 +457,7 @@ export function App({
       cursorStyle={cursorStyle}
       cursorBlink={cursorBlink}
       scrollSensitivity={scrollSensitivity}
+      optionAsAlt={optionAsAlt}
     />
   ),
 }: AppProps) {
@@ -501,6 +506,9 @@ export function App({
   );
   const [terminalScrollSensitivityDraft, setTerminalScrollSensitivityDraft] = useState(
     String(settings.terminalScrollSensitivity),
+  );
+  const [terminalOptionAsAltDraft, setTerminalOptionAsAltDraft] = useState(
+    settings.terminalOptionAsAlt,
   );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
@@ -626,6 +634,7 @@ export function App({
       terminalScrollSensitivity:
         parseTerminalScrollSensitivity(terminalScrollSensitivityDraft) ??
         settings.terminalScrollSensitivity,
+      terminalOptionAsAlt: terminalOptionAsAltDraft,
     };
   }, [
     fontSizeDrafts,
@@ -635,6 +644,7 @@ export function App({
     terminalCursorStyleDraft,
     terminalFontFamilyDraft,
     terminalLineHeightDraft,
+    terminalOptionAsAltDraft,
     terminalScrollSensitivityDraft,
   ]);
   const handleConnectionChange = useCallback((sessionID: string, state: ConnectionState) => {
@@ -851,6 +861,7 @@ export function App({
       setTerminalCursorStyleDraft(loaded.terminalCursorStyle);
       setTerminalCursorBlinkDraft(loaded.terminalCursorBlink);
       setTerminalScrollSensitivityDraft(String(loaded.terminalScrollSensitivity));
+      setTerminalOptionAsAltDraft(loaded.terminalOptionAsAlt);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -2291,6 +2302,7 @@ export function App({
     setTerminalCursorStyleDraft(settings.terminalCursorStyle);
     setTerminalCursorBlinkDraft(settings.terminalCursorBlink);
     setTerminalScrollSensitivityDraft(String(settings.terminalScrollSensitivity));
+    setTerminalOptionAsAltDraft(settings.terminalOptionAsAlt);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -2405,6 +2417,7 @@ export function App({
       terminalCursorStyle,
       terminalCursorBlink: terminalCursorBlinkDraft,
       terminalScrollSensitivity,
+      terminalOptionAsAlt: terminalOptionAsAltDraft,
     });
     setSettingsOpen(false);
   }
@@ -2739,6 +2752,7 @@ export function App({
                         previewSettings.terminalCursorStyle,
                         previewSettings.terminalCursorBlink,
                         previewSettings.terminalScrollSensitivity,
+                        previewSettings.terminalOptionAsAlt,
                       )
                     }
                   />
@@ -3059,6 +3073,20 @@ export function App({
                   <h3 id="terminal-appearance-heading">Terminal appearance</h3>
                   <span>Comfort &amp; control</span>
                 </div>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="terminalOptionAsAlt"
+                    checked={terminalOptionAsAltDraft}
+                    onCheckedChange={(checked) =>
+                      setTerminalOptionAsAltDraft(Boolean(checked))}
+                  />
+                  <FieldContent>
+                    <FieldLabel htmlFor="terminalOptionAsAlt">Option as Alt</FieldLabel>
+                    <FieldDescription>
+                      Send macOS Option-modified keys as Alt sequences to terminal applications.
+                    </FieldDescription>
+                  </FieldContent>
+                </Field>
                 <div className="terminal-appearance-fields">
                   <Field data-invalid={settingsError?.field === "terminalLineHeight"}>
                     <FieldLabel htmlFor="terminalLineHeight">

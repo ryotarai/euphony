@@ -118,7 +118,8 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		defaults.AgentLogFontSize != 14 || defaults.TerminalHistoryLimit != 1048576 ||
 		!defaults.AutoSelectAttention || !defaults.AutoDeselectRunning ||
 		defaults.TerminalLineHeight != 1.25 || defaults.TerminalCursorStyle != "bar" ||
-		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 {
+		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 ||
+		!defaults.TerminalOptionAsAlt {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 	want := Settings{
@@ -130,6 +131,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		AutoDeselectRunning: false,
 		TerminalLineHeight:  1.5, TerminalCursorStyle: "underline",
 		TerminalCursorBlink: true, TerminalScrollSensitivity: 5,
+		TerminalOptionAsAlt: false,
 	}
 	if err := store.SaveSettings(context.Background(), want); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
@@ -314,6 +316,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 		AutoDeselectRunning: true,
 		TerminalLineHeight:  1.25, TerminalCursorStyle: "bar",
 		TerminalCursorBlink: false, TerminalScrollSensitivity: 3,
+		TerminalOptionAsAlt: true,
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)

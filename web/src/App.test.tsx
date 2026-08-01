@@ -21,6 +21,7 @@ const defaultSettings: Settings = {
   terminalCursorStyle: "bar",
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
+  terminalOptionAsAlt: true,
 };
 
 const runningSession: Session = {
@@ -2701,6 +2702,7 @@ test("previews, cancels, and saves terminal appearance settings", async () => {
         cursorStyle,
         cursorBlink,
         scrollSensitivity,
+        optionAsAlt,
       ) => (
         <div
           aria-label={`${session.id} terminal pane`}
@@ -2708,6 +2710,7 @@ test("previews, cancels, and saves terminal appearance settings", async () => {
           data-cursor-style={cursorStyle}
           data-cursor-blink={cursorBlink}
           data-scroll-sensitivity={scrollSensitivity}
+          data-option-as-alt={optionAsAlt}
         />
       )}
     />,
@@ -2716,6 +2719,7 @@ test("previews, cancels, and saves terminal appearance settings", async () => {
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
   const dialog = screen.getByRole("dialog", { name: "Settings" });
+  await user.click(within(dialog).getByRole("checkbox", { name: "Option as Alt" }));
   fireEvent.change(within(dialog).getByLabelText("Terminal line height"), {
     target: { value: "1.5" },
   });
@@ -2729,15 +2733,22 @@ test("previews, cancels, and saves terminal appearance settings", async () => {
   expect(terminalPane).toHaveAttribute("data-cursor-style", "underline");
   expect(terminalPane).toHaveAttribute("data-cursor-blink", "true");
   expect(terminalPane).toHaveAttribute("data-scroll-sensitivity", "5");
+  expect(terminalPane).toHaveAttribute("data-option-as-alt", "false");
 
   await user.keyboard("{Escape}");
   expect(terminalPane).toHaveAttribute("data-line-height", "1.25");
   expect(terminalPane).toHaveAttribute("data-cursor-style", "bar");
   expect(terminalPane).toHaveAttribute("data-cursor-blink", "false");
   expect(terminalPane).toHaveAttribute("data-scroll-sensitivity", "3");
+  expect(terminalPane).toHaveAttribute("data-option-as-alt", "true");
 
   await user.click(screen.getByRole("button", { name: "Open settings" }));
   const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
+  const optionAsAltCheckbox = within(reopenedDialog).getByRole("checkbox", {
+    name: "Option as Alt",
+  });
+  expect(optionAsAltCheckbox).toBeChecked();
+  await user.click(optionAsAltCheckbox);
   fireEvent.change(within(reopenedDialog).getByLabelText("Terminal line height"), {
     target: { value: "1.5" },
   });
@@ -2761,6 +2772,7 @@ test("previews, cancels, and saves terminal appearance settings", async () => {
         terminalCursorStyle: "underline",
         terminalCursorBlink: true,
         terminalScrollSensitivity: 5,
+        terminalOptionAsAlt: false,
       }),
     }),
   );

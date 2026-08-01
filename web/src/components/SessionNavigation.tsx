@@ -40,6 +40,7 @@ import {
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
   defaultTerminalLineHeight,
+  defaultTerminalOptionAsAlt,
   defaultTerminalScrollSensitivity,
 } from "../settings";
 
@@ -488,6 +489,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalCursorStyle: defaultTerminalCursorStyle,
     terminalCursorBlink: defaultTerminalCursorBlink,
     terminalScrollSensitivity: defaultTerminalScrollSensitivity,
+    terminalOptionAsAlt: defaultTerminalOptionAsAlt,
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

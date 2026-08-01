@@ -40,6 +40,7 @@ async function clearSessions(
       terminalCursorStyle: "bar",
       terminalCursorBlink: false,
       terminalScrollSensitivity: 3,
+      terminalOptionAsAlt: true,
     },
   });
   expect(settingsResponse.ok()).toBe(true);
