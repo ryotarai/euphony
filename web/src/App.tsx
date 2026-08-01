@@ -578,6 +578,7 @@ export function App({
       window.clearTimeout(timer);
       runningDeselectTimersRef.current.delete(id);
     }
+    filterSelectedIDsRef.current.delete(id);
     setRunningDeselectNotices((current) =>
       current.filter((notice) => notice.id !== id),
     );
@@ -687,6 +688,30 @@ export function App({
     snapshot: SelectionSnapshot,
     mode: "push" | "replace" = "replace",
   ) {
+    const pendingRunningIDs = new Set([
+      ...pendingAgentRunningIDsRef.current,
+      ...runningDeselectTimersRef.current.keys(),
+    ]);
+    const preservedRunningIDs = settings.autoDeselectRunning
+      ? [...pendingRunningIDs].filter(
+        (id) =>
+          selectedIDs.includes(id) &&
+          !pinnedIDs.includes(id) &&
+          !snapshot.terminalIds.includes(id),
+      )
+      : [];
+    const effectiveSnapshot = preservedRunningIDs.length === 0
+      ? snapshot
+      : {
+        ...snapshot,
+        terminalIds: [...new Set([...snapshot.terminalIds, ...preservedRunningIDs])],
+        manualTerminalIds: [
+          ...new Set([...snapshot.manualTerminalIds, ...preservedRunningIDs]),
+        ],
+        ...(focusedID && preservedRunningIDs.includes(focusedID)
+          ? { focusedTerminalId: focusedID }
+          : {}),
+      };
     const nextStatusFilters = snapshot.filters.statuses;
     const nextCwdFilters = snapshot.filters.cwds.map((filter) =>
       cwdFilterKey(filter.status, filter.cwd)
@@ -696,13 +721,13 @@ export function App({
       (filter) => cwdFilterKey(filter.status, filter.cwd),
     );
     filterSelectedIDsRef.current = new Set(
-      snapshot.terminalIds.filter(
+      effectiveSnapshot.terminalIds.filter(
         (id) =>
-          !snapshot.manualTerminalIds.includes(id) &&
-          !snapshot.pinnedTerminalIds.includes(id),
+          !effectiveSnapshot.manualTerminalIds.includes(id) &&
+          !effectiveSnapshot.pinnedTerminalIds.includes(id),
       ),
     );
-    manualSelectedIDsRef.current = new Set(snapshot.manualTerminalIds);
+    manualSelectedIDsRef.current = new Set(effectiveSnapshot.manualTerminalIds);
     decomposedStatusFiltersRef.current = new Set(
       snapshot.filters.cwds
         .map((filter) => filter.status)
@@ -723,17 +748,17 @@ export function App({
       nextPinnedStatusFilters,
       snapshot.pinnedFilters?.cwds ?? [],
     );
-    setSelectedIDs(snapshot.terminalIds);
-    setPinnedIDs(snapshot.pinnedTerminalIds);
-    setFocusedID(snapshot.focusedTerminalId ?? null);
+    setSelectedIDs(effectiveSnapshot.terminalIds);
+    setPinnedIDs(effectiveSnapshot.pinnedTerminalIds);
+    setFocusedID(effectiveSnapshot.focusedTerminalId ?? null);
     setStatusFilters(nextStatusFilters);
     setCwdFilters(nextCwdFilters);
     setPinnedStatusFilters(nextPinnedStatusFilters);
     setPinnedCwdFilters(nextPinnedCwdFilters);
     writeWorkspaceToURL(
-      snapshot.terminalIds,
-      snapshot.pinnedTerminalIds,
-      snapshot.focusedTerminalId ?? null,
+      effectiveSnapshot.terminalIds,
+      effectiveSnapshot.pinnedTerminalIds,
+      effectiveSnapshot.focusedTerminalId ?? null,
       nextStatusFilters,
       nextCwdFilters,
       mode,
@@ -1356,8 +1381,17 @@ export function App({
       .filter((session) => matchesWorkspaceFilter(session, statusFilters, cwdFilters))
       .map((session) => session.id);
     const previousMatches = filterSelectedIDsRef.current;
+    const pendingRunningIDs = settings.autoDeselectRunning
+      ? new Set(
+        [...runningDeselectTimersRef.current.keys()].filter(
+          (id) => selectedIDs.includes(id) && !pinnedIDs.includes(id),
+        ),
+      )
+      : new Set<string>();
     const next = [
-      ...selectedIDs.filter((id) => !previousMatches.has(id)),
+      ...selectedIDs.filter(
+        (id) => !previousMatches.has(id) || pendingRunningIDs.has(id),
+      ),
       ...matches,
       ...attentionIDs,
     ].filter((id, index, values) => values.indexOf(id) === index);

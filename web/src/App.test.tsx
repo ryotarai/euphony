@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { useEffect, type ComponentProps } from "react";
 import { App, agentRunningTransitions, attentionTransitions } from "./App";
-import type { Session, Settings } from "./types";
+import type { SelectionSnapshot, Session, Settings } from "./types";
 
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
@@ -2076,6 +2076,160 @@ test("delays deselecting a selected terminal when its agent starts running", asy
     const parameters = new URLSearchParams(window.location.search);
     expect(parameters.getAll("terminal")).toEqual([]);
     expect(parameters.has("focus")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("keeps a filtered Codex terminal visible during the running deselection delay", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const waitingCodex = {
+      ...plainTerminalSession,
+      name: "Codex",
+      agent: "codex",
+      agentStatus: "waiting",
+      agentTitle: "Codex",
+    };
+    const otherTerminal = { ...plainTerminalSession, id: "session-other" };
+    let sessionReads = 0;
+    let sharedSelection: SelectionSnapshot = {
+      terminalIds: [waitingCodex.id],
+      manualTerminalIds: [],
+      pinnedTerminalIds: [],
+      focusedTerminalId: waitingCodex.id,
+      filters: { statuses: ["waiting"], cwds: [] },
+      pinnedFilters: { statuses: [], cwds: [] },
+      revision: 7,
+    };
+    const writes: Array<{ manualTerminalIds: string[] }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/api/sessions") {
+        sessionReads += 1;
+        if (sessionReads >= 2) {
+          sharedSelection = {
+            ...sharedSelection,
+            terminalIds: [],
+            focusedTerminalId: "",
+            revision: 8,
+          };
+          return jsonResponse([
+            { ...waitingCodex, agentStatus: "running" },
+            otherTerminal,
+          ]);
+        }
+        return jsonResponse([waitingCodex, otherTerminal]);
+      }
+      if (input === "/api/v1/selection" && init?.method === "PUT") {
+        const request = JSON.parse(String(init.body)) as {
+          manualTerminalIds: string[];
+          pinnedTerminalIds: string[];
+          focusedTerminalId?: string;
+          filters: SelectionSnapshot["filters"];
+          pinnedFilters: SelectionSnapshot["filters"];
+        };
+        writes.push({ manualTerminalIds: request.manualTerminalIds });
+        sharedSelection = {
+          ...sharedSelection,
+          terminalIds: request.manualTerminalIds,
+          manualTerminalIds: request.manualTerminalIds,
+          pinnedTerminalIds: request.pinnedTerminalIds,
+          focusedTerminalId: request.focusedTerminalId ?? "",
+          filters: request.filters,
+          pinnedFilters: request.pinnedFilters,
+          revision: sharedSelection.revision + 1,
+        };
+        return jsonResponse({ ok: true, result: sharedSelection });
+      }
+      if (input === "/api/v1/selection") {
+        return jsonResponse({ ok: true, result: sharedSelection });
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        syncEvents={false}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.id} terminal pane`} />
+        )}
+      />,
+    );
+
+    await screen.findByLabelText("session-plain terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.getByRole("status", { name: "Automatic deselection" })).toHaveTextContent(
+      "Codex is now running. It will be removed in 10 seconds.",
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    await waitFor(() => {
+      expectTerminalPaneHidden("session-plain terminal pane");
+    });
+    expect(writes.at(-1)?.manualTerminalIds).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("keeps a filtered Codex terminal visible during the delay without shared selection", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    history.replaceState(null, "", "/?terminal=session-plain&status=waiting");
+    const waitingCodex = {
+      ...plainTerminalSession,
+      name: "Codex",
+      agent: "codex",
+      agentStatus: "waiting",
+      agentTitle: "Codex",
+    };
+    const runningCodex = { ...waitingCodex, agentStatus: "running" };
+    const otherTerminal = { ...plainTerminalSession, id: "session-other" };
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => jsonResponse([waitingCodex, otherTerminal]))
+      .mockImplementation(() => jsonResponse([runningCodex, otherTerminal]));
+    render(
+      <App
+        syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.id} terminal pane`} />
+        )}
+      />,
+    );
+
+    await screen.findByLabelText("session-plain terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+    expect(screen.getByRole("status", { name: "Automatic deselection" })).toHaveTextContent(
+      "Codex is now running. It will be removed in 10 seconds.",
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
+    expect(screen.getByLabelText("session-plain terminal pane")).toBeVisible();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    await waitFor(() => {
+      expectTerminalPaneHidden("session-plain terminal pane");
+    });
   } finally {
     vi.useRealTimers();
   }

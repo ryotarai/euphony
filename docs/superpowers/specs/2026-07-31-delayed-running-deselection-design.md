@@ -35,9 +35,17 @@ The toast uses the existing dark terminal palette, a lime status accent, a
 visible keyboard-focusable `Cancel` button, and a polite live region. Timers
 are cleared on cancellation, invalidation, and component unmount.
 
+When shared selection is driven by a dynamic status or cwd filter, a running
+transition can make the server's next selection snapshot omit the terminal
+before the local ten-second timer is visible. While the timer is active, the
+client temporarily preserves that terminal as a manual selection and carries
+it through subsequent filter recomputation. Timer expiry still uses the
+existing selection mutation path, so the temporary selection is removed after
+the delay without requiring a backend change.
+
 ## Verification
 
-React tests cover the ten-second boundary, cancellation, and preservation of
-the existing pinned-terminal behavior. Type checking, production build, the
-full web unit suite, and the focused Playwright flow verify the browser
-behavior.
+React tests cover the ten-second boundary, cancellation, preservation of the
+existing pinned-terminal behavior, and filtered Codex terminals with and
+without shared selection. Type checking, production build, the full web unit
+suite, and the focused Playwright flow verify the browser behavior.
