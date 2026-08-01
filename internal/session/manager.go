@@ -127,9 +127,10 @@ func DefaultSettings() Settings {
 }
 
 type entry struct {
-	metadata       Metadata
-	session        *Session
-	interruptWatch *agentInterruptWatch
+	metadata           Metadata
+	session            *Session
+	interruptWatch     *agentInterruptWatch
+	codexActivityWatch *codexActivityWatch
 	// cwdFromAgent records that an agent hook named this terminal's working
 	// directory. An agent knows its project directory where its process only
 	// knows where it happens to stand — a worktree it entered, say — so without
@@ -154,6 +155,17 @@ type agentInterruptTarget struct {
 
 type agentInterruptWatch struct {
 	target agentInterruptTarget
+	cancel context.CancelFunc
+}
+
+type codexActivityTarget struct {
+	sessionID      string
+	transcriptPath string
+	offset         int64
+}
+
+type codexActivityWatch struct {
+	target codexActivityTarget
 	cancel context.CancelFunc
 }
 
@@ -456,6 +468,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		return Metadata{}, ErrNotFound
 	}
 	m.cancelAgentInterruptLocked(item)
+	m.cancelCodexActivityLocked(item)
 	before := item.metadata
 	item.metadata.Agent = strings.TrimSpace(update.Agent)
 	if resumeAgent := strings.TrimSpace(update.ResumeAgent); resumeAgent != "" {
@@ -482,6 +495,16 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	if item.metadata.Agent == "" && nextStatus == "" {
 		item.metadata.NeedsAttention = false
 	}
+	var activityTarget codexActivityTarget
+	if item.metadata.Agent == "codex" && item.metadata.AgentStatus == "blocked" &&
+		item.metadata.AgentSessionID != "" && item.metadata.AgentTranscriptPath != "" {
+		if info, err := os.Stat(item.metadata.AgentTranscriptPath); err == nil && info.Mode().IsRegular() {
+			activityTarget = codexActivityTarget{
+				sessionID: item.metadata.AgentSessionID, transcriptPath: item.metadata.AgentTranscriptPath,
+				offset: info.Size(),
+			}
+		}
+	}
 	if title := strings.TrimSpace(update.Title); title != "" {
 		item.metadata.AgentTitle = title
 	} else if item.metadata.Agent == "" && nextStatus == "" {
@@ -507,6 +530,9 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	m.mu.Unlock()
 	if change != nil {
 		m.emitChange(*change)
+	}
+	if activityTarget.transcriptPath != "" {
+		m.watchCodexActivity(id, activityTarget)
 	}
 	return after, nil
 }
@@ -547,6 +573,73 @@ func (m *Manager) awaitCodexAbort(ctx context.Context, id string, watch *agentIn
 	}
 }
 
+func (m *Manager) watchCodexActivity(id string, target codexActivityTarget) {
+	// PermissionRequest is emitted before Codex shows its approval UI. Keep the
+	// hook's blocked state until the rollout records durable progress or a
+	// completed turn, so a transient approval request cannot leave it stale.
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	item, ok := m.sessions[id]
+	if !ok || !matchesCodexActivity(item.metadata, target) {
+		m.mu.Unlock()
+		cancel()
+		return
+	}
+	m.cancelCodexActivityLocked(item)
+	watch := &codexActivityWatch{target: target, cancel: cancel}
+	item.codexActivityWatch = watch
+	m.mu.Unlock()
+
+	go m.awaitCodexActivity(ctx, id, watch)
+}
+
+func (m *Manager) awaitCodexActivity(ctx context.Context, id string, watch *codexActivityWatch) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		activity, err := agentlog.CodexActivitySince(
+			watch.target.transcriptPath, watch.target.offset,
+		)
+		if err == nil && activity != "" {
+			m.completeCodexActivity(id, watch, activity)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, activity string) {
+	if activity != agentlog.CodexActivityRunning && activity != agentlog.CodexActivityWaiting {
+		return
+	}
+	m.mu.Lock()
+	item, ok := m.sessions[id]
+	if !ok || item.codexActivityWatch != watch || !matchesCodexActivity(item.metadata, watch.target) {
+		m.mu.Unlock()
+		return
+	}
+	before := item.metadata
+	item.codexActivityWatch = nil
+	item.metadata.AgentStatus = activity
+	if m.store != nil {
+		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+			item.metadata = before
+			item.codexActivityWatch = watch
+			m.mu.Unlock()
+			return
+		}
+	}
+	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	m.mu.Unlock()
+	watch.cancel()
+	m.emitChange(change)
+}
+
 func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
@@ -585,6 +678,20 @@ func (m *Manager) cancelAgentInterruptLocked(item *entry) {
 	}
 	item.interruptWatch.cancel()
 	item.interruptWatch = nil
+}
+
+func (m *Manager) cancelCodexActivityLocked(item *entry) {
+	if item.codexActivityWatch == nil {
+		return
+	}
+	item.codexActivityWatch.cancel()
+	item.codexActivityWatch = nil
+}
+
+func matchesCodexActivity(metadata Metadata, target codexActivityTarget) bool {
+	return metadata.Agent == "codex" && metadata.AgentStatus == "blocked" &&
+		metadata.AgentSessionID == target.sessionID &&
+		metadata.AgentTranscriptPath == target.transcriptPath
 }
 
 func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
@@ -762,6 +869,7 @@ func (m *Manager) watch(item *entry) {
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
 		m.cancelAgentInterruptLocked(item)
+		m.cancelCodexActivityLocked(item)
 		if !m.closing {
 			delete(m.sessions, item.metadata.ID)
 			if m.store != nil {
@@ -1031,6 +1139,7 @@ func (m *Manager) Delete(id string) error {
 	}
 	m.mu.Lock()
 	m.cancelAgentInterruptLocked(item)
+	m.cancelCodexActivityLocked(item)
 	m.mu.Unlock()
 	if m.store != nil {
 		if err := m.store.Delete(context.Background(), id); err != nil {
@@ -1085,6 +1194,7 @@ func (m *Manager) Close(ctx context.Context) error {
 	for _, item := range items {
 		m.mu.Lock()
 		m.cancelAgentInterruptLocked(item)
+		m.cancelCodexActivityLocked(item)
 		m.mu.Unlock()
 		item.session.terminate()
 	}

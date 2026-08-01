@@ -195,6 +195,56 @@ func TestCodexTurnAbortedSinceOnlyFindsAppendedAbortEvents(t *testing.T) {
 	}
 }
 
+func TestCodexActivitySinceIgnoresTransientApprovalUntilDurableProgress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout-session.jsonl")
+	initial := `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}` + "\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	offset := int64(len(initial))
+
+	transient := "" +
+		`{"type":"event_msg","payload":{"type":"exec_approval_request","call_id":"call-1"}}` + "\n" +
+		`{"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{}"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"hook_completed","turn_id":"turn-1"}}` + "\n"
+	if err := appendCodexTestTranscript(path, transient); err != nil {
+		t.Fatalf("append transient events: %v", err)
+	}
+	if activity, err := CodexActivitySince(path, offset); err != nil || activity != "" {
+		t.Fatalf("CodexActivitySince(transient) = %q, %v; want no activity", activity, err)
+	}
+
+	if err := appendCodexTestTranscript(path,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"ok"}}`+"\n",
+	); err != nil {
+		t.Fatalf("append durable progress: %v", err)
+	}
+	if activity, err := CodexActivitySince(path, offset); err != nil || activity != "running" {
+		t.Fatalf("CodexActivitySince(progress) = %q, %v; want running", activity, err)
+	}
+
+	if err := appendCodexTestTranscript(path,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}`+"\n",
+	); err != nil {
+		t.Fatalf("append completion: %v", err)
+	}
+	if activity, err := CodexActivitySince(path, offset); err != nil || activity != "waiting" {
+		t.Fatalf("CodexActivitySince(completion) = %q, %v; want waiting", activity, err)
+	}
+}
+
+func appendCodexTestTranscript(path, content string) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 func entriesEqual(left, right []Entry) bool {
 	if len(left) != len(right) {
 		return false
