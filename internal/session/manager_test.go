@@ -443,6 +443,71 @@ func TestUpdateAgentMarksEnteringBlockedAsNeedingAttention(t *testing.T) {
 	}
 }
 
+func TestCodexBlockedStatusReconcilesFromTranscript(t *testing.T) {
+	transcriptPath := filepath.Join(t.TempDir(), "rollout-session-1.jsonl")
+	initial := `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}` + "\n"
+	if err := os.WriteFile(transcriptPath, []byte(initial), 0o600); err != nil {
+		t.Fatalf("WriteFile(transcript) error = %v", err)
+	}
+
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Codex")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", TranscriptPath: transcriptPath,
+		Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running) error = %v", err)
+	}
+	blocked, err := manager.UpdateAgent(metadata.ID, AgentUpdate{Agent: "codex", Status: "blocked"})
+	if err != nil {
+		t.Fatalf("UpdateAgent(blocked) error = %v", err)
+	}
+	if blocked.AgentStatus != "blocked" {
+		t.Fatalf("blocked status = %q, want blocked", blocked.AgentStatus)
+	}
+	if err := appendSessionTestTranscript(transcriptPath,
+		`{"type":"event_msg","payload":{"type":"exec_approval_request","call_id":"call-1"}}`+"\n"+
+			`{"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{}"}}`+"\n",
+	); err != nil {
+		t.Fatalf("append transient events: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	current, ok := manager.Metadata(metadata.ID)
+	if !ok || current.AgentStatus != "blocked" {
+		t.Fatalf("status after transient events = %#v, want blocked", current)
+	}
+
+	if err := appendSessionTestTranscript(transcriptPath,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"ok"}}`+"\n",
+	); err != nil {
+		t.Fatalf("append progress: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		current, ok := manager.Metadata(metadata.ID)
+		return ok && current.AgentStatus == "running"
+	})
+	current, ok = manager.Metadata(metadata.ID)
+	if !ok || !current.NeedsAttention {
+		t.Fatalf("metadata after activity = %#v, want attention preserved", current)
+	}
+}
+
+func appendSessionTestTranscript(path, content string) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 func TestAcknowledgeAttentionClearsFlagAndPreservesCurrentStatus(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

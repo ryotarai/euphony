@@ -76,6 +76,9 @@
   multi-megabyte files stay cheap to poll.
 - Treat Ctrl-C as an interrupt request, not proof that an agent stopped; change
   lifecycle status only after a matching agent-confirmed stop or abort event.
+- Treat Codex permission-request hooks as transient approval prompts; reconcile a
+  `blocked` status from Codex's rollout transcript before assuming it remains
+  blocked.
 - Keep a terminal's negotiated size claim while switching to a non-terminal
   in-pane source; hidden Terminal, Agent Log, Git Changes, Files, and
   Annotation tabs must not resize the PTY.
