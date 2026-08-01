@@ -204,7 +204,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 				}
 				if err != nil || len(data) == 0 {
 					invalidMessages++
-				} else if _, err := terminal.Write(data); err != nil {
+				} else if err := s.control.SendTerminalBytes(id, data); err != nil {
 					return
 				} else if strings.ContainsAny(string(data), "\r\n") {
 					if cancelCWDRefresh != nil {

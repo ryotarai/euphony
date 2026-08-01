@@ -44,6 +44,8 @@
 - Read agent metadata that hooks do not carry from the artifacts they point at
   (for example a transcript path), and bound such reads to a tail window so
   multi-megabyte files stay cheap to poll.
+- Treat Ctrl-C as an interrupt request, not proof that an agent stopped; change
+  lifecycle status only after a matching agent-confirmed stop or abort event.
 - Keep CJK punctuation spacing untrimmed inside terminal renderers so every
   full-width glyph occupies the same cell geometry.
 - Keep mounted xterm panes measurable when they are not visible; use layout-
