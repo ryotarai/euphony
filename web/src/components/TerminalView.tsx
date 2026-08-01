@@ -132,7 +132,7 @@ export function loadWebglRenderer(
   }
 }
 
-function defaultTerminal(
+export function terminalOptions(
   fontFamily: string,
   fontSize: number,
   scrollback: number,
@@ -140,18 +140,18 @@ function defaultTerminal(
   cursorStyle: TerminalCursorStyle,
   cursorBlink: boolean,
   scrollSensitivity: number,
-): TerminalDriver {
-  const fitAddon = new FitAddon();
-  const terminal = new Terminal({
+): ConstructorParameters<typeof Terminal>[0] {
+  return {
     allowTransparency: true,
     fontFamily,
     fontSize,
-	lineHeight,
-	cursorStyle,
-	cursorBlink,
-	linkHandler: {
-		activate: (_event, uri) => openTerminalLink(uri),
-	},
+    lineHeight,
+    cursorStyle,
+    cursorBlink,
+    linkHandler: {
+      activate: (_event, uri) => openTerminalLink(uri),
+    },
+    macOptionIsMeta: true,
     scrollback,
     scrollSensitivity,
     theme: {
@@ -169,7 +169,28 @@ function defaultTerminal(
       white: "#f5f5f5",
       brightBlack: "#737373",
     },
-  });
+  };
+}
+
+function defaultTerminal(
+  fontFamily: string,
+  fontSize: number,
+  scrollback: number,
+  lineHeight: number,
+  cursorStyle: TerminalCursorStyle,
+  cursorBlink: boolean,
+  scrollSensitivity: number,
+): TerminalDriver {
+  const fitAddon = new FitAddon();
+  const terminal = new Terminal(terminalOptions(
+    fontFamily,
+    fontSize,
+    scrollback,
+    lineHeight,
+    cursorStyle,
+    cursorBlink,
+    scrollSensitivity,
+  ));
   terminal.loadAddon(fitAddon);
   return {
     get cols() {

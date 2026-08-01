@@ -4,6 +4,7 @@ import {
   fitTerminalIfVisible,
   loadWebglRenderer,
   openTerminalLink,
+  terminalOptions,
   terminalScrollback,
   TerminalView,
   type TerminalDriver,
@@ -74,6 +75,11 @@ test("maps finite and unlimited history limits to xterm scrollback rows", () => 
   expect(terminalScrollback(1024 * 1024)).toBe(8192);
   expect(terminalScrollback(4095 * 1024 * 1024)).toBe(100000);
   expect(terminalScrollback(0)).toBe(4294967295);
+});
+
+test("treats macOS Option input as Alt in xterm", () => {
+  expect(terminalOptions("monospace", 14, 1000, 1, "block", true, 1))
+    .toMatchObject({ macOptionIsMeta: true });
 });
 
 test("loads the WebGL addon into an xterm terminal", () => {
