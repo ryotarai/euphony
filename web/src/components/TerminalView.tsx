@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Terminal, type ITerminalAddon } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -22,6 +28,7 @@ export interface TerminalDriver {
   write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
   fit(): void;
+  refresh?(): void;
   proposeDimensions?(): { cols: number; rows: number } | undefined;
   resize?(cols: number, rows: number): void;
   setScrollback?(scrollback: number): void;
@@ -212,6 +219,7 @@ function defaultTerminal(
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
     fit: () => fitAddon.fit(),
+    refresh: () => terminal.refresh(0, terminal.rows - 1),
     proposeDimensions: () => fitAddon.proposeDimensions(),
     resize: (cols, rows) => terminal.resize(cols, rows),
     setScrollback: (next) => {
@@ -260,6 +268,14 @@ export function fitTerminalIfVisible(
 ) {
   if (host.hidden || host.closest("[hidden]")) return;
   terminal.fit();
+}
+
+export function refreshTerminalIfVisible(
+  host: HTMLElement,
+  terminal: Pick<TerminalDriver, "refresh">,
+) {
+  if (host.hidden || host.closest("[hidden]")) return;
+  terminal.refresh?.();
 }
 
 export function TerminalView({
@@ -377,6 +393,7 @@ export function TerminalView({
         }
         return;
       }
+      refreshTerminalIfVisible(host, terminal);
       const dimensions = terminal.proposeDimensions?.();
       if (!dimensions || dimensions.cols < 1 || dimensions.rows < 1) return;
       setLocalSize(dimensions);
@@ -521,6 +538,7 @@ export function TerminalView({
             message.rows! <= 1000
           ) {
             terminal.resize?.(message.cols!, message.rows!);
+            refreshTerminalIfVisible(host, terminal);
             const acceptedSize = { cols: message.cols!, rows: message.rows! };
             acceptedSizeReceived = true;
             setSharedSize(acceptedSize);
@@ -609,12 +627,27 @@ export function TerminalView({
 
   useEffect(() => {
     const terminal = terminalRef.current;
+    const host = hostRef.current;
     if (active && terminal) focusTerminal(terminal);
     const sourceVisibilityChanged =
       previousSourceVisibleRef.current !== sourceVisible;
     previousSourceVisibleRef.current = sourceVisible;
-    if (!sourceVisibilityChanged) capacityReporterRef.current();
+    if (sourceVisibilityChanged) {
+      if (sourceVisible && host && terminal) {
+        refreshTerminalIfVisible(host, terminal);
+      }
+      return;
+    }
+    capacityReporterRef.current();
   }, [active, sourceVisible]);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    const terminal = terminalRef.current;
+    if (host && terminal && gridGeometry) {
+      refreshTerminalIfVisible(host, terminal);
+    }
+  }, [gridGeometry]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

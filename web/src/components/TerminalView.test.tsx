@@ -809,6 +809,58 @@ test("remeasures terminal capacity when its pane changes size", async () => {
   vi.unstubAllGlobals();
 });
 
+test("repaints the terminal when its host layout changes without changing capacity", async () => {
+  let notifyResize: (() => void) | undefined;
+  class FakeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      notifyResize = () => callback([], this as unknown as ResizeObserver);
+    }
+
+    observe = vi.fn();
+    disconnect = vi.fn();
+  }
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  const refresh = vi.fn();
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    refresh,
+    proposeDimensions: () => ({ cols: 100, rows: 32 }),
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    refresh(): void;
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => new FakeSocket()}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  refresh.mockClear();
+
+  act(() => notifyResize?.());
+
+  expect(refresh).toHaveBeenCalledOnce();
+  vi.unstubAllGlobals();
+});
+
 test("reports connection changes and retries without rendering pane-local status", async () => {
   const sockets = [new FakeSocket(), new FakeSocket()];
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
