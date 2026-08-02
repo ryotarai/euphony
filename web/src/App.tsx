@@ -558,6 +558,9 @@ export function App({
   const runningDeselectTimersRef = useRef<Map<string, number>>(new Map());
   const expiredRunningDeselectIDsRef = useRef<Set<string>>(new Set());
   const [runningDeselectExpiryVersion, setRunningDeselectExpiryVersion] = useState(0);
+  const filterDeselectTimersRef = useRef<Map<string, number>>(new Map());
+  const expiredFilterDeselectIDsRef = useRef<Set<string>>(new Set());
+  const [filterDeselectExpiryVersion, setFilterDeselectExpiryVersion] = useState(0);
   const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
   const selectionRevisionRef = useRef<number | null>(null);
@@ -571,6 +574,18 @@ export function App({
   const selectionActiveWriteVersionRef = useRef<number | null>(null);
   const selectionLocalVersionRef = useRef(0);
   const selectionSyncedLocalVersionRef = useRef(0);
+  const currentSelectionStateRef = useRef({
+    selectedIDs,
+    pinnedIDs,
+    statusFilters,
+    cwdFilters,
+  });
+  currentSelectionStateRef.current = {
+    selectedIDs,
+    pinnedIDs,
+    statusFilters,
+    cwdFilters,
+  };
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const cancelRunningDeselect = useCallback((id: string) => {
     const timer = runningDeselectTimersRef.current.get(id);
@@ -583,6 +598,22 @@ export function App({
       current.filter((notice) => notice.id !== id),
     );
   }, []);
+  const cancelFilterDeselect = useCallback((id: string) => {
+    const timer = filterDeselectTimersRef.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      filterDeselectTimersRef.current.delete(id);
+    }
+  }, []);
+  const scheduleFilterDeselect = useCallback((id: string) => {
+    if (filterDeselectTimersRef.current.has(id)) return;
+    const timer = window.setTimeout(() => {
+      filterDeselectTimersRef.current.delete(id);
+      expiredFilterDeselectIDsRef.current.add(id);
+      setFilterDeselectExpiryVersion((current) => current + 1);
+    }, runningDeselectDelayMs);
+    filterDeselectTimersRef.current.set(id, timer);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -590,6 +621,10 @@ export function App({
         window.clearTimeout(timer);
       }
       runningDeselectTimersRef.current.clear();
+      for (const timer of filterDeselectTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      filterDeselectTimersRef.current.clear();
     };
   }, []);
 
@@ -655,6 +690,35 @@ export function App({
   }, []);
   const applySessionSnapshot = useCallback((items: Session[]) => {
     const previous = previousSessionsRef.current;
+    const previousByID = new Map(previous.map((session) => [session.id, session]));
+    const currentSelection = currentSelectionStateRef.current;
+    for (const session of items) {
+      const previousSession = previousByID.get(session.id);
+      if (!previousSession) continue;
+      const wasMatch = matchesWorkspaceFilter(
+        previousSession,
+        currentSelection.statusFilters,
+        currentSelection.cwdFilters,
+      );
+      const isMatch = matchesWorkspaceFilter(
+        session,
+        currentSelection.statusFilters,
+        currentSelection.cwdFilters,
+      );
+      if (isMatch) {
+        cancelFilterDeselect(session.id);
+        expiredFilterDeselectIDsRef.current.delete(session.id);
+        continue;
+      }
+      if (
+        wasMatch &&
+        filterSelectedIDsRef.current.has(session.id) &&
+        currentSelection.selectedIDs.includes(session.id) &&
+        !currentSelection.pinnedIDs.includes(session.id)
+      ) {
+        scheduleFilterDeselect(session.id);
+      }
+    }
     const transitions = attentionTransitions(previous, items);
     pendingAgentLaunchIDsRef.current = new Set(
       agentLaunchTransitions(previous, items).map((session) => session.id),
@@ -682,16 +746,40 @@ export function App({
       }
       playAttentionTone();
     }
-  }, []);
+  }, [cancelFilterDeselect, scheduleFilterDeselect]);
 
   function applyServerSelection(
     snapshot: SelectionSnapshot,
     mode: "push" | "replace" = "replace",
   ) {
+    const currentSelection = currentSelectionStateRef.current;
+    const snapshotCwdFilters = snapshot.filters.cwds.map((filter) =>
+      cwdFilterKey(filter.status, filter.cwd)
+    );
+    const sameFilterSource =
+      currentSelection.statusFilters.join("\0") ===
+        snapshot.filters.statuses.join("\0") &&
+      currentSelection.cwdFilters.join("\0") === snapshotCwdFilters.join("\0");
+    if (
+      sameFilterSource &&
+      (currentSelection.statusFilters.length > 0 || currentSelection.cwdFilters.length > 0)
+    ) {
+      for (const id of filterSelectedIDsRef.current) {
+        if (
+          currentSelection.selectedIDs.includes(id) &&
+          !currentSelection.pinnedIDs.includes(id) &&
+          !snapshot.terminalIds.includes(id) &&
+          !expiredFilterDeselectIDsRef.current.has(id)
+        ) {
+          scheduleFilterDeselect(id);
+        }
+      }
+    }
     const pendingRunningIDs = new Set([
       ...pendingAgentRunningIDsRef.current,
       ...runningDeselectTimersRef.current.keys(),
     ]);
+    const pendingFilterDeselectIDs = new Set(filterDeselectTimersRef.current.keys());
     const preservedRunningIDs = settings.autoDeselectRunning
       ? [...pendingRunningIDs].filter(
         (id) =>
@@ -700,22 +788,29 @@ export function App({
           !snapshot.terminalIds.includes(id),
       )
       : [];
-    const effectiveSnapshot = preservedRunningIDs.length === 0
+    const preservedFilterDeselectIDs = [...pendingFilterDeselectIDs].filter(
+      (id) =>
+        selectedIDs.includes(id) &&
+        !pinnedIDs.includes(id) &&
+        !snapshot.terminalIds.includes(id),
+    );
+    const preservedIDs = [
+      ...new Set([...preservedRunningIDs, ...preservedFilterDeselectIDs]),
+    ];
+    const effectiveSnapshot = preservedIDs.length === 0
       ? snapshot
       : {
         ...snapshot,
-        terminalIds: [...new Set([...snapshot.terminalIds, ...preservedRunningIDs])],
+        terminalIds: [...new Set([...snapshot.terminalIds, ...preservedIDs])],
         manualTerminalIds: [
           ...new Set([...snapshot.manualTerminalIds, ...preservedRunningIDs]),
         ],
-        ...(focusedID && preservedRunningIDs.includes(focusedID)
+        ...(focusedID && preservedIDs.includes(focusedID)
           ? { focusedTerminalId: focusedID }
           : {}),
       };
     const nextStatusFilters = snapshot.filters.statuses;
-    const nextCwdFilters = snapshot.filters.cwds.map((filter) =>
-      cwdFilterKey(filter.status, filter.cwd)
-    );
+    const nextCwdFilters = snapshotCwdFilters;
     const nextPinnedStatusFilters = snapshot.pinnedFilters?.statuses ?? [];
     const nextPinnedCwdFilters = (snapshot.pinnedFilters?.cwds ?? []).map(
       (filter) => cwdFilterKey(filter.status, filter.cwd),
@@ -1216,7 +1311,11 @@ export function App({
       ? [...pendingAttentionSelectionIDsRef.current].filter((id) => available.has(id))
       : [];
     pendingAttentionSelectionIDsRef.current.clear();
-    attentionIDs.forEach((id) => filterSelectedIDsRef.current.delete(id));
+    attentionIDs.forEach((id) => {
+      if (!filterDeselectTimersRef.current.has(id)) {
+        filterSelectedIDsRef.current.delete(id);
+      }
+    });
 
     const runningTransitionIDs = [...pendingAgentRunningIDsRef.current];
     pendingAgentRunningIDsRef.current.clear();
@@ -1381,6 +1480,16 @@ export function App({
       .filter((session) => matchesWorkspaceFilter(session, statusFilters, cwdFilters))
       .map((session) => session.id);
     const previousMatches = filterSelectedIDsRef.current;
+    for (const id of filterDeselectTimersRef.current.keys()) {
+      if (
+        !selectedIDs.includes(id) ||
+        pinnedIDs.includes(id) ||
+        matches.includes(id)
+      ) {
+        cancelFilterDeselect(id);
+        expiredFilterDeselectIDsRef.current.delete(id);
+      }
+    }
     const pendingRunningIDs = settings.autoDeselectRunning
       ? new Set(
         [...runningDeselectTimersRef.current.keys()].filter(
@@ -1388,15 +1497,24 @@ export function App({
         ),
       )
       : new Set<string>();
+    const pendingFilterDeselectIDs = new Set(filterDeselectTimersRef.current.keys());
     const next = [
       ...selectedIDs.filter(
-        (id) => !previousMatches.has(id) || pendingRunningIDs.has(id),
+        (id) =>
+          !previousMatches.has(id) ||
+          pendingRunningIDs.has(id) ||
+          pendingFilterDeselectIDs.has(id),
       ),
       ...matches,
       ...attentionIDs,
     ].filter((id, index, values) => values.indexOf(id) === index);
     filterSelectedIDsRef.current = new Set(
-      matches.filter((id) => !pinnedIDs.includes(id)),
+      [
+        ...matches,
+        ...[...pendingFilterDeselectIDs].filter(
+          (id) => selectedIDs.includes(id) && !pinnedIDs.includes(id),
+        ),
+      ].filter((id) => !pinnedIDs.includes(id)),
     );
     if (next.join("\0") !== selectedIDs.join("\0")) {
       setSelectedIDs(next);
@@ -1412,6 +1530,7 @@ export function App({
       );
     }
   }, [
+    filterDeselectExpiryVersion,
     sessions,
     syncSelection,
     statusFilters,
@@ -1423,6 +1542,54 @@ export function App({
     focusedID,
     settings.autoSelectAttention,
     settings.autoDeselectRunning,
+  ]);
+
+  useEffect(() => {
+    const expiredIDs = [...expiredFilterDeselectIDsRef.current];
+    expiredFilterDeselectIDsRef.current.clear();
+    if (
+      expiredIDs.length === 0 ||
+      !sessions ||
+      (statusFilters.length === 0 && cwdFilters.length === 0)
+    ) {
+      return;
+    }
+    const expiredNonMatches = new Set(
+      expiredIDs.filter((id) => {
+        const session = sessions.find((item) => item.id === id);
+        return session && !matchesWorkspaceFilter(session, statusFilters, cwdFilters);
+      }),
+    );
+    if (expiredNonMatches.size === 0) return;
+    const next = selectedIDs.filter(
+      (id) => pinnedIDs.includes(id) || !expiredNonMatches.has(id),
+    );
+    if (next.join("\0") === selectedIDs.join("\0")) return;
+    for (const id of expiredNonMatches) {
+      filterSelectedIDsRef.current.delete(id);
+    }
+    const nextFocus =
+      focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
+    if (syncSelection) markLocalSelectionMutation();
+    setSelectedIDs(next);
+    setFocusedID(nextFocus);
+    writeWorkspaceToURL(
+      next,
+      pinnedIDs,
+      nextFocus,
+      statusFilters,
+      cwdFilters,
+      "replace",
+    );
+  }, [
+    filterDeselectExpiryVersion,
+    sessions,
+    syncSelection,
+    statusFilters,
+    cwdFilters,
+    selectedIDs,
+    pinnedIDs,
+    focusedID,
   ]);
 
   useEffect(() => {

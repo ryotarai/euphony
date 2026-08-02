@@ -55,6 +55,7 @@ async function replaceSharedSelection(
   page: Page,
   terminalIDs: string[],
   focusedTerminalID?: string,
+  statusFilters: string[] = [],
 ) {
   const currentResponse = await page.request.get("/api/v1/selection", {
     headers: { Authorization: "Bearer test-token" },
@@ -72,7 +73,7 @@ async function replaceSharedSelection(
       manualTerminalIds: terminalIDs,
       pinnedTerminalIds: [],
       ...(focusedTerminalID ? { focusedTerminalId: focusedTerminalID } : {}),
-      filters: { statuses: [], cwds: [] },
+      filters: { statuses: statusFilters, cwds: [] },
       pinnedFilters: { statuses: [], cwds: [] },
       expectedRevision: current.result.revision,
     },
@@ -560,6 +561,39 @@ test("keeps the agent log open when a filtered running agent starts waiting", as
   await expect(firstPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
     "data-active",
   );
+});
+
+test("delays removing a running-filtered terminal while its status settles", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  const first = await createSession(page, "First", "/tmp");
+  const second = await createSession(page, "Second", "/tmp");
+  await reportAgent(page, first.id, "codex", "Running task", "running");
+  await reportAgent(page, second.id, "claude", "Waiting task");
+  await replaceSharedSelection(page, [], first.id, ["running"]);
+
+  await page.goto("/?token=test-token");
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeHidden();
+
+  await reportAgent(page, first.id, "codex", "Waiting for input");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = (await response.json()) as Array<{
+      id: string;
+      agentStatus?: string;
+    }>;
+    return sessions.find((session) => session.id === first.id)?.agentStatus;
+  }).toBe("waiting");
+
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeHidden({
+    timeout: 12_000,
+  });
+  await expect(page.getByText("No signal yet.", { exact: true })).toBeVisible();
 });
 
 test("browses Git changes inside a terminal pane", async ({ page }, testInfo) => {
