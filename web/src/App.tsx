@@ -184,10 +184,17 @@ function sessionActivity(session: Session) {
   return session.state === "running" ? "terminal" : session.state;
 }
 
-function availableQuickActionValues(sessions: Session[]): Set<string> {
+function availableQuickActionValues(
+  sessions: Session[],
+  selectedIDs: string[] = [],
+): Set<string> {
+  const availableSessionIDs = new Set(sessions.map((session) => session.id));
   return new Set([
     "new-terminal",
     "attention-alerts",
+    ...(selectedIDs.some((id) => availableSessionIDs.has(id))
+      ? ["delete-selected-terminals"]
+      : []),
     ...sessions.map((session) => `session:${session.id}`),
     ...quickActionStatuses
       .filter((status) =>
@@ -536,7 +543,7 @@ export function App({
   );
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
-  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [runningDeselectNotices, setRunningDeselectNotices] = useState<
     RunningDeselectNotice[]
   >([]);
@@ -1719,7 +1726,7 @@ export function App({
 
   useEffect(() => {
     if (!sessions) return;
-    const availableValues = availableQuickActionValues(sessions);
+    const availableValues = availableQuickActionValues(sessions, selectedIDs);
     const availableRecentValues = recentQuickActionValues.filter((value) =>
       availableValues.has(value),
     );
@@ -1730,13 +1737,13 @@ export function App({
       return;
     }
     setRecentQuickActionValues(availableRecentValues);
-  }, [recentQuickActionValues, sessions]);
+  }, [recentQuickActionValues, selectedIDs, sessions]);
 
   useEffect(() => {
     const openCommands = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || !event.metaKey) return;
       event.preventDefault();
-      const availableValues = availableQuickActionValues(sessions ?? []);
+      const availableValues = availableQuickActionValues(sessions ?? [], selectedIDs);
       setCommandQuery("");
       setCommandValue(
         recentQuickActionValues.find((value) => availableValues.has(value)) ??
@@ -1746,7 +1753,7 @@ export function App({
     };
     window.addEventListener("keydown", openCommands, { capture: true });
     return () => window.removeEventListener("keydown", openCommands, { capture: true });
-  }, [recentQuickActionValues, sessions]);
+  }, [recentQuickActionValues, selectedIDs, sessions]);
 
   useEffect(() => {
     if (!commandOpen) return;
@@ -2428,23 +2435,23 @@ export function App({
     setCreateOpen(false);
   }
 
-  async function deleteSession(item: Session) {
-    if (!api) return;
-    try {
-      const deleted = syncSelection
-        ? await api.deleteTerminal(item.id)
-        : null;
-      if (!syncSelection) {
-        await api.deleteSession(item.id);
-      }
-      const remaining = sessions?.filter((candidate) => candidate.id !== item.id) ?? [];
-      const replacement = replacementSession(sessions ?? [], item.id, remaining);
-      setSessions(remaining);
-      if (deleted) {
-        applyServerSelection(deleted.selection, "push");
-        return;
-      }
-      let nextIDs = selectedIDs.filter((id) => id !== item.id);
+  async function deleteSessions(items: Session[]) {
+    if (!api || items.length === 0) return;
+    const previousSessions = sessions ?? [];
+    const deletedIDs = new Set<string>();
+    let latestSelection: SelectionSnapshot | null = null;
+
+    const reconcileLocalDeletion = () => {
+      const remaining = previousSessions.filter(
+        (candidate) => !deletedIDs.has(candidate.id),
+      );
+      const lastDeletedID = [...items]
+        .reverse()
+        .find((item) => deletedIDs.has(item.id))?.id;
+      const replacement = lastDeletedID
+        ? replacementSession(previousSessions, lastDeletedID, remaining)
+        : undefined;
+      let nextIDs = selectedIDs.filter((id) => !deletedIDs.has(id));
       if (
         nextIDs.length === 0 &&
         statusFilters.length === 0 &&
@@ -2453,8 +2460,13 @@ export function App({
       ) {
         nextIDs = [replacement.id];
       }
-      const nextFocus = focusedID === item.id ? nextIDs[0] ?? null : focusedID;
-      const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
+      const nextPinnedIDs = pinnedIDs.filter((id) => !deletedIDs.has(id));
+      const nextFocus = focusedID && nextIDs.includes(focusedID)
+        ? focusedID
+        : nextIDs[0] ?? null;
+      filterSelectedIDsRef.current = new Set(
+        [...filterSelectedIDsRef.current].filter((id) => !deletedIDs.has(id)),
+      );
       setSelectedIDs(nextIDs);
       setPinnedIDs(nextPinnedIDs);
       setFocusedID(nextFocus);
@@ -2465,16 +2477,45 @@ export function App({
         statusFilters,
         cwdFilters,
       );
+    };
+
+    try {
+      for (const item of items) {
+        const deleted = syncSelection
+          ? await api.deleteTerminal(item.id)
+          : null;
+        if (!syncSelection) {
+          await api.deleteSession(item.id);
+        }
+        deletedIDs.add(item.id);
+        if (deleted) latestSelection = deleted.selection;
+        cancelRunningDeselect(item.id);
+        cancelFilterDeselect(item.id);
+        setSessions((current) =>
+          current?.filter((candidate) => candidate.id !== item.id) ?? current,
+        );
+      }
     } catch (error) {
-      setRequestError(error instanceof Error ? error.message : "The terminal could not be deleted.");
+      if (deletedIDs.size > 0) {
+        if (latestSelection) applyServerSelection(latestSelection, "push");
+        else reconcileLocalDeletion();
+      }
+      setRequestError(
+        error instanceof Error ? error.message : "The terminal could not be deleted.",
+      );
+      return;
     }
+
+    if (latestSelection) applyServerSelection(latestSelection, "push");
+    else reconcileLocalDeletion();
+    setRequestError("");
   }
 
   function confirmDelete() {
     if (!pendingDelete) return;
-    const item = pendingDelete;
+    const items = pendingDelete;
     setPendingDelete(null);
-    void deleteSession(item);
+    void deleteSessions(items);
   }
 
   async function persistSettings(next: Settings) {
@@ -2653,6 +2694,9 @@ export function App({
   const panes = selectedIDs
     .map((id) => sessions.find((item) => item.id === id))
     .filter((item): item is Session => Boolean(item));
+  const selectedSessions = selectedIDs
+    .map((id) => sessions.find((session) => session.id === id))
+    .filter((session): session is Session => Boolean(session));
   const selectedIDSet = new Set(selectedIDs);
   const cachedPanes = [...openedTerminalIDsRef.current]
     .filter((id) => !selectedIDSet.has(id))
@@ -2670,6 +2714,19 @@ export function App({
     (pane) => connectionStates[pane.id] === "exited",
   ).length;
   const quickActions = [
+    ...(selectedSessions.length > 0
+      ? [{
+        value: "delete-selected-terminals",
+        label: "Delete selected terminals",
+        detail: `${selectedSessions.length} selected terminal${selectedSessions.length === 1 ? "" : "s"}`,
+        search: "delete remove selected terminals",
+        run: () => {
+          setCommandOpen(false);
+          setPendingDelete(selectedSessions);
+        },
+        group: "Actions",
+      }]
+      : []),
     {
       value: "new-terminal",
       label: "New terminal in directory…",
@@ -2742,6 +2799,8 @@ export function App({
   };
   const quickActionGroups = quickActionGroupsForQuery(normalizedCommandQuery);
   const filteredQuickActions = quickActionGroups.flatMap((group) => group.actions);
+  const pendingDeleteCount = pendingDelete?.length ?? 0;
+  const deletingMultiple = pendingDeleteCount > 1;
 
   const runQuickAction = (action: (typeof quickActions)[number]) => {
     setRecentQuickActionValues((current) =>
@@ -2841,7 +2900,7 @@ export function App({
           selectSession(id, multiple, false, pin)
         }
         onCreate={(cwd) => void createSession(false, cwd)}
-        onDelete={setPendingDelete}
+        onDelete={(session) => setPendingDelete([session])}
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
@@ -3062,10 +3121,13 @@ export function App({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete terminal?</DialogTitle>
+            <DialogTitle>
+              {deletingMultiple ? "Delete selected terminals?" : "Delete terminal?"}
+            </DialogTitle>
             <DialogDescription>
-              “{pendingDelete?.name}” will be stopped and removed from this workspace.
-              This cannot be undone.
+              {deletingMultiple
+                ? `${pendingDeleteCount} selected terminals will be stopped and removed from this workspace. This cannot be undone.`
+                : <>“{pendingDelete?.[0]?.name}” will be stopped and removed from this workspace. This cannot be undone.</>}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -3078,7 +3140,7 @@ export function App({
               Cancel
             </Button>
             <Button type="button" variant="destructive" onClick={confirmDelete}>
-              Delete terminal
+              {deletingMultiple ? "Delete terminals" : "Delete terminal"}
             </Button>
           </DialogFooter>
         </DialogContent>

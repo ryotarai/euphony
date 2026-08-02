@@ -1087,6 +1087,83 @@ test("opens Quick Actions with Command-K but not Control-K", async () => {
   ).toBeVisible();
 });
 
+test("deletes selected terminals from Quick Actions after confirmation", async () => {
+  history.replaceState(null, "", "/?terminal=session-1&terminal=session-2");
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  fetchMock
+    .mockImplementationOnce(() =>
+      jsonResponse([runningSession, secondRunningSession]),
+    )
+    .mockImplementationOnce(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    )
+    .mockImplementationOnce(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    );
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(
+    await screen.findByRole("option", {
+      name: /^Delete selected terminals/,
+    }),
+  );
+
+  expect(
+    screen.getByRole("dialog", { name: "Delete selected terminals?" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/2 selected terminals will be stopped/),
+  ).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Delete selected terminals?" }),
+  ).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(
+    await screen.findByRole("option", {
+      name: /^Delete selected terminals/,
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Delete terminals" }));
+
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Select Codex" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select Claude" })).not.toBeInTheDocument();
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/sessions/session-1",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/sessions/session-2",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  expect(
+    screen.queryByRole("option", { name: /^Delete selected terminals/ }),
+  ).not.toBeInTheDocument();
+});
+
 test("navigates Quick Actions with arrows and Ctrl-P/N before Enter selects", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),

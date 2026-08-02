@@ -1238,6 +1238,38 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
+test("deletes selected terminals from Quick Actions", async ({ page }) => {
+  await clearSessions(page);
+  const left = await createSession(page, "Left");
+  const right = await createSession(page, "Right");
+  await replaceSharedSelection(page, [left.id, right.id], left.id);
+
+  await page.goto("/?token=test-token");
+  await page.keyboard.press("Meta+K");
+  await page.getByRole("option", { name: /^Delete selected terminals/ }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Delete selected terminals?" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/2 selected terminals will be stopped/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(
+    page.getByRole("button", { name: "Select Left" }),
+  ).toBeVisible();
+
+  await page.keyboard.press("Meta+K");
+  await page.getByRole("option", { name: /^Delete selected terminals/ }).click();
+  await page.getByRole("button", { name: "Delete terminals" }).click();
+
+  await expect(page.getByRole("button", { name: "Select Left" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Select Right" })).toHaveCount(0);
+  const sessions = await page.request.get("/api/sessions", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(await sessions.json()).toEqual([]);
+});
+
 test("shows recent Quick Actions first in a taller dialog", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Left");

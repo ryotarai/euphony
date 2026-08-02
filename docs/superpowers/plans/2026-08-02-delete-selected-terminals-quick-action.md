@@ -28,7 +28,7 @@
 - Consumes: Existing `runningSession`, `secondRunningSession`, `jsonResponse`, Testing Library helpers, and the current `App` Quick Actions UI.
 - Produces: A regression test named `deletes selected terminals from Quick Actions after confirmation` that requires the new action and count-aware dialog.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this test after the existing Command-K Quick Actions test:
 
@@ -111,7 +111,7 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails for the missing feature**
+- [x] **Step 2: Run the focused test and verify it fails for the missing feature**
 
 Run from `web`:
 
@@ -130,7 +130,7 @@ Expected: FAIL because the Quick Actions catalog has no `Delete selected termina
 - Consumes: `selectedIDs`, `sessions`, `syncSelection`, `api.deleteTerminal`, `api.deleteSession`, `applyServerSelection`, `replacementSession`, and the existing `SessionNavigation` callback.
 - Produces: `deleteSessions(items: Session[])`, a `Session[] | null` pending-delete state, and a Quick Actions item with value `delete-selected-terminals`.
 
-- [ ] **Step 1: Store a session list for pending deletion**
+- [x] **Step 1: Store a session list for pending deletion**
 
 Change the state from a single nullable session to a nullable non-empty list:
 
@@ -144,7 +144,7 @@ Pass sidebar deletes as one-item lists:
 onDelete={(session) => setPendingDelete([session])}
 ```
 
-- [ ] **Step 2: Add the selected-session snapshot and Quick Actions item**
+- [x] **Step 2: Add the selected-session snapshot and Quick Actions item**
 
 Immediately after deriving `panes`, derive the current valid selection in `selectedIDs` order:
 
@@ -172,7 +172,7 @@ Insert this item at the start of the existing `Actions` entries, only when `sele
 
 Use the existing array spread pattern so the item is absent when there is no valid selection.
 
-- [ ] **Step 3: Replace single-item deletion with sequential deletion**
+- [x] **Step 3: Replace single-item deletion with sequential deletion**
 
 Rename the existing `deleteSession(item)` implementation to `deleteSessions(items)` and make it return immediately for an empty list. Keep a `Set` of successful IDs and the latest shared-selection snapshot. For each item, await the existing delete call, record success, and remove that item from `sessions` with a functional state update. Do not use `Promise.all`, because each shared-selection delete must observe the previous server mutation.
 
@@ -207,7 +207,7 @@ const nextPinnedIDs = pinnedIDs.filter((id) => !deletedIDs.has(id));
 
 Keep `deleteSession` as a one-item wrapper only if that makes existing call sites clearer; the confirmation handler must invoke `deleteSessions(pendingDelete)` once.
 
-- [ ] **Step 4: Update confirmation text and confirmation handler**
+- [x] **Step 4: Update confirmation text and confirmation handler**
 
 Read the first item for single-delete copy and the list length for bulk copy:
 
@@ -218,7 +218,7 @@ const deletingMultiple = pendingDeleteCount > 1;
 
 Use `Delete selected terminals?`, `N selected terminals will be stopped and removed from this workspace. This cannot be undone.`, and `Delete terminals` for bulk deletion. Preserve `Delete terminal?`, the quoted single name, and `Delete terminal` for one-item deletion. `confirmDelete` should clear the dialog state and call `void deleteSessions(items)`.
 
-- [ ] **Step 5: Run the focused test and verify it passes**
+- [x] **Step 5: Run the focused test and verify it passes**
 
 Run:
 
@@ -237,7 +237,7 @@ Expected: PASS, including the no-action state after all selected sessions have b
 - Consumes: `clearSessions`, `createSession`, `replaceSharedSelection`, Playwright Quick Actions locators, and the isolated in-memory server from `playwright.config.ts`.
 - Produces: A browser regression test proving cancel is non-destructive and confirmation removes both selected sessions.
 
-- [ ] **Step 1: Add the Playwright scenario**
+- [x] **Step 1: Add the Playwright scenario**
 
 Add this test after the existing Quick Actions navigation test:
 
@@ -275,7 +275,7 @@ test("deletes selected terminals from Quick Actions", async ({ page }) => {
 });
 ```
 
-- [ ] **Step 2: Run the focused browser test with an isolated port**
+- [x] **Step 2: Run the focused browser test with an isolated port**
 
 Run from `web`:
 
@@ -285,7 +285,7 @@ EUPHONY_E2E_PORT=18081 npm run e2e -- --grep "deletes selected terminals from Qu
 
 Expected: PASS with one Playwright worker and an in-memory backend.
 
-- [ ] **Step 3: Run static and focused regression checks**
+- [x] **Step 3: Run static and focused regression checks**
 
 Run:
 
@@ -297,7 +297,7 @@ npm test -- --run src/App.test.tsx -t "deletes selected terminals from Quick Act
 
 Expected: typecheck, build, and both focused App tests pass. If the pre-existing full-suite failures recur, record their exact names separately rather than widening this change.
 
-- [ ] **Step 4: Inspect the diff and commit the implementation**
+- [x] **Step 4: Inspect the diff and commit the implementation**
 
 Run:
 
