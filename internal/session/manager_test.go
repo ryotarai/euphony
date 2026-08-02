@@ -671,6 +671,52 @@ func TestListRefreshesCodexTitleFromSessionIndex(t *testing.T) {
 	}
 }
 
+func TestListRefreshesCodexTitleFromTranscript(t *testing.T) {
+	root := t.TempDir()
+	indexPath := filepath.Join(root, "session_index.jsonl")
+	transcriptPath := filepath.Join(root, "rollout-session.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(
+		`{"type":"event_msg","payload":{"type":"thread_name_updated","thread_id":"codex-session","thread_name":"Generated from prompt"}}`+"\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile(transcript) error = %v", err)
+	}
+	manager := NewManager("/bin/sh", HookConfig{CodexSessionIndex: indexPath})
+	manager.sessions["terminal-1"] = &entry{metadata: Metadata{
+		ID: "terminal-1", Name: "Terminal", State: StateRunning,
+		Agent: "codex", AgentSessionID: "codex-session",
+		AgentTranscriptPath: transcriptPath, CreatedAt: time.Now().UTC(),
+	}}
+
+	items := manager.List()
+
+	if len(items) != 1 || items[0].AgentTitle != "Generated from prompt" {
+		t.Fatalf("List() = %#v, want Codex transcript title", items)
+	}
+}
+
+func TestListRefreshesCodexTitleFromLargeTranscriptHeader(t *testing.T) {
+	root := t.TempDir()
+	indexPath := filepath.Join(root, "session_index.jsonl")
+	transcriptPath := filepath.Join(root, "rollout-session.jsonl")
+	transcript := `{"type":"event_msg","payload":{"type":"thread_name_updated","thread_id":"codex-session","thread_name":"Generated early"}}` +
+		"\n" + strings.Repeat("x", 2<<20)
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o600); err != nil {
+		t.Fatalf("WriteFile(transcript) error = %v", err)
+	}
+	manager := NewManager("/bin/sh", HookConfig{CodexSessionIndex: indexPath})
+	manager.sessions["terminal-1"] = &entry{metadata: Metadata{
+		ID: "terminal-1", Name: "Terminal", State: StateRunning,
+		Agent: "codex", AgentSessionID: "codex-session",
+		AgentTranscriptPath: transcriptPath, CreatedAt: time.Now().UTC(),
+	}}
+
+	items := manager.List()
+
+	if len(items) != 1 || items[0].AgentTitle != "Generated early" {
+		t.Fatalf("List() = %#v, want Codex header title", items)
+	}
+}
+
 func TestRestoredCommandResumesKnownAgents(t *testing.T) {
 	tests := []struct {
 		agent string

@@ -144,6 +144,9 @@ type entry struct {
 	// a claim that has gone stale.
 	cwdReportedAt              time.Time
 	foregroundProcessSampledAt time.Time
+	// codexTitleHeaderScanned records the one-time bounded header recovery for
+	// Codex sessions whose automatic name predates the tail polling window.
+	codexTitleHeaderScanned bool
 }
 
 type agentInterruptTarget struct {
@@ -471,12 +474,18 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	m.cancelCodexActivityLocked(item)
 	before := item.metadata
 	item.metadata.Agent = strings.TrimSpace(update.Agent)
+	if item.metadata.Agent != "codex" {
+		item.codexTitleHeaderScanned = false
+	}
 	if resumeAgent := strings.TrimSpace(update.ResumeAgent); resumeAgent != "" {
 		item.metadata.ResumeAgent = resumeAgent
 	} else if item.metadata.Agent != "" {
 		item.metadata.ResumeAgent = item.metadata.Agent
 	}
 	if sessionID := strings.TrimSpace(update.AgentSessionID); sessionID != "" {
+		if sessionID != item.metadata.AgentSessionID {
+			item.codexTitleHeaderScanned = false
+		}
 		if sessionID != item.metadata.AgentSessionID &&
 			strings.TrimSpace(update.TranscriptPath) == "" {
 			item.metadata.AgentTranscriptPath = ""
@@ -484,6 +493,9 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		item.metadata.AgentSessionID = sessionID
 	}
 	if transcriptPath := strings.TrimSpace(update.TranscriptPath); transcriptPath != "" {
+		if transcriptPath != item.metadata.AgentTranscriptPath {
+			item.codexTitleHeaderScanned = false
+		}
 		item.metadata.AgentTranscriptPath = transcriptPath
 	}
 	nextStatus := strings.TrimSpace(update.Status)
@@ -1015,12 +1027,11 @@ func (m *Manager) ListCurrent() []Metadata {
 }
 
 func (m *Manager) refreshCodexTitles() {
-	if m.hooks.CodexSessionIndex == "" {
-		return
-	}
-	titles, err := loadCodexSessionTitles(m.hooks.CodexSessionIndex)
-	if err != nil {
-		return
+	titles := make(map[string]string)
+	if m.hooks.CodexSessionIndex != "" {
+		if loaded, err := loadCodexSessionTitles(m.hooks.CodexSessionIndex); err == nil {
+			titles = loaded
+		}
 	}
 	m.mu.Lock()
 	var changes []Change
@@ -1029,6 +1040,23 @@ func (m *Manager) refreshCodexTitles() {
 			continue
 		}
 		title := titles[item.metadata.AgentSessionID]
+		if title == "" {
+			tailTitle, tailErr := agentlog.CodexThreadTitle(
+				item.metadata.AgentTranscriptPath, item.metadata.AgentSessionID,
+			)
+			title = tailTitle
+			if title == "" && !item.codexTitleHeaderScanned {
+				headerTitle, headerErr := agentlog.CodexThreadTitleFromStart(
+					item.metadata.AgentTranscriptPath, item.metadata.AgentSessionID,
+				)
+				if headerErr == nil {
+					item.codexTitleHeaderScanned = true
+				}
+				title = headerTitle
+			} else if tailErr == nil {
+				item.codexTitleHeaderScanned = true
+			}
+		}
 		if title == "" || title == item.metadata.AgentTitle {
 			continue
 		}
