@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -96,6 +97,7 @@ type TerminalEvent struct {
 }
 
 type resizeRequest struct {
+	ctx    context.Context
 	cols   uint16
 	rows   uint16
 	notify func()
@@ -269,7 +271,7 @@ func (s *Session) Write(data []byte) (int, error) {
 }
 
 func (s *Session) Resize(cols, rows uint16) error {
-	return s.ResizeWithNotification(cols, rows, nil)
+	return s.ResizeWithNotificationContext(context.Background(), cols, rows, nil)
 }
 
 // ResizeWithNotification submits the resize to the PTY event loop. The loop
@@ -279,6 +281,21 @@ func (s *Session) ResizeWithNotification(
 	cols, rows uint16,
 	notify func(),
 ) error {
+	return s.ResizeWithNotificationContext(context.Background(), cols, rows, notify)
+}
+
+// ResizeWithNotificationContext submits a resize that can be canceled while
+// the PTY event loop is busy. A canceled request remains safe to consume from
+// the event loop, but it never changes the stored dimensions or publishes a
+// resize notification.
+func (s *Session) ResizeWithNotificationContext(
+	ctx context.Context,
+	cols, rows uint16,
+	notify func(),
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if cols < 1 || cols > 1000 || rows < 1 || rows > 1000 {
 		return errors.New("terminal dimensions must be between 1 and 1000")
 	}
@@ -294,6 +311,7 @@ func (s *Session) ResizeWithNotification(
 	default:
 	}
 	request := resizeRequest{
+		ctx:    ctx,
 		cols:   cols,
 		rows:   rows,
 		notify: notify,
@@ -303,6 +321,8 @@ func (s *Session) ResizeWithNotification(
 	case s.resizeRequests <- request:
 	case <-s.pumpDone:
 		return errors.New("terminal output loop is closed")
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	for {
 		if _, err := unix.Write(s.resizeWakeWrite, []byte{1}); err != nil {
@@ -331,6 +351,13 @@ func (s *Session) ResizeWithNotification(
 			return err
 		default:
 			return errors.New("terminal output loop is closed")
+		}
+	case <-ctx.Done():
+		select {
+		case err := <-request.done:
+			return err
+		default:
+			return ctx.Err()
 		}
 	}
 }
@@ -508,11 +535,19 @@ func (s *Session) drainTerminalOutput(buffer []byte) (bool, error) {
 func (s *Session) processPendingResize() {
 	select {
 	case request := <-s.resizeRequests:
+		if err := request.ctx.Err(); err != nil {
+			request.done <- err
+			return
+		}
 		err := unix.IoctlSetWinsize(s.terminalFD, unix.TIOCSWINSZ, &unix.Winsize{
 			Col: request.cols,
 			Row: request.rows,
 		})
 		if err == nil {
+			if request.ctx.Err() != nil {
+				request.done <- request.ctx.Err()
+				return
+			}
 			s.dimensionsMu.Lock()
 			s.cols = request.cols
 			s.rows = request.rows

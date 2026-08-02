@@ -29,6 +29,8 @@ type serverMessage struct {
 	Rows     uint16 `json:"rows,omitempty"`
 }
 
+const terminalResizeTimeout = 2 * time.Second
+
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	s.terminalStream(w, r, false)
 }
@@ -96,10 +98,20 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 		var unsubscribeSize func()
 		cols, rows := terminal.Dimensions()
 		dimensions := terminalDimensions{Cols: cols, Rows: rows}
+		applyResize := func(cols, rows uint16, notify func()) error {
+			resizeContext, cancelResize := context.WithTimeout(ctx, terminalResizeTimeout)
+			defer cancelResize()
+			return terminal.ResizeWithNotificationContext(
+				resizeContext,
+				cols,
+				rows,
+				notify,
+			)
+		}
 		reportSize, releaseSize, _, unsubscribeSize = s.terminalSizes.subscribe(
 			id,
 			dimensions,
-			terminal.ResizeWithNotification,
+			applyResize,
 			func(dimensions terminalDimensions) {
 				enqueueResize(dimensions.Cols, dimensions.Rows)
 			},

@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1261,6 +1262,49 @@ configured:
 resized:
 	if err := <-resizeDone; err != nil {
 		t.Fatalf("ResizeWithNotification() error = %v", err)
+	}
+}
+
+func TestResizeWithNotificationContextCancelsPendingRequest(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Cancelable resize")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+
+	readPaused := make(chan struct{})
+	resumeRead := make(chan struct{})
+	var pauseOnce sync.Once
+	running.setAfterReadHook(func(data []byte) {
+		if bytes.Contains(data, []byte("resize-cancel-marker")) {
+			pauseOnce.Do(func() {
+				close(readPaused)
+				<-resumeRead
+			})
+		}
+	})
+	defer running.setAfterReadHook(nil)
+
+	if _, err := running.Write([]byte("printf resize-cancel-marker\\n\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	select {
+	case <-readPaused:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for the PTY read to pause")
+	}
+
+	resizeContext, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := running.ResizeWithNotificationContext(resizeContext, 100, 30, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ResizeWithNotificationContext() error = %v, want deadline exceeded", err)
+	}
+
+	close(resumeRead)
+	if err := running.Resize(90, 25); err != nil {
+		t.Fatalf("Resize() after canceled request error = %v", err)
 	}
 }
 
