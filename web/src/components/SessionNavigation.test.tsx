@@ -282,8 +282,8 @@ test("orders terminal rows by attention and lifecycle priority", () => {
   expect([...labels].map((button) => button.getAttribute("aria-label"))).toEqual([
     "Select Needs review",
     "Select Blocked",
-    "Select Waiting",
     "Select Running",
+    "Select Waiting",
     "Select Terminal",
   ]);
 });

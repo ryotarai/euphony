@@ -71,8 +71,8 @@ function activity(session: Session) {
 
 const terminalRowPriority = new Map([
   ["blocked", 1],
-  ["waiting", 2],
-  ["running", 3],
+  ["running", 2],
+  ["waiting", 3],
   ["terminal", 4],
 ]);
 
