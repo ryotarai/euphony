@@ -1822,14 +1822,17 @@ test("a status filter automatically adds newly matching terminal panes", async (
   vi.useRealTimers();
 });
 
-test("a status filter removes a terminal after its status changes", async () => {
+test("delays removing a status-filtered terminal until its status settles", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   history.replaceState(null, "", "/?terminal=session-1&status=running");
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession, thirdRunningSession]))
     .mockImplementation(() =>
-      jsonResponse([runningSession, { ...thirdRunningSession, agentStatus: "waiting" }]),
+      jsonResponse([
+        runningSession,
+        { ...thirdRunningSession, agentStatus: "waiting", needsAttention: true },
+      ]),
     );
   render(
     <App syncSelection={false}
@@ -1845,11 +1848,70 @@ test("a status filter removes a terminal after its status changes", async () => 
     await vi.advanceTimersByTimeAsync(1500);
   });
 
-  await waitFor(() => {
-    expectTerminalPaneHidden("session-3 terminal pane");
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+    "session-3",
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(9000);
   });
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+    "session-3",
+  );
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).not.toContain(
+    "session-3",
+  );
   expect(screen.getByLabelText("session-1 terminal pane")).toBeVisible();
   vi.useRealTimers();
+});
+
+test("cancels a pending filter removal when the status returns", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    history.replaceState(null, "", "/?terminal=session-1&status=running");
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce(() => jsonResponse([runningSession, thirdRunningSession]))
+      .mockImplementationOnce(() =>
+        jsonResponse([runningSession, { ...thirdRunningSession, agentStatus: "waiting" }]),
+      )
+      .mockImplementation(() => jsonResponse([runningSession, thirdRunningSession]));
+    render(
+      <App
+        syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      />,
+    );
+
+    await screen.findByLabelText("session-3 terminal pane");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+      "session-3",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+      "session-3",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+      "session-3",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("does not render terminal panes again for an unchanged polling response", async () => {
@@ -2437,6 +2499,18 @@ test("a checked status and cwd group dynamically follows matching terminals", as
     await vi.advanceTimersByTimeAsync(1500);
   });
 
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+    "session-1",
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(9000);
+  });
+  expect(new URLSearchParams(window.location.search).getAll("terminal")).toContain(
+    "session-1",
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
   await waitFor(() => {
     expectTerminalPaneHidden("session-1 terminal pane");
   });
