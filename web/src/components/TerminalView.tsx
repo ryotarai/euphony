@@ -1,13 +1,13 @@
 import {
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
-import { Terminal, type ITerminalAddon } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
@@ -20,6 +20,14 @@ import {
   defaultTerminalScrollSensitivity,
 } from "../settings";
 import type { Session, TerminalCursorStyle } from "../types";
+import {
+  fitTerminalIfVisible,
+  loadWebglRenderer,
+  openTerminalLink,
+  refreshTerminalIfVisible,
+  terminalOptions,
+  terminalScrollback,
+} from "./terminalUtils";
 
 export interface TerminalDriver {
   readonly cols?: number;
@@ -85,103 +93,8 @@ interface TerminalGridGeometry {
   height: number;
 }
 
-type WebglRendererAddon = ITerminalAddon & {
-  onContextLoss?: (listener: () => void) => unknown;
-};
-
-const maxTerminalScrollback = 4294967295;
-const maxFiniteTerminalScrollback = 100000;
-const estimatedBytesPerScrollbackRow = 128;
 const terminalViewportGutter = 14;
 const maxQueuedInitialTerminalBytes = 2 * 1024 * 1024;
-
-export function terminalScrollback(historyLimit: number): number {
-  if (historyLimit === 0) return maxTerminalScrollback;
-  return Math.max(
-    1000,
-    Math.min(
-      maxFiniteTerminalScrollback,
-      Math.ceil(historyLimit / estimatedBytesPerScrollbackRow),
-    ),
-  );
-}
-
-export function openTerminalLink(uri: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(uri);
-  } catch {
-    return;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
-
-  const newWindow = window.open(parsed.href, "_blank", "noopener,noreferrer");
-  if (!newWindow) {
-    console.warn("Opening link blocked as opener could not be cleared");
-    return;
-  }
-  try {
-    newWindow.opener = null;
-  } catch {
-    // Some browser shells may reject changing opener.
-  }
-}
-
-export function loadWebglRenderer(
-  terminal: Pick<Terminal, "loadAddon">,
-  createAddon: () => WebglRendererAddon = () => new WebglAddon(),
-): boolean {
-  try {
-    const addon = createAddon();
-    addon.onContextLoss?.(() => addon.dispose());
-    terminal.loadAddon(addon);
-    return true;
-  } catch (error) {
-    console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
-    return false;
-  }
-}
-
-export function terminalOptions(
-  fontFamily: string,
-  fontSize: number,
-  scrollback: number,
-  lineHeight: number,
-  cursorStyle: TerminalCursorStyle,
-  cursorBlink: boolean,
-  scrollSensitivity: number,
-  optionAsAlt = defaultTerminalOptionAsAlt,
-): ConstructorParameters<typeof Terminal>[0] {
-  return {
-    allowTransparency: true,
-    fontFamily,
-    fontSize,
-    lineHeight,
-    cursorStyle,
-    cursorBlink,
-    linkHandler: {
-      activate: (_event, uri) => openTerminalLink(uri),
-    },
-    macOptionIsMeta: optionAsAlt,
-    scrollback,
-    scrollSensitivity,
-    theme: {
-      background: "#050505",
-      foreground: "#f5f5f5",
-      cursor: "#f5f5f5",
-      selectionBackground: "#333333",
-      black: "#050505",
-      red: "#f87171",
-      green: "#a3e635",
-      yellow: "#facc15",
-      blue: "#93c5fd",
-      magenta: "#d8b4fe",
-      cyan: "#67e8f9",
-      white: "#f5f5f5",
-      brightBlack: "#737373",
-    },
-  };
-}
 
 function defaultTerminal(
   fontFamily: string,
@@ -262,58 +175,89 @@ function focusTerminal(terminal: TerminalDriver) {
   if (!modalOpen) terminal.focus();
 }
 
-export function fitTerminalIfVisible(
-  host: HTMLElement,
-  terminal: Pick<TerminalDriver, "fit">,
-) {
-  if (host.hidden || host.closest("[hidden]")) return;
-  terminal.fit();
+interface TerminalViewHookProps {
+  session: Session;
+  api: ApiClient;
+  active: boolean;
+  sourceVisible: boolean;
+  layoutVersion: number;
+  reconnectSignal: number;
+  terminalHistoryLimit: number;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  cursorStyle: TerminalCursorStyle;
+  cursorBlink: boolean;
+  scrollSensitivity: number;
+  optionAsAlt: boolean;
+  onConnectionChange?: (sessionID: string, state: ConnectionState) => void;
+  createTerminal: NonNullable<TerminalViewProps["createTerminal"]>;
+  createSocket: NonNullable<TerminalViewProps["createSocket"]>;
 }
 
-export function refreshTerminalIfVisible(
-  host: HTMLElement,
-  terminal: Pick<TerminalDriver, "refresh">,
-) {
-  if (host.hidden || host.closest("[hidden]")) return;
-  terminal.refresh?.();
+interface TerminalSocketHandlers {
+  onOpen: () => void;
+  onMessage: (event: Event) => void;
+  onClose: () => void;
 }
 
-export function TerminalView({
+function subscribeToTerminalSocket(
+  socket: WebSocketLike,
+  handlers: TerminalSocketHandlers,
+): () => void {
+  socket.addEventListener("open", handlers.onOpen);
+  socket.addEventListener("message", handlers.onMessage);
+  socket.addEventListener("close", handlers.onClose);
+  return () => {
+    socket.removeEventListener("open", handlers.onOpen);
+    socket.removeEventListener("message", handlers.onMessage);
+    socket.removeEventListener("close", handlers.onClose);
+  };
+}
+
+function useTerminalView({
   session,
   api,
-  active = true,
-  sourceVisible = true,
-  layoutVersion = 1,
-  reconnectSignal = 0,
-  terminalHistoryLimit = 1024 * 1024,
-  fontFamily = defaultTerminalFontFamily,
-  fontSize = 14,
-  lineHeight = defaultTerminalLineHeight,
-  cursorStyle = defaultTerminalCursorStyle,
-  cursorBlink = defaultTerminalCursorBlink,
-  scrollSensitivity = defaultTerminalScrollSensitivity,
-  optionAsAlt = defaultTerminalOptionAsAlt,
+  active,
+  sourceVisible,
+  layoutVersion,
+  reconnectSignal,
+  terminalHistoryLimit,
+  fontFamily,
+  fontSize,
+  lineHeight,
+  cursorStyle,
+  cursorBlink,
+  scrollSensitivity,
+  optionAsAlt,
   onConnectionChange,
-  createTerminal = defaultTerminal,
-  createSocket = defaultSocket,
-}: TerminalViewProps) {
+  createTerminal,
+  createSocket,
+}: TerminalViewHookProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<TerminalDriver | null>(null);
   const capacityReporterRef = useRef<() => void>(() => undefined);
   const activeRef = useRef(active);
-  activeRef.current = active;
   const sourceVisibleRef = useRef(sourceVisible);
-  sourceVisibleRef.current = sourceVisible;
+  const sessionCwdRef = useRef(session.cwd);
+  const terminalHistoryLimitRef = useRef(terminalHistoryLimit);
   const previousSourceVisibleRef = useRef(sourceVisible);
+  const connectionStateRef = useRef<ConnectionState | undefined>(undefined);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [copied, setCopied] = useState(false);
   const [localSize, setLocalSize] = useState<{ cols: number; rows: number }>();
   const [sharedSize, setSharedSize] = useState<{ cols: number; rows: number }>();
   const [gridGeometry, setGridGeometry] = useState<TerminalGridGeometry>();
+  const notifyConnectionChange = useEffectEvent((state: ConnectionState) => {
+    onConnectionChange?.(session.id, state);
+  });
 
-  useEffect(() => {
-    onConnectionChange?.(session.id, connection);
-  }, [connection, onConnectionChange, session.id]);
+  useLayoutEffect(() => {
+    activeRef.current = active;
+    sourceVisibleRef.current = sourceVisible;
+    sessionCwdRef.current = session.cwd;
+    terminalHistoryLimitRef.current = terminalHistoryLimit;
+  }, [active, session.cwd, sourceVisible, terminalHistoryLimit]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -327,23 +271,36 @@ export function TerminalView({
     }> = [];
     let queuedInitialBytes = 0;
     let initialQueueOverflowed = false;
-    const initialTerminalQueueLimit = terminalHistoryLimit > 0
+    const initialTerminalQueueLimit = terminalHistoryLimitRef.current > 0
       ? Math.min(
           maxQueuedInitialTerminalBytes,
-          Math.max(1024, terminalHistoryLimit),
+          Math.max(1024, terminalHistoryLimitRef.current),
         )
       : maxQueuedInitialTerminalBytes;
     let pendingHistoryWrites = 0;
     let historyStreamComplete = false;
     let socket: WebSocketLike | undefined;
+    let removeSocketListeners: (() => void) | undefined;
     let gridMeasurementFrame: number | undefined;
     let lastSize = "";
     let claimActive = false;
-    let lastReportedCWD = session.cwd;
+    let lastReportedCWD = sessionCwdRef.current;
+    const closeSocket = () => {
+      removeSocketListeners?.();
+      removeSocketListeners = undefined;
+      socket?.close();
+      socket = undefined;
+    };
+    const setConnectionState = (next: ConnectionState) => {
+      if (connectionStateRef.current === next) return;
+      connectionStateRef.current = next;
+      setConnection(next);
+      notifyConnectionChange(next);
+    };
     const terminal = createTerminal(
       fontFamily,
       fontSize,
-      terminalScrollback(terminalHistoryLimit),
+      terminalScrollback(terminalHistoryLimitRef.current),
       lineHeight,
       cursorStyle,
       cursorBlink,
@@ -353,7 +310,7 @@ export function TerminalView({
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
-    setConnection("connecting");
+    setConnectionState("connecting");
 
     const send = (message: unknown): boolean => {
       const currentSocket = socket;
@@ -378,7 +335,7 @@ export function TerminalView({
         queuedInitialData = [];
         queuedInitialBytes = 0;
         initialQueueOverflowed = true;
-        socket?.close();
+        closeSocket();
         return;
       }
       queuedInitialData.push({ data, history });
@@ -479,14 +436,18 @@ export function TerminalView({
           session.id,
         )}/terminal?ticket=${encodeURIComponent(ticket)}`;
         const connectionSocket = createSocket(url);
+        if (!active) {
+          connectionSocket.close();
+          return;
+        }
         socket = connectionSocket;
-        connectionSocket.addEventListener("open", () => {
+        const handleOpen = () => {
           if (!active) return;
-          setConnection("connected");
+          setConnectionState("connected");
           reportCapacity();
           if (activeRef.current) focusTerminal(terminal);
-        });
-        connectionSocket.addEventListener("message", (event) => {
+        };
+        const handleMessage = (event: Event) => {
           if (!active || !(event instanceof MessageEvent) || typeof event.data !== "string") return;
           const message = JSON.parse(event.data) as {
             type: string;
@@ -546,6 +507,7 @@ export function TerminalView({
               window.cancelAnimationFrame(gridMeasurementFrame);
             }
             gridMeasurementFrame = window.requestAnimationFrame(() => {
+              if (!active) return;
               const screen = host.querySelector<HTMLElement>(".xterm-screen");
               if (!screen) return;
               const bounds = screen.getBoundingClientRect();
@@ -573,18 +535,25 @@ export function TerminalView({
               replayingHistory = false;
             }
           } else if (message.type === "exit") {
-            setConnection("exited");
+            setConnectionState("exited");
             terminal.write(`\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`);
           } else if (message.type === "error" && message.message) {
             terminal.write(`\r\n\x1b[31m[${message.message}]\x1b[0m\r\n`);
           }
-        });
-        connectionSocket.addEventListener("close", () => {
-          if (active) setConnection((current) => (current === "exited" ? current : "disconnected"));
+        };
+        const handleClose = () => {
+          if (active && connectionStateRef.current !== "exited") {
+            setConnectionState("disconnected");
+          }
+        };
+        removeSocketListeners = subscribeToTerminalSocket(connectionSocket, {
+          onOpen: handleOpen,
+          onMessage: handleMessage,
+          onClose: handleClose,
         });
       })
       .catch(() => {
-        if (active) setConnection("disconnected");
+        if (active) setConnectionState("disconnected");
       });
 
     return () => {
@@ -599,7 +568,10 @@ export function TerminalView({
       if (gridMeasurementFrame !== undefined) {
         window.cancelAnimationFrame(gridMeasurementFrame);
       }
+      removeSocketListeners?.();
+      removeSocketListeners = undefined;
       socket?.close();
+      socket = undefined;
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
       if (capacityReporterRef.current === reportCapacity) {
@@ -655,6 +627,49 @@ export function TerminalView({
     }, 50);
     return () => window.clearTimeout(timer);
   }, [layoutVersion]);
+
+  return { copied, connection, gridGeometry, hostRef, localSize, sharedSize };
+}
+
+export function TerminalView({
+  session,
+  api,
+  active = true,
+  sourceVisible = true,
+  layoutVersion = 1,
+  reconnectSignal = 0,
+  terminalHistoryLimit = 1024 * 1024,
+  fontFamily = defaultTerminalFontFamily,
+  fontSize = 14,
+  lineHeight = defaultTerminalLineHeight,
+  cursorStyle = defaultTerminalCursorStyle,
+  cursorBlink = defaultTerminalCursorBlink,
+  scrollSensitivity = defaultTerminalScrollSensitivity,
+  optionAsAlt = defaultTerminalOptionAsAlt,
+  onConnectionChange,
+  createTerminal = defaultTerminal,
+  createSocket = defaultSocket,
+}: TerminalViewProps) {
+  const { copied, connection, gridGeometry, hostRef, localSize, sharedSize } =
+    useTerminalView({
+      session,
+      api,
+      active,
+      sourceVisible,
+      layoutVersion,
+      reconnectSignal,
+      terminalHistoryLimit,
+      fontFamily,
+      fontSize,
+      lineHeight,
+      cursorStyle,
+      cursorBlink,
+      scrollSensitivity,
+      optionAsAlt,
+      onConnectionChange,
+      createTerminal,
+      createSocket,
+    });
 
   const terminalHostStyle = gridGeometry
     ? ({

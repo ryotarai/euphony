@@ -1,9 +1,11 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import {
   BinaryIcon,
@@ -41,8 +43,207 @@ interface WorkspaceFilesViewProps {
   active: boolean;
 }
 
+interface WorkspaceFilesState {
+  directories: Record<string, WorkspaceDirectory>;
+  expanded: Set<string>;
+  loadingDirectories: Set<string>;
+  directoryErrors: Set<string>;
+  rootLoading: boolean;
+  rootError: unknown;
+  refreshVersion: number;
+  query: string;
+  searchResult: WorkspaceSearchResult | null;
+  searching: boolean;
+  searchError: boolean;
+  selectedPath: string | null;
+  selectedFile: WorkspaceFile | null;
+  fileLoading: boolean;
+  fileError: boolean;
+}
+
+const initialWorkspaceFilesState: WorkspaceFilesState = {
+  directories: {},
+  expanded: new Set(),
+  loadingDirectories: new Set(),
+  directoryErrors: new Set(),
+  rootLoading: false,
+  rootError: null,
+  refreshVersion: 0,
+  query: "",
+  searchResult: null,
+  searching: false,
+  searchError: false,
+  selectedPath: null,
+  selectedFile: null,
+  fileLoading: false,
+  fileError: false,
+};
+
+type WorkspaceFilesAction =
+  | { type: "rootRequestStarted" }
+  | { type: "rootLoaded"; directory: WorkspaceDirectory }
+  | { type: "rootFailed"; error: unknown }
+  | { type: "rootRequestFinished" }
+  | { type: "queryChanged"; query: string }
+  | { type: "searchCleared" }
+  | { type: "searchRequestStarted" }
+  | { type: "searchLoaded"; result: WorkspaceSearchResult }
+  | { type: "searchFailed" }
+  | { type: "fileSelected"; path: string }
+  | { type: "fileRequestStarted" }
+  | { type: "fileLoaded"; file: WorkspaceFile }
+  | { type: "fileFailed" }
+  | { type: "directoryRequestStarted"; path: string }
+  | {
+    type: "directoryLoaded";
+    path: string;
+    directory: WorkspaceDirectory;
+  }
+  | { type: "directoryFailed"; path: string }
+  | { type: "directoryToggled"; path: string }
+  | { type: "refreshRequested" };
+
+function workspaceFilesReducer(
+  state: WorkspaceFilesState,
+  action: WorkspaceFilesAction,
+): WorkspaceFilesState {
+  switch (action.type) {
+    case "rootRequestStarted":
+      return { ...state, rootLoading: true };
+    case "rootLoaded":
+      return {
+        ...state,
+        directories: { ...state.directories, "": action.directory },
+        rootError: null,
+      };
+    case "rootFailed":
+      return { ...state, rootError: action.error };
+    case "rootRequestFinished":
+      return { ...state, rootLoading: false };
+    case "queryChanged":
+      return { ...state, query: action.query };
+    case "searchCleared":
+      return {
+        ...state,
+        searchResult: null,
+        searching: false,
+        searchError: false,
+      };
+    case "searchRequestStarted":
+      return { ...state, searching: true };
+    case "searchLoaded":
+      return {
+        ...state,
+        searchResult: action.result,
+        searching: false,
+        searchError: false,
+      };
+    case "searchFailed":
+      return {
+        ...state,
+        searchResult: null,
+        searching: false,
+        searchError: true,
+      };
+    case "fileSelected":
+      return {
+        ...state,
+        selectedPath: action.path,
+        selectedFile: state.selectedFile?.path === action.path
+          ? state.selectedFile
+          : null,
+      };
+    case "fileRequestStarted":
+      return { ...state, fileLoading: true, fileError: false };
+    case "fileLoaded":
+      return { ...state, selectedFile: action.file, fileLoading: false };
+    case "fileFailed":
+      return {
+        ...state,
+        selectedFile: null,
+        fileLoading: false,
+        fileError: true,
+      };
+    case "directoryRequestStarted": {
+      const directoryErrors = new Set(state.directoryErrors);
+      directoryErrors.delete(action.path);
+      const loadingDirectories = new Set(state.loadingDirectories);
+      loadingDirectories.add(action.path);
+      return { ...state, directoryErrors, loadingDirectories };
+    }
+    case "directoryLoaded": {
+      const loadingDirectories = new Set(state.loadingDirectories);
+      loadingDirectories.delete(action.path);
+      return {
+        ...state,
+        directories: {
+          ...state.directories,
+          [action.path]: action.directory,
+        },
+        loadingDirectories,
+      };
+    }
+    case "directoryFailed": {
+      const directoryErrors = new Set(state.directoryErrors);
+      directoryErrors.add(action.path);
+      const loadingDirectories = new Set(state.loadingDirectories);
+      loadingDirectories.delete(action.path);
+      return { ...state, directoryErrors, loadingDirectories };
+    }
+    case "directoryToggled": {
+      const expanded = new Set(state.expanded);
+      if (expanded.has(action.path)) expanded.delete(action.path);
+      else expanded.add(action.path);
+      return { ...state, expanded };
+    }
+    case "refreshRequested": {
+      const directories: Record<string, WorkspaceDirectory> = {};
+      if (state.directories[""]) directories[""] = state.directories[""];
+      return {
+        ...state,
+        directories,
+        expanded: new Set(),
+        loadingDirectories: new Set(),
+        directoryErrors: new Set(),
+        refreshVersion: state.refreshVersion + 1,
+      };
+    }
+  }
+}
+
 const searchDelay = 180;
 const maxRenderedLines = 5_000;
+const treeListStyle: CSSProperties = {
+  margin: 0,
+  padding: 0,
+  listStyle: "none",
+};
+const codeTableStyle: CSSProperties = {
+  display: "block",
+  minWidth: "100%",
+  width: "max-content",
+  padding: "0.65rem 0 1.5rem",
+};
+const codeTableBodyStyle: CSSProperties = {
+  display: "block",
+  minWidth: "100%",
+};
+const codeLineNumberStyle: CSSProperties = {
+  display: "block",
+  padding: "0 0.6rem",
+  color: "#515151",
+  background: "#080808",
+  borderRight: "1px solid #1c1c1c",
+  fontVariantNumeric: "tabular-nums",
+  textAlign: "right",
+  userSelect: "none",
+};
+const codeContentStyle: CSSProperties = {
+  display: "block",
+  padding: "0 0.8rem",
+  font: "inherit",
+  whiteSpace: "pre",
+};
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -84,196 +285,30 @@ function entryIcon(entry: WorkspaceEntry, expanded: boolean) {
   return <FileTextIcon aria-hidden="true" />;
 }
 
-export function WorkspaceFilesView({
-  session,
-  api,
-  active,
-}: WorkspaceFilesViewProps) {
-  const [directories, setDirectories] = useState<
-    Record<string, WorkspaceDirectory>
-  >({});
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(
-    new Set(),
-  );
-  const [directoryErrors, setDirectoryErrors] = useState<Set<string>>(
-    new Set(),
-  );
-  const [rootLoading, setRootLoading] = useState(false);
-  const [rootError, setRootError] = useState<unknown>(null);
-  const [refreshVersion, setRefreshVersion] = useState(0);
-  const [query, setQuery] = useState("");
-  const [searchResult, setSearchResult] =
-    useState<WorkspaceSearchResult | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState(false);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
-  const [fileLoading, setFileLoading] = useState(false);
-  const [fileError, setFileError] = useState(false);
-  const sessionIDRef = useRef(session.id);
-  const refreshGenerationRef = useRef(0);
-  sessionIDRef.current = session.id;
+interface WorkspaceTreeProps {
+  root: WorkspaceDirectory;
+  directories: Record<string, WorkspaceDirectory>;
+  expanded: Set<string>;
+  loadingDirectories: Set<string>;
+  directoryErrors: Set<string>;
+  selectedPath: string | null;
+  onLoadDirectory: (entry: WorkspaceEntry) => void;
+  onToggleDirectory: (entry: WorkspaceEntry) => void;
+  onOpenFile: (path: string) => void;
+}
 
-  useEffect(() => {
-    setDirectories({});
-    setExpanded(new Set());
-    setLoadingDirectories(new Set());
-    setDirectoryErrors(new Set());
-    setRootError(null);
-    setQuery("");
-    setSearchResult(null);
-    setSelectedPath(null);
-    setSelectedFile(null);
-    setFileError(false);
-    refreshGenerationRef.current += 1;
-  }, [session.id]);
-
-  useEffect(() => {
-    if (!active) return;
-    let current = true;
-    setRootLoading(true);
-    void api.getWorkspaceDirectory(session.id).then((directory) => {
-      if (!current) return;
-      setDirectories((existing) => ({ ...existing, "": directory }));
-      setRootError(null);
-    }).catch((error) => {
-      if (current) setRootError(error);
-    }).finally(() => {
-      if (current) setRootLoading(false);
-    });
-    return () => {
-      current = false;
-    };
-  }, [active, api, refreshVersion, session.id]);
-
-  useEffect(() => {
-    if (!active) return;
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setSearchResult(null);
-      setSearching(false);
-      setSearchError(false);
-      return;
-    }
-    let current = true;
-    setSearching(true);
-    const timer = window.setTimeout(() => {
-      void api.searchWorkspace(session.id, trimmed).then((result) => {
-        if (!current) return;
-        setSearchResult(result);
-        setSearchError(false);
-      }).catch(() => {
-        if (!current) return;
-        setSearchResult(null);
-        setSearchError(true);
-      }).finally(() => {
-        if (current) setSearching(false);
-      });
-    }, searchDelay);
-    return () => {
-      current = false;
-      window.clearTimeout(timer);
-    };
-  }, [active, api, query, refreshVersion, session.id]);
-
-  useEffect(() => {
-    if (!active || !selectedPath) return;
-    let current = true;
-    setFileLoading(true);
-    setFileError(false);
-    void api.getWorkspaceFile(session.id, selectedPath).then((file) => {
-      if (current) setSelectedFile(file);
-    }).catch(() => {
-      if (!current) return;
-      setSelectedFile(null);
-      setFileError(true);
-    }).finally(() => {
-      if (current) setFileLoading(false);
-    });
-    return () => {
-      current = false;
-    };
-  }, [active, api, refreshVersion, selectedPath, session.id]);
-
-  const root = directories[""];
-  const workspaceRoot = root?.root ?? searchResult?.root ?? session.cwd;
-
-  const loadDirectory = (entry: WorkspaceEntry) => {
-    const requestSessionID = session.id;
-    const requestGeneration = refreshGenerationRef.current;
-    setDirectoryErrors((current) => {
-      const next = new Set(current);
-      next.delete(entry.path);
-      return next;
-    });
-    setLoadingDirectories((current) => new Set(current).add(entry.path));
-    void api.getWorkspaceDirectory(session.id, entry.path).then((directory) => {
-      if (
-        sessionIDRef.current !== requestSessionID ||
-        refreshGenerationRef.current !== requestGeneration
-      ) return;
-      setDirectories((current) => ({
-        ...current,
-        [entry.path]: directory,
-      }));
-    }).catch(() => {
-      if (
-        sessionIDRef.current !== requestSessionID ||
-        refreshGenerationRef.current !== requestGeneration
-      ) return;
-      setDirectoryErrors((current) => {
-        const next = new Set(current);
-        next.add(entry.path);
-        return next;
-      });
-    }).finally(() => {
-      if (
-        sessionIDRef.current !== requestSessionID ||
-        refreshGenerationRef.current !== requestGeneration
-      ) return;
-      setLoadingDirectories((current) => {
-        const next = new Set(current);
-        next.delete(entry.path);
-        return next;
-      });
-    });
-  };
-
-  const toggleDirectory = (entry: WorkspaceEntry) => {
-    if (entry.kind !== "directory") return;
-    if (expanded.has(entry.path)) {
-      setExpanded((current) => {
-        const next = new Set(current);
-        next.delete(entry.path);
-        return next;
-      });
-      return;
-    }
-    setExpanded((current) => new Set(current).add(entry.path));
-    if (directories[entry.path] || loadingDirectories.has(entry.path)) return;
-    loadDirectory(entry);
-  };
-
-  const refreshWorkspace = () => {
-    refreshGenerationRef.current += 1;
-    setDirectories((current) => {
-      const next: Record<string, WorkspaceDirectory> = {};
-      if (current[""]) next[""] = current[""];
-      return next;
-    });
-    setExpanded(new Set());
-    setLoadingDirectories(new Set());
-    setDirectoryErrors(new Set());
-    setRefreshVersion((current) => current + 1);
-  };
-
-  const openFile = (path: string) => {
-    setSelectedPath(path);
-    setSelectedFile((current) => current?.path === path ? current : null);
-  };
-
-  const renderEntries = (path: string, depth = 0) => {
+function renderWorkspaceTree({
+  root,
+  directories,
+  expanded,
+  loadingDirectories,
+  directoryErrors,
+  selectedPath,
+  onLoadDirectory,
+  onToggleDirectory,
+  onOpenFile,
+}: WorkspaceTreeProps) {
+  const renderEntries = (path: string, depth = 0): ReactNode => {
     const directory = directories[path];
     if (!directory) return null;
     return (
@@ -288,9 +323,8 @@ export function WorkspaceFilesView({
               ? `Open ${entry.path}`
               : `Unavailable ${entry.path}`;
           return (
-            <div
+            <li
               className="workspace-tree-node"
-              role="listitem"
               key={entry.path}
             >
               <button
@@ -301,8 +335,8 @@ export function WorkspaceFilesView({
                 disabled={!isDirectory && !isFile}
                 style={{ "--tree-depth": depth } as CSSProperties}
                 onClick={() => isDirectory
-                  ? toggleDirectory(entry)
-                  : openFile(entry.path)}
+                  ? onToggleDirectory(entry)
+                  : onOpenFile(entry.path)}
               >
                 <ChevronRightIcon
                   className="workspace-tree-chevron"
@@ -313,47 +347,472 @@ export function WorkspaceFilesView({
                 <span>{entry.name}</span>
               </button>
               {isDirectory && isExpanded && (
-                <div role="list">
+                <ul style={treeListStyle}>
                   {directoryErrors.has(entry.path)
                     ? (
-                      <div className="workspace-tree-feedback" role="status">
+                      <li className="workspace-tree-feedback" role="status">
                         <span>Directory unavailable.</span>
                         <Button
                           type="button"
                           variant="ghost"
                           size="xs"
                           aria-label={`Retry ${entry.path} directory`}
-                          onClick={() => loadDirectory(entry)}
+                          onClick={() => onLoadDirectory(entry)}
                         >
                           Retry
                         </Button>
-                      </div>
+                      </li>
                     )
                     : loadingDirectories.has(entry.path)
                     ? (
-                      <span className="workspace-tree-loading" role="status">
+                      <li className="workspace-tree-loading" role="status">
                         Loading {entry.path}…
-                      </span>
+                      </li>
                     )
                     : directories[entry.path]?.entries.length === 0
                       ? (
-                        <span className="workspace-tree-empty">
+                        <li className="workspace-tree-empty">
                           This directory is empty.
-                        </span>
+                        </li>
                       )
                       : renderEntries(entry.path, depth + 1)}
-                </div>
+                </ul>
               )}
-            </div>
+            </li>
           );
         })}
         {directory.truncated && (
-          <p className="workspace-files-note">
+          <li className="workspace-files-note">
             Only the first 500 entries are shown.
-          </p>
+          </li>
         )}
       </>
     );
+  };
+
+  return <ul style={treeListStyle}>{renderEntries(root.path)}</ul>;
+}
+
+interface WorkspaceFileViewerProps {
+  fileLoading: boolean;
+  fileError: boolean;
+  selectedFile: WorkspaceFile | null;
+  renderedFile: ReturnType<typeof fileLines>;
+}
+
+function renderWorkspaceFileViewer({
+  fileLoading,
+  fileError,
+  selectedFile,
+  renderedFile,
+}: WorkspaceFileViewerProps) {
+  return (
+    <article className="workspace-file-viewer">
+      {fileLoading && (
+        <div className="workspace-file-loading" role="status">
+          <Skeleton />
+          <Skeleton />
+          <Skeleton />
+        </div>
+      )}
+      {!fileLoading && fileError && (
+        <Empty className="workspace-files-empty">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileTextIcon aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>File unavailable</EmptyTitle>
+            <EmptyDescription>
+              The selected file could not be read.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {!fileLoading && !fileError && !selectedFile && (
+        <Empty className="workspace-files-empty">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FolderOpenIcon aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>Open a file</EmptyTitle>
+            <EmptyDescription>
+              Select a text file from the workspace tree.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {!fileLoading && selectedFile && (
+        <>
+          <header className="workspace-file-header">
+            <div>
+              <h2>{selectedFile.name}</h2>
+              <span>{selectedFile.path}</span>
+            </div>
+            <span>
+              {fileKind(selectedFile.path)} · {formatBytes(selectedFile.size)}
+            </span>
+          </header>
+          {selectedFile.binary
+            ? (
+              <Empty className="workspace-files-empty">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <BinaryIcon aria-hidden="true" />
+                  </EmptyMedia>
+                  <EmptyTitle>Binary file</EmptyTitle>
+                  <EmptyDescription>
+                    Binary content is not displayed in the read-only viewer.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )
+            : (
+              <div className="workspace-code-scroll">
+                <table
+                  className="workspace-code-table"
+                  style={codeTableStyle}
+                  aria-label={`Contents of ${selectedFile.path}`}
+                >
+                  <tbody style={codeTableBodyStyle}>
+                    {renderedFile.lines.map((line, index) => (
+                      <tr className="workspace-code-row" key={index}>
+                        <td style={codeLineNumberStyle}>{index + 1}</td>
+                        <td style={codeContentStyle}>{line || " "}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {renderedFile.truncated && (
+                  <p className="workspace-files-note">
+                    Only the first 5,000 lines are shown.
+                  </p>
+                )}
+                {selectedFile.truncated && (
+                  <p className="workspace-files-note">
+                    Only the first 1 MiB is shown.
+                  </p>
+                )}
+              </div>
+            )}
+        </>
+      )}
+    </article>
+  );
+}
+
+interface WorkspaceFileNavigatorProps {
+  root: WorkspaceDirectory | undefined;
+  rootLoading: boolean;
+  rootError: unknown;
+  workspaceRoot: string;
+  query: string;
+  searchResult: WorkspaceSearchResult | null;
+  searching: boolean;
+  searchError: boolean;
+  directories: Record<string, WorkspaceDirectory>;
+  expanded: Set<string>;
+  loadingDirectories: Set<string>;
+  directoryErrors: Set<string>;
+  selectedPath: string | null;
+  onQueryChange: (query: string) => void;
+  onRefresh: () => void;
+  onLoadDirectory: (entry: WorkspaceEntry) => void;
+  onToggleDirectory: (entry: WorkspaceEntry) => void;
+  onOpenFile: (path: string) => void;
+}
+
+function renderWorkspaceFileNavigator({
+  root,
+  rootLoading,
+  rootError,
+  workspaceRoot,
+  query,
+  searchResult,
+  searching,
+  searchError,
+  directories,
+  expanded,
+  loadingDirectories,
+  directoryErrors,
+  selectedPath,
+  onQueryChange,
+  onRefresh,
+  onLoadDirectory,
+  onToggleDirectory,
+  onOpenFile,
+}: WorkspaceFileNavigatorProps) {
+  return (
+    <aside className="workspace-file-navigator">
+      <header className="workspace-navigator-header">
+        <div className="workspace-root-line">
+          <FolderTreeIcon aria-hidden="true" />
+          <span title={workspaceRoot}>{workspaceRoot}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Refresh workspace files"
+            title="Refresh workspace files"
+            onClick={onRefresh}
+          >
+            <RefreshCwIcon aria-hidden="true" />
+          </Button>
+        </div>
+        <label className="workspace-search-field">
+          <SearchIcon aria-hidden="true" />
+          <Input
+            type="search"
+            value={query}
+            aria-label="Filter workspace files"
+            placeholder="Filter files…"
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </label>
+      </header>
+
+      <div className="workspace-tree-scroll">
+        {rootLoading && !root && (
+          <div className="workspace-tree-skeleton" role="status">
+            <Skeleton />
+            <Skeleton />
+            <Skeleton />
+          </div>
+        )}
+        {!rootLoading && !root && Boolean(rootError) && (
+          <Empty className="workspace-navigator-empty">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <FolderTreeIcon aria-hidden="true" />
+              </EmptyMedia>
+              <EmptyTitle>Workspace unavailable</EmptyTitle>
+              <EmptyDescription>
+                The terminal workspace could not be read.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={onRefresh}
+              >
+                Retry
+              </Button>
+            </EmptyContent>
+          </Empty>
+        )}
+        {query.trim()
+          ? (
+            <nav
+              className="workspace-search-results"
+              aria-label="Workspace search results"
+            >
+              {searching && (
+                <p className="workspace-search-state" role="status">
+                  Searching…
+                </p>
+              )}
+              {!searching && searchError && (
+                <p className="workspace-search-state" role="status">
+                  Search unavailable.
+                </p>
+              )}
+              {!searching && !searchError &&
+                searchResult?.matches.length === 0 && (
+                <p className="workspace-search-state">No matching files.</p>
+              )}
+              {searchResult?.matches.map((entry) => (
+                <button
+                  type="button"
+                  className="workspace-search-row"
+                  key={entry.path}
+                  aria-label={entry.kind === "file"
+                    ? `Open search result ${entry.path}`
+                    : `Directory search result ${entry.path}`}
+                  disabled={entry.kind !== "file"}
+                  onClick={() => {
+                    if (entry.kind === "file") onOpenFile(entry.path);
+                  }}
+                >
+                  {entryIcon(entry, false)}
+                  <span>
+                    <strong>{entry.name}</strong>
+                    <small>{entry.path}</small>
+                  </span>
+                </button>
+              ))}
+              {searchResult?.truncated && (
+                <p className="workspace-files-note">
+                  Only the first 200 matches are shown.
+                </p>
+              )}
+            </nav>
+          )
+          : root && (
+            <nav
+              className="workspace-tree"
+              aria-label="Workspace files"
+            >
+              {renderWorkspaceTree({
+                root,
+                directories,
+                expanded,
+                loadingDirectories,
+                directoryErrors,
+                selectedPath,
+                onLoadDirectory,
+                onToggleDirectory,
+                onOpenFile,
+              })}
+              {root.entries.length === 0 && (
+                <p className="workspace-search-state">
+                  This directory is empty.
+                </p>
+              )}
+            </nav>
+          )}
+      </div>
+      {root && Boolean(rootError) && (
+        <p className="workspace-refresh-warning" role="status">
+          Workspace could not be refreshed.
+        </p>
+      )}
+    </aside>
+  );
+}
+
+function WorkspaceFilesViewContent({
+  session,
+  api,
+  active,
+}: WorkspaceFilesViewProps) {
+  const [state, dispatch] = useReducer(
+    workspaceFilesReducer,
+    initialWorkspaceFilesState,
+  );
+  const {
+    directories,
+    expanded,
+    loadingDirectories,
+    directoryErrors,
+    rootLoading,
+    rootError,
+    refreshVersion,
+    query,
+    searchResult,
+    searching,
+    searchError,
+    selectedPath,
+    selectedFile,
+    fileLoading,
+    fileError,
+  } = state;
+  const sessionIDRef = useRef(session.id);
+  const refreshGenerationRef = useRef(0);
+
+  useLayoutEffect(() => {
+    sessionIDRef.current = session.id;
+    return () => {
+      refreshGenerationRef.current += 1;
+    };
+  }, [session.id]);
+
+  useEffect(() => {
+    if (!active) return;
+    let current = true;
+    dispatch({ type: "rootRequestStarted" });
+    void api.getWorkspaceDirectory(session.id).then((directory) => {
+      if (!current) return;
+      dispatch({ type: "rootLoaded", directory });
+    }).catch((error) => {
+      if (current) dispatch({ type: "rootFailed", error });
+    }).finally(() => {
+      if (current) dispatch({ type: "rootRequestFinished" });
+    });
+    return () => {
+      current = false;
+    };
+  }, [active, api, refreshVersion, session.id]);
+
+  useEffect(() => {
+    if (!active) return;
+    const trimmed = query.trim();
+    if (!trimmed) {
+      dispatch({ type: "searchCleared" });
+      return;
+    }
+    let current = true;
+    dispatch({ type: "searchRequestStarted" });
+    const timer = window.setTimeout(() => {
+      void api.searchWorkspace(session.id, trimmed).then((result) => {
+        if (!current) return;
+        dispatch({ type: "searchLoaded", result });
+      }).catch(() => {
+        if (!current) return;
+        dispatch({ type: "searchFailed" });
+      });
+    }, searchDelay);
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [active, api, query, refreshVersion, session.id]);
+
+  useEffect(() => {
+    if (!active || !selectedPath) return;
+    let current = true;
+    dispatch({ type: "fileRequestStarted" });
+    void api.getWorkspaceFile(session.id, selectedPath).then((file) => {
+      if (current) dispatch({ type: "fileLoaded", file });
+    }).catch(() => {
+      if (!current) return;
+      dispatch({ type: "fileFailed" });
+    });
+    return () => {
+      current = false;
+    };
+  }, [active, api, refreshVersion, selectedPath, session.id]);
+
+  const root = directories[""];
+  const workspaceRoot = root?.root ?? searchResult?.root ?? session.cwd;
+
+  const loadDirectory = (entry: WorkspaceEntry) => {
+    const requestSessionID = session.id;
+    const requestGeneration = refreshGenerationRef.current;
+    dispatch({ type: "directoryRequestStarted", path: entry.path });
+    void api.getWorkspaceDirectory(session.id, entry.path).then((directory) => {
+      if (
+        sessionIDRef.current !== requestSessionID ||
+        refreshGenerationRef.current !== requestGeneration
+      ) return;
+      dispatch({ type: "directoryLoaded", path: entry.path, directory });
+    }).catch(() => {
+      if (
+        sessionIDRef.current !== requestSessionID ||
+        refreshGenerationRef.current !== requestGeneration
+      ) return;
+      dispatch({ type: "directoryFailed", path: entry.path });
+    });
+  };
+
+  const toggleDirectory = (entry: WorkspaceEntry) => {
+    if (entry.kind !== "directory") return;
+    if (expanded.has(entry.path)) {
+      dispatch({ type: "directoryToggled", path: entry.path });
+      return;
+    }
+    dispatch({ type: "directoryToggled", path: entry.path });
+    if (directories[entry.path] || loadingDirectories.has(entry.path)) return;
+    loadDirectory(entry);
+  };
+
+  const refreshWorkspace = () => {
+    refreshGenerationRef.current += 1;
+    dispatch({ type: "refreshRequested" });
+  };
+
+  const openFile = (path: string) => {
+    dispatch({ type: "fileSelected", path });
   };
 
   const renderedFile = useMemo(
@@ -366,226 +825,42 @@ export function WorkspaceFilesView({
   return (
     <section
       className="workspace-files-view"
-      role="region"
       aria-label="Workspace files"
     >
       <div className="workspace-files-layout">
-        <article className="workspace-file-viewer">
-          {fileLoading && (
-            <div className="workspace-file-loading" role="status">
-              <Skeleton />
-              <Skeleton />
-              <Skeleton />
-            </div>
-          )}
-          {!fileLoading && fileError && (
-            <Empty className="workspace-files-empty">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <FileTextIcon aria-hidden="true" />
-                </EmptyMedia>
-                <EmptyTitle>File unavailable</EmptyTitle>
-                <EmptyDescription>
-                  The selected file could not be read.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-          {!fileLoading && !fileError && !selectedFile && (
-            <Empty className="workspace-files-empty">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <FolderOpenIcon aria-hidden="true" />
-                </EmptyMedia>
-                <EmptyTitle>Open a file</EmptyTitle>
-                <EmptyDescription>
-                  Select a text file from the workspace tree.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-          {!fileLoading && selectedFile && (
-            <>
-              <header className="workspace-file-header">
-                <div>
-                  <h2>{selectedFile.name}</h2>
-                  <span>{selectedFile.path}</span>
-                </div>
-                <span>
-                  {fileKind(selectedFile.path)} · {formatBytes(selectedFile.size)}
-                </span>
-              </header>
-              {selectedFile.binary
-                ? (
-                  <Empty className="workspace-files-empty">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <BinaryIcon aria-hidden="true" />
-                      </EmptyMedia>
-                      <EmptyTitle>Binary file</EmptyTitle>
-                      <EmptyDescription>
-                        Binary content is not displayed in the read-only viewer.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                )
-                : (
-                  <div className="workspace-code-scroll">
-                    <div
-                      className="workspace-code-table"
-                      role="table"
-                      aria-label={`Contents of ${selectedFile.path}`}
-                    >
-                      {renderedFile.lines.map((line, index) => (
-                        <div className="workspace-code-row" role="row" key={index}>
-                          <span role="cell">{index + 1}</span>
-                          <code role="cell">{line || " "}</code>
-                        </div>
-                      ))}
-                    </div>
-                    {renderedFile.truncated && (
-                      <p className="workspace-files-note">
-                        Only the first 5,000 lines are shown.
-                      </p>
-                    )}
-                    {selectedFile.truncated && (
-                      <p className="workspace-files-note">
-                        Only the first 1 MiB is shown.
-                      </p>
-                    )}
-                  </div>
-                )}
-            </>
-          )}
-        </article>
-
-        <aside className="workspace-file-navigator">
-          <header className="workspace-navigator-header">
-            <div className="workspace-root-line">
-              <FolderTreeIcon aria-hidden="true" />
-              <span title={workspaceRoot}>{workspaceRoot}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Refresh workspace files"
-                title="Refresh workspace files"
-                onClick={refreshWorkspace}
-              >
-                <RefreshCwIcon aria-hidden="true" />
-              </Button>
-            </div>
-            <label className="workspace-search-field">
-              <SearchIcon aria-hidden="true" />
-              <Input
-                type="search"
-                value={query}
-                aria-label="Filter workspace files"
-                placeholder="Filter files…"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-          </header>
-
-          <div className="workspace-tree-scroll">
-            {rootLoading && !root && (
-              <div className="workspace-tree-skeleton" role="status">
-                <Skeleton />
-                <Skeleton />
-                <Skeleton />
-              </div>
-            )}
-            {!rootLoading && !root && rootError && (
-              <Empty className="workspace-navigator-empty">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <FolderTreeIcon aria-hidden="true" />
-                  </EmptyMedia>
-                  <EmptyTitle>Workspace unavailable</EmptyTitle>
-                  <EmptyDescription>
-                    The terminal workspace could not be read.
-                  </EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={refreshWorkspace}
-                  >
-                    Retry
-                  </Button>
-                </EmptyContent>
-              </Empty>
-            )}
-            {query.trim()
-              ? (
-                <nav
-                  className="workspace-search-results"
-                  aria-label="Workspace search results"
-                >
-                  {searching && (
-                    <p className="workspace-search-state" role="status">
-                      Searching…
-                    </p>
-                  )}
-                  {!searching && searchError && (
-                    <p className="workspace-search-state" role="status">
-                      Search unavailable.
-                    </p>
-                  )}
-                  {!searching && !searchError &&
-                    searchResult?.matches.length === 0 && (
-                    <p className="workspace-search-state">No matching files.</p>
-                  )}
-                  {searchResult?.matches.map((entry) => (
-                    <button
-                      type="button"
-                      className="workspace-search-row"
-                      key={entry.path}
-                      aria-label={entry.kind === "file"
-                        ? `Open search result ${entry.path}`
-                        : `Directory search result ${entry.path}`}
-                      disabled={entry.kind !== "file"}
-                      onClick={() => {
-                        if (entry.kind === "file") openFile(entry.path);
-                      }}
-                    >
-                      {entryIcon(entry, false)}
-                      <span>
-                        <strong>{entry.name}</strong>
-                        <small>{entry.path}</small>
-                      </span>
-                    </button>
-                  ))}
-                  {searchResult?.truncated && (
-                    <p className="workspace-files-note">
-                      Only the first 200 matches are shown.
-                    </p>
-                  )}
-                </nav>
-              )
-              : root && (
-                <nav
-                  className="workspace-tree"
-                  aria-label="Workspace files"
-                >
-                  <div role="list">{renderEntries("")}</div>
-                  {root.entries.length === 0 && (
-                    <p className="workspace-search-state">
-                      This directory is empty.
-                    </p>
-                  )}
-                </nav>
-              )}
-          </div>
-          {root && Boolean(rootError) && (
-            <p className="workspace-refresh-warning" role="status">
-              Workspace could not be refreshed.
-            </p>
-          )}
-        </aside>
+        {renderWorkspaceFileViewer({
+          fileLoading,
+          fileError,
+          selectedFile,
+          renderedFile,
+        })}
+        {renderWorkspaceFileNavigator({
+          root,
+          rootLoading,
+          rootError,
+          workspaceRoot,
+          query,
+          searchResult,
+          searching,
+          searchError,
+          directories,
+          expanded,
+          loadingDirectories,
+          directoryErrors,
+          selectedPath,
+          onQueryChange: (nextQuery) => {
+            dispatch({ type: "queryChanged", query: nextQuery });
+          },
+          onRefresh: refreshWorkspace,
+          onLoadDirectory: loadDirectory,
+          onToggleDirectory: toggleDirectory,
+          onOpenFile: openFile,
+        })}
       </div>
     </section>
   );
+}
+
+export function WorkspaceFilesView(props: WorkspaceFilesViewProps) {
+  return <WorkspaceFilesViewContent key={props.session.id} {...props} />;
 }

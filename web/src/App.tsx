@@ -10,10 +10,15 @@ import {
   useState,
 } from "react";
 import { ApiClient, ApiError } from "./api";
+import { SessionNavigation } from "./components/SessionNavigation";
 import {
+  agentLaunchTransitions,
+  agentRunningTransitions,
+  attentionTransitions,
   cwdFilterKey,
-  SessionNavigation,
-} from "./components/SessionNavigation";
+  replacementSession,
+  sessionsEqual,
+} from "./sessionUtils";
 import {
   isEditableTarget,
   matchesPrefix,
@@ -74,7 +79,8 @@ import {
 } from "./settings";
 
 const tokenKey = "euphony.token";
-const recentQuickActionsKey = "euphony.recentQuickActions";
+const recentQuickActionsKey = "euphony.recentQuickActions:v1";
+const legacyRecentQuickActionsKey = "euphony.recentQuickActions";
 const recentQuickActionsLimit = 5;
 const quickActionStatuses = [
   "blocked",
@@ -140,7 +146,11 @@ function historyLimitDraft(limit: number): string {
 
 function resolveRecentQuickActionValues(): string[] {
   try {
-    const stored = JSON.parse(localStorage.getItem(recentQuickActionsKey) ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem(recentQuickActionsKey) ??
+        localStorage.getItem(legacyRecentQuickActionsKey) ??
+        "[]",
+    );
     if (!Array.isArray(stored)) return [];
     return [...new Set(stored.filter((value): value is string => typeof value === "string"))]
       .slice(0, recentQuickActionsLimit);
@@ -257,71 +267,6 @@ function selectionSourceSignature(
   });
 }
 
-export function attentionTransitions(previous: Session[], next: Session[]): Session[] {
-  const previousAttention = new Map(
-    previous.map((session) => [session.id, Boolean(session.needsAttention)]),
-  );
-  return next.filter(
-    (session) =>
-      session.needsAttention &&
-      !previousAttention.get(session.id),
-  );
-}
-
-export function agentLaunchTransitions(
-  previous: Session[],
-  next: Session[],
-): Session[] {
-  const previousActivity = new Map(
-    previous.map((session) => [session.id, sessionActivity(session)]),
-  );
-  return next.filter(
-    (session) =>
-      Boolean(session.agent) &&
-      previousActivity.get(session.id) === "terminal" &&
-      sessionActivity(session) !== "terminal",
-  );
-}
-
-export function agentRunningTransitions(
-  previous: Session[],
-  next: Session[],
-): Session[] {
-  const previousStatuses = new Map(
-    previous.map((session) => [session.id, session.agentStatus]),
-  );
-  return next.filter(
-    (session) =>
-      Boolean(session.agent) &&
-      session.agentStatus === "running" &&
-      previousStatuses.get(session.id) !== "running",
-  );
-}
-
-export function sessionsEqual(left: Session[], right: Session[]): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((session, index) => {
-    const next = right[index];
-    if (!next) return false;
-    const keys = Object.keys(session) as Array<keyof Session>;
-    const nextKeys = Object.keys(next) as Array<keyof Session>;
-    return (
-      keys.length === nextKeys.length &&
-      keys.every((key) => session[key] === next[key])
-    );
-  });
-}
-
-export function replacementSession(
-  previous: Session[],
-  removedID: string,
-  remaining: Session[],
-): Session | undefined {
-  const previousIndex = previous.findIndex((session) => session.id === removedID);
-  if (previousIndex < 0) return remaining[0];
-  return remaining[previousIndex] ?? remaining[previousIndex - 1] ?? remaining[0];
-}
-
 function playAttentionTone() {
   if (typeof AudioContext === "undefined") return;
   const context = new AudioContext();
@@ -335,6 +280,13 @@ function playAttentionTone() {
   oscillator.start();
   oscillator.stop(context.currentTime + 0.16);
   oscillator.addEventListener("ended", () => void context.close(), { once: true });
+}
+
+async function enableAttentionAlerts() {
+  if (typeof Notification !== "undefined" && Notification.permission === "default") {
+    await Notification.requestPermission();
+  }
+  playAttentionTone();
 }
 
 function resolveInitialToken(explicitToken?: string): string {
@@ -488,7 +440,7 @@ export function App({
     settings.paneTabShortcut,
   );
   const [terminalHistoryLimitDraft, setTerminalHistoryLimitDraft] = useState(
-    historyLimitDraft(settings.terminalHistoryLimit),
+    () => historyLimitDraft(settings.terminalHistoryLimit),
   );
   const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
     settings.terminalHistoryLimit === 0,
@@ -553,23 +505,23 @@ export function App({
   const commandListRef = useRef<HTMLDivElement>(null);
   const scrollCommandSelectionRef = useRef(false);
   const prefixActiveRef = useRef(false);
-  const filterSelectedIDsRef = useRef<Set<string>>(new Set());
-  const manualSelectedIDsRef = useRef<Set<string>>(new Set());
-  const decomposedStatusFiltersRef = useRef<Set<string>>(new Set());
-  const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(new Set());
+  const filterSelectedIDsRef = useRef<Set<string>>(null!);
+  const manualSelectedIDsRef = useRef<Set<string>>(null!);
+  const decomposedStatusFiltersRef = useRef<Set<string>>(null!);
+  const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(null!);
   const previousSessionsRef = useRef<Session[]>([]);
   const previousSessionOrderRef = useRef<Session[]>([]);
-  const openedTerminalIDsRef = useRef<Set<string>>(new Set());
-  const pendingAgentLaunchIDsRef = useRef<Set<string>>(new Set());
-  const pendingAgentRunningIDsRef = useRef<Set<string>>(new Set());
-  const runningDeselectTimersRef = useRef<Map<string, number>>(new Map());
-  const expiredRunningDeselectIDsRef = useRef<Set<string>>(new Set());
+  const openedTerminalIDs = useMemo(() => new Set<string>(), []);
+  const pendingAgentLaunchIDsRef = useRef<Set<string>>(null!);
+  const pendingAgentRunningIDsRef = useRef<Set<string>>(null!);
+  const runningDeselectTimersRef = useRef<Map<string, number>>(null!);
+  const expiredRunningDeselectIDsRef = useRef<Set<string>>(null!);
   const [runningDeselectExpiryVersion, setRunningDeselectExpiryVersion] = useState(0);
-  const filterDeselectTimersRef = useRef<Map<string, number>>(new Map());
-  const expiredFilterDeselectIDsRef = useRef<Set<string>>(new Set());
+  const filterDeselectTimersRef = useRef<Map<string, number>>(null!);
+  const expiredFilterDeselectIDsRef = useRef<Set<string>>(null!);
   const [filterDeselectExpiryVersion, setFilterDeselectExpiryVersion] = useState(0);
-  const pendingAttentionSelectionIDsRef = useRef<Set<string>>(new Set());
-  const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(new Set());
+  const pendingAttentionSelectionIDsRef = useRef<Set<string>>(null!);
+  const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(null!);
   const selectionRevisionRef = useRef<number | null>(null);
   const selectionServerSignatureRef = useRef("");
   const selectionSyncReadyRef = useRef(false);
@@ -581,18 +533,34 @@ export function App({
   const selectionActiveWriteVersionRef = useRef<number | null>(null);
   const selectionLocalVersionRef = useRef(0);
   const selectionSyncedLocalVersionRef = useRef(0);
+  useLayoutEffect(() => {
+    filterSelectedIDsRef.current ??= new Set();
+    manualSelectedIDsRef.current ??= new Set();
+    decomposedStatusFiltersRef.current ??= new Set();
+    decomposedPinnedStatusFiltersRef.current ??= new Set();
+    pendingAgentLaunchIDsRef.current ??= new Set();
+    pendingAgentRunningIDsRef.current ??= new Set();
+    runningDeselectTimersRef.current ??= new Map();
+    expiredRunningDeselectIDsRef.current ??= new Set();
+    filterDeselectTimersRef.current ??= new Map();
+    expiredFilterDeselectIDsRef.current ??= new Set();
+    pendingAttentionSelectionIDsRef.current ??= new Set();
+    pendingAttentionAcknowledgementsRef.current ??= new Set();
+  }, []);
   const currentSelectionStateRef = useRef({
     selectedIDs,
     pinnedIDs,
     statusFilters,
     cwdFilters,
   });
-  currentSelectionStateRef.current = {
-    selectedIDs,
-    pinnedIDs,
-    statusFilters,
-    cwdFilters,
-  };
+  useLayoutEffect(() => {
+    currentSelectionStateRef.current = {
+      selectedIDs,
+      pinnedIDs,
+      statusFilters,
+      cwdFilters,
+    };
+  }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const cancelRunningDeselect = useCallback((id: string) => {
     const timer = runningDeselectTimersRef.current.get(id);
@@ -635,27 +603,30 @@ export function App({
     };
   }, []);
 
-  function writeWorkspaceToURL(
-    nextSelectedIDs: string[],
-    nextPinnedIDs: string[],
-    nextFocusedID: string | null,
-    nextStatusFilters: string[],
-    nextCwdFilters: string[],
-    mode: "push" | "replace" = "push",
-    nextPinnedStatusFilters: string[] = pinnedStatusFilters,
-    nextPinnedCwdFilters: string[] = pinnedCwdFilters,
-  ) {
-    writeWorkspaceURL(
-      nextSelectedIDs,
-      nextPinnedIDs,
-      nextFocusedID,
-      nextStatusFilters,
-      nextCwdFilters,
-      mode,
-      nextPinnedStatusFilters,
-      nextPinnedCwdFilters,
-    );
-  }
+  const writeWorkspaceToURL = useCallback(
+    (
+      nextSelectedIDs: string[],
+      nextPinnedIDs: string[],
+      nextFocusedID: string | null,
+      nextStatusFilters: string[],
+      nextCwdFilters: string[],
+      mode: "push" | "replace" = "push",
+      nextPinnedStatusFilters: string[] = pinnedStatusFilters,
+      nextPinnedCwdFilters: string[] = pinnedCwdFilters,
+    ) => {
+      writeWorkspaceURL(
+        nextSelectedIDs,
+        nextPinnedIDs,
+        nextFocusedID,
+        nextStatusFilters,
+        nextCwdFilters,
+        mode,
+        nextPinnedStatusFilters,
+        nextPinnedCwdFilters,
+      );
+    },
+    [pinnedCwdFilters, pinnedStatusFilters],
+  );
   const previewSettings = useMemo(() => {
     if (!settingsOpen) return settings;
     return {
@@ -699,6 +670,8 @@ export function App({
     const previous = previousSessionsRef.current;
     const previousByID = new Map(previous.map((session) => [session.id, session]));
     const currentSelection = currentSelectionStateRef.current;
+    const selectedIDSet = new Set(currentSelection.selectedIDs);
+    const pinnedIDSet = new Set(currentSelection.pinnedIDs);
     for (const session of items) {
       const previousSession = previousByID.get(session.id);
       if (!previousSession) continue;
@@ -720,8 +693,8 @@ export function App({
       if (
         wasMatch &&
         filterSelectedIDsRef.current.has(session.id) &&
-        currentSelection.selectedIDs.includes(session.id) &&
-        !currentSelection.pinnedIDs.includes(session.id)
+        selectedIDSet.has(session.id) &&
+        !pinnedIDSet.has(session.id)
       ) {
         scheduleFilterDeselect(session.id);
       }
@@ -763,6 +736,9 @@ export function App({
     const snapshotCwdFilters = snapshot.filters.cwds.map((filter) =>
       cwdFilterKey(filter.status, filter.cwd)
     );
+    const selectedIDSet = new Set(currentSelection.selectedIDs);
+    const pinnedIDSet = new Set(currentSelection.pinnedIDs);
+    const snapshotTerminalIDSet = new Set(snapshot.terminalIds);
     const sameFilterSource =
       currentSelection.statusFilters.join("\0") ===
         snapshot.filters.statuses.join("\0") &&
@@ -773,9 +749,9 @@ export function App({
     ) {
       for (const id of filterSelectedIDsRef.current) {
         if (
-          currentSelection.selectedIDs.includes(id) &&
-          !currentSelection.pinnedIDs.includes(id) &&
-          !snapshot.terminalIds.includes(id) &&
+          selectedIDSet.has(id) &&
+          !pinnedIDSet.has(id) &&
+          !snapshotTerminalIDSet.has(id) &&
           !expiredFilterDeselectIDsRef.current.has(id)
         ) {
           scheduleFilterDeselect(id);
@@ -790,16 +766,16 @@ export function App({
     const preservedRunningIDs = settings.autoDeselectRunning
       ? [...pendingRunningIDs].filter(
         (id) =>
-          selectedIDs.includes(id) &&
-          !pinnedIDs.includes(id) &&
-          !snapshot.terminalIds.includes(id),
+          selectedIDSet.has(id) &&
+          !pinnedIDSet.has(id) &&
+          !snapshotTerminalIDSet.has(id),
       )
       : [];
     const preservedFilterDeselectIDs = [...pendingFilterDeselectIDs].filter(
       (id) =>
-        selectedIDs.includes(id) &&
-        !pinnedIDs.includes(id) &&
-        !snapshot.terminalIds.includes(id),
+        selectedIDSet.has(id) &&
+        !pinnedIDSet.has(id) &&
+        !snapshotTerminalIDSet.has(id),
     );
     const preservedIDs = [
       ...new Set([...preservedRunningIDs, ...preservedFilterDeselectIDs]),
@@ -822,11 +798,12 @@ export function App({
     const nextPinnedCwdFilters = (snapshot.pinnedFilters?.cwds ?? []).map(
       (filter) => cwdFilterKey(filter.status, filter.cwd),
     );
+    const effectiveManualIDSet = new Set(effectiveSnapshot.manualTerminalIds);
+    const effectivePinnedIDSet = new Set(effectiveSnapshot.pinnedTerminalIds);
     filterSelectedIDsRef.current = new Set(
       effectiveSnapshot.terminalIds.filter(
         (id) =>
-          !effectiveSnapshot.manualTerminalIds.includes(id) &&
-          !effectiveSnapshot.pinnedTerminalIds.includes(id),
+          !effectiveManualIDSet.has(id) && !effectivePinnedIDSet.has(id),
       ),
     );
     manualSelectedIDsRef.current = new Set(effectiveSnapshot.manualTerminalIds);
@@ -901,11 +878,11 @@ export function App({
     applyServerSelection(snapshot);
   }
 
-  function markLocalSelectionMutation() {
+  const markLocalSelectionMutation = useCallback(() => {
     if (syncSelection) {
       selectionLocalVersionRef.current += 1;
     }
-  }
+  }, [syncSelection]);
 
   async function flushSelectionWrites() {
     if (!api || selectionWriteActiveRef.current) return;
@@ -1089,13 +1066,13 @@ export function App({
   useLayoutEffect(() => {
     if (!sessions) return;
     const availableIDs = new Set(sessions.map((session) => session.id));
-    for (const id of [...openedTerminalIDsRef.current]) {
-      if (!availableIDs.has(id)) openedTerminalIDsRef.current.delete(id);
+    for (const id of [...openedTerminalIDs]) {
+      if (!availableIDs.has(id)) openedTerminalIDs.delete(id);
     }
     for (const id of selectedIDs) {
-      if (availableIDs.has(id)) openedTerminalIDsRef.current.add(id);
+      if (availableIDs.has(id)) openedTerminalIDs.add(id);
     }
-  }, [sessions, selectedIDs]);
+  }, [openedTerminalIDs, sessions, selectedIDs]);
 
   useEffect(() => {
     if (!api || !sessions) return;
@@ -1310,6 +1287,7 @@ export function App({
     focusedID,
     statusFilters,
     cwdFilters,
+    writeWorkspaceToURL,
   ]);
 
   useEffect(() => {
@@ -1549,6 +1527,8 @@ export function App({
     focusedID,
     settings.autoSelectAttention,
     settings.autoDeselectRunning,
+    markLocalSelectionMutation,
+    writeWorkspaceToURL,
   ]);
 
   useEffect(() => {
@@ -1597,6 +1577,8 @@ export function App({
     selectedIDs,
     pinnedIDs,
     focusedID,
+    markLocalSelectionMutation,
+    writeWorkspaceToURL,
   ]);
 
   useEffect(() => {
@@ -1648,6 +1630,8 @@ export function App({
     pinnedIDs,
     focusedID,
     settings.autoDeselectRunning,
+    markLocalSelectionMutation,
+    writeWorkspaceToURL,
   ]);
 
   useEffect(() => {
@@ -1774,7 +1758,7 @@ export function App({
     if (!sessions) return;
     const restore = () => {
       if (syncSelection) {
-        writeWorkspaceToURL(
+        writeWorkspaceURL(
           selectedIDs,
           pinnedIDs,
           focusedID,
@@ -2422,13 +2406,6 @@ export function App({
     setCreateOpen(true);
   }
 
-  async function enableAttentionAlerts() {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      await Notification.requestPermission();
-    }
-    playAttentionTone();
-  }
-
   async function submitCreate(event: FormEvent) {
     event.preventDefault();
     await createSession(false, cwdDraft.trim());
@@ -2691,19 +2668,22 @@ export function App({
     return <main className="loading-screen">Connecting to Euphony…</main>;
   }
 
-  const panes = selectedIDs
-    .map((id) => sessions.find((item) => item.id === id))
-    .filter((item): item is Session => Boolean(item));
-  const selectedSessions = selectedIDs
-    .map((id) => sessions.find((session) => session.id === id))
-    .filter((session): session is Session => Boolean(session));
+  const sessionsByID = new Map(sessions.map((session) => [session.id, session]));
+  const panes = selectedIDs.reduce<Session[]>((result, id) => {
+    const session = sessionsByID.get(id);
+    if (session) result.push(session);
+    return result;
+  }, []);
+  const selectedSessions = panes;
   const selectedIDSet = new Set(selectedIDs);
-  const cachedPanes = [...openedTerminalIDsRef.current]
-    .filter((id) => !selectedIDSet.has(id))
-    .map((id) => sessions.find((item) => item.id === id))
-    .filter((item): item is Session => Boolean(item));
+  const cachedPanes = [...openedTerminalIDs].reduce<Session[]>((result, id) => {
+    if (selectedIDSet.has(id)) return result;
+    const session = sessionsByID.get(id);
+    if (session) result.push(session);
+    return result;
+  }, []);
   const mountedPanes = [...panes, ...cachedPanes];
-  const selected = sessions.find((item) => item.id === focusedID) ?? panes[0];
+  const selected = sessionsByID.get(focusedID ?? "") ?? panes[0];
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")
     .map((pane) => pane.id);
@@ -3418,6 +3398,7 @@ export function App({
                   <select
                     id="terminalCursorStyle"
                     name="terminalCursorStyle"
+                    aria-label="Cursor style"
                     className="settings-select"
                     value={terminalCursorStyleDraft}
                     onChange={(event) => {

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useLayoutEffect, useRef } from "react";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { ApiClient } from "../api";
 import type { AgentTranscript, Session } from "../types";
@@ -64,9 +65,11 @@ test("applies the configured agent log font size", () => {
 
   render(<AgentLogView session={session} api={api} active={false} fontSize={17} />);
 
-  expect(screen.getByRole("region", { name: "Agent log" })).toHaveStyle({
+  const agentLogRegion = screen.getByRole("region", { name: "Agent log" });
+  expect(agentLogRegion).toHaveStyle({
     "--agent-log-font-size": "17px",
   });
+  expect(agentLogRegion).not.toHaveAttribute("role", "region");
 });
 
 test("renders normalized transcript as safe semantic HTML", async () => {
@@ -88,6 +91,46 @@ test("renders normalized transcript as safe semantic HTML", async () => {
   expect(document.querySelector("script")).toBeNull();
   expect(screen.getByText("3 tool calls")).toBeInTheDocument();
   expect(screen.getByText("3 tool calls").closest("details")).toBeInTheDocument();
+});
+
+test("reuses one time formatter for timestamped entries", async () => {
+  const OriginalDateTimeFormat = Intl.DateTimeFormat;
+  class CountingDateTimeFormat {
+    constructor(locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+      return new OriginalDateTimeFormat(locales, options);
+    }
+  }
+  const dateTimeFormat = vi
+    .spyOn(Intl, "DateTimeFormat")
+    .mockImplementation(CountingDateTimeFormat as unknown as typeof Intl.DateTimeFormat);
+  const timestampedLog: AgentTranscript = {
+    ...initialLog,
+    entries: [
+      {
+        id: "timestamp-1",
+        kind: "message",
+        role: "assistant",
+        timestamp: "2026-07-30T01:02:03Z",
+        content: "First timestamped entry",
+      },
+      {
+        id: "timestamp-2",
+        kind: "message",
+        role: "assistant",
+        timestamp: "2026-07-30T01:02:04Z",
+        content: "Second timestamped entry",
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: timestampedLog, etag: 'W/"time"' }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  expect(await screen.findByText("First timestamped entry")).toBeInTheDocument();
+  expect(screen.getByText("Second timestamped entry")).toBeInTheDocument();
+  expect(dateTimeFormat).not.toHaveBeenCalled();
 });
 
 test("expands tool activity and pairs each call with its matching result", async () => {
@@ -372,6 +415,79 @@ test("loads older entries from the top and preserves the reading position", asyn
   expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
 });
 
+test("does not reuse a scroll anchor after an older page from another transcript", async () => {
+  vi.useFakeTimers();
+  const mismatchedOlderLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-other",
+    startCursor: "0",
+    endCursor: "100",
+    entries: [
+      { id: "other-0", kind: "message", role: "assistant", content: "Other transcript" },
+    ],
+  };
+  const refreshedLog: AgentTranscript = {
+    agent: "codex",
+    sessionId: "session-1",
+    startCursor: "50",
+    endCursor: "250",
+    entries: [
+      { id: "refreshed-0", kind: "message", role: "assistant", content: "Refreshed log" },
+    ],
+  };
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValueOnce({ log: initialLog, etag: 'W/"first"' })
+    .mockResolvedValueOnce({ log: mismatchedOlderLog, etag: 'W/"other"' })
+    .mockResolvedValueOnce({ log: refreshedLog, etag: 'W/"refreshed"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  render(<AgentLogView session={session} api={api} active />);
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(screen.getByRole("heading", { name: "Result" })).toBeInTheDocument();
+
+  const viewport = screen.getByLabelText("Agent log", {
+    selector: '[data-slot="message-scroller-viewport"]',
+  });
+  let scrollTop = 250;
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => 1000,
+  });
+  const scrollAssignments: number[] = [];
+  Object.defineProperty(viewport, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = value;
+      scrollAssignments.push(value);
+    },
+  });
+  const animationFrames: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    animationFrames.push(callback);
+    return animationFrames.length;
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await Promise.resolve();
+  });
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+  });
+
+  expect(screen.getByText("Refreshed log")).toBeInTheDocument();
+  while (animationFrames.length > 0) {
+    const frame = animationFrames.splice(0);
+    act(() => frame.forEach((callback) => callback(0)));
+  }
+  expect(scrollAssignments).not.toContain(250);
+});
+
 test("offers older history when the newest page has no displayable entries", async () => {
   const user = userEvent.setup();
   const emptyNewest: AgentTranscript = {
@@ -636,6 +752,46 @@ test("replaces the transcript when a linked agent session changes", async () => 
   rerender(<AgentLogView session={{ ...session, agent: "claude" }} api={api} active />);
   expect(await screen.findByText("Newest session")).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Result" })).not.toBeInTheDocument();
+});
+
+test("does not commit the previous transcript while switching session identity", async () => {
+  const getAgentLog = vi
+    .fn()
+    .mockResolvedValue({ log: initialLog, etag: 'W/"first"' });
+  const api = { getAgentLog } as unknown as ApiClient;
+  let textDuringCommit = "";
+
+  function SessionSwitchProbe({
+    session: currentSession,
+    active: isActive,
+  }: {
+    session: Session;
+    active: boolean;
+  }) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+      if (currentSession.agent === "claude") {
+        textDuringCommit = containerRef.current?.textContent ?? "";
+      }
+    }, [currentSession.agent]);
+    return (
+      <div ref={containerRef}>
+        <AgentLogView session={currentSession} api={api} active={isActive} />
+      </div>
+    );
+  }
+
+  const { rerender } = render(<SessionSwitchProbe session={session} active />);
+  expect(await screen.findByRole("heading", { name: "Result" })).toBeInTheDocument();
+
+  rerender(
+    <SessionSwitchProbe
+      session={{ ...session, agent: "claude" }}
+      active={false}
+    />,
+  );
+
+  expect(textDuringCommit).not.toContain("Result");
 });
 
 test("explains unavailable logs and retries automatically", async () => {
