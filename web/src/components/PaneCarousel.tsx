@@ -54,7 +54,13 @@ export function PaneCarousel({
     () => displayedPanes.map((pane) => pane.id).join("\0"),
     [displayedPanes],
   );
-  const focusedIndex = displayedPanes.findIndex((pane) => pane.id === focusedID);
+  const displayedPaneIndices = useMemo(
+    () => new Map(displayedPanes.map((pane, index) => [pane.id, index])),
+    [displayedPanes],
+  );
+  const focusedIndex = focusedID === null
+    ? -1
+    : displayedPaneIndices.get(focusedID) ?? -1;
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -118,8 +124,8 @@ export function PaneCarousel({
     >
       <div className="pane-carousel-track" style={railStyle}>
         {panes.map((pane) => {
-          const index = displayedPanes.findIndex((displayedPane) => displayedPane.id === pane.id);
-          const displayed = index >= 0;
+          const index = displayedPaneIndices.get(pane.id) ?? -1;
+          const displayed = index !== -1;
           const visible =
             displayed && index >= offset && index < offset + visibleCount;
           return (
@@ -134,7 +140,7 @@ export function PaneCarousel({
               aria-label={pane.label}
               onMouseDown={() => onFocus(pane.id)}
             >
-              {pane.content}
+              {(visible || pane.cached) && pane.content}
             </div>
           );
         })}

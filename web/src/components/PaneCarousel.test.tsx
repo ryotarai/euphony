@@ -83,20 +83,26 @@ test("moves the visible window by one mounted pane", async () => {
   expect(pane("One pane")).toHaveAttribute("data-visible", "true");
   expect(pane("Two pane")).toHaveAttribute("data-visible", "true");
   expect(pane("Three pane")).toHaveAttribute("data-visible", "false");
+  expect(screen.getByText("one terminal")).toBeInTheDocument();
+  expect(screen.getByText("two terminal")).toBeInTheDocument();
+  expect(screen.queryByText("three terminal")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Show previous pane" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Show next pane" }));
 
   expect(pane("One pane")).toHaveAttribute("data-visible", "false");
   expect(pane("Two pane")).toHaveAttribute("data-visible", "true");
   expect(pane("Three pane")).toHaveAttribute("data-visible", "true");
+  expect(screen.queryByText("one terminal")).not.toBeInTheDocument();
+  expect(screen.getByText("three terminal")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Show previous pane" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Show next pane" })).not.toBeInTheDocument();
-  expect(screen.getByText("one terminal")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Show previous pane" }));
 
   expect(pane("One pane")).toHaveAttribute("data-visible", "true");
   expect(pane("Three pane")).toHaveAttribute("data-visible", "false");
+  expect(screen.getByText("one terminal")).toBeInTheDocument();
+  expect(screen.queryByText("three terminal")).not.toBeInTheDocument();
 });
 
 test("reveals a pane when focus moves beyond the visible window", () => {

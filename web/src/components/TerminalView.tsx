@@ -25,6 +25,7 @@ import {
   loadWebglRenderer,
   openTerminalLink,
   refreshTerminalIfVisible,
+  terminalElementIsVisible,
   terminalOptions,
   terminalScrollback,
 } from "./terminalUtils";
@@ -241,6 +242,7 @@ function useTerminalView({
   const sourceVisibleRef = useRef(sourceVisible);
   const sessionCwdRef = useRef(session.cwd);
   const terminalHistoryLimitRef = useRef(terminalHistoryLimit);
+  const localSizeRef = useRef<{ cols: number; rows: number } | undefined>(undefined);
   const previousSourceVisibleRef = useRef(sourceVisible);
   const connectionStateRef = useRef<ConnectionState | undefined>(undefined);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -343,7 +345,7 @@ function useTerminalView({
     };
     const reportCapacity = () => {
       if (!sourceVisibleRef.current) return;
-      if (host.hidden || host.closest("[hidden]")) {
+      if (!terminalElementIsVisible(host)) {
         if (claimActive && send({ type: "resize_release" })) {
           claimActive = false;
           lastSize = "";
@@ -353,7 +355,14 @@ function useTerminalView({
       refreshTerminalIfVisible(host, terminal);
       const dimensions = terminal.proposeDimensions?.();
       if (!dimensions || dimensions.cols < 1 || dimensions.rows < 1) return;
-      setLocalSize(dimensions);
+      const previousDimensions = localSizeRef.current;
+      if (
+        previousDimensions?.cols !== dimensions.cols ||
+        previousDimensions.rows !== dimensions.rows
+      ) {
+        localSizeRef.current = dimensions;
+        setLocalSize(dimensions);
+      }
       sendResize(dimensions.cols, dimensions.rows);
     };
     capacityReporterRef.current = reportCapacity;

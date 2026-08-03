@@ -99,11 +99,17 @@ export function terminalOptions(
   };
 }
 
+export function terminalElementIsVisible(host: HTMLElement): boolean {
+  return !host.hidden &&
+    !host.closest("[hidden]") &&
+    !host.closest('[aria-hidden="true"]');
+}
+
 export function fitTerminalIfVisible(
   host: HTMLElement,
   terminal: Pick<{ fit(): void }, "fit">,
 ) {
-  if (host.hidden || host.closest("[hidden]")) return;
+  if (!terminalElementIsVisible(host)) return;
   terminal.fit();
 }
 
@@ -111,6 +117,6 @@ export function refreshTerminalIfVisible(
   host: HTMLElement,
   terminal: Pick<{ refresh?(): void }, "refresh">,
 ) {
-  if (host.hidden || host.closest("[hidden]")) return;
+  if (!terminalElementIsVisible(host)) return;
   terminal.refresh?.();
 }

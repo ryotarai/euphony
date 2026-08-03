@@ -222,6 +222,12 @@ test("keeps an opened terminal connection alive while switching sessions", async
   await clearSessions(page);
   const first = await createSession(page, "First");
   await createSession(page, "Second");
+  const laterSessions = await Promise.all([
+    createSession(page, "Third"),
+    createSession(page, "Fourth"),
+    createSession(page, "Fifth"),
+    createSession(page, "Sixth"),
+  ]);
   await replaceSharedSelection(page, first.id);
 
   let firstSocketCount = 0;
@@ -254,6 +260,16 @@ test("keeps an opened terminal connection alive while switching sessions", async
 
   await page.getByRole("button", { name: "Select First" }).click();
   await expect(firstTerminal).toBeVisible();
+  expect(firstSocketCount).toBe(1);
+
+  for (const session of laterSessions) {
+    await page.getByRole("button", { name: `Select ${session.name}` }).click();
+    await expect(page.getByLabel(`${session.name} terminal`, { exact: true })).toBeVisible();
+  }
+
+  await expect(page.locator(".terminal-view")).toHaveCount(5);
+  await expect(firstTerminal).toBeHidden();
+  await expect(page.getByLabel("Second terminal", { exact: true })).toHaveCount(0);
   expect(firstSocketCount).toBe(1);
 });
 test("shares the smallest terminal size across differently sized browsers", async ({

@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Profiler } from "react";
 import {
   TerminalView,
   type TerminalDriver,
@@ -57,7 +58,7 @@ class FakeSocket extends EventTarget implements WebSocketLike {
   }
 }
 
-test("does not fit xterm while its mounted tab panel is hidden", () => {
+test("does not fit xterm beneath a hidden or aria-hidden panel", () => {
   const panel = document.createElement("div");
   const host = document.createElement("div");
   panel.append(host);
@@ -71,6 +72,14 @@ test("does not fit xterm while its mounted tab panel is hidden", () => {
   panel.hidden = false;
   fitTerminalIfVisibleUtil(host, terminal);
   expect(terminal.fit).toHaveBeenCalledTimes(1);
+
+  panel.setAttribute("aria-hidden", "true");
+  fitTerminalIfVisibleUtil(host, terminal);
+  expect(terminal.fit).toHaveBeenCalledTimes(1);
+
+  panel.setAttribute("aria-hidden", "false");
+  fitTerminalIfVisibleUtil(host, terminal);
+  expect(terminal.fit).toHaveBeenCalledTimes(2);
 });
 
 test("maps finite and unlimited history limits to xterm scrollback rows", () => {
@@ -942,6 +951,55 @@ test("repaints the terminal when its host layout changes without changing capaci
   vi.unstubAllGlobals();
 });
 
+test("does not commit a render when measured capacity is unchanged", async () => {
+  const socket = new FakeSocket();
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    refresh: () => undefined,
+    proposeDimensions: () => ({ cols: 100, rows: 32 }),
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    refresh(): void;
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  let commits = 0;
+
+  render(
+    <Profiler id="terminal" onRender={() => commits++}>
+      <TerminalView
+        session={runningSession}
+        api={api}
+        createTerminal={() => terminal}
+        createSocket={() => socket}
+      />
+    </Profiler>,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  act(() => socket.dispatchEvent(new Event("open")));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Codex terminal").parentElement)
+      .toHaveAttribute("data-local-cols", "100")
+  );
+  const commitsBeforeResize = commits;
+
+  act(() => window.dispatchEvent(new Event("resize")));
+
+  expect(commits).toBe(commitsBeforeResize);
+});
+
 test("reports connection changes and retries without rendering pane-local status", async () => {
   const sockets = [new FakeSocket(), new FakeSocket()];
   const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
@@ -1140,6 +1198,63 @@ test("releases a hidden terminal capacity and reports it again when visible", as
     { type: "resize_release" },
     { type: "resize", cols: 120, rows: 40 },
   ]);
+});
+
+test("releases capacity without measuring or refreshing beneath an aria-hidden pane", async () => {
+  const socket = new FakeSocket();
+  const refresh = vi.fn();
+  const proposeDimensions = vi.fn(() => ({ cols: 120, rows: 40 }));
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    refresh,
+    proposeDimensions,
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    refresh(): void;
+    proposeDimensions(): { cols: number; rows: number };
+    resize(cols: number, rows: number): void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const props = {
+    session: runningSession,
+    api,
+    createTerminal: () => terminal,
+    createSocket: () => socket,
+  };
+  const view = (hidden: boolean) => (
+    <div aria-hidden={hidden}>
+      <TerminalView {...props} active={!hidden} />
+    </div>
+  );
+
+  const { rerender } = render(view(false));
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  act(() => socket.dispatchEvent(new Event("open")));
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+  ]);
+  refresh.mockClear();
+  proposeDimensions.mockClear();
+
+  rerender(view(true));
+
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+    { type: "resize_release" },
+  ]);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(proposeDimensions).not.toHaveBeenCalled();
 });
 
 test("retains terminal capacity while its source tab is hidden", async () => {

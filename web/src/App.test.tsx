@@ -5,6 +5,10 @@ import { App } from "./App";
 import { agentRunningTransitions, attentionTransitions } from "./sessionUtils";
 import type { SelectionSnapshot, Session, Settings } from "./types";
 
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100_000);
+});
+
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
   paneTabShortcut: "Meta+L",
@@ -155,7 +159,7 @@ test("uses the server selection as authoritative and persists browser changes", 
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
-test("keeps terminal views alive across terminal switches", async () => {
+test("keeps only four recently visited terminal views warm across switches", async () => {
   const mounts = new Map<string, number>();
   const unmounts = new Map<string, number>();
   function TerminalLifetimeProbe({ id }: { id: string }) {
@@ -168,9 +172,15 @@ test("keeps terminal views alive across terminal switches", async () => {
     return <div aria-label={`${id} terminal pane`} />;
   }
 
+  const terminalSessions = Array.from({ length: 6 }, (_, index) => ({
+    ...runningSession,
+    id: `session-${index + 1}`,
+    name: `Terminal ${index + 1}`,
+    cwd: `/workspace/terminal-${index + 1}`,
+  }));
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (input === "/api/sessions") {
-      return jsonResponse([runningSession, secondRunningSession]);
+      return jsonResponse(terminalSessions);
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -186,18 +196,19 @@ test("keeps terminal views alive across terminal switches", async () => {
   );
 
   expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Select Claude" }));
+  for (let index = 2; index <= 6; index += 1) {
+    await user.click(screen.getByRole("button", { name: `Select Terminal ${index}` }));
+    expect(await screen.findByLabelText(`session-${index} terminal pane`)).toBeVisible();
+  }
+
+  expect(screen.getAllByLabelText(/session-\d+ terminal pane/)).toHaveLength(5);
+  expect(unmounts.get("session-1")).toBe(1);
+  expect(mounts.get("session-2")).toBe(1);
+  expect(unmounts.get("session-2") ?? 0).toBe(0);
+
+  await user.click(screen.getByRole("button", { name: "Select Terminal 2" }));
   expect(await screen.findByLabelText("session-2 terminal pane")).toBeVisible();
-
-  expect(mounts.get("session-1")).toBe(1);
-  expect(unmounts.get("session-1") ?? 0).toBe(0);
-  expect(document.querySelector('[aria-label="Codex pane"]'))
-    .toHaveAttribute("data-visible", "false");
-
-  await user.click(screen.getByRole("button", { name: "Select Codex" }));
-  expect(await screen.findByLabelText("session-1 terminal pane")).toBeVisible();
-  expect(mounts.get("session-1")).toBe(1);
-  expect(unmounts.get("session-1") ?? 0).toBe(0);
+  expect(mounts.get("session-2")).toBe(1);
 });
 
 test("serializes rapid shared-selection writes and rebases the latest state", async () => {

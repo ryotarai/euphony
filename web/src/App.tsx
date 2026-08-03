@@ -91,6 +91,7 @@ const quickActionStatuses = [
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 const runningDeselectDelayMs = 10_000;
+const maxCachedTerminalViews = 4;
 
 interface RunningDeselectNotice {
   id: string;
@@ -1066,11 +1067,20 @@ export function App({
   useLayoutEffect(() => {
     if (!sessions) return;
     const availableIDs = new Set(sessions.map((session) => session.id));
+    const selectedIDSet = new Set(selectedIDs);
     for (const id of [...openedTerminalIDs]) {
       if (!availableIDs.has(id)) openedTerminalIDs.delete(id);
     }
     for (const id of selectedIDs) {
-      if (availableIDs.has(id)) openedTerminalIDs.add(id);
+      if (!availableIDs.has(id)) continue;
+      openedTerminalIDs.delete(id);
+      openedTerminalIDs.add(id);
+    }
+    const cachedIDs = [...openedTerminalIDs].filter(
+      (id) => !selectedIDSet.has(id),
+    );
+    for (const id of cachedIDs.slice(0, -maxCachedTerminalViews)) {
+      openedTerminalIDs.delete(id);
     }
   }, [openedTerminalIDs, sessions, selectedIDs]);
 
@@ -2676,12 +2686,14 @@ export function App({
   }, []);
   const selectedSessions = panes;
   const selectedIDSet = new Set(selectedIDs);
-  const cachedPanes = [...openedTerminalIDs].reduce<Session[]>((result, id) => {
-    if (selectedIDSet.has(id)) return result;
-    const session = sessionsByID.get(id);
-    if (session) result.push(session);
-    return result;
-  }, []);
+  const cachedPanes = [...openedTerminalIDs]
+    .filter((id) => !selectedIDSet.has(id))
+    .slice(-maxCachedTerminalViews)
+    .reduce<Session[]>((result, id) => {
+      const session = sessionsByID.get(id);
+      if (session) result.push(session);
+      return result;
+    }, []);
   const mountedPanes = [...panes, ...cachedPanes];
   const selected = sessionsByID.get(focusedID ?? "") ?? panes[0];
   const disconnectedIDs = panes
