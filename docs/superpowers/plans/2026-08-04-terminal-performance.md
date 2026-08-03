@@ -126,6 +126,7 @@ git commit -m "perf(web): bound terminal rendering work"
 **Files:**
 - Modify: `internal/session/foreground_unix.go`
 - Modify: `internal/session/manager.go`
+- Modify: `internal/session/session.go`
 - Modify: `internal/session/manager_test.go`
 - Modify: `internal/server/sessions.go`
 - Modify: `internal/server/sessions_test.go`
@@ -204,7 +205,19 @@ and execute synchronously when available, preserving current callers. Add an
 async trigger used by the HTTP handler, which writes `ListCurrent()` first and
 does not enqueue duplicate refresh goroutines.
 
-- [ ] **Step 10: Verify backend behavior**
+- [ ] **Step 10: Add a failing PTY drain regression test**
+
+Exercise a readable PTY until it is drained, then submit a resize and require
+the resize to complete. The test must fail by blocked pump or timeout before the
+descriptor is made non-blocking.
+
+- [ ] **Step 11: Make PTY draining non-blocking**
+
+Set the PTY descriptor non-blocking during session startup. Treat `EAGAIN` and
+`EWOULDBLOCK` as a normal end of the current drain batch, while preserving EOF
+and real error handling.
+
+- [ ] **Step 12: Verify backend behavior**
 
 Run:
 
@@ -214,7 +227,7 @@ go test -race ./internal/session ./internal/server -count=1
 go test ./... -count=1
 ```
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
 git add internal/session internal/server
@@ -258,4 +271,3 @@ geometry callbacks plateau at the selected-visible count plus four warm panes.
 git add .
 git commit -m "test: cover terminal performance bounds"
 ```
-

@@ -25,6 +25,9 @@ byte fidelity.
   manager lock that `WriteTerminal` needs.
 - `ForegroundCommand` holds the PTY file mutex while waiting for `ps`; terminal
   input needs the same mutex.
+- The PTY pump uses blocking reads after readiness notification. Persistent
+  `POLLHUP`/`POLLERR` readiness can therefore send it into another blocking
+  read, stalling output delivery and resize processing.
 
 The existing cleanup paths work when a terminal unmounts. The dominant
 frontend issue is therefore unbounded retention, not a missing cleanup.
@@ -95,6 +98,9 @@ rather than:
   result if the terminal identity is unchanged.
 - Foreground process group lookup stays protected by the PTY file mutex, but
   the external `ps` command runs after that mutex is released.
+- The PTY file descriptor is non-blocking. A drained descriptor (`EAGAIN`) ends
+  the current batch normally so resize wakeups and later output remain
+  serviceable.
 
 Terminal input therefore waits only for a short map lookup and PTY write, not
 for transcript scanning or `ps`.
@@ -135,9 +141,10 @@ The two flows share terminal identity but no slow operation or long-lived lock.
   lookup/terminal input are not blocked.
 - A backend concurrency test blocks foreground `ps` execution and proves PTY
   input is not blocked.
+- A PTY pump regression test exercises drain-to-`EAGAIN` and proves a resize
+  request still completes after output/HUP readiness.
 - A server test proves session-list response completion does not wait for a
   blocked metadata refresh and overlapping requests do not start duplicate
   refreshes.
 - Focused unit tests, all Go tests, frontend typecheck/build, and Playwright
   terminal reliability tests verify integration.
-
