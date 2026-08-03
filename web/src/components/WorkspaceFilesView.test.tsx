@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
@@ -16,6 +17,13 @@ const session: Session = {
   state: "running",
   cwd: "/repo",
   createdAt: "2026-07-31T00:00:00Z",
+};
+
+const nextSession: Session = {
+  ...session,
+  id: "terminal-2",
+  name: "Terminal two",
+  cwd: "/other-repo",
 };
 
 const rootDirectory: WorkspaceDirectory = {
@@ -257,6 +265,37 @@ test("ignores a stale file response after another file is selected", async () =>
   await waitFor(() => {
     expect(screen.getByRole("heading", { name: "second.txt" })).toBeVisible();
   });
+});
+
+test("clears stale file state before a new session's passive effects run", async () => {
+  const user = userEvent.setup();
+  let observedStaleFile = false;
+
+  function SessionHarness({ currentSession }: { currentSession: Session }) {
+    useLayoutEffect(() => {
+      if (currentSession.id === nextSession.id) {
+        observedStaleFile = screen.queryByRole("heading", {
+          name: "README.md",
+        }) !== null;
+      }
+    }, [currentSession.id]);
+
+    return (
+      <WorkspaceFilesView
+        session={currentSession}
+        api={filesAPI()}
+        active
+      />
+    );
+  }
+
+  const { rerender } = render(<SessionHarness currentSession={session} />);
+  await user.click(await screen.findByRole("button", { name: "Open README.md" }));
+  expect(await screen.findByRole("heading", { name: "README.md" })).toBeVisible();
+
+  rerender(<SessionHarness currentSession={nextSession} />);
+
+  expect(observedStaleFile).toBe(false);
 });
 
 test("refresh invalidates child directories and reloads the selected file", async () => {
