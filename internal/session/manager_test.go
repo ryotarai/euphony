@@ -3981,3 +3981,72 @@ func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
 	}
 	t.Fatal("condition was not met before timeout")
 }
+
+func TestListRefreshesRenamedClaudeTitles(t *testing.T) {
+	// `/rename` writes a custom-title entry to the transcript without firing any
+	// Claude Code hook, so nothing reports it. Re-reading the transcript on list
+	// is what keeps a renamed session's sidebar entry from going stale.
+	transcript := filepath.Join(t.TempDir(), "claude-session.jsonl")
+	if err := os.WriteFile(transcript, []byte(
+		`{"type":"ai-title","aiTitle":"Old title","sessionId":"claude-session"}`+"\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal-1"] = &entry{metadata: Metadata{
+		ID: "terminal-1", Name: "Terminal", State: StateRunning,
+		Agent: "claude", AgentSessionID: "claude-session",
+		AgentTranscriptPath: transcript,
+		AgentTitle:          "Old title", CreatedAt: time.Now().UTC(),
+	}}
+
+	if items := manager.List(); len(items) != 1 || items[0].AgentTitle != "Old title" {
+		t.Fatalf("List() = %#v, want the reported title", items)
+	}
+
+	if err := os.WriteFile(transcript, []byte(
+		`{"type":"ai-title","aiTitle":"Old title","sessionId":"claude-session"}`+"\n"+
+			`{"type":"custom-title","customTitle":"deploy","sessionId":"claude-session"}`+"\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	manager.sessions["terminal-1"].claudeTitleSampledAt = time.Time{}
+
+	items := manager.List()
+	if len(items) != 1 || items[0].AgentTitle != "deploy" {
+		t.Fatalf("List() = %#v, want the renamed Claude title", items)
+	}
+}
+
+func TestListLeavesNonClaudeAndTitlelessTranscriptsAlone(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "claude-session.jsonl")
+	if err := os.WriteFile(transcript, []byte(
+		`{"type":"user","message":{"content":"hi"}}`+"\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal-1"] = &entry{metadata: Metadata{
+		ID: "terminal-1", Name: "Terminal", State: StateRunning,
+		Agent: "claude", AgentSessionID: "claude-session",
+		AgentTranscriptPath: transcript,
+		AgentTitle:          "Reported title", CreatedAt: time.Now().UTC(),
+	}}
+	manager.sessions["terminal-2"] = &entry{metadata: Metadata{
+		ID: "terminal-2", Name: "Terminal", State: StateRunning,
+		Agent: "codex", AgentSessionID: "codex-session",
+		AgentTranscriptPath: transcript,
+		AgentTitle:          "Codex title", CreatedAt: time.Now().UTC().Add(time.Second),
+	}}
+
+	items := manager.List()
+	if len(items) != 2 {
+		t.Fatalf("List() = %#v, want two terminals", items)
+	}
+	if items[0].AgentTitle != "Reported title" {
+		t.Fatalf("titleless transcript overwrote reported title: %q", items[0].AgentTitle)
+	}
+	if items[1].AgentTitle != "Codex title" {
+		t.Fatalf("Codex title read from a Claude transcript: %q", items[1].AgentTitle)
+	}
+}

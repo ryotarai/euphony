@@ -419,3 +419,52 @@ func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, target an
 		t.Fatalf("decode response: %v; body = %q", err, response.Body.String())
 	}
 }
+
+func TestSessionListHealsStaleClaudeTitleFromTranscript(t *testing.T) {
+	// `/rename` appends a custom-title entry to the transcript and fires no
+	// hook, so the sidebar keeps whatever title was last reported until the list
+	// re-reads the transcript.
+	transcript := filepath.Join(t.TempDir(), "agent-1.jsonl")
+	if err := os.WriteFile(transcript, []byte(
+		`{"type":"ai-title","aiTitle":"Add relayed webhook support","sessionId":"agent-1"}`+"\n"+
+			`{"type":"custom-title","customTitle":"deploy","sessionId":"agent-1"}`+"\n",
+	), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+
+	hook := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":"`+metadata.ID+`","agent":"claude","agentSessionId":"agent-1",`+
+			`"agentTranscriptPath":`+strconv.Quote(transcript)+`,"status":"waiting",`+
+			`"title":"Add relayed webhook support","cwd":"/repo"}`)
+	if hook.Code != http.StatusOK {
+		t.Fatalf("POST hook status = %d, body = %s", hook.Code, hook.Body.String())
+	}
+
+	// The list endpoint answers from the current snapshot and refreshes behind
+	// the response, so the healed title lands on the next read.
+	listed := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	waitForServer(t, time.Second, func() bool {
+		current, ok := srv.sessions.Metadata(metadata.ID)
+		return ok && current.AgentTitle == "deploy"
+	})
+
+	relisted := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	var sessions []session.Metadata
+	decodeResponse(t, relisted, &sessions)
+	if len(sessions) != 1 || sessions[0].AgentTitle != "deploy" {
+		t.Fatalf("sessions = %#v, want the renamed Claude title", sessions)
+	}
+}

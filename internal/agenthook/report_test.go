@@ -175,3 +175,34 @@ func TestReportClearsAgentWhenSessionEnds(t *testing.T) {
 		t.Fatalf("session-end payload = %#v, want resumable claude agent", payload)
 	}
 }
+
+func TestReportPrefersRenamedClaudeSessionTitle(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"ai-title","aiTitle":"Add relayed webhook support","sessionId":"agent-1"}`,
+		`{"type":"custom-title","customTitle":"deploy","sessionId":"agent-1"}`,
+		`{"type":"ai-title","aiTitle":"Add relayed webhook support","sessionId":"agent-1"}`,
+	}
+	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	var payload map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	input := `{"cwd":"/repo","session_id":"agent-1","transcript_path":` + quote(transcript) + `}`
+	err := Report(context.Background(), Config{
+		URL: server.URL, Token: "secret", TerminalID: "terminal-123",
+		Agent: "claude", Status: "running",
+	}, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if payload["title"] != "deploy" {
+		t.Fatalf("payload[title] = %q, want the renamed session title", payload["title"])
+	}
+}

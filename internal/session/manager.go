@@ -150,6 +150,7 @@ type entry struct {
 	// a claim that has gone stale.
 	cwdReportedAt              time.Time
 	foregroundProcessSampledAt time.Time
+	claudeTitleSampledAt       time.Time
 	// codexTitleHeaderScanned records the one-time bounded header recovery for
 	// Codex sessions whose automatic name predates the tail polling window.
 	codexTitleHeaderScanned bool
@@ -186,6 +187,12 @@ type codexActivityWatch struct {
 const defaultCWDSampleInterval = 5 * time.Second
 const defaultForegroundProcessSampleInterval = 500 * time.Millisecond
 
+// defaultClaudeTitleSampleInterval bounds how often a Claude transcript is
+// re-read for its title. `/rename` fires no hook, so nothing reports it; this
+// backstop is what surfaces the new name. Lists happen in tight loops, and each
+// sample tails a file that grows to tens of megabytes, so the reads are spaced.
+const defaultClaudeTitleSampleInterval = 2 * time.Second
+
 type Manager struct {
 	mu                              sync.RWMutex
 	refreshMu                       sync.Mutex
@@ -212,6 +219,7 @@ type Manager struct {
 	onChange                        func(Change)
 	changeSequence                  uint64
 	cwdSampleInterval               time.Duration
+	claudeTitleSampleInterval       time.Duration
 	foregroundProcessSampleInterval time.Duration
 	codexTitleResolver              func(string, string, bool) (string, error)
 	repositoryRootResolver          func(string) string
@@ -283,6 +291,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
 		settings: DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
 		foregroundProcessSampleInterval: defaultForegroundProcessSampleInterval,
+		claudeTitleSampleInterval:       defaultClaudeTitleSampleInterval,
 	}
 }
 
@@ -1297,6 +1306,7 @@ func (m *Manager) finishMetadataRefresh(done chan struct{}, changes []Change) {
 func (m *Manager) refreshMetadata() []Change {
 	var changes []Change
 	changes = append(changes, m.refreshCodexTitles()...)
+	changes = append(changes, m.refreshClaudeTitles()...)
 	changes = append(changes, m.refreshWorkingDirectories()...)
 	changes = append(changes, m.refreshForegroundProcessNames()...)
 	return changes
@@ -1554,6 +1564,93 @@ func (m *Manager) resolveCodexTitle(path, sessionID string, fromStart bool) (str
 	return agentlog.CodexThreadTitle(path, sessionID)
 }
 
+// refreshClaudeTitles re-derives each Claude terminal's title from the
+// transcript the hooks pointed at. A `/rename` is recorded there without firing
+// any hook, so a title that only ever arrives by report stays stale — sometimes
+// forever, when the session was renamed before Claude Code guessed a title of
+// its own. Reads happen outside the lock: each one tails a file that grows to
+// tens of megabytes, and holding the lock across that would stall every reader.
+func (m *Manager) refreshClaudeTitles() []Change {
+	type sample struct {
+		id             string
+		entry          *entry
+		transcriptPath string
+	}
+	now := time.Now()
+	var due []sample
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return nil
+	}
+	for id, item := range m.sessions {
+		if item.metadata.Agent != "claude" || item.metadata.AgentTranscriptPath == "" {
+			continue
+		}
+		if !item.claudeTitleSampledAt.IsZero() &&
+			now.Sub(item.claudeTitleSampledAt) < m.claudeTitleSampleInterval {
+			continue
+		}
+		item.claudeTitleSampledAt = now
+		due = append(due, sample{
+			id: id, entry: item, transcriptPath: item.metadata.AgentTranscriptPath,
+		})
+	}
+	m.mu.Unlock()
+
+	var changes []Change
+	for _, candidate := range due {
+		title := agentlog.ClaudeTranscriptTitle(candidate.transcriptPath)
+		if title == "" {
+			continue
+		}
+		lockedItem, releaseMetadataSave, err := m.lockMetadataSaveEntry(candidate.id)
+		if err != nil {
+			continue
+		}
+		if lockedItem != candidate.entry {
+			releaseMetadataSave()
+			continue
+		}
+		m.mu.Lock()
+		item, ok := m.sessions[candidate.id]
+		if m.closing ||
+			!ok ||
+			item != candidate.entry ||
+			item.metadata.Agent != "claude" ||
+			item.metadata.AgentTranscriptPath != candidate.transcriptPath ||
+			title == item.metadata.AgentTitle {
+			m.mu.Unlock()
+			releaseMetadataSave()
+			continue
+		}
+		before := item.metadata
+		item.metadata.AgentTitle = title
+		after := item.metadata
+		change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		store := m.store
+		var operation storeOperation
+		if store != nil {
+			operation = m.reserveStoreOperation()
+		}
+		m.mu.Unlock()
+		if store != nil {
+			_ = m.runStoreOperation(operation, func() error {
+				return store.Save(context.Background(), after)
+			})
+		}
+		releaseMetadataSave()
+		m.mu.RLock()
+		closing := m.closing
+		m.mu.RUnlock()
+		if closing {
+			m.skipChange(change)
+			continue
+		}
+		changes = append(changes, change)
+	}
+	return changes
+}
 func (m *Manager) Settings() Settings {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

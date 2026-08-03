@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/ryotarai/euphony/internal/agentlog"
 )
 
 type Config struct {
@@ -34,7 +36,7 @@ func Report(ctx context.Context, config Config, input io.Reader) error {
 		title = event.Title
 	}
 	if title == "" {
-		title = transcriptTitle(event.TranscriptPath)
+		title = agentlog.ClaudeTranscriptTitle(event.TranscriptPath)
 	}
 	if event.CWD == "" {
 		event.CWD, _ = os.Getwd()

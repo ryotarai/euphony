@@ -44,6 +44,11 @@
   restored after a restart shows a directory it left long ago. An agent hook
   still wins, because an agent knows its project directory where its process
   only knows the worktree it entered.
+- A session title a user set by hand outranks one an agent guessed, and the two
+  are recorded separately: Claude Code writes `/rename` as a `custom-title`
+  transcript entry and its own guess as `ai-title`, and a rename never clears
+  the guess. Read both and prefer the rename, and refresh it on read too —
+  renaming fires no hook, so nothing reports it.
 
 ## Sidebar filters, pins, and attention
 
