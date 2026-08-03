@@ -35,6 +35,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { Session, Settings } from "../types";
+import { cwdFilterKey } from "../sessionUtils";
 import {
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
@@ -85,14 +86,14 @@ function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-function displayPath(path: string) {
-  return path
-    .replace(/^\/Users\/[^/]+(?=\/|$)/, "~")
-    .replace(/^\/home\/[^/]+(?=\/|$)/, "~");
+function canonicalPath(path: string) {
+  return path.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
 }
 
-export function cwdFilterKey(status: string, cwd: string) {
-  return `${status}\u0000${cwd}`;
+function displayPath(path: string) {
+  return canonicalPath(path)
+    .replace(/^\/Users\/[^/]+(?=\/|$)/, "~")
+    .replace(/^\/home\/[^/]+(?=\/|$)/, "~");
 }
 
 function sessionLabel(session: Session) {
@@ -165,15 +166,16 @@ function SessionList(props: SessionNavigationProps) {
     <nav className="session-list" aria-label="Terminal sessions">
       {groupSessionsByCwd(props.sessions).map(({ cwd, sessions: cwdSessions }) => (
         <SidebarGroup className="cwd-group" key={cwd}>
-          <SidebarGroupLabel className="cwd-heading" title={cwd}>
+          <SidebarGroupLabel className="cwd-heading" title={displayPath(cwd)}>
             <h3>{displayPath(cwd)}</h3>
             <button
+              type="button"
               className="cwd-create"
               aria-label={`Create terminal in ${displayPath(cwd)}`}
               title={`Create terminal in ${displayPath(cwd)}`}
               onClick={(event) => {
                 event.stopPropagation();
-                props.onCreate(cwd);
+                props.onCreate(canonicalPath(cwd));
                 if (isMobile) setOpenMobile(false);
               }}
             >
@@ -217,7 +219,7 @@ function SessionList(props: SessionNavigationProps) {
                       aria-pressed={selected}
                       aria-current={selected ? "true" : undefined}
                       aria-describedby={attentionDescriptionID}
-                      title={session.cwd}
+                      title={displayPath(session.cwd)}
                       onClick={(event) =>
                         selectSession(
                           session.id,

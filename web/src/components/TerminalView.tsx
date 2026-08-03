@@ -6,9 +6,8 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { Terminal, type ITerminalAddon } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
@@ -21,6 +20,14 @@ import {
   defaultTerminalScrollSensitivity,
 } from "../settings";
 import type { Session, TerminalCursorStyle } from "../types";
+import {
+  fitTerminalIfVisible,
+  loadWebglRenderer,
+  openTerminalLink,
+  refreshTerminalIfVisible,
+  terminalOptions,
+  terminalScrollback,
+} from "./terminalUtils";
 
 export interface TerminalDriver {
   readonly cols?: number;
@@ -86,103 +93,8 @@ interface TerminalGridGeometry {
   height: number;
 }
 
-type WebglRendererAddon = ITerminalAddon & {
-  onContextLoss?: (listener: () => void) => unknown;
-};
-
-const maxTerminalScrollback = 4294967295;
-const maxFiniteTerminalScrollback = 100000;
-const estimatedBytesPerScrollbackRow = 128;
 const terminalViewportGutter = 14;
 const maxQueuedInitialTerminalBytes = 2 * 1024 * 1024;
-
-function terminalScrollback(historyLimit: number): number {
-  if (historyLimit === 0) return maxTerminalScrollback;
-  return Math.max(
-    1000,
-    Math.min(
-      maxFiniteTerminalScrollback,
-      Math.ceil(historyLimit / estimatedBytesPerScrollbackRow),
-    ),
-  );
-}
-
-function openTerminalLink(uri: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(uri);
-  } catch {
-    return;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
-
-  const newWindow = window.open(parsed.href, "_blank", "noopener,noreferrer");
-  if (!newWindow) {
-    console.warn("Opening link blocked as opener could not be cleared");
-    return;
-  }
-  try {
-    newWindow.opener = null;
-  } catch {
-    // Some browser shells may reject changing opener.
-  }
-}
-
-function loadWebglRenderer(
-  terminal: Pick<Terminal, "loadAddon">,
-  createAddon: () => WebglRendererAddon = () => new WebglAddon(),
-): boolean {
-  try {
-    const addon = createAddon();
-    addon.onContextLoss?.(() => addon.dispose());
-    terminal.loadAddon(addon);
-    return true;
-  } catch (error) {
-    console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
-    return false;
-  }
-}
-
-function terminalOptions(
-  fontFamily: string,
-  fontSize: number,
-  scrollback: number,
-  lineHeight: number,
-  cursorStyle: TerminalCursorStyle,
-  cursorBlink: boolean,
-  scrollSensitivity: number,
-  optionAsAlt = defaultTerminalOptionAsAlt,
-): ConstructorParameters<typeof Terminal>[0] {
-  return {
-    allowTransparency: true,
-    fontFamily,
-    fontSize,
-    lineHeight,
-    cursorStyle,
-    cursorBlink,
-    linkHandler: {
-      activate: (_event, uri) => openTerminalLink(uri),
-    },
-    macOptionIsMeta: optionAsAlt,
-    scrollback,
-    scrollSensitivity,
-    theme: {
-      background: "#050505",
-      foreground: "#f5f5f5",
-      cursor: "#f5f5f5",
-      selectionBackground: "#333333",
-      black: "#050505",
-      red: "#f87171",
-      green: "#a3e635",
-      yellow: "#facc15",
-      blue: "#93c5fd",
-      magenta: "#d8b4fe",
-      cyan: "#67e8f9",
-      white: "#f5f5f5",
-      brightBlack: "#737373",
-    },
-  };
-}
 
 function defaultTerminal(
   fontFamily: string,
@@ -261,22 +173,6 @@ function decodeTerminalData(data: string): Uint8Array {
 function focusTerminal(terminal: TerminalDriver) {
   const modalOpen = document.querySelector('[role="dialog"]');
   if (!modalOpen) terminal.focus();
-}
-
-function fitTerminalIfVisible(
-  host: HTMLElement,
-  terminal: Pick<TerminalDriver, "fit">,
-) {
-  if (host.hidden || host.closest("[hidden]")) return;
-  terminal.fit();
-}
-
-function refreshTerminalIfVisible(
-  host: HTMLElement,
-  terminal: Pick<TerminalDriver, "refresh">,
-) {
-  if (host.hidden || host.closest("[hidden]")) return;
-  terminal.refresh?.();
 }
 
 interface TerminalViewHookProps {

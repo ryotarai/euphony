@@ -384,6 +384,25 @@ test("creates a terminal from the cwd heading", async () => {
   expect(onCreate).toHaveBeenCalledWith("/Users/ryotarai/work/euphony");
 });
 
+test("uses the canonical macOS temporary-directory label", async () => {
+  const onCreate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={[{ ...sessions[0], cwd: "/private/tmp" }]}
+      selectedIDs={[]}
+      onSelect={() => undefined}
+      onCreate={onCreate}
+      onDelete={() => undefined}
+    />,
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: "Create terminal in /tmp" }),
+  );
+  expect(onCreate).toHaveBeenCalledWith("/tmp");
+});
+
 test("forwards Alt-clicks, but not Shift-clicks, on terminal checkboxes as pin requests", () => {
   const onSelect = vi.fn();
   render(

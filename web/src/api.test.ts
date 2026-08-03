@@ -50,6 +50,22 @@ test("reads and replaces the shared v1 selection envelope", async () => {
   );
 });
 
+test("turns a non-JSON v1 error response into an API error", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response("upstream failure", {
+      status: 502,
+      headers: { "Content-Type": "text/plain" },
+    }),
+  );
+  const api = new ApiClient("token");
+
+  await expect(api.getSelection()).rejects.toMatchObject({
+    status: 502,
+    code: "request_failed",
+    message: "The request failed.",
+  });
+});
+
 test("creates and deletes terminals through v1 with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],

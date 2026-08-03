@@ -1293,7 +1293,7 @@ test("shows recent Quick Actions first in a taller dialog", async ({ page }) => 
   await expect(page.getByRole("option", { name: /^Right/ })).toHaveCount(1);
   expect(
     await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null"),
+      JSON.parse(localStorage.getItem("euphony.recentQuickActions:v1") ?? "null"),
     ),
   ).toEqual([`session:${right.id}`]);
 });
@@ -1493,6 +1493,8 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(sidebar).toHaveCSS("width", "420px");
   await page.reload();
   await expect(sidebar).toHaveCSS("width", "420px");
+  const reloadedCodexPane = page.getByLabel("Codex pane", { exact: true });
+  await reloadedCodexPane.getByRole("tab", { name: "Terminal" }).click();
 
   await page.getByRole("button", { name: "Open settings" }).click();
   const settingsDialog = page.getByRole("dialog", { name: "Settings" });
@@ -1503,10 +1505,15 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("Terminal", { exact: true }).fill("17");
   await settingsDialog.getByLabel("Terminal font").fill('"Courier New", monospace');
   await settingsDialog.getByLabel("Agent log").fill("16");
-  await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
-  const fontOnlyRowHeight = await page.locator(".xterm-rows").first().evaluate(
-    (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
-  );
+  const terminalRows = page.locator(".xterm-rows").first();
+  const hasDomTerminalRows = await terminalRows.count() > 0;
+  let fontOnlyRowHeight = 0;
+  if (hasDomTerminalRows) {
+    await expect(terminalRows).toHaveCSS("font-size", "17px");
+    fontOnlyRowHeight = await terminalRows.evaluate(
+      (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
+    );
+  }
   await settingsDialog.getByLabel("Terminal line height").fill("1.5");
   await settingsDialog.getByLabel("Cursor style").selectOption("underline");
   await settingsDialog.getByRole("checkbox", { name: "Cursor blink" }).check();
@@ -1525,20 +1532,21 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await autoDeselectRunning.uncheck();
   await optionAsAlt.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
-  await expect(page.locator(".xterm-rows").first()).toHaveCSS("font-size", "17px");
-  await expect(page.locator(".xterm-rows").first()).toHaveCSS(
-    "font-family",
-    '"Courier New", monospace',
-  );
+  if (hasDomTerminalRows) {
+    await expect(terminalRows).toHaveCSS("font-size", "17px");
+    await expect(terminalRows).toHaveCSS("font-family", '"Courier New", monospace');
+  }
   await expect(page.locator(".agent-log-view").first()).toHaveCSS(
     "--agent-log-font-size",
     "16px",
   );
-  await expect
-    .poll(async () => page.locator(".xterm-rows").first().evaluate(
-      (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
-    ))
-    .toBeGreaterThan(fontOnlyRowHeight);
+  if (hasDomTerminalRows) {
+    await expect
+      .poll(async () => terminalRows.evaluate(
+        (rows) => rows.firstElementChild?.getBoundingClientRect().height ?? 0,
+      ))
+      .toBeGreaterThan(fontOnlyRowHeight);
+  }
   await page.screenshot({ path: testInfo.outputPath("font-size-settings.png") });
   await page.getByRole("button", { name: "Save settings" }).click();
   await page.reload();

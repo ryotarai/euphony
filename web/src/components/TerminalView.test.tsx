@@ -5,6 +5,14 @@ import {
   type TerminalDriver,
   type WebSocketLike,
 } from "./TerminalView";
+import {
+  fitTerminalIfVisible as fitTerminalIfVisibleUtil,
+  loadWebglRenderer as loadWebglRendererUtil,
+  openTerminalLink as openTerminalLinkUtil,
+  terminalOptions as terminalOptionsUtil,
+  terminalScrollback as terminalScrollbackUtil,
+} from "./terminalUtils";
+import type { ITerminalAddon } from "@xterm/xterm";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
@@ -48,6 +56,115 @@ class FakeSocket extends EventTarget implements WebSocketLike {
     this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
   }
 }
+
+test("does not fit xterm while its mounted tab panel is hidden", () => {
+  const panel = document.createElement("div");
+  const host = document.createElement("div");
+  panel.append(host);
+  document.body.append(panel);
+  const terminal = { fit: vi.fn() };
+
+  panel.hidden = true;
+  fitTerminalIfVisibleUtil(host, terminal);
+  expect(terminal.fit).not.toHaveBeenCalled();
+
+  panel.hidden = false;
+  fitTerminalIfVisibleUtil(host, terminal);
+  expect(terminal.fit).toHaveBeenCalledTimes(1);
+});
+
+test("maps finite and unlimited history limits to xterm scrollback rows", () => {
+  expect(terminalScrollbackUtil(1024 * 1024)).toBe(8192);
+  expect(terminalScrollbackUtil(4095 * 1024 * 1024)).toBe(100000);
+  expect(terminalScrollbackUtil(0)).toBe(4294967295);
+});
+
+test("treats macOS Option input as Alt in xterm", () => {
+  expect(terminalOptionsUtil("monospace", 14, 1000, 1, "block", true, 1, true))
+    .toMatchObject({ macOptionIsMeta: true });
+  expect(terminalOptionsUtil("monospace", 14, 1000, 1, "block", true, 1, false))
+    .toMatchObject({ macOptionIsMeta: false });
+});
+
+test("loads the WebGL addon into an xterm terminal", () => {
+  const addon: ITerminalAddon = {
+    activate: () => undefined,
+    dispose: () => undefined,
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRendererUtil({ loadAddon }, () => addon)).toBe(true);
+  expect(loadAddon).toHaveBeenCalledOnce();
+  expect(loadAddon).toHaveBeenCalledWith(addon);
+});
+
+test("disposes the WebGL addon after a context loss", () => {
+  let onContextLoss: (() => void) | undefined;
+  const dispose = vi.fn();
+  const addon = {
+    activate: () => undefined,
+    dispose,
+    onContextLoss: (listener: () => void) => {
+      onContextLoss = listener;
+      return { dispose: () => undefined };
+    },
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRendererUtil({ loadAddon }, () => addon)).toBe(true);
+  expect(onContextLoss).toBeDefined();
+
+  onContextLoss?.();
+
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
+test("keeps the DOM renderer when WebGL addon loading fails", () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const loadAddon = vi.fn(() => {
+    throw new Error("WebGL is unavailable");
+  });
+
+  expect(
+    loadWebglRendererUtil(
+      { loadAddon },
+      () => ({
+        activate: () => undefined,
+        dispose: () => undefined,
+      }),
+    ),
+  ).toBe(false);
+  expect(warning).toHaveBeenCalledWith(
+    "WebGL terminal renderer unavailable; using DOM renderer",
+    expect.any(Error),
+  );
+});
+
+test("opens an HTTP terminal link with one popup navigation", () => {
+  const popup = { location: { href: "" }, opener: window } as unknown as Window;
+  const open = vi.spyOn(window, "open").mockReturnValue(popup);
+  const confirm = vi.spyOn(window, "confirm");
+
+  openTerminalLinkUtil("https://example.com/docs");
+
+  expect(confirm).not.toHaveBeenCalled();
+  expect(open).toHaveBeenCalledOnce();
+  expect(open).toHaveBeenCalledWith(
+    "https://example.com/docs",
+    "_blank",
+    "noopener,noreferrer",
+  );
+  expect(popup.opener).toBeNull();
+  expect(popup.location.href).toBe("");
+});
+
+test("does not open non-HTTP terminal links", () => {
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+  openTerminalLinkUtil("javascript:alert(1)");
+
+  expect(open).not.toHaveBeenCalled();
+});
 
 test("updates scrollback without reconnecting the terminal", async () => {
   const socket = new FakeSocket();

@@ -251,6 +251,9 @@ export class ApiClient {
         ...init.headers,
       },
     });
+    if (!response.ok) {
+      throw await this.v1ApiError(response);
+    }
     const envelope = await response.json() as {
       ok: boolean;
       result?: T;

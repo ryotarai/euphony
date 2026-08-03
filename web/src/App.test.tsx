@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, type ComponentProps } from "react";
-import { App, agentRunningTransitions, attentionTransitions } from "./App";
+import { App } from "./App";
+import { agentRunningTransitions, attentionTransitions } from "./sessionUtils";
 import type { SelectionSnapshot, Session, Settings } from "./types";
 
 const defaultSettings: Settings = {
@@ -1263,7 +1264,7 @@ test("shows the five most recently executed Quick Actions first without duplicat
     screen.getAllByRole("option", { name: /^New terminal in directory…/ }),
   ).toHaveLength(1);
   expect(screen.getAllByRole("option", { name: /^Fix API/ })).toHaveLength(1);
-  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null")).toEqual([
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions:v1") ?? "null")).toEqual([
     "session:session-3",
     "session:session-2",
     "session:session-1",
@@ -1274,7 +1275,7 @@ test("shows the five most recently executed Quick Actions first without duplicat
 
 test("discards unavailable recent Quick Actions and searches the full catalog", async () => {
   localStorage.setItem(
-    "euphony.recentQuickActions",
+    "euphony.recentQuickActions:v1",
     JSON.stringify([
       "status:exited",
       "session:missing",
@@ -1315,7 +1316,7 @@ test("discards unavailable recent Quick Actions and searches the full catalog", 
   expect(
     within(recentGroup as HTMLElement).getByRole("option", { name: /^Needs approval/ }),
   ).toBeVisible();
-  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions") ?? "null")).toEqual([
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions:v1") ?? "null")).toEqual([
     "session:session-2",
   ]);
 
