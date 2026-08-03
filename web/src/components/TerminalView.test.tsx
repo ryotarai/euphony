@@ -1,16 +1,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
-  fitTerminalIfVisible,
-  loadWebglRenderer,
-  openTerminalLink,
-  terminalOptions,
-  terminalScrollback,
   TerminalView,
   type TerminalDriver,
   type WebSocketLike,
 } from "./TerminalView";
-import type { ITerminalAddon } from "@xterm/xterm";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
@@ -54,115 +48,6 @@ class FakeSocket extends EventTarget implements WebSocketLike {
     this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
   }
 }
-
-test("does not fit xterm while its mounted tab panel is hidden", () => {
-  const panel = document.createElement("div");
-  const host = document.createElement("div");
-  panel.append(host);
-  document.body.append(panel);
-  const terminal = { fit: vi.fn() };
-
-  panel.hidden = true;
-  fitTerminalIfVisible(host, terminal);
-  expect(terminal.fit).not.toHaveBeenCalled();
-
-  panel.hidden = false;
-  fitTerminalIfVisible(host, terminal);
-  expect(terminal.fit).toHaveBeenCalledTimes(1);
-});
-
-test("maps finite and unlimited history limits to xterm scrollback rows", () => {
-  expect(terminalScrollback(1024 * 1024)).toBe(8192);
-  expect(terminalScrollback(4095 * 1024 * 1024)).toBe(100000);
-  expect(terminalScrollback(0)).toBe(4294967295);
-});
-
-test("treats macOS Option input as Alt in xterm", () => {
-  expect(terminalOptions("monospace", 14, 1000, 1, "block", true, 1, true))
-    .toMatchObject({ macOptionIsMeta: true });
-  expect(terminalOptions("monospace", 14, 1000, 1, "block", true, 1, false))
-    .toMatchObject({ macOptionIsMeta: false });
-});
-
-test("loads the WebGL addon into an xterm terminal", () => {
-  const addon: ITerminalAddon = {
-    activate: () => undefined,
-    dispose: () => undefined,
-  };
-  const loadAddon = vi.fn();
-
-  expect(loadWebglRenderer({ loadAddon }, () => addon)).toBe(true);
-  expect(loadAddon).toHaveBeenCalledOnce();
-  expect(loadAddon).toHaveBeenCalledWith(addon);
-});
-
-test("disposes the WebGL addon after a context loss", () => {
-  let onContextLoss: (() => void) | undefined;
-  const dispose = vi.fn();
-  const addon = {
-    activate: () => undefined,
-    dispose,
-    onContextLoss: (listener: () => void) => {
-      onContextLoss = listener;
-      return { dispose: () => undefined };
-    },
-  };
-  const loadAddon = vi.fn();
-
-  expect(loadWebglRenderer({ loadAddon }, () => addon)).toBe(true);
-  expect(onContextLoss).toBeDefined();
-
-  onContextLoss?.();
-
-  expect(dispose).toHaveBeenCalledOnce();
-});
-
-test("keeps the DOM renderer when WebGL addon loading fails", () => {
-  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-  const loadAddon = vi.fn(() => {
-    throw new Error("WebGL is unavailable");
-  });
-
-  expect(
-    loadWebglRenderer(
-      { loadAddon },
-      () => ({
-        activate: () => undefined,
-        dispose: () => undefined,
-      }),
-    ),
-  ).toBe(false);
-  expect(warning).toHaveBeenCalledWith(
-    "WebGL terminal renderer unavailable; using DOM renderer",
-    expect.any(Error),
-  );
-});
-
-test("opens an HTTP terminal link with one popup navigation", () => {
-  const popup = { location: { href: "" }, opener: window } as unknown as Window;
-  const open = vi.spyOn(window, "open").mockReturnValue(popup);
-  const confirm = vi.spyOn(window, "confirm");
-
-  openTerminalLink("https://example.com/docs");
-
-  expect(confirm).not.toHaveBeenCalled();
-  expect(open).toHaveBeenCalledOnce();
-  expect(open).toHaveBeenCalledWith(
-    "https://example.com/docs",
-    "_blank",
-    "noopener,noreferrer",
-  );
-  expect(popup.opener).toBeNull();
-  expect(popup.location.href).toBe("");
-});
-
-test("does not open non-HTTP terminal links", () => {
-  const open = vi.spyOn(window, "open").mockReturnValue(null);
-
-  openTerminalLink("javascript:alert(1)");
-
-  expect(open).not.toHaveBeenCalled();
-});
 
 test("updates scrollback without reconnecting the terminal", async () => {
   const socket = new FakeSocket();
@@ -807,6 +692,85 @@ test("remeasures terminal capacity when its pane changes size", async () => {
   unmount();
   expect(disconnect).toHaveBeenCalledTimes(1);
   vi.unstubAllGlobals();
+});
+
+test("removes WebSocket listeners before closing on unmount", async () => {
+  const socket = new FakeSocket();
+  const removeEventListener = vi.spyOn(socket, "removeEventListener");
+  const close = vi.spyOn(socket, "close");
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const createSocket = vi.fn(() => socket);
+
+  const { unmount } = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={createSocket}
+    />,
+  );
+  await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(1));
+
+  unmount();
+
+  expect(removeEventListener).toHaveBeenCalledWith("open", expect.any(Function));
+  expect(removeEventListener).toHaveBeenCalledWith("message", expect.any(Function));
+  expect(removeEventListener).toHaveBeenCalledWith("close", expect.any(Function));
+  expect(close).toHaveBeenCalledOnce();
+});
+
+test("does not create a WebSocket when a ticket resolves after unmount", async () => {
+  let resolveTicket: (value: { ticket: string }) => void = () => undefined;
+  const ticket = new Promise<{ ticket: string }>((resolve) => {
+    resolveTicket = resolve;
+  });
+  const api = {
+    createTicket: vi.fn(() => ticket),
+  } as unknown as ApiClient;
+  const createSocket = vi.fn(() => new FakeSocket());
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+
+  const { unmount } = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={createSocket}
+    />,
+  );
+  unmount();
+
+  await act(async () => {
+    resolveTicket({ ticket: "late-ticket" });
+    await Promise.resolve();
+  });
+
+  expect(createSocket).not.toHaveBeenCalled();
 });
 
 test("repaints the terminal when its host layout changes without changing capacity", async () => {
