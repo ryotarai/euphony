@@ -182,6 +182,7 @@ const defaultForegroundProcessSampleInterval = 500 * time.Millisecond
 
 type Manager struct {
 	mu                              sync.RWMutex
+	refreshMu                       sync.Mutex
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
@@ -192,6 +193,7 @@ type Manager struct {
 	changeSequence                  uint64
 	cwdSampleInterval               time.Duration
 	foregroundProcessSampleInterval time.Duration
+	codexTitleResolver              func(string, string, bool) (string, error)
 
 	workspaceSelection    selection.State
 	hasWorkspaceSelection bool
@@ -379,6 +381,13 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	terminalFD := int(terminal.Fd())
+	if err := unix.SetNonblock(terminalFD, true); err != nil {
+		_ = command.Process.Kill()
+		_ = terminal.Close()
+		_ = command.Wait()
+		return nil, err
+	}
 	resizeWake := []int{0, 0}
 	if err := unix.Pipe(resizeWake); err != nil {
 		_ = command.Process.Kill()
@@ -392,7 +401,7 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 			id:              metadata.ID,
 			command:         command,
 			terminal:        terminal,
-			terminalFD:      int(terminal.Fd()),
+			terminalFD:      terminalFD,
 			cols:            80,
 			rows:            24,
 			waitDone:        make(chan struct{}),
@@ -900,10 +909,32 @@ func (m *Manager) watch(item *entry) {
 }
 
 func (m *Manager) List() []Metadata {
+	if m.refreshMu.TryLock() {
+		func() {
+			defer m.refreshMu.Unlock()
+			m.refreshMetadata()
+		}()
+	}
+	return m.ListCurrent()
+}
+
+// RefreshMetadata starts a best-effort metadata refresh without blocking the
+// caller. An active synchronous or asynchronous refresh owns the single-flight
+// slot, so repeated polling cannot accumulate refresh goroutines.
+func (m *Manager) RefreshMetadata() {
+	if !m.refreshMu.TryLock() {
+		return
+	}
+	go func() {
+		defer m.refreshMu.Unlock()
+		m.refreshMetadata()
+	}()
+}
+
+func (m *Manager) refreshMetadata() {
 	m.refreshCodexTitles()
 	m.refreshWorkingDirectories()
 	m.refreshForegroundProcessNames()
-	return m.ListCurrent()
 }
 
 // refreshWorkingDirectories re-derives each terminal's working directory from
@@ -1033,31 +1064,61 @@ func (m *Manager) refreshCodexTitles() {
 			titles = loaded
 		}
 	}
-	m.mu.Lock()
-	var changes []Change
-	for _, item := range m.sessions {
+
+	type candidate struct {
+		id            string
+		sessionID     string
+		transcript    string
+		headerScanned bool
+	}
+	m.mu.RLock()
+	candidates := make([]candidate, 0, len(m.sessions))
+	for id, item := range m.sessions {
 		if item.metadata.Agent != "codex" || item.metadata.AgentSessionID == "" {
 			continue
 		}
-		title := titles[item.metadata.AgentSessionID]
+		candidates = append(candidates, candidate{
+			id:            id,
+			sessionID:     item.metadata.AgentSessionID,
+			transcript:    item.metadata.AgentTranscriptPath,
+			headerScanned: item.codexTitleHeaderScanned,
+		})
+	}
+	m.mu.RUnlock()
+
+	for _, candidate := range candidates {
+		title := titles[candidate.sessionID]
+		headerScanned := candidate.headerScanned
 		if title == "" {
-			tailTitle, tailErr := agentlog.CodexThreadTitle(
-				item.metadata.AgentTranscriptPath, item.metadata.AgentSessionID,
+			tailTitle, tailErr := m.resolveCodexTitle(
+				candidate.transcript, candidate.sessionID, false,
 			)
 			title = tailTitle
-			if title == "" && !item.codexTitleHeaderScanned {
-				headerTitle, headerErr := agentlog.CodexThreadTitleFromStart(
-					item.metadata.AgentTranscriptPath, item.metadata.AgentSessionID,
+			if title == "" && !headerScanned {
+				headerTitle, headerErr := m.resolveCodexTitle(
+					candidate.transcript, candidate.sessionID, true,
 				)
 				if headerErr == nil {
-					item.codexTitleHeaderScanned = true
+					headerScanned = true
 				}
 				title = headerTitle
 			} else if tailErr == nil {
-				item.codexTitleHeaderScanned = true
+				headerScanned = true
 			}
 		}
+
+		m.mu.Lock()
+		item, ok := m.sessions[candidate.id]
+		if !ok ||
+			item.metadata.Agent != "codex" ||
+			item.metadata.AgentSessionID != candidate.sessionID ||
+			item.metadata.AgentTranscriptPath != candidate.transcript {
+			m.mu.Unlock()
+			continue
+		}
+		item.codexTitleHeaderScanned = headerScanned
 		if title == "" || title == item.metadata.AgentTitle {
+			m.mu.Unlock()
 			continue
 		}
 		before := item.metadata
@@ -1066,12 +1127,20 @@ func (m *Manager) refreshCodexTitles() {
 			_ = m.store.Save(context.Background(), item.metadata)
 		}
 		after := item.metadata
-		changes = append(changes, m.nextChangeLocked(ChangeUpdated, &before, &after))
-	}
-	m.mu.Unlock()
-	for _, change := range changes {
+		change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		m.mu.Unlock()
 		m.emitChange(change)
 	}
+}
+
+func (m *Manager) resolveCodexTitle(path, sessionID string, fromStart bool) (string, error) {
+	if m.codexTitleResolver != nil {
+		return m.codexTitleResolver(path, sessionID, fromStart)
+	}
+	if fromStart {
+		return agentlog.CodexThreadTitleFromStart(path, sessionID)
+	}
+	return agentlog.CodexThreadTitle(path, sessionID)
 }
 
 func (m *Manager) Settings() Settings {

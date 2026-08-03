@@ -11,7 +11,8 @@ import (
 )
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.sessions.List())
+	writeJSON(w, http.StatusOK, s.sessions.ListCurrent())
+	s.sessions.RefreshMetadata()
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {

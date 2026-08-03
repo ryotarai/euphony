@@ -506,6 +506,9 @@ func (s *Session) drainTerminalOutput(buffer []byte) (bool, error) {
 			s.publish(buffer[:n])
 		}
 		if err != nil {
+			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
+				return false, nil
+			}
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}

@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ryotarai/euphony/internal/session"
 )
@@ -48,6 +52,98 @@ func TestSessionAPI(t *testing.T) {
 	}
 }
 
+func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var terminal session.Metadata
+	decodeResponse(t, created, &terminal)
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "claude",
+		CWD:   t.TempDir(),
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	directory := t.TempDir()
+	entered := filepath.Join(directory, "entered")
+	release := filepath.Join(directory, "release")
+	count := filepath.Join(directory, "count")
+	script := filepath.Join(directory, "ps")
+	body := "#!/bin/sh\n" +
+		"printf x >> \"$METADATA_REFRESH_COUNT\"\n" +
+		"touch \"$METADATA_REFRESH_ENTERED\"\n" +
+		"while [ ! -e \"$METADATA_REFRESH_RELEASE\" ]; do sleep 0.01; done\n" +
+		"printf 'sleep 1\\n'\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatalf("write fake ps: %v", err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("METADATA_REFRESH_ENTERED", entered)
+	t.Setenv("METADATA_REFRESH_RELEASE", release)
+	t.Setenv("METADATA_REFRESH_COUNT", count)
+	defer func() {
+		_ = os.WriteFile(release, nil, 0o600)
+	}()
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstDone <- performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	}()
+	var first *httptest.ResponseRecorder
+	select {
+	case first = <-firstDone:
+	case <-time.After(250 * time.Millisecond):
+		if err := os.WriteFile(release, nil, 0o600); err != nil {
+			t.Fatalf("release blocked metadata refresh: %v", err)
+		}
+		<-firstDone
+		t.Fatal("GET /api/sessions waited for metadata refresh")
+	}
+	if first.Code != http.StatusOK {
+		t.Fatalf("first GET status = %d, body = %s", first.Code, first.Body.String())
+	}
+	var snapshot []session.Metadata
+	decodeResponse(t, first, &snapshot)
+	if len(snapshot) != 1 || snapshot[0].ProcessName != "sh" {
+		t.Fatalf("first GET snapshot = %#v, want current process name", snapshot)
+	}
+
+	waitForFile(t, entered, time.Second)
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		secondDone <- performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	}()
+	select {
+	case second := <-secondDone:
+		if second.Code != http.StatusOK {
+			t.Fatalf("second GET status = %d, body = %s", second.Code, second.Body.String())
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("overlapping GET /api/sessions waited for active refresh")
+	}
+	time.Sleep(50 * time.Millisecond)
+	refreshCount, err := os.ReadFile(count)
+	if err != nil {
+		t.Fatalf("read metadata refresh count: %v", err)
+	}
+	if got := strings.Count(string(refreshCount), "x"); got != 1 {
+		t.Fatalf("active metadata refreshes = %d, want single flight", got)
+	}
+
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatalf("release metadata refresh: %v", err)
+	}
+	waitForServer(t, time.Second, func() bool {
+		items := srv.sessions.ListCurrent()
+		return len(items) == 1 && items[0].ProcessName == "sleep"
+	})
+}
+
 func TestCreateSessionValidatesRequest(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {
@@ -62,6 +158,26 @@ func TestCreateSessionValidatesRequest(t *testing.T) {
 			t.Fatalf("POST body %q status = %d, want 400", body, response.Code)
 		}
 	}
+}
+
+func waitForFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	waitForServer(t, timeout, func() bool {
+		_, err := os.Stat(path)
+		return err == nil
+	})
+}
+
+func waitForServer(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }
 
 func TestCreateSessionAcceptsWorkingDirectory(t *testing.T) {

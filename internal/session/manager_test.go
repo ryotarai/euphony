@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ryotarai/euphony/internal/selection"
+	"golang.org/x/sys/unix"
 )
 
 func TestCreateRejectsBlankName(t *testing.T) {
@@ -736,6 +737,117 @@ func TestRestoredCommandResumesKnownAgents(t *testing.T) {
 	}
 }
 
+func TestRefreshCodexTitlesDoesNotBlockMetadata(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager.codexTitleResolver = func(path, sessionID string, fromStart bool) (string, error) {
+		if path != "/transcripts/session-1.jsonl" || sessionID != "session-1" || fromStart {
+			t.Errorf("resolver arguments = %q, %q, %t", path, sessionID, fromStart)
+		}
+		close(entered)
+		<-release
+		return "Resolved title", nil
+	}
+
+	refreshDone := make(chan struct{})
+	go func() {
+		manager.refreshCodexTitles()
+		close(refreshDone)
+	}()
+	<-entered
+
+	metadataDone := make(chan Metadata, 1)
+	go func() {
+		metadata, _ := manager.Metadata("terminal")
+		metadataDone <- metadata
+	}()
+	select {
+	case metadata := <-metadataDone:
+		if metadata.AgentTitle != "" {
+			t.Fatalf("AgentTitle during refresh = %q, want current snapshot", metadata.AgentTitle)
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-refreshDone
+		t.Fatal("Metadata() blocked while Codex title resolution was active")
+	}
+
+	close(release)
+	<-refreshDone
+	metadata, _ := manager.Metadata("terminal")
+	if metadata.AgentTitle != "Resolved title" {
+		t.Fatalf("AgentTitle after refresh = %q, want %q", metadata.AgentTitle, "Resolved title")
+	}
+}
+
+func TestRefreshCodexTitlesDiscardsStaleResolution(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		close(entered)
+		<-release
+		return "Stale title", nil
+	}
+
+	refreshDone := make(chan struct{})
+	go func() {
+		manager.refreshCodexTitles()
+		close(refreshDone)
+	}()
+	<-entered
+
+	metadataDone := make(chan struct{})
+	go func() {
+		_, _ = manager.Metadata("terminal")
+		close(metadataDone)
+	}()
+	select {
+	case <-metadataDone:
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-refreshDone
+		t.Fatal("Metadata() blocked while stale title resolution was active")
+	}
+
+	manager.mu.Lock()
+	manager.sessions["terminal"].metadata.AgentSessionID = "session-2"
+	manager.sessions["terminal"].metadata.AgentTranscriptPath = "/transcripts/session-2.jsonl"
+	manager.mu.Unlock()
+	close(release)
+	<-refreshDone
+
+	metadata, _ := manager.Metadata("terminal")
+	if metadata.AgentTitle != "" {
+		t.Fatalf("AgentTitle = %q, want stale resolution discarded", metadata.AgentTitle)
+	}
+}
+
 func TestPersistentManagerRestoresTerminalWithItsCWD(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
 	cwd := t.TempDir()
@@ -1067,6 +1179,58 @@ func TestForegroundIsShellTracksPTYForegroundProcessGroup(t *testing.T) {
 	})
 }
 
+func TestForegroundCommandDoesNotBlockTerminalWrite(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Foreground", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+
+	runnerEntered := make(chan struct{})
+	releaseRunner := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseRunner)
+		})
+	}
+	defer release()
+
+	foregroundDone := make(chan error, 1)
+	go func() {
+		_, commandErr := running.foregroundCommand(func(int) ([]byte, error) {
+			close(runnerEntered)
+			<-releaseRunner
+			return []byte("/bin/sh\n"), nil
+		})
+		foregroundDone <- commandErr
+	}()
+	<-runnerEntered
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, writeErr := running.Write([]byte("x"))
+		writeDone <- writeErr
+	}()
+	select {
+	case writeErr := <-writeDone:
+		if writeErr != nil {
+			t.Fatalf("Write() error = %v", writeErr)
+		}
+	case <-time.After(250 * time.Millisecond):
+		release()
+		<-foregroundDone
+		t.Fatal("terminal write blocked while foreground command runner was active")
+	}
+
+	release()
+	if err := <-foregroundDone; err != nil {
+		t.Fatalf("ForegroundCommand() error = %v", err)
+	}
+}
+
 func TestForegroundProcessNameNormalizesCommand(t *testing.T) {
 
 	tests := []struct {
@@ -1305,6 +1469,58 @@ func TestResizeWithNotificationContextCancelsPendingRequest(t *testing.T) {
 	close(resumeRead)
 	if err := running.Resize(90, 25); err != nil {
 		t.Fatalf("Resize() after canceled request error = %v", err)
+	}
+}
+
+func TestPTYDrainDoesNotBlockResizeAfterReadableData(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Nonblocking PTY")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, _ := manager.Get(metadata.ID)
+
+	flags, err := unix.FcntlInt(uintptr(running.terminalFD), unix.F_GETFL, 0)
+	if err != nil {
+		t.Fatalf("F_GETFL error = %v", err)
+	}
+	if flags&unix.O_NONBLOCK == 0 {
+		t.Fatal("PTY descriptor is blocking; drain can stall after readiness changes")
+	}
+
+	_, output, unsubscribe := running.Subscribe()
+	defer unsubscribe()
+	if _, err := running.Write([]byte("printf pty-drained\\n\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	receiveUntil(t, output, "pty-drained", 3*time.Second)
+
+	resizeContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := running.ResizeWithNotificationContext(resizeContext, 90, 25, nil); err != nil {
+		t.Fatalf("Resize() after readable data error = %v", err)
+	}
+}
+
+func TestDrainTerminalOutputTreatsWouldBlockAsDrained(t *testing.T) {
+	pipe := []int{0, 0}
+	if err := unix.Pipe(pipe); err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer unix.Close(pipe[0])
+	defer unix.Close(pipe[1])
+	if err := unix.SetNonblock(pipe[0], true); err != nil {
+		t.Fatalf("SetNonblock() error = %v", err)
+	}
+	running := &Session{
+		terminalFD:  pipe[0],
+		subscribers: make(map[uint64]*outputSubscriber),
+	}
+
+	closed, err := running.drainTerminalOutput(make([]byte, 32))
+	if err != nil || closed {
+		t.Fatalf("drainTerminalOutput() = closed %t, error %v; want drained and open", closed, err)
 	}
 }
 

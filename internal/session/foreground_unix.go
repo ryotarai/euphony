@@ -30,18 +30,27 @@ func (s *Session) ForegroundIsShell() (bool, error) {
 }
 
 func (s *Session) ForegroundCommand() (string, error) {
+	return s.foregroundCommand(func(foregroundGroup int) ([]byte, error) {
+		return exec.Command(
+			"ps", "-o", "command=", "-p", strconv.Itoa(foregroundGroup),
+		).Output()
+	})
+}
+
+func (s *Session) foregroundCommand(
+	run func(foregroundGroup int) ([]byte, error),
+) (string, error) {
 	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
 	if s.terminal == nil || s.command == nil || s.command.Process == nil {
+		s.fileMu.Unlock()
 		return "", errors.New("terminal process has not started")
 	}
 	foregroundGroup, err := unix.IoctlGetInt(int(s.terminal.Fd()), unix.TIOCGPGRP)
+	s.fileMu.Unlock()
 	if err != nil {
 		return "", err
 	}
-	output, err := exec.Command(
-		"ps", "-o", "command=", "-p", strconv.Itoa(foregroundGroup),
-	).Output()
+	output, err := run(foregroundGroup)
 	if err != nil {
 		return "", err
 	}
