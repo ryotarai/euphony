@@ -1257,7 +1257,7 @@ test("releases capacity without measuring or refreshing beneath an aria-hidden p
   expect(proposeDimensions).not.toHaveBeenCalled();
 });
 
-test("retains terminal capacity while its source tab is hidden", async () => {
+test("retains capacity for a hidden source until its pane becomes aria-hidden", async () => {
   const socket = new FakeSocket();
   let capacity = { cols: 120, rows: 40 };
   const terminal = {
@@ -1282,8 +1282,8 @@ test("retains terminal capacity while its source tab is hidden", async () => {
   } as unknown as ApiClient;
   const createTerminal = () => terminal;
   const createSocket = () => socket;
-  const view = (sourceActive: boolean, hidden = !sourceActive) => (
-    <div hidden={hidden}>
+  const view = (sourceActive: boolean, paneHidden = false) => (
+    <div aria-hidden={paneHidden}>
       <TerminalView
         session={runningSession}
         api={api}
@@ -1309,14 +1309,19 @@ test("retains terminal capacity while its source tab is hidden", async () => {
     { type: "resize", cols: 120, rows: 40 },
   ]);
 
-  rerender(view(false));
+  rerender(view(false, true));
+  act(() => window.dispatchEvent(new Event("resize")));
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "resize", cols: 120, rows: 40 },
+    { type: "resize_release" },
   ]);
 
   capacity = { cols: 120, rows: 40 };
   rerender(view(true));
+  act(() => window.dispatchEvent(new Event("resize")));
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "resize", cols: 120, rows: 40 },
+    { type: "resize_release" },
     { type: "resize", cols: 120, rows: 40 },
   ]);
 });

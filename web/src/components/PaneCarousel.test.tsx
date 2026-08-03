@@ -40,7 +40,7 @@ test("fits only whole panes at the minimum pane width", () => {
   expect(visiblePaneCount(1080, 3)).toBe(3);
 });
 
-test("keeps cached panes mounted without including them in carousel layout", () => {
+test("keeps cached content mounted outside the visible carousel window", () => {
   vi.stubGlobal("ResizeObserver", ControlledResizeObserver);
   const cachedPanes = [
     panes[0],
@@ -63,6 +63,8 @@ test("keeps cached panes mounted without including them in carousel layout", () 
   );
   expect(pane("One pane")).toHaveAttribute("data-visible", "true");
   expect(pane("Two pane")).not.toHaveAttribute("hidden");
+  expect(pane("Two pane")).toHaveAttribute("data-visible", "false");
+  expect(pane("Two pane")).toHaveAttribute("aria-hidden", "true");
   expect(pane("Two pane")).toHaveAttribute("inert");
   expect(screen.getByText("two terminal")).toBeInTheDocument();
 });

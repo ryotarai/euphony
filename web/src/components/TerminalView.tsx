@@ -322,6 +322,12 @@ function useTerminalView({
       }
       return false;
     };
+    const releaseCapacity = () => {
+      if (claimActive && send({ type: "resize_release" })) {
+        claimActive = false;
+        lastSize = "";
+      }
+    };
     const sendResize = (cols?: number, rows?: number) => {
       if (!cols || !rows) return;
       const size = `${cols}x${rows}`;
@@ -344,12 +350,13 @@ function useTerminalView({
       queuedInitialBytes += data.byteLength;
     };
     const reportCapacity = () => {
+      if (host.closest('[aria-hidden="true"]')) {
+        releaseCapacity();
+        return;
+      }
       if (!sourceVisibleRef.current) return;
       if (!terminalElementIsVisible(host)) {
-        if (claimActive && send({ type: "resize_release" })) {
-          claimActive = false;
-          lastSize = "";
-        }
+        releaseCapacity();
         return;
       }
       refreshTerminalIfVisible(host, terminal);
