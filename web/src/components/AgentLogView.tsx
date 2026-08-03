@@ -79,15 +79,17 @@ const markdownComponents: Components = {
   ),
 };
 
+const entryTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
 function entryTime(timestamp?: string): string {
   if (!timestamp) return "";
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(parsed);
+  return entryTimeFormatter.format(parsed);
 }
 
 function Markdown({ children }: { children: string }) {
@@ -198,11 +200,14 @@ function ToolGroupEntry({ entry }: { entry: AgentLogEntry }) {
             execution.call?.title || execution.result?.title || "Tool result";
           const headingId = `agent-log-tool-${entry.id}-${index + 1}`;
           const timestamp = execution.call?.timestamp ?? execution.result?.timestamp;
+          const executionKey = execution.call
+            ? `call-${execution.call.id}`
+            : `result-${execution.result?.id ?? "missing"}`;
           return (
             <article
               className="agent-log-tool-execution"
               aria-labelledby={headingId}
-              key={`${execution.call?.id ?? "result"}-${execution.result?.id ?? index}`}
+              key={executionKey}
             >
               <header>
                 <span className="agent-log-tool-sequence">
@@ -314,7 +319,7 @@ function mergeAdjacentToolGroups(entries: AgentLogEntry[]): AgentLogEntry[] {
   return merged;
 }
 
-export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogViewProps) {
+function AgentLogViewContent({ session, api, active, fontSize = 14 }: AgentLogViewProps) {
   const [log, setLog] = useState<AgentTranscript | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -325,34 +330,34 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
   const loadMoreGenerationRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const prependAdjustmentRef = useRef<{
+    sessionId: string;
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
   const sessionKey = `${session.id}\u0000${session.agent ?? ""}`;
   const sessionKeyRef = useRef(sessionKey);
-  sessionKeyRef.current = sessionKey;
   const linkedAgent = session.agent === "claude"
     ? "Claude"
     : session.agent === "codex"
       ? "Codex"
       : "";
 
-  useEffect(() => {
-    etagRef.current = "";
-    setLog(null);
-    setLoading(true);
-    setUnavailable(false);
-    setError("");
-    setLoadingMore(false);
-    endCursorRef.current = "";
-    loadMoreGenerationRef.current++;
-    prependAdjustmentRef.current = null;
-  }, [session.id, session.agent]);
+  useLayoutEffect(() => {
+    sessionKeyRef.current = sessionKey;
+    return () => {
+      sessionKeyRef.current = "";
+      loadMoreGenerationRef.current++;
+    };
+  }, [sessionKey]);
 
   useLayoutEffect(() => {
     const adjustment = prependAdjustmentRef.current;
+    if (!adjustment || adjustment.sessionId !== log?.sessionId) {
+      if (adjustment) prependAdjustmentRef.current = null;
+      return;
+    }
     const viewport = viewportRef.current;
-    if (!adjustment || !viewport) return;
+    if (!viewport) return;
     let adjustmentFrame = 0;
     const layoutFrame = window.requestAnimationFrame(() => {
       adjustmentFrame = window.requestAnimationFrame(() => {
@@ -365,7 +370,7 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
       window.cancelAnimationFrame(layoutFrame);
       if (adjustmentFrame) window.cancelAnimationFrame(adjustmentFrame);
     };
-  }, [log?.startCursor]);
+  }, [log?.sessionId, log?.startCursor]);
 
   useEffect(() => {
     if (!active) return;
@@ -383,32 +388,33 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
             }
           : undefined;
         const result = await api.getAgentLog(session.id, request);
-        if (!current) return;
-        etagRef.current = result.etag;
-        if (result.log) {
-          const nextLog = result.log;
-          setLog((currentLog) => {
-            if (
-              !currentLog ||
-              currentLog.sessionId !== nextLog.sessionId ||
-              (after && nextLog.startCursor !== after)
-            ) {
-              return nextLog;
-            }
-            if (!after) return nextLog;
-            return {
-              ...currentLog,
-              entries: mergeAdjacentToolGroups([
-                ...(currentLog.entries ?? []),
-                ...(nextLog.entries ?? []),
-              ]),
-              endCursor: nextLog.endCursor,
-            };
-          });
-          endCursorRef.current = nextLog.endCursor ?? "";
+        if (current) {
+          etagRef.current = result.etag;
+          if (result.log) {
+            const nextLog = result.log;
+            setLog((currentLog) => {
+              if (
+                !currentLog ||
+                currentLog.sessionId !== nextLog.sessionId ||
+                (after && nextLog.startCursor !== after)
+              ) {
+                return nextLog;
+              }
+              if (!after) return nextLog;
+              return {
+                ...currentLog,
+                entries: mergeAdjacentToolGroups([
+                  ...(currentLog.entries ?? []),
+                  ...(nextLog.entries ?? []),
+                ]),
+                endCursor: nextLog.endCursor,
+              };
+            });
+            endCursorRef.current = nextLog.endCursor ?? "";
+          }
+          setUnavailable(false);
+          setError("");
         }
-        setUnavailable(false);
-        setError("");
       } catch (refreshError) {
         if (!current) return;
         if (errorCode(refreshError) === "agent_log_not_found") {
@@ -439,6 +445,7 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
     const viewport = viewportRef.current;
     if (viewport) {
       prependAdjustmentRef.current = {
+        sessionId: requestTranscriptID,
         scrollHeight: viewport.scrollHeight,
         scrollTop: viewport.scrollTop,
       };
@@ -457,13 +464,16 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
         return;
       }
       const olderLog = result.log;
+      if (olderLog.sessionId !== requestTranscriptID) {
+        prependAdjustmentRef.current = null;
+        return;
+      }
       setLog((currentLog) => {
         if (
           !currentLog ||
           currentLog.sessionId !== requestTranscriptID ||
           olderLog.sessionId !== requestTranscriptID
         ) {
-          prependAdjustmentRef.current = null;
           return currentLog;
         }
         return {
@@ -498,7 +508,6 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
   return (
     <section
       className="agent-log-view"
-      role="region"
       aria-label="Agent log"
       style={{ "--agent-log-font-size": `${fontSize}px` } as CSSProperties}
     >
@@ -541,4 +550,9 @@ export function AgentLogView({ session, api, active, fontSize = 14 }: AgentLogVi
       )}
     </section>
   );
+}
+
+export function AgentLogView(props: AgentLogViewProps) {
+  const sessionKey = `${props.session.id}\u0000${props.session.agent ?? ""}`;
+  return <AgentLogViewContent key={sessionKey} {...props} />;
 }
