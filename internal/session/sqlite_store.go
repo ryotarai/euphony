@@ -83,8 +83,6 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_font_family TEXT NOT NULL DEFAULT 'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
 			agent_log_font_size INTEGER NOT NULL DEFAULT 14,
 			terminal_history_limit INTEGER NOT NULL DEFAULT 1048576,
-			auto_select_attention INTEGER NOT NULL DEFAULT 1,
-			auto_deselect_running INTEGER NOT NULL DEFAULT 1,
 			terminal_line_height REAL NOT NULL DEFAULT 1.25,
 			terminal_cursor_style TEXT NOT NULL DEFAULT 'bar',
 			terminal_cursor_blink INTEGER NOT NULL DEFAULT 0,
@@ -152,28 +150,6 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE settings ADD COLUMN terminal_history_limit INTEGER NOT NULL DEFAULT 1048576",
 		); err != nil {
 			return fmt.Errorf("add terminal history limit: %w", err)
-		}
-	}
-	hasAutoSelectAttention, err := s.hasColumn(ctx, "settings", "auto_select_attention")
-	if err != nil {
-		return err
-	}
-	if !hasAutoSelectAttention {
-		if _, err := s.db.ExecContext(ctx,
-			"ALTER TABLE settings ADD COLUMN auto_select_attention INTEGER NOT NULL DEFAULT 1",
-		); err != nil {
-			return fmt.Errorf("add auto-select attention setting: %w", err)
-		}
-	}
-	hasAutoDeselectRunning, err := s.hasColumn(ctx, "settings", "auto_deselect_running")
-	if err != nil {
-		return err
-	}
-	if !hasAutoDeselectRunning {
-		if _, err := s.db.ExecContext(ctx,
-			"ALTER TABLE settings ADD COLUMN auto_deselect_running INTEGER NOT NULL DEFAULT 1",
-		); err != nil {
-			return fmt.Errorf("add auto-deselect running setting: %w", err)
 		}
 	}
 	hasTerminalFontFamily, err := s.hasColumn(ctx, "settings", "terminal_font_family")
@@ -323,12 +299,11 @@ func (s *SQLiteStore) hasColumn(ctx context.Context, table, column string) (bool
 
 func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
-	var collapsed, autoSelectAttention, autoDeselectRunning, terminalCursorBlink, terminalOptionAsAlt int
+	var collapsed, terminalCursorBlink, terminalOptionAsAlt int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
-			terminal_history_limit, auto_select_attention, auto_deselect_running,
-			terminal_line_height,
+			terminal_history_limit, terminal_line_height,
 			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity,
 			terminal_option_as_alt
 		FROM settings WHERE id = 1`,
@@ -342,8 +317,6 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&result.TerminalFontFamily,
 		&result.AgentLogFontSize,
 		&result.TerminalHistoryLimit,
-		&autoSelectAttention,
-		&autoDeselectRunning,
 		&result.TerminalLineHeight,
 		&result.TerminalCursorStyle,
 		&terminalCursorBlink,
@@ -354,8 +327,6 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
 	}
 	result.SidebarCollapsed = collapsed != 0
-	result.AutoSelectAttention = autoSelectAttention != 0
-	result.AutoDeselectRunning = autoDeselectRunning != 0
 	result.TerminalCursorBlink = terminalCursorBlink != 0
 	result.TerminalOptionAsAlt = terminalOptionAsAlt != 0
 	return result, nil
@@ -365,14 +336,6 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	collapsed := 0
 	if settings.SidebarCollapsed {
 		collapsed = 1
-	}
-	autoSelectAttention := 0
-	if settings.AutoSelectAttention {
-		autoSelectAttention = 1
-	}
-	autoDeselectRunning := 0
-	if settings.AutoDeselectRunning {
-		autoDeselectRunning = 1
 	}
 	terminalCursorBlink := 0
 	if settings.TerminalCursorBlink {
@@ -385,16 +348,14 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
 		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
-			terminal_history_limit = ?, auto_select_attention = ?, auto_deselect_running = ?,
-			terminal_line_height = ?,
+			terminal_history_limit = ?, terminal_line_height = ?,
 			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?,
 			terminal_option_as_alt = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
-		settings.TerminalHistoryLimit, autoSelectAttention, autoDeselectRunning,
-		settings.TerminalLineHeight,
+		settings.TerminalHistoryLimit, settings.TerminalLineHeight,
 		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity,
 		terminalOptionAsAlt)
 	if err != nil {

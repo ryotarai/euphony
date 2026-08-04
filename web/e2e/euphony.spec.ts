@@ -29,8 +29,6 @@ async function clearSessions(page: Page) {
         'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
-      autoSelectAttention: true,
-      autoDeselectRunning: true,
       terminalLineHeight: 1.25,
       terminalCursorStyle: "bar",
       terminalCursorBlink: false,
@@ -785,7 +783,7 @@ test("splits pane sources with Command-click and drags the divider", async ({
   }
 });
 
-test("auto-selects an attention terminal without moving focus", async ({ page }) => {
+test("does not select a terminal when it needs attention", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First", "/tmp");
   const second = await createSession(page, "Second", "/tmp");
@@ -800,14 +798,10 @@ test("auto-selects an attention terminal without moving focus", async ({ page })
   await reportAgent(page, second.id, "claude", "Reviewing changes", "running");
   await reportAgent(page, second.id, "claude", "Waiting for review");
 
-  await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Second terminal", { exact: true })).toBeHidden();
   await expect(page.getByLabel("First pane", { exact: true })).toHaveAttribute(
     "data-active",
     "true",
-  );
-  await expect(page.getByLabel("Second pane", { exact: true })).toHaveAttribute(
-    "data-active",
-    "false",
   );
   await expect.poll(async () => {
     const response = await page.request.get("/api/sessions", {
@@ -1055,7 +1049,7 @@ test("follows a focused terminal when polling identifies it as a Claude agent", 
   expect(new URL(page.url()).searchParams.getAll("cwd")).toEqual([]);
 });
 
-test("deselects a terminal when its agent starts running", async ({ page }) => {
+test("keeps a terminal selected when its agent starts running", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First", "/tmp");
   await createSession(page, "Second", "/tmp");
@@ -1068,17 +1062,11 @@ test("deselects a terminal when its agent starts running", async ({ page }) => {
   await reportAgent(page, first.id, "claude", "Working", "running");
 
   await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("status", { name: "Automatic deselection" }),
-  ).toContainText("First is now running. It will be removed in 10 seconds.");
-  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
-  await expect(page.getByLabel("First terminal", { exact: true })).toBeHidden({
-    timeout: 12_000,
-  });
-  await expect(page.getByText("No signal yet.")).toBeVisible();
+  await page.waitForTimeout(10_500);
+  await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
   const parameters = new URL(page.url()).searchParams;
-  expect(parameters.getAll("terminal")).toEqual([]);
-  expect(parameters.has("focus")).toBe(false);
+  expect(parameters.getAll("terminal")).toEqual([first.id]);
+  expect(parameters.get("focus")).toBe(first.id);
 });
 
 test("keeps cwd and terminal navigation rows compact", async ({ page }) => {
@@ -1518,18 +1506,14 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await settingsDialog.getByLabel("Cursor style").selectOption("underline");
   await settingsDialog.getByRole("checkbox", { name: "Cursor blink" }).check();
   await settingsDialog.getByLabel("Scroll sensitivity").fill("5");
-  const autoSelectAttention = settingsDialog.getByRole("checkbox", {
-    name: "Auto-select attention terminals",
-  });
-  const autoDeselectRunning = settingsDialog.getByRole("checkbox", {
-    name: "Auto-deselect running agent terminals",
-  });
   const optionAsAlt = settingsDialog.getByRole("checkbox", { name: "Option as Alt" });
-  await expect(autoSelectAttention).toBeChecked();
-  await expect(autoDeselectRunning).toBeChecked();
+  await expect(settingsDialog.getByRole("checkbox", {
+    name: "Auto-select attention terminals",
+  })).toHaveCount(0);
+  await expect(settingsDialog.getByRole("checkbox", {
+    name: "Auto-deselect running agent terminals",
+  })).toHaveCount(0);
   await expect(optionAsAlt).toBeChecked();
-  await autoSelectAttention.uncheck();
-  await autoDeselectRunning.uncheck();
   await optionAsAlt.uncheck();
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   if (hasDomTerminalRows) {
@@ -1563,12 +1547,6 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(savedSettingsDialog.getByLabel("Cursor style")).toHaveValue("underline");
   await expect(savedSettingsDialog.getByRole("checkbox", { name: "Cursor blink" })).toBeChecked();
   await expect(savedSettingsDialog.getByLabel("Scroll sensitivity")).toHaveValue("5");
-  await expect(savedSettingsDialog.getByRole("checkbox", {
-    name: "Auto-select attention terminals",
-  })).not.toBeChecked();
-  await expect(savedSettingsDialog.getByRole("checkbox", {
-    name: "Auto-deselect running agent terminals",
-  })).not.toBeChecked();
   await expect(savedSettingsDialog.getByRole("checkbox", {
     name: "Option as Alt",
   })).not.toBeChecked();

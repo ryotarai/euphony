@@ -116,7 +116,6 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		defaults.InterfaceFontSize != 16 || defaults.TerminalFontSize != 14 ||
 		defaults.TerminalFontFamily != DefaultTerminalFontFamily ||
 		defaults.AgentLogFontSize != 14 || defaults.TerminalHistoryLimit != 1048576 ||
-		!defaults.AutoSelectAttention || !defaults.AutoDeselectRunning ||
 		defaults.TerminalLineHeight != 1.25 || defaults.TerminalCursorStyle != "bar" ||
 		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 ||
 		!defaults.TerminalOptionAsAlt {
@@ -127,9 +126,8 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 		TerminalFontFamily:   "JetBrains Mono, monospace",
-		TerminalHistoryLimit: 0, AutoSelectAttention: false,
-		AutoDeselectRunning: false,
-		TerminalLineHeight:  1.5, TerminalCursorStyle: "underline",
+		TerminalHistoryLimit: 0,
+		TerminalLineHeight:   1.5, TerminalCursorStyle: "underline",
 		TerminalCursorBlink: true, TerminalScrollSensitivity: 5,
 		TerminalOptionAsAlt: false,
 	}
@@ -151,6 +149,56 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("LoadSettings() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSQLiteStoreIgnoresRemovedAutomaticSelectionColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "removed-settings.sqlite3")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+
+	for _, statement := range []string{
+		"ALTER TABLE settings ADD COLUMN auto_select_attention INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE settings ADD COLUMN auto_deselect_running INTEGER NOT NULL DEFAULT 1",
+	} {
+		if _, err := store.db.Exec(statement); err != nil {
+			t.Fatalf("add removed settings column: %v", err)
+		}
+	}
+	if _, err := store.db.Exec(
+		"UPDATE settings SET auto_select_attention = 0, auto_deselect_running = 0 WHERE id = 1",
+	); err != nil {
+		t.Fatalf("set removed settings values: %v", err)
+	}
+
+	settings := DefaultSettings()
+	settings.Prefix = "Ctrl+A"
+	if err := store.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	got, err := store.LoadSettings(context.Background())
+	if err != nil {
+		t.Fatalf("LoadSettings() error = %v", err)
+	}
+	if got != settings {
+		t.Fatalf("LoadSettings() = %#v, want %#v", got, settings)
+	}
+
+	var autoSelectAttention, autoDeselectRunning int
+	if err := store.db.QueryRow(
+		"SELECT auto_select_attention, auto_deselect_running FROM settings WHERE id = 1",
+	).Scan(&autoSelectAttention, &autoDeselectRunning); err != nil {
+		t.Fatalf("read removed settings values: %v", err)
+	}
+	if autoSelectAttention != 0 || autoDeselectRunning != 0 {
+		t.Fatalf(
+			"removed settings changed to auto_select_attention=%d, auto_deselect_running=%d",
+			autoSelectAttention,
+			autoDeselectRunning,
+		)
 	}
 }
 
@@ -312,9 +360,8 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
 		TerminalFontFamily:   DefaultTerminalFontFamily,
-		TerminalHistoryLimit: 1048576, AutoSelectAttention: true,
-		AutoDeselectRunning: true,
-		TerminalLineHeight:  1.25, TerminalCursorStyle: "bar",
+		TerminalHistoryLimit: 1048576,
+		TerminalLineHeight:   1.25, TerminalCursorStyle: "bar",
 		TerminalCursorBlink: false, TerminalScrollSensitivity: 3,
 		TerminalOptionAsAlt: true,
 	}

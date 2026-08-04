@@ -14,10 +14,7 @@ type ClientSizeMessage = {
   rows?: number;
 };
 
-async function clearSessions(
-  page: Page,
-  options: { autoDeselectRunning?: boolean } = {},
-) {
+async function clearSessions(page: Page) {
   const settingsResponse = await page.request.patch("/api/settings", {
     headers: {
       Authorization: "Bearer test-token",
@@ -34,8 +31,6 @@ async function clearSessions(
         'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
       agentLogFontSize: 14,
       terminalHistoryLimit: 1024 * 1024,
-      autoSelectAttention: true,
-      autoDeselectRunning: options.autoDeselectRunning ?? true,
       terminalLineHeight: 1.25,
       terminalCursorStyle: "bar",
       terminalCursorBlink: false,
@@ -514,7 +509,7 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
     Object.defineProperty(window, "WebSocket", { value: RecordingWebSocket });
   });
 
-  await clearSessions(page, { autoDeselectRunning: false });
+  await clearSessions(page);
   await createSession(page, "Left");
   const claude = await createSession(page, "Claude");
   await page.goto("/?token=test-token");

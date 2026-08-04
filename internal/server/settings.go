@@ -29,8 +29,6 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalFontFamily        string   `json:"terminalFontFamily"`
 		AgentLogFontSize          float64  `json:"agentLogFontSize"`
 		TerminalHistoryLimit      *float64 `json:"terminalHistoryLimit"`
-		AutoSelectAttention       *bool    `json:"autoSelectAttention"`
-		AutoDeselectRunning       *bool    `json:"autoDeselectRunning"`
 		TerminalLineHeight        float64  `json:"terminalLineHeight"`
 		TerminalCursorStyle       string   `json:"terminalCursorStyle"`
 		TerminalCursorBlink       *bool    `json:"terminalCursorBlink"`
@@ -52,7 +50,6 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validFontSize(input.AgentLogFontSize) ||
 		terminalFontFamily == "" || utf8.RuneCountInString(terminalFontFamily) > 256 ||
 		!validTerminalHistoryLimit(input.TerminalHistoryLimit) ||
-		input.AutoSelectAttention == nil || input.AutoDeselectRunning == nil ||
 		!validTerminalLineHeight(input.TerminalLineHeight) ||
 		!validTerminalCursorStyle(input.TerminalCursorStyle) ||
 		input.TerminalCursorBlink == nil ||
@@ -71,8 +68,6 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalFontFamily:        terminalFontFamily,
 		AgentLogFontSize:          int(input.AgentLogFontSize),
 		TerminalHistoryLimit:      int(*input.TerminalHistoryLimit),
-		AutoSelectAttention:       *input.AutoSelectAttention,
-		AutoDeselectRunning:       *input.AutoDeselectRunning,
 		TerminalLineHeight:        input.TerminalLineHeight,
 		TerminalCursorStyle:       input.TerminalCursorStyle,
 		TerminalCursorBlink:       *input.TerminalCursorBlink,

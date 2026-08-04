@@ -13,7 +13,6 @@ import { ApiClient, ApiError } from "./api";
 import { SessionNavigation } from "./components/SessionNavigation";
 import {
   agentLaunchTransitions,
-  agentRunningTransitions,
   attentionTransitions,
   cwdFilterKey,
   replacementSession,
@@ -90,13 +89,8 @@ const quickActionStatuses = [
 ] as const;
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
-const runningDeselectDelayMs = 10_000;
+const filterDeselectDelayMs = 10_000;
 const maxCachedTerminalViews = 4;
-
-interface RunningDeselectNotice {
-  id: string;
-  name: string;
-}
 
 interface AppProps {
   initialToken?: string;
@@ -132,8 +126,6 @@ const defaultSettings: Settings = {
   terminalFontFamily: defaultTerminalFontFamily,
   agentLogFontSize: 14,
   terminalHistoryLimit: bytesPerMiB,
-  autoSelectAttention: true,
-  autoDeselectRunning: true,
   terminalLineHeight: defaultTerminalLineHeight,
   terminalCursorStyle: defaultTerminalCursorStyle,
   terminalCursorBlink: defaultTerminalCursorBlink,
@@ -446,12 +438,6 @@ export function App({
   const [unlimitedTerminalHistory, setUnlimitedTerminalHistory] = useState(
     settings.terminalHistoryLimit === 0,
   );
-  const [autoSelectAttentionDraft, setAutoSelectAttentionDraft] = useState(
-    settings.autoSelectAttention,
-  );
-  const [autoDeselectRunningDraft, setAutoDeselectRunningDraft] = useState(
-    settings.autoDeselectRunning,
-  );
   const [terminalFontFamilyDraft, setTerminalFontFamilyDraft] = useState(
     settings.terminalFontFamily,
   );
@@ -497,9 +483,6 @@ export function App({
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
-  const [runningDeselectNotices, setRunningDeselectNotices] = useState<
-    RunningDeselectNotice[]
-  >([]);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -514,14 +497,9 @@ export function App({
   const previousSessionOrderRef = useRef<Session[]>([]);
   const openedTerminalIDs = useMemo(() => new Set<string>(), []);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(null!);
-  const pendingAgentRunningIDsRef = useRef<Set<string>>(null!);
-  const runningDeselectTimersRef = useRef<Map<string, number>>(null!);
-  const expiredRunningDeselectIDsRef = useRef<Set<string>>(null!);
-  const [runningDeselectExpiryVersion, setRunningDeselectExpiryVersion] = useState(0);
   const filterDeselectTimersRef = useRef<Map<string, number>>(null!);
   const expiredFilterDeselectIDsRef = useRef<Set<string>>(null!);
   const [filterDeselectExpiryVersion, setFilterDeselectExpiryVersion] = useState(0);
-  const pendingAttentionSelectionIDsRef = useRef<Set<string>>(null!);
   const pendingAttentionAcknowledgementsRef = useRef<Set<string>>(null!);
   const selectionRevisionRef = useRef<number | null>(null);
   const selectionServerSignatureRef = useRef("");
@@ -540,12 +518,8 @@ export function App({
     decomposedStatusFiltersRef.current ??= new Set();
     decomposedPinnedStatusFiltersRef.current ??= new Set();
     pendingAgentLaunchIDsRef.current ??= new Set();
-    pendingAgentRunningIDsRef.current ??= new Set();
-    runningDeselectTimersRef.current ??= new Map();
-    expiredRunningDeselectIDsRef.current ??= new Set();
     filterDeselectTimersRef.current ??= new Map();
     expiredFilterDeselectIDsRef.current ??= new Set();
-    pendingAttentionSelectionIDsRef.current ??= new Set();
     pendingAttentionAcknowledgementsRef.current ??= new Set();
   }, []);
   const currentSelectionStateRef = useRef({
@@ -563,17 +537,6 @@ export function App({
     };
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
-  const cancelRunningDeselect = useCallback((id: string) => {
-    const timer = runningDeselectTimersRef.current.get(id);
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      runningDeselectTimersRef.current.delete(id);
-    }
-    filterSelectedIDsRef.current.delete(id);
-    setRunningDeselectNotices((current) =>
-      current.filter((notice) => notice.id !== id),
-    );
-  }, []);
   const cancelFilterDeselect = useCallback((id: string) => {
     const timer = filterDeselectTimersRef.current.get(id);
     if (timer !== undefined) {
@@ -587,16 +550,12 @@ export function App({
       filterDeselectTimersRef.current.delete(id);
       expiredFilterDeselectIDsRef.current.add(id);
       setFilterDeselectExpiryVersion((current) => current + 1);
-    }, runningDeselectDelayMs);
+    }, filterDeselectDelayMs);
     filterDeselectTimersRef.current.set(id, timer);
   }, []);
 
   useEffect(() => {
     return () => {
-      for (const timer of runningDeselectTimersRef.current.values()) {
-        window.clearTimeout(timer);
-      }
-      runningDeselectTimersRef.current.clear();
       for (const timer of filterDeselectTimersRef.current.values()) {
         window.clearTimeout(timer);
       }
@@ -704,12 +663,6 @@ export function App({
     pendingAgentLaunchIDsRef.current = new Set(
       agentLaunchTransitions(previous, items).map((session) => session.id),
     );
-    pendingAgentRunningIDsRef.current = new Set(
-      agentRunningTransitions(previous, items).map((session) => session.id),
-    );
-    pendingAttentionSelectionIDsRef.current = new Set(
-      transitions.map((session) => session.id),
-    );
     previousSessionOrderRef.current = previous;
     previousSessionsRef.current = items;
     setSessions((current) =>
@@ -759,19 +712,7 @@ export function App({
         }
       }
     }
-    const pendingRunningIDs = new Set([
-      ...pendingAgentRunningIDsRef.current,
-      ...runningDeselectTimersRef.current.keys(),
-    ]);
     const pendingFilterDeselectIDs = new Set(filterDeselectTimersRef.current.keys());
-    const preservedRunningIDs = settings.autoDeselectRunning
-      ? [...pendingRunningIDs].filter(
-        (id) =>
-          selectedIDSet.has(id) &&
-          !pinnedIDSet.has(id) &&
-          !snapshotTerminalIDSet.has(id),
-      )
-      : [];
     const preservedFilterDeselectIDs = [...pendingFilterDeselectIDs].filter(
       (id) =>
         selectedIDSet.has(id) &&
@@ -779,16 +720,13 @@ export function App({
         !snapshotTerminalIDSet.has(id),
     );
     const preservedIDs = [
-      ...new Set([...preservedRunningIDs, ...preservedFilterDeselectIDs]),
+      ...new Set(preservedFilterDeselectIDs),
     ];
     const effectiveSnapshot = preservedIDs.length === 0
       ? snapshot
       : {
         ...snapshot,
         terminalIds: [...new Set([...snapshot.terminalIds, ...preservedIDs])],
-        manualTerminalIds: [
-          ...new Set([...snapshot.manualTerminalIds, ...preservedRunningIDs]),
-        ],
         ...(focusedID && preservedIDs.includes(focusedID)
           ? { focusedTerminalId: focusedID }
           : {}),
@@ -959,8 +897,6 @@ export function App({
       setPaneTabShortcutDraft(loaded.paneTabShortcut);
       setTerminalHistoryLimitDraft(historyLimitDraft(loaded.terminalHistoryLimit));
       setUnlimitedTerminalHistory(loaded.terminalHistoryLimit === 0);
-      setAutoSelectAttentionDraft(loaded.autoSelectAttention);
-      setAutoDeselectRunningDraft(loaded.autoDeselectRunning);
       setTerminalFontFamilyDraft(loaded.terminalFontFamily);
       setTerminalLineHeightDraft(String(loaded.terminalLineHeight));
       setTerminalCursorStyleDraft(loaded.terminalCursorStyle);
@@ -1301,55 +1237,6 @@ export function App({
   ]);
 
   useEffect(() => {
-    const available = new Set(sessions?.map((session) => session.id) ?? []);
-    const attentionIDs = settings.autoSelectAttention
-      ? [...pendingAttentionSelectionIDsRef.current].filter((id) => available.has(id))
-      : [];
-    pendingAttentionSelectionIDsRef.current.clear();
-    attentionIDs.forEach((id) => {
-      if (!filterDeselectTimersRef.current.has(id)) {
-        filterSelectedIDsRef.current.delete(id);
-      }
-    });
-
-    const runningTransitionIDs = [...pendingAgentRunningIDsRef.current];
-    pendingAgentRunningIDsRef.current.clear();
-    for (const id of runningTransitionIDs) {
-      pendingAgentLaunchIDsRef.current.delete(id);
-    }
-    if (settings.autoDeselectRunning && runningTransitionIDs.length > 0) {
-      const notices: RunningDeselectNotice[] = [];
-      for (const id of runningTransitionIDs) {
-        const session = sessions?.find((item) => item.id === id);
-        if (
-          !session ||
-          !selectedIDs.includes(id) ||
-          pinnedIDs.includes(id) ||
-          runningDeselectTimersRef.current.has(id)
-        ) {
-          continue;
-        }
-        const timer = window.setTimeout(() => {
-          runningDeselectTimersRef.current.delete(id);
-          expiredRunningDeselectIDsRef.current.add(id);
-          setRunningDeselectNotices((current) =>
-            current.filter((notice) => notice.id !== id),
-          );
-          setRunningDeselectExpiryVersion((current) => current + 1);
-        }, runningDeselectDelayMs);
-        runningDeselectTimersRef.current.set(id, timer);
-        notices.push({ id, name: session.name });
-      }
-      if (notices.length > 0) {
-        setRunningDeselectNotices((current) => [
-          ...current,
-          ...notices.filter(
-            (notice) => !current.some((item) => item.id === notice.id),
-          ),
-        ]);
-      }
-    }
-
     if (syncSelection) {
       const promotedID =
         focusedID &&
@@ -1375,7 +1262,6 @@ export function App({
             ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
             ...pinnedFilterMatches,
             promotedID,
-            ...attentionIDs,
           ]),
         ];
         markLocalSelectionMutation();
@@ -1396,18 +1282,6 @@ export function App({
         );
         return;
       }
-      if (attentionIDs.length === 0) return;
-      const next = [...new Set([...selectedIDs, ...attentionIDs])];
-      markLocalSelectionMutation();
-      setSelectedIDs(next);
-      writeWorkspaceToURL(
-        next,
-        pinnedIDs,
-        focusedID,
-        statusFilters,
-        cwdFilters,
-        "replace",
-      );
       return;
     }
 
@@ -1436,7 +1310,6 @@ export function App({
           ...selectedIDs.filter((id) => pinnedIDs.includes(id)),
           ...pinnedFilterMatches,
           promotedID,
-          ...attentionIDs,
         ]),
       ];
       setSelectedIDs(next);
@@ -1458,17 +1331,6 @@ export function App({
     }
 
     if (!sessions || (statusFilters.length === 0 && cwdFilters.length === 0)) {
-      if (attentionIDs.length === 0) return;
-      const next = [...new Set([...selectedIDs, ...attentionIDs])];
-      setSelectedIDs(next);
-      writeWorkspaceToURL(
-        next,
-        pinnedIDs,
-        focusedID,
-        statusFilters,
-        cwdFilters,
-        "replace",
-      );
       return;
     }
     const matches = sessions
@@ -1485,23 +1347,14 @@ export function App({
         expiredFilterDeselectIDsRef.current.delete(id);
       }
     }
-    const pendingRunningIDs = settings.autoDeselectRunning
-      ? new Set(
-        [...runningDeselectTimersRef.current.keys()].filter(
-          (id) => selectedIDs.includes(id) && !pinnedIDs.includes(id),
-        ),
-      )
-      : new Set<string>();
     const pendingFilterDeselectIDs = new Set(filterDeselectTimersRef.current.keys());
     const next = [
       ...selectedIDs.filter(
         (id) =>
           !previousMatches.has(id) ||
-          pendingRunningIDs.has(id) ||
           pendingFilterDeselectIDs.has(id),
       ),
       ...matches,
-      ...attentionIDs,
     ].filter((id, index, values) => values.indexOf(id) === index);
     filterSelectedIDsRef.current = new Set(
       [
@@ -1535,8 +1388,6 @@ export function App({
     selectedIDs,
     pinnedIDs,
     focusedID,
-    settings.autoSelectAttention,
-    settings.autoDeselectRunning,
     markLocalSelectionMutation,
     writeWorkspaceToURL,
   ]);
@@ -1589,85 +1440,6 @@ export function App({
     focusedID,
     markLocalSelectionMutation,
     writeWorkspaceToURL,
-  ]);
-
-  useEffect(() => {
-    const expiredIDs = [...expiredRunningDeselectIDsRef.current];
-    expiredRunningDeselectIDsRef.current.clear();
-    if (
-      expiredIDs.length === 0 ||
-      !settings.autoDeselectRunning ||
-      !sessions
-    ) {
-      return;
-    }
-    const runningIDs = new Set(
-      expiredIDs.filter((id) =>
-        sessions.some(
-          (session) => session.id === id && session.agentStatus === "running",
-        ),
-      ),
-    );
-    if (runningIDs.size === 0) return;
-    const next = selectedIDs.filter(
-      (id) => pinnedIDs.includes(id) || !runningIDs.has(id),
-    );
-    if (next.join("\0") === selectedIDs.join("\0")) return;
-    for (const id of runningIDs) {
-      manualSelectedIDsRef.current.delete(id);
-      filterSelectedIDsRef.current.delete(id);
-    }
-    const nextFocus =
-      focusedID && next.includes(focusedID) ? focusedID : next[0] ?? null;
-    if (syncSelection) markLocalSelectionMutation();
-    setSelectedIDs(next);
-    setFocusedID(nextFocus);
-    writeWorkspaceToURL(
-      next,
-      pinnedIDs,
-      nextFocus,
-      statusFilters,
-      cwdFilters,
-      "replace",
-    );
-  }, [
-    runningDeselectExpiryVersion,
-    sessions,
-    syncSelection,
-    statusFilters,
-    cwdFilters,
-    selectedIDs,
-    pinnedIDs,
-    focusedID,
-    settings.autoDeselectRunning,
-    markLocalSelectionMutation,
-    writeWorkspaceToURL,
-  ]);
-
-  useEffect(() => {
-    if (runningDeselectNotices.length === 0) return;
-    const activeSessions = new Map(
-      (sessions ?? []).map((session) => [session.id, session]),
-    );
-    const invalidIDs = runningDeselectNotices
-      .filter((notice) => {
-        const session = activeSessions.get(notice.id);
-        return (
-          !settings.autoDeselectRunning ||
-          !selectedIDs.includes(notice.id) ||
-          pinnedIDs.includes(notice.id) ||
-          session?.agentStatus !== "running"
-        );
-      })
-      .map((notice) => notice.id);
-    invalidIDs.forEach(cancelRunningDeselect);
-  }, [
-    cancelRunningDeselect,
-    runningDeselectNotices,
-    sessions,
-    selectedIDs,
-    pinnedIDs,
-    settings.autoDeselectRunning,
   ]);
 
   useEffect(() => {
@@ -2476,7 +2248,6 @@ export function App({
         }
         deletedIDs.add(item.id);
         if (deleted) latestSelection = deleted.selection;
-        cancelRunningDeselect(item.id);
         cancelFilterDeselect(item.id);
         setSessions((current) =>
           current?.filter((candidate) => candidate.id !== item.id) ?? current,
@@ -2524,8 +2295,6 @@ export function App({
     setPaneTabShortcutDraft(settings.paneTabShortcut);
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
-    setAutoSelectAttentionDraft(settings.autoSelectAttention);
-    setAutoDeselectRunningDraft(settings.autoDeselectRunning);
     setTerminalFontFamilyDraft(settings.terminalFontFamily);
     setTerminalLineHeightDraft(String(settings.terminalLineHeight));
     setTerminalCursorStyleDraft(settings.terminalCursorStyle);
@@ -2640,8 +2409,6 @@ export function App({
       terminalFontFamily,
       agentLogFontSize: fontSizes.agentLogFontSize!,
       terminalHistoryLimit,
-      autoSelectAttention: autoSelectAttentionDraft,
-      autoDeselectRunning: autoDeselectRunningDraft,
       terminalLineHeight,
       terminalCursorStyle,
       terminalCursorBlink: terminalCursorBlinkDraft,
@@ -2901,40 +2668,6 @@ export function App({
         className="terminal-stage"
         data-multiple={panes.length > 1}
       >
-        {runningDeselectNotices.length > 0 && (
-          <div className="running-deselect-toasts">
-            {runningDeselectNotices.map((notice) => (
-              <div
-                key={notice.id}
-                className="running-deselect-toast"
-                data-slot="running-deselect-toast"
-                data-terminal-id={notice.id}
-                role="status"
-                aria-label="Automatic deselection"
-              >
-                <div className="running-deselect-toast-copy">
-                  <strong className="running-deselect-toast-title">
-                    {notice.name} is now running.
-                  </strong>
-                  <p className="running-deselect-toast-description">
-                    {" "}It will be removed in 10 seconds.
-                  </p>
-                </div>
-                <div className="running-deselect-toast-actions">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="running-deselect-toast-action"
-                    onClick={() => cancelRunningDeselect(notice.id)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
           <div
@@ -3218,38 +2951,6 @@ export function App({
                 {settingsError?.field === "terminalHistoryLimit" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
-              </Field>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id="auto-select-attention"
-                  checked={autoSelectAttentionDraft}
-                  onCheckedChange={(checked) =>
-                    setAutoSelectAttentionDraft(Boolean(checked))}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="auto-select-attention">
-                    Auto-select attention terminals
-                  </FieldLabel>
-                  <FieldDescription>
-                    Add them to the workspace without moving focus.
-                  </FieldDescription>
-                </FieldContent>
-              </Field>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id="auto-deselect-running"
-                  checked={autoDeselectRunningDraft}
-                  onCheckedChange={(checked) =>
-                    setAutoDeselectRunningDraft(Boolean(checked))}
-                />
-                <FieldContent>
-                  <FieldLabel htmlFor="auto-deselect-running">
-                    Auto-deselect running agent terminals
-                  </FieldLabel>
-                  <FieldDescription>
-                    Remove them from the workspace when their agent starts running.
-                  </FieldDescription>
-                </FieldContent>
               </Field>
               <section className="font-size-section" aria-labelledby="font-size-heading">
                 <div className="settings-section-heading">

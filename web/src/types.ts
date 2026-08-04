@@ -34,8 +34,6 @@ export interface Settings {
   terminalFontFamily: string;
   agentLogFontSize: number;
   terminalHistoryLimit: number;
-  autoSelectAttention: boolean;
-  autoDeselectRunning: boolean;
   terminalLineHeight: number;
   terminalCursorStyle: TerminalCursorStyle;
   terminalCursorBlink: boolean;

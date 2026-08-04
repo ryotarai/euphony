@@ -64,8 +64,8 @@
   clear group filters and other pane selections, then follow that session.
 - Model unread attention independently from the agent's current status; never
   replace statuses such as `waiting` or `running` with an attention status.
-- Automatically selecting an attention-needing terminal must not move focus;
-  acknowledge attention only after the user explicitly focuses that terminal.
+- Attention transitions must not change terminal selection or focus; acknowledge
+  attention only after the user explicitly focuses that terminal.
 - Toggle the desktop sidebar with Meta+B only; keep Control+B available for
   terminal prefix commands.
 

@@ -88,8 +88,6 @@ type Settings struct {
 	TerminalFontFamily        string  `json:"terminalFontFamily"`
 	AgentLogFontSize          int     `json:"agentLogFontSize"`
 	TerminalHistoryLimit      int     `json:"terminalHistoryLimit"`
-	AutoSelectAttention       bool    `json:"autoSelectAttention"`
-	AutoDeselectRunning       bool    `json:"autoDeselectRunning"`
 	TerminalLineHeight        float64 `json:"terminalLineHeight"`
 	TerminalCursorStyle       string  `json:"terminalCursorStyle"`
 	TerminalCursorBlink       bool    `json:"terminalCursorBlink"`
@@ -119,8 +117,6 @@ func DefaultSettings() Settings {
 		TerminalFontFamily:        DefaultTerminalFontFamily,
 		AgentLogFontSize:          14,
 		TerminalHistoryLimit:      DefaultTerminalHistoryLimit,
-		AutoSelectAttention:       true,
-		AutoDeselectRunning:       true,
 		TerminalLineHeight:        DefaultTerminalLineHeight,
 		TerminalCursorStyle:       DefaultTerminalCursorStyle,
 		TerminalCursorBlink:       DefaultTerminalCursorBlink,

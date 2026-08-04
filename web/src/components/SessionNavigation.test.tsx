@@ -28,8 +28,6 @@ const settings: Settings = {
     'Menlo, Monaco, "Hiragino Sans", "Yu Gothic", "Noto Sans Mono CJK JP", monospace',
   agentLogFontSize: 14,
   terminalHistoryLimit: 1024 * 1024,
-  autoSelectAttention: true,
-  autoDeselectRunning: true,
   terminalLineHeight: 1.25,
   terminalCursorStyle: "bar",
   terminalCursorBlink: false,

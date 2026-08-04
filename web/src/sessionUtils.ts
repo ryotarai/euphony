@@ -28,21 +28,6 @@ export function agentLaunchTransitions(
   );
 }
 
-export function agentRunningTransitions(
-  previous: Session[],
-  next: Session[],
-): Session[] {
-  const previousStatuses = new Map(
-    previous.map((session) => [session.id, session.agentStatus]),
-  );
-  return next.filter(
-    (session) =>
-      Boolean(session.agent) &&
-      session.agentStatus === "running" &&
-      previousStatuses.get(session.id) !== "running",
-  );
-}
-
 export function sessionsEqual(left: Session[], right: Session[]): boolean {
   if (left.length !== right.length) return false;
   return left.every((session, index) => {

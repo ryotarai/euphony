@@ -11,14 +11,14 @@ Give a filter-owned terminal a 10-second grace period after a session status eve
 ## Scope and non-goals
 
 - Apply the delay to automatic selection changes caused by session status/activity updates.
-- Preserve immediate behavior for explicit user operations such as selecting a terminal, changing a filter, pinning, deleting, or canceling the existing running-agent deselection notice.
+- Preserve immediate behavior for explicit user operations such as selecting a terminal, changing a filter, pinning, or deleting.
 - Keep manually selected and pinned terminals selected regardless of filter membership.
 - Do not delay or alter server event delivery; this is a browser selection presentation concern.
 - Do not add a new visual treatment. Existing terminal panes remain visible during the grace period.
 
 ## Design
 
-The existing session-snapshot path records activity transitions before updating React state. Add a per-terminal pending filter-removal timer registry alongside the existing running-agent deselection timers. The registry is created only when all of the following are true:
+The existing session-snapshot path records activity transitions before updating React state. Add a per-terminal pending filter-removal timer registry. The registry is created only when all of the following are true:
 
 1. The terminal was previously owned by the active filter selection.
 2. A session snapshot event made it stop matching the current status/cwd filters.
@@ -28,7 +28,7 @@ The filter reconciliation effect keeps pending IDs in the selected list while th
 
 When a later snapshot shows the terminal matching again, reconciliation clears its timer and keeps it selected. If the terminal is manually deselected, pinned, removed, or the filter is changed, the timer is cleared so explicit user actions remain immediate. Component cleanup clears all pending timers.
 
-The existing `runningDeselectDelayMs` constant remains the single 10-second duration for the related automatic deselection behavior. The new logic must not reuse its notice UI or change the meaning of the `autoDeselectRunning` setting: the new grace period is for filter-driven transient status changes.
+The `filterDeselectDelayMs` constant defines the independent 10-second grace period for filter-driven transient status changes.
 
 ## Data flow
 
@@ -59,5 +59,4 @@ Add regression coverage to the existing `App.test.tsx` behavior suite using fake
 - A status-filtered terminal remains visible before 10 seconds after changing from the filter's status to another status.
 - The terminal is removed and the replacement is selected after 10 seconds if the status remains outside the filter.
 - Returning to the filtered status before expiry cancels the pending removal and does not remove the terminal.
-- Existing immediate explicit filter changes and running-agent deselection behavior remain passing.
-
+- Existing immediate explicit filter changes remain passing.
