@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import {
+  BotIcon,
   CircleCheckIcon,
   CircleHelpIcon,
   CirclePauseIcon,
@@ -63,6 +64,9 @@ interface SessionNavigationProps {
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
+  agentsOpen?: boolean;
+  agentSummaryCount?: number;
+  onOpenAgents?(): void;
 }
 
 function activity(session: Session) {
@@ -384,6 +388,11 @@ function SessionNavigationContent({
     props.onOpenSettings?.();
   };
 
+  const openAgents = () => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenAgents?.();
+  };
+
   return (
     <>
       <Sidebar
@@ -408,6 +417,26 @@ function SessionNavigationContent({
           data-overflow-bottom={hasTerminalTreeOverflowBelow || undefined}
           onScroll={updateTerminalTreeOverflow}
         >
+          <SidebarMenu className="sidebar-primary-navigation">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                tooltip="Agents"
+                isActive={props.agentsOpen}
+                aria-current={props.agentsOpen ? "page" : undefined}
+                aria-label="Agents"
+                onClick={openAgents}
+              >
+                <BotIcon aria-hidden="true" />
+                <span>Agents</span>
+                {(props.agentSummaryCount ?? 0) > 0 && (
+                  <span className="sidebar-attention-count" aria-hidden="true">
+                    {props.agentSummaryCount}
+                  </span>
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
           <SessionList {...props} settings={settings} />
         </SidebarContent>
         <SidebarFooter>

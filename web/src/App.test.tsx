@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useEffect, type ComponentProps } from "react";
 import { App } from "./App";
 import { attentionTransitions } from "./sessionUtils";
-import type { SelectionSnapshot, Session, Settings } from "./types";
+import type { AgentSummary, SelectionSnapshot, Session, Settings } from "./types";
 
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100_000);
@@ -499,6 +499,49 @@ test("detects only new transitions into attention", () => {
   const attention = { ...runningSession, needsAttention: true };
   expect(attentionTransitions([runningSession], [attention])).toEqual([attention]);
   expect(attentionTransitions([attention], [attention])).toEqual([]);
+});
+
+test("opens the Agents dashboard and returns to the selected terminal", async () => {
+  const summary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "waiting",
+    summary: "The agent is waiting for confirmation before editing the route.",
+    action: "Approve the requested file change.",
+    generatedAt: "2026-08-05T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([summary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+
+  expect(await screen.findByRole("heading", { name: "Action required" })).toBeVisible();
+  expect(screen.getByText(summary.summary)).toBeVisible();
+  expect(screen.getByText(summary.action!)).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+
+  await user.click(screen.getByRole("button", { name: /Needs approval/ }));
+  expect(screen.queryByRole("heading", { name: "Action required" })).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
 test("acknowledges a need-attention terminal when it receives focus", async () => {
@@ -2400,12 +2443,15 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const terminalFontSize = within(dialog).getByLabelText("Terminal");
   const agentLogFontSize = within(dialog).getByLabelText("Agent log");
   const terminalFontFamily = within(dialog).getByLabelText("Terminal font");
+  const summaryProvider = within(dialog).getByLabelText("Summary provider");
+  expect(summaryProvider).toHaveValue("claude");
   fireEvent.change(interfaceFontSize, { target: { value: "18" } });
   fireEvent.change(terminalFontSize, { target: { value: "17" } });
   fireEvent.change(agentLogFontSize, { target: { value: "16" } });
   fireEvent.change(terminalFontFamily, {
     target: { value: '"JetBrains Mono", monospace' },
   });
+  await user.selectOptions(summaryProvider, "codex");
   expect(document.documentElement).toHaveStyle({ fontSize: "18px" });
   expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
     "data-font-size",
@@ -2440,6 +2486,9 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   expect(within(reopenedDialog).getByLabelText("Terminal font")).toHaveValue(
     defaultSettings.terminalFontFamily,
   );
+  expect(within(reopenedDialog).getByLabelText("Summary provider")).toHaveValue(
+    "claude",
+  );
   fireEvent.change(reopenedPrefix, { target: { value: "Ctrl+A" } });
   fireEvent.change(paneTabShortcut, { target: { value: "control+j" } });
   fireEvent.change(historyBuffer, { target: { value: "8" } });
@@ -2455,6 +2504,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   fireEvent.change(within(reopenedDialog).getByLabelText("Terminal font"), {
     target: { value: "  Iosevka, monospace  " },
   });
+  await user.selectOptions(within(reopenedDialog).getByLabelText("Summary provider"), "codex");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
@@ -2470,6 +2520,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         terminalFontFamily: "Iosevka, monospace",
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
+        agentSummaryProvider: "codex",
       }),
     }),
   );

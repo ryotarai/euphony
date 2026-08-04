@@ -81,6 +81,33 @@ test("composes terminal navigation from the shadcn sidebar without a monogram", 
   expect(screen.queryByText("EU")).not.toBeInTheDocument();
 });
 
+test("places Agents above the terminal tree and opens the dashboard", async () => {
+  const onOpenAgents = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      agentSummaryCount={2}
+      onOpenAgents={onOpenAgents}
+    />,
+  );
+
+  const terminalTree = screen
+    .getByLabelText("Terminal sessions")
+    .closest('[data-slot="sidebar-content"]') as HTMLElement | null;
+  expect(terminalTree).not.toBeNull();
+  const agents = within(terminalTree!).getByRole("button", { name: /Agents/ });
+  expect(agents).toHaveTextContent("2");
+  expect(within(terminalTree!).getAllByRole("button")[0]).toBe(agents);
+
+  await user.click(agents);
+  expect(onOpenAgents).toHaveBeenCalledOnce();
+});
+
 test("reports whether more terminal tree content remains below", () => {
   render(
     <SessionNavigation

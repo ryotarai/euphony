@@ -11,6 +11,7 @@ import {
 } from "react";
 import { ApiClient, ApiError } from "./api";
 import { SessionNavigation } from "./components/SessionNavigation";
+import { AgentsView } from "./components/AgentsView";
 import {
   agentLaunchTransitions,
   attentionTransitions,
@@ -62,6 +63,7 @@ import {
 } from "@/components/ui/input-group";
 import type {
   CwdSelectionFilter,
+  AgentSummary,
   ReplaceSelectionRequest,
   SelectionSnapshot,
   Session,
@@ -429,6 +431,10 @@ export function App({
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
+  const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
+  const [agentSummariesError, setAgentSummariesError] = useState("");
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
@@ -456,6 +462,9 @@ export function App({
   );
   const [terminalOptionAsAltDraft, setTerminalOptionAsAltDraft] = useState(
     settings.terminalOptionAsAlt,
+  );
+  const [agentSummaryProviderDraft, setAgentSummaryProviderDraft] = useState(
+    settings.agentSummaryProvider,
   );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
@@ -538,6 +547,22 @@ export function App({
     };
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const loadAgentSummaries = useCallback(async () => {
+    if (!api) return;
+    setAgentSummariesLoading(true);
+    setAgentSummariesError("");
+    try {
+      setAgentSummaries(await api.listAgentSummaries());
+    } catch (error) {
+      setAgentSummariesError(
+        error instanceof Error
+          ? error.message
+          : "Agent summaries could not be loaded.",
+      );
+    } finally {
+      setAgentSummariesLoading(false);
+    }
+  }, [api]);
   const cancelFilterDeselect = useCallback((id: string) => {
     const timer = filterDeselectTimersRef.current.get(id);
     if (timer !== undefined) {
@@ -904,6 +929,7 @@ export function App({
       setTerminalCursorBlinkDraft(loaded.terminalCursorBlink);
       setTerminalScrollSensitivityDraft(String(loaded.terminalScrollSensitivity));
       setTerminalOptionAsAltDraft(loaded.terminalOptionAsAlt);
+      setAgentSummaryProviderDraft(loaded.agentSummaryProvider);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -913,6 +939,11 @@ export function App({
       active = false;
     };
   }, [api, initialSettings]);
+
+  useEffect(() => {
+    if (!agentsOpen || !api) return;
+    void loadAgentSummaries();
+  }, [agentsOpen, api, loadAgentSummaries]);
 
   useEffect(() => {
     if (!api) {
@@ -1078,6 +1109,24 @@ export function App({
           await refreshSnapshots();
           retryDelay = 250;
           await api.subscribeEvents(controller.signal, (event) => {
+            if (event.type === "agent.summary.updated") {
+              const summary = event.data as AgentSummary;
+              if (!summary?.terminalId) return;
+              setAgentSummaries((current) => [
+                ...current.filter((item) => item.terminalId !== summary.terminalId),
+                summary,
+              ]);
+              return;
+            }
+            if (event.type === "agent.summary.deleted") {
+              const data = event.data as { terminalId?: string };
+              if (data?.terminalId) {
+                setAgentSummaries((current) =>
+                  current.filter((item) => item.terminalId !== data.terminalId),
+                );
+              }
+              return;
+            }
             if (event.type === "selection.changed") {
               const snapshot = event.data as SelectionSnapshot;
               if (typeof snapshot?.revision === "number") {
@@ -1100,6 +1149,15 @@ export function App({
               event.type === "agent.updated" ||
               event.type === "subscriber_lagged"
             ) {
+              if (event.type === "terminal.deleted") {
+                const data = event.data as { id?: string; terminalId?: string };
+                const deletedID = data?.id ?? data?.terminalId;
+                if (deletedID) {
+                  setAgentSummaries((current) =>
+                    current.filter((item) => item.terminalId !== deletedID),
+                  );
+                }
+              }
               void refreshSnapshots();
             }
           });
@@ -2302,6 +2360,7 @@ export function App({
     setTerminalCursorBlinkDraft(settings.terminalCursorBlink);
     setTerminalScrollSensitivityDraft(String(settings.terminalScrollSensitivity));
     setTerminalOptionAsAltDraft(settings.terminalOptionAsAlt);
+    setAgentSummaryProviderDraft(settings.agentSummaryProvider);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -2415,8 +2474,14 @@ export function App({
       terminalCursorBlink: terminalCursorBlinkDraft,
       terminalScrollSensitivity,
       terminalOptionAsAlt: terminalOptionAsAltDraft,
+      agentSummaryProvider: agentSummaryProviderDraft,
     });
     setSettingsOpen(false);
+  }
+
+  function openAgentTerminal(id: string) {
+    setAgentsOpen(false);
+    selectSession(id, false);
   }
 
   if (!token) {
@@ -2464,6 +2529,14 @@ export function App({
     }, []);
   const mountedPanes = [...panes, ...cachedPanes];
   const selected = sessionsByID.get(focusedID ?? "") ?? panes[0];
+  const summaryByTerminalID = new Map(
+    agentSummaries.map((summary) => [summary.terminalId, summary]),
+  );
+  const agentSummaryCount = sessions.filter((session) => {
+    if (!session.agent) return false;
+    const status = summaryByTerminalID.get(session.id)?.status ?? session.agentStatus;
+    return status === "blocked" || status === "waiting";
+  }).length;
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")
     .map((pane) => pane.id);
@@ -2664,11 +2737,23 @@ export function App({
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
+        agentsOpen={agentsOpen}
+        agentSummaryCount={agentSummaryCount}
+        onOpenAgents={() => setAgentsOpen(true)}
       />
-      <section
-        className="terminal-stage"
-        data-multiple={panes.length > 1}
-      >
+      {agentsOpen ? (
+        <AgentsView
+          summaries={agentSummaries}
+          sessions={sessions}
+          loading={agentSummariesLoading}
+          error={agentSummariesError}
+          onSelectSession={openAgentTerminal}
+        />
+      ) : (
+        <section
+          className="terminal-stage"
+          data-multiple={panes.length > 1}
+        >
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
           <div
@@ -2752,7 +2837,8 @@ export function App({
         ) : (
           emptyState
         )}
-      </section>
+        </section>
+      )}
       {prefixActive && (
         <div className="prefix-command-guide" role="status" aria-label="Prefix commands">
           <span><kbd>c</kbd>: Create a terminal</span>
@@ -2915,6 +3001,25 @@ export function App({
                 {settingsError?.field === "paneTabShortcut" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="agentSummaryProvider">Summary provider</FieldLabel>
+                <select
+                  id="agentSummaryProvider"
+                  name="agentSummaryProvider"
+                  aria-label="Summary provider"
+                  className="settings-select"
+                  value={agentSummaryProviderDraft}
+                  onChange={(event) =>
+                    setAgentSummaryProviderDraft(event.target.value as Settings["agentSummaryProvider"])
+                  }
+                >
+                  <option value="claude">Claude · Haiku</option>
+                  <option value="codex">Codex · GPT-5.6-low</option>
+                </select>
+                <FieldDescription>
+                  Generate agent summaries with the selected command-line model.
+                </FieldDescription>
               </Field>
               <Field data-invalid={settingsError?.field === "terminalHistoryLimit"}>
                 <FieldLabel htmlFor="terminal-history-limit">
