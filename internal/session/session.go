@@ -275,7 +275,7 @@ func (s *Session) Write(data []byte) (int, error) {
 		s.fileMu.Unlock()
 		return 0, errors.New("terminal is closed")
 	}
-	fd, err := unix.Dup(s.terminalFD)
+	fd, err := duplicateTerminalFD(s.terminalFD)
 	s.fileMu.Unlock()
 	if err != nil {
 		return 0, err
@@ -306,6 +306,10 @@ func (s *Session) Write(data []byte) (int, error) {
 		return written, writeErr
 	}
 	return written, nil
+}
+
+func duplicateTerminalFD(fd int) (int, error) {
+	return unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
 }
 
 func (s *Session) waitUntilWritable(fd int) error {

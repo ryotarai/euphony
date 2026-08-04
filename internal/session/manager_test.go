@@ -940,6 +940,39 @@ func TestListWaitsForInFlightMetadataRefresh(t *testing.T) {
 	}
 }
 
+func TestMetadataRefreshChangeHandlerCanCallList(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		return "Refreshed title", nil
+	}
+	handlerDone := make(chan []Metadata, 1)
+	manager.SetChangeHandler(func(Change) {
+		handlerDone <- manager.List()
+	})
+
+	manager.RefreshMetadata()
+	select {
+	case items := <-handlerDone:
+		if len(items) != 1 || items[0].AgentTitle != "Refreshed title" {
+			t.Fatalf("List() from change handler = %#v", items)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("change handler deadlocked when it called List() during refresh")
+	}
+}
+
 func TestCloseWaitsForMetadataRefreshAndPreventsLateEffects(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	metadata, err := manager.Create(context.Background(), "Terminal", t.TempDir())
@@ -1143,6 +1176,121 @@ func TestMetadataPersistencePreservesUpdateOrder(t *testing.T) {
 		saves[1].AgentTitle != "Resolved title" ||
 		saves[1].AgentStatus != "waiting" {
 		t.Fatalf("persisted metadata order = %#v", saves)
+	}
+}
+
+func TestMetadataPersistenceReservesTitleBeforeNewerUpdate(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = codexTitleTestEntry()
+	store := newGapMetadataStore()
+	manager.store = store
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		return "Resolved title", nil
+	}
+	reserved := make(chan uint64, 2)
+	releaseFirst := make(chan struct{})
+	manager.beforeStoreOperation = func(sequence uint64) {
+		reserved <- sequence
+		if sequence == 1 {
+			<-releaseFirst
+		}
+	}
+
+	manager.RefreshMetadata()
+	requireStoreReservation(t, reserved, 1)
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateAgent("terminal", AgentUpdate{
+			Agent:          "codex",
+			AgentSessionID: "session-1",
+			TranscriptPath: "/transcripts/session-1.jsonl",
+			Status:         "waiting",
+		})
+		updateDone <- err
+	}()
+	requireStoreReservation(t, reserved, 2)
+	close(releaseFirst)
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		return len(store.Operations()) == 2
+	})
+
+	operations := store.Operations()
+	if operations[0] != "save:Resolved title:" ||
+		operations[1] != "save:Resolved title:waiting" {
+		t.Fatalf("persistence operations = %#v, want title save before update", operations)
+	}
+}
+
+func TestMetadataPersistenceReservesTitleBeforeNewerDelete(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	item := codexTitleTestEntry()
+	item.session = &Session{command: exec.Command("/bin/sh")}
+	manager.sessions["terminal"] = item
+	store := newGapMetadataStore()
+	manager.store = store
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		return "Resolved title", nil
+	}
+	reserved := make(chan uint64, 2)
+	releaseFirst := make(chan struct{})
+	manager.beforeStoreOperation = func(sequence uint64) {
+		reserved <- sequence
+		if sequence == 1 {
+			<-releaseFirst
+		}
+	}
+
+	manager.RefreshMetadata()
+	requireStoreReservation(t, reserved, 1)
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- manager.Delete("terminal")
+	}()
+	requireStoreReservation(t, reserved, 2)
+	close(releaseFirst)
+	if err := <-deleteDone; err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		return len(store.Operations()) == 2
+	})
+
+	operations := store.Operations()
+	if operations[0] != "save:Resolved title:" || operations[1] != "delete:terminal" {
+		t.Fatalf("persistence operations = %#v, want title save before delete", operations)
+	}
+	if store.Has("terminal") {
+		t.Fatal("deleted terminal was resurrected by an older title save")
+	}
+}
+
+func codexTitleTestEntry() *entry {
+	return &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+}
+
+func requireStoreReservation(t *testing.T, reserved <-chan uint64, want uint64) {
+	t.Helper()
+	select {
+	case got := <-reserved:
+		if got != want {
+			t.Fatalf("store reservation = %d, want %d", got, want)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("store operation %d was not reserved before I/O", want)
 	}
 }
 
@@ -1904,6 +2052,28 @@ func TestDrainTerminalOutputTreatsWouldBlockAsDrained(t *testing.T) {
 	}
 }
 
+func TestDuplicateTerminalFDIsCloseOnExec(t *testing.T) {
+	pipe := []int{0, 0}
+	if err := unix.Pipe(pipe); err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer unix.Close(pipe[0])
+	defer unix.Close(pipe[1])
+
+	duplicate, err := duplicateTerminalFD(pipe[0])
+	if err != nil {
+		t.Fatalf("duplicateTerminalFD() error = %v", err)
+	}
+	defer unix.Close(duplicate)
+	flags, err := unix.FcntlInt(uintptr(duplicate), unix.F_GETFD, 0)
+	if err != nil {
+		t.Fatalf("F_GETFD error = %v", err)
+	}
+	if flags&unix.FD_CLOEXEC == 0 {
+		t.Fatal("duplicated terminal fd is inherited across exec")
+	}
+}
+
 func TestContinuousPTYOutputDoesNotStarveResize(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -2107,6 +2277,48 @@ type orderedMetadataStore struct {
 	calls        int
 	entered      chan int
 	releaseFirst chan struct{}
+}
+
+type gapMetadataStore struct {
+	recordingMetadataStore
+	operations []string
+	records    map[string]Metadata
+}
+
+func newGapMetadataStore() *gapMetadataStore {
+	return &gapMetadataStore{records: make(map[string]Metadata)}
+}
+
+func (s *gapMetadataStore) Save(_ context.Context, metadata Metadata) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.operations = append(
+		s.operations,
+		"save:"+metadata.AgentTitle+":"+metadata.AgentStatus,
+	)
+	s.records[metadata.ID] = metadata
+	return nil
+}
+
+func (s *gapMetadataStore) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.operations = append(s.operations, "delete:"+id)
+	delete(s.records, id)
+	return nil
+}
+
+func (s *gapMetadataStore) Operations() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.operations...)
+}
+
+func (s *gapMetadataStore) Has(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.records[id]
+	return ok
 }
 
 func (s *orderedMetadataStore) Save(_ context.Context, metadata Metadata) error {

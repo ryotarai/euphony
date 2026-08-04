@@ -184,7 +184,10 @@ type Manager struct {
 	mu                              sync.RWMutex
 	refreshMu                       sync.Mutex
 	refreshDone                     chan struct{}
-	storeMu                         sync.Mutex
+	refreshLifecycleDone            chan struct{}
+	storeOrderMu                    sync.Mutex
+	storeTail                       chan struct{}
+	storeSequence                   uint64
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
@@ -196,9 +199,17 @@ type Manager struct {
 	cwdSampleInterval               time.Duration
 	foregroundProcessSampleInterval time.Duration
 	codexTitleResolver              func(string, string, bool) (string, error)
+	beforeStoreOperation            func(uint64)
 
 	workspaceSelection    selection.State
 	hasWorkspaceSelection bool
+}
+
+type storeOperation struct {
+	previous <-chan struct{}
+	done     chan struct{}
+	sequence uint64
+	hook     func(uint64)
 }
 
 func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager, error) {
@@ -804,26 +815,38 @@ func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metada
 func (m *Manager) updateCWDNotReportedSince(
 	id, cwd string, preserveEquivalentPath bool, sampledAt time.Time,
 ) (Metadata, error) {
+	metadata, change, err := m.updateCWDNotReportedSinceDeferred(
+		id, cwd, preserveEquivalentPath, sampledAt,
+	)
+	if change != nil {
+		m.emitChange(*change)
+	}
+	return metadata, err
+}
+
+func (m *Manager) updateCWDNotReportedSinceDeferred(
+	id, cwd string, preserveEquivalentPath bool, sampledAt time.Time,
+) (Metadata, *Change, error) {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
-		return Metadata{}, ErrNotFound
+		return Metadata{}, nil, ErrNotFound
 	}
 	if m.closing {
 		metadata := item.metadata
 		m.mu.Unlock()
-		return metadata, nil
+		return metadata, nil, nil
 	}
 	if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
 		metadata := item.metadata
 		m.mu.Unlock()
-		return metadata, nil
+		return metadata, nil, nil
 	}
 	if item.metadata.CWD == cwd {
 		metadata := item.metadata
 		m.mu.Unlock()
-		return metadata, nil
+		return metadata, nil, nil
 	}
 	if preserveEquivalentPath {
 		currentInfo, currentErr := os.Stat(item.metadata.CWD)
@@ -831,7 +854,7 @@ func (m *Manager) updateCWDNotReportedSince(
 		if currentErr == nil && nextErr == nil && os.SameFile(currentInfo, nextInfo) {
 			metadata := item.metadata
 			m.mu.Unlock()
-			return metadata, nil
+			return metadata, nil, nil
 		}
 	}
 	before := item.metadata
@@ -841,14 +864,13 @@ func (m *Manager) updateCWDNotReportedSince(
 	if m.store != nil {
 		if err := m.saveMetadata(m.store, next); err != nil {
 			m.mu.Unlock()
-			return Metadata{}, err
+			return Metadata{}, nil, err
 		}
 	}
 	item.metadata = next
 	change := m.nextChangeLocked(ChangeUpdated, &before, &next)
 	m.mu.Unlock()
-	m.emitChange(change)
-	return next, nil
+	return next, &change, nil
 }
 
 func (m *Manager) RefreshCWD(id string) (Metadata, error) {
@@ -917,9 +939,10 @@ func (m *Manager) watch(item *entry) {
 
 func (m *Manager) List() []Metadata {
 	done, started := m.beginMetadataRefresh()
+	var changes []Change
 	if started {
-		m.refreshMetadata()
-		m.finishMetadataRefresh(done)
+		changes = m.refreshMetadata()
+		m.finishMetadataRefresh(done, changes)
 	} else if done != nil {
 		<-done
 	}
@@ -935,8 +958,8 @@ func (m *Manager) RefreshMetadata() {
 		return
 	}
 	go func() {
-		defer m.finishMetadataRefresh(done)
-		m.refreshMetadata()
+		changes := m.refreshMetadata()
+		m.finishMetadataRefresh(done, changes)
 	}()
 }
 
@@ -954,28 +977,43 @@ func (m *Manager) beginMetadataRefresh() (chan struct{}, bool) {
 	}
 	done := make(chan struct{})
 	m.refreshDone = done
+	m.refreshLifecycleDone = make(chan struct{})
 	return done, true
 }
 
-func (m *Manager) finishMetadataRefresh(done chan struct{}) {
+func (m *Manager) finishMetadataRefresh(done chan struct{}, changes []Change) {
+	m.refreshMu.Lock()
+	if m.refreshDone != done {
+		m.refreshMu.Unlock()
+		return
+	}
+	close(done)
+	m.refreshMu.Unlock()
+
+	m.emitRefreshChanges(changes)
+
 	m.refreshMu.Lock()
 	if m.refreshDone == done {
 		m.refreshDone = nil
-		close(done)
+		lifecycleDone := m.refreshLifecycleDone
+		m.refreshLifecycleDone = nil
+		close(lifecycleDone)
 	}
 	m.refreshMu.Unlock()
 }
 
-func (m *Manager) refreshMetadata() {
-	m.refreshCodexTitles()
-	m.refreshWorkingDirectories()
-	m.refreshForegroundProcessNames()
+func (m *Manager) refreshMetadata() []Change {
+	var changes []Change
+	changes = append(changes, m.refreshCodexTitles()...)
+	changes = append(changes, m.refreshWorkingDirectories()...)
+	changes = append(changes, m.refreshForegroundProcessNames()...)
+	return changes
 }
 
 // refreshWorkingDirectories re-derives each terminal's working directory from
 // its live process. Sampling happens outside the lock: it shells out to lsof on
 // macOS, and holding the lock across that would stall every reader.
-func (m *Manager) refreshWorkingDirectories() {
+func (m *Manager) refreshWorkingDirectories() []Change {
 	type sample struct {
 		id  string
 		pid int
@@ -985,7 +1023,7 @@ func (m *Manager) refreshWorkingDirectories() {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
-		return
+		return nil
 	}
 	for id, item := range m.sessions {
 		if item.metadata.State != StateRunning || item.cwdFromAgent {
@@ -1009,6 +1047,7 @@ func (m *Manager) refreshWorkingDirectories() {
 	}
 	m.mu.Unlock()
 
+	var changes []Change
 	for _, candidate := range due {
 		cwd, err := processWorkingDirectory(candidate.pid)
 		if err != nil {
@@ -1018,11 +1057,15 @@ func (m *Manager) refreshWorkingDirectories() {
 		if err != nil {
 			continue
 		}
-		_, _ = m.updateCWDNotReportedSince(candidate.id, cwd, true, now)
+		_, change, _ := m.updateCWDNotReportedSinceDeferred(candidate.id, cwd, true, now)
+		if change != nil {
+			changes = append(changes, *change)
+		}
 	}
+	return changes
 }
 
-func (m *Manager) refreshForegroundProcessNames() {
+func (m *Manager) refreshForegroundProcessNames() []Change {
 	type sample struct {
 		id      string
 		session *Session
@@ -1033,7 +1076,7 @@ func (m *Manager) refreshForegroundProcessNames() {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
-		return
+		return nil
 	}
 	for id, item := range m.sessions {
 		if item.metadata.State != StateRunning {
@@ -1057,31 +1100,31 @@ func (m *Manager) refreshForegroundProcessNames() {
 		due = append(due, sample{id: id, session: item.session})
 	}
 	m.mu.Unlock()
-	for _, change := range changes {
-		m.emitChange(change)
-	}
 	for _, candidate := range due {
 		name, err := candidate.session.ForegroundCommandName()
 		if err != nil || name == "" {
 			continue
 		}
-		m.updateForegroundProcessName(candidate.id, name)
+		if change := m.updateForegroundProcessName(candidate.id, name); change != nil {
+			changes = append(changes, *change)
+		}
 	}
+	return changes
 }
 
-func (m *Manager) updateForegroundProcessName(id, name string) {
+func (m *Manager) updateForegroundProcessName(id, name string) *Change {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
 	if m.closing || !ok || item.metadata.State != StateRunning || item.metadata.ProcessName == name {
 		m.mu.Unlock()
-		return
+		return nil
 	}
 	before := item.metadata
 	item.metadata.ProcessName = name
 	after := item.metadata
 	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
 	m.mu.Unlock()
-	m.emitChange(change)
+	return &change
 }
 
 // ListCurrent returns the current metadata without running refresh hooks.
@@ -1100,7 +1143,7 @@ func (m *Manager) ListCurrent() []Metadata {
 	return result
 }
 
-func (m *Manager) refreshCodexTitles() {
+func (m *Manager) refreshCodexTitles() []Change {
 	titles := make(map[string]string)
 	if m.hooks.CodexSessionIndex != "" {
 		if loaded, err := loadCodexSessionTitles(m.hooks.CodexSessionIndex); err == nil {
@@ -1131,6 +1174,7 @@ func (m *Manager) refreshCodexTitles() {
 	}
 	m.mu.RUnlock()
 
+	var changes []Change
 	for _, candidate := range candidates {
 		title := titles[candidate.sessionID]
 		headerScanned := candidate.headerScanned
@@ -1173,9 +1217,15 @@ func (m *Manager) refreshCodexTitles() {
 		after := item.metadata
 		change := m.nextChangeLocked(ChangeUpdated, &before, &after)
 		store := m.store
+		var operation storeOperation
+		if store != nil {
+			operation = m.reserveStoreOperation()
+		}
 		m.mu.Unlock()
 		if store != nil {
-			_ = m.saveMetadata(store, after)
+			_ = m.runStoreOperation(operation, func() error {
+				return store.Save(context.Background(), after)
+			})
 		}
 		m.mu.RLock()
 		closing := m.closing
@@ -1183,8 +1233,9 @@ func (m *Manager) refreshCodexTitles() {
 		if closing {
 			continue
 		}
-		m.emitChange(change)
+		changes = append(changes, change)
 	}
+	return changes
 }
 
 func (m *Manager) resolveCodexTitle(path, sessionID string, fromStart bool) (string, error) {
@@ -1279,10 +1330,15 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
 	var change Change
+	store := m.store
+	var operation storeOperation
 	if ok {
 		delete(m.sessions, id)
 		before := item.metadata
 		change = m.nextChangeLocked(ChangeDeleted, &before, nil)
+		if store != nil {
+			operation = m.reserveStoreOperation()
+		}
 	}
 	m.mu.Unlock()
 	if !ok {
@@ -1292,8 +1348,10 @@ func (m *Manager) Delete(id string) error {
 	m.cancelAgentInterruptLocked(item)
 	m.cancelCodexActivityLocked(item)
 	m.mu.Unlock()
-	if m.store != nil {
-		if err := m.deleteMetadata(m.store, id); err != nil {
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Delete(context.Background(), id)
+		}); err != nil {
 			m.mu.Lock()
 			m.sessions[id] = item
 			m.mu.Unlock()
@@ -1333,16 +1391,30 @@ func (m *Manager) emitChange(change Change) {
 	}
 }
 
+func (m *Manager) emitRefreshChanges(changes []Change) {
+	for _, change := range changes {
+		m.mu.RLock()
+		closing := m.closing
+		m.mu.RUnlock()
+		if closing {
+			return
+		}
+		m.emitChange(change)
+	}
+}
+
 func (m *Manager) saveMetadata(store metadataStore, metadata Metadata) error {
-	m.storeMu.Lock()
-	defer m.storeMu.Unlock()
-	return store.Save(context.Background(), metadata)
+	operation := m.reserveStoreOperation()
+	return m.runStoreOperation(operation, func() error {
+		return store.Save(context.Background(), metadata)
+	})
 }
 
 func (m *Manager) deleteMetadata(store metadataStore, id string) error {
-	m.storeMu.Lock()
-	defer m.storeMu.Unlock()
-	return store.Delete(context.Background(), id)
+	operation := m.reserveStoreOperation()
+	return m.runStoreOperation(operation, func() error {
+		return store.Delete(context.Background(), id)
+	})
 }
 
 func (m *Manager) saveSettings(
@@ -1350,9 +1422,10 @@ func (m *Manager) saveSettings(
 	ctx context.Context,
 	settings Settings,
 ) error {
-	m.storeMu.Lock()
-	defer m.storeMu.Unlock()
-	return store.SaveSettings(ctx, settings)
+	operation := m.reserveStoreOperation()
+	return m.runStoreOperation(operation, func() error {
+		return store.SaveSettings(ctx, settings)
+	})
 }
 
 func (m *Manager) saveSelection(
@@ -1360,15 +1433,41 @@ func (m *Manager) saveSelection(
 	ctx context.Context,
 	state selection.State,
 ) error {
-	m.storeMu.Lock()
-	defer m.storeMu.Unlock()
-	return store.SaveSelection(ctx, state)
+	operation := m.reserveStoreOperation()
+	return m.runStoreOperation(operation, func() error {
+		return store.SaveSelection(ctx, state)
+	})
 }
 
 func (m *Manager) closeStore(store metadataStore) error {
-	m.storeMu.Lock()
-	defer m.storeMu.Unlock()
-	return store.Close()
+	operation := m.reserveStoreOperation()
+	return m.runStoreOperation(operation, store.Close)
+}
+
+func (m *Manager) reserveStoreOperation() storeOperation {
+	m.storeOrderMu.Lock()
+	defer m.storeOrderMu.Unlock()
+	m.storeSequence++
+	done := make(chan struct{})
+	operation := storeOperation{
+		previous: m.storeTail,
+		done:     done,
+		sequence: m.storeSequence,
+		hook:     m.beforeStoreOperation,
+	}
+	m.storeTail = done
+	return operation
+}
+
+func (m *Manager) runStoreOperation(operation storeOperation, persist func() error) error {
+	if operation.hook != nil {
+		operation.hook(operation.sequence)
+	}
+	if operation.previous != nil {
+		<-operation.previous
+	}
+	defer close(operation.done)
+	return persist()
 }
 
 func (m *Manager) Close(ctx context.Context) error {
@@ -1380,7 +1479,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		items = append(items, item)
 	}
 	m.mu.Unlock()
-	refreshDone := m.refreshDone
+	refreshDone := m.refreshLifecycleDone
 	m.refreshMu.Unlock()
 
 	if refreshDone != nil {
