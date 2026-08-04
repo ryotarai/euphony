@@ -192,6 +192,10 @@ type Manager struct {
 	storeTail                       chan struct{}
 	storeSequence                   uint64
 	storeSealed                     bool
+	changeDeliveryMu                sync.Mutex
+	changeCompletions               map[uint64]changeCompletion
+	changeDeliverySequence          uint64
+	changeDeliveryActive            bool
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
@@ -219,6 +223,11 @@ type storeOperation struct {
 	sequence uint64
 	hook     func(uint64)
 	err      error
+}
+
+type changeCompletion struct {
+	change  Change
+	deliver bool
 }
 
 func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager, error) {
@@ -635,6 +644,9 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Save(context.Background(), after)
 		}); err != nil {
+			if change != nil {
+				m.skipChange(*change)
+			}
 			return Metadata{}, err
 		}
 	}
@@ -690,7 +702,7 @@ func (m *Manager) watchCodexActivity(id string, target codexActivityTarget) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
 	item, ok := m.sessions[id]
-	if !ok || !matchesCodexActivity(item.metadata, target) {
+	if m.closing || !ok || !matchesCodexActivity(item.metadata, target) {
 		m.mu.Unlock()
 		cancel()
 		return
@@ -758,6 +770,7 @@ func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, ac
 				item.codexActivityWatch = watch
 			}
 			m.mu.Unlock()
+			m.skipChange(change)
 			return
 		}
 	}
@@ -799,6 +812,7 @@ func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) 
 				item.interruptWatch = watch
 			}
 			m.mu.Unlock()
+			m.skipChange(change)
 			return
 		}
 	}
@@ -864,6 +878,7 @@ func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Save(context.Background(), after)
 		}); err != nil {
+			m.skipChange(change)
 			return Metadata{}, err
 		}
 	}
@@ -994,6 +1009,7 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 				item.metadata = before
 			}
 			m.mu.Unlock()
+			m.skipChange(change)
 			return Metadata{}, nil, err
 		}
 	}
@@ -1366,6 +1382,7 @@ func (m *Manager) refreshCodexTitles() []Change {
 		closing := m.closing
 		m.mu.RUnlock()
 		if closing {
+			m.skipChange(change)
 			continue
 		}
 		changes = append(changes, change)
@@ -1519,6 +1536,7 @@ func (m *Manager) Delete(id string) error {
 			persistErr := store.Delete(context.Background(), id)
 			return m.completeDelete(item, id, persistErr)
 		}); err != nil {
+			m.skipChange(change)
 			return err
 		}
 	} else {
@@ -1568,20 +1586,85 @@ func (m *Manager) nextChangeLocked(
 }
 
 func (m *Manager) emitChange(change Change) {
-	m.mu.RLock()
-	handler := m.onChange
-	m.mu.RUnlock()
-	if handler != nil {
-		handler(change)
+	m.completeChange(change, true)
+}
+
+func (m *Manager) skipChange(change Change) {
+	m.completeChange(change, false)
+}
+
+// completeChange lets concurrent mutations finish independently while keeping
+// externally observed changes in their assigned order. A completed skip closes
+// a failed mutation's sequence gap. Only one caller drains at a time, but it
+// never holds the delivery mutex while invoking user code, so handlers may
+// safely re-enter the manager.
+func (m *Manager) completeChange(change Change, deliver bool) {
+	m.changeDeliveryMu.Lock()
+	if change.Sequence <= m.changeDeliverySequence {
+		m.changeDeliveryMu.Unlock()
+		return
+	}
+	if m.changeCompletions == nil {
+		m.changeCompletions = make(map[uint64]changeCompletion)
+	}
+	m.changeCompletions[change.Sequence] = changeCompletion{
+		change:  change,
+		deliver: deliver,
+	}
+	if m.changeDeliveryActive {
+		m.changeDeliveryMu.Unlock()
+		return
+	}
+	m.changeDeliveryActive = true
+	var handlerPanic any
+	for {
+		next := m.changeDeliverySequence + 1
+		completion, ok := m.changeCompletions[next]
+		if !ok {
+			m.changeDeliveryActive = false
+			m.changeDeliveryMu.Unlock()
+			if handlerPanic != nil {
+				panic(handlerPanic)
+			}
+			return
+		}
+		delete(m.changeCompletions, next)
+		m.changeDeliverySequence = next
+		m.changeDeliveryMu.Unlock()
+
+		if completion.deliver {
+			m.mu.RLock()
+			handler := m.onChange
+			m.mu.RUnlock()
+			if handler != nil {
+				if recovered := invokeChangeHandler(handler, completion.change); recovered != nil &&
+					handlerPanic == nil {
+					handlerPanic = recovered
+				}
+			}
+		}
+
+		m.changeDeliveryMu.Lock()
 	}
 }
 
+func invokeChangeHandler(handler func(Change), change Change) (recovered any) {
+	defer func() {
+		recovered = recover()
+	}()
+	handler(change)
+	return nil
+}
+
 func (m *Manager) emitRefreshChanges(changes []Change) {
-	for _, change := range changes {
+	for index, change := range changes {
 		m.mu.RLock()
 		closing := m.closing
 		m.mu.RUnlock()
 		if closing {
+			for _, skipped := range changes[index:] {
+				m.skipChange(skipped)
+			}
 			return
 		}
 		m.emitChange(change)

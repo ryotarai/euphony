@@ -161,6 +161,296 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	}
 }
 
+func TestChangeHandlersObserveAssignedSequenceOrder(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["first"] = &entry{
+		metadata: Metadata{
+			ID:             "first",
+			Name:           "First",
+			State:          StateRunning,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+	manager.sessions["second"] = &entry{
+		metadata: Metadata{
+			ID:             "second",
+			Name:           "Second",
+			State:          StateRunning,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var observedMu sync.Mutex
+	var observed []uint64
+	manager.SetChangeHandler(func(change Change) {
+		if change.Sequence == 1 {
+			close(firstEntered)
+			<-releaseFirst
+		}
+		observedMu.Lock()
+		observed = append(observed, change.Sequence)
+		observedMu.Unlock()
+	})
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := manager.AcknowledgeAttention("first")
+		firstDone <- err
+	}()
+	<-firstEntered
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := manager.AcknowledgeAttention("second")
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second AcknowledgeAttention() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second change did not complete while the first handler was gated")
+	}
+
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first AcknowledgeAttention() error = %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		observedMu.Lock()
+		defer observedMu.Unlock()
+		return len(observed) == 2
+	})
+	observedMu.Lock()
+	defer observedMu.Unlock()
+	if !reflect.DeepEqual(observed, []uint64{1, 2}) {
+		t.Fatalf("observed change sequences = %v, want [1 2]", observed)
+	}
+}
+
+func TestChangeHandlerPanicDoesNotStopLaterDeliveries(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["first"] = &entry{
+		metadata: Metadata{
+			ID:             "first",
+			Name:           "First",
+			State:          StateRunning,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+	manager.sessions["second"] = &entry{
+		metadata: Metadata{
+			ID:             "second",
+			Name:           "Second",
+			State:          StateRunning,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+	manager.SetChangeHandler(func(change Change) {
+		if change.Sequence == 1 {
+			panic("handler failed")
+		}
+	})
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != "handler failed" {
+				t.Fatalf("recovered panic = %v, want handler failed", recovered)
+			}
+		}()
+		_, _ = manager.AcknowledgeAttention("first")
+	}()
+
+	delivered := make(chan Change, 1)
+	manager.SetChangeHandler(func(change Change) {
+		delivered <- change
+	})
+	if _, err := manager.AcknowledgeAttention("second"); err != nil {
+		t.Fatalf("second AcknowledgeAttention() error = %v", err)
+	}
+	select {
+	case change := <-delivered:
+		if change.Sequence != 2 {
+			t.Fatalf("delivered sequence = %d, want 2", change.Sequence)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("later change was stranded after a handler panic")
+	}
+}
+
+func TestChangeHandlerPanicDrainsCompletedLaterChange(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	for _, id := range []string{"first", "second"} {
+		manager.sessions[id] = &entry{
+			metadata: Metadata{
+				ID:             id,
+				Name:           id,
+				State:          StateRunning,
+				NeedsAttention: true,
+				CreatedAt:      time.Now().UTC(),
+			},
+		}
+	}
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	deliveredSecond := make(chan struct{})
+	manager.SetChangeHandler(func(change Change) {
+		switch change.Sequence {
+		case 1:
+			close(firstEntered)
+			<-releaseFirst
+			panic("handler failed")
+		case 2:
+			close(deliveredSecond)
+		}
+	})
+
+	firstDone := make(chan any, 1)
+	go func() {
+		defer func() {
+			firstDone <- recover()
+		}()
+		_, _ = manager.AcknowledgeAttention("first")
+	}()
+	<-firstEntered
+
+	if _, err := manager.AcknowledgeAttention("second"); err != nil {
+		t.Fatalf("second AcknowledgeAttention() error = %v", err)
+	}
+	close(releaseFirst)
+	if recovered := <-firstDone; recovered != "handler failed" {
+		t.Fatalf("recovered panic = %v, want handler failed", recovered)
+	}
+	select {
+	case <-deliveredSecond:
+	case <-time.After(time.Second):
+		t.Fatal("completed later change was stranded by an earlier handler panic")
+	}
+}
+
+func TestFailedPersistenceSkipsChangeSequenceGap(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["first"] = &entry{
+		metadata: Metadata{
+			ID:             "first",
+			Name:           "First",
+			State:          StateRunning,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+	manager.sessions["second"] = &entry{
+		metadata: Metadata{
+			ID:             "second",
+			Name:           "Second",
+			State:          StateRunning,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+	store := &failFirstSaveMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		err:                    errors.New("save failed"),
+	}
+	manager.store = store
+
+	var observed []uint64
+	manager.SetChangeHandler(func(change Change) {
+		observed = append(observed, change.Sequence)
+	})
+
+	if _, err := manager.AcknowledgeAttention("first"); !errors.Is(err, store.err) {
+		t.Fatalf("first AcknowledgeAttention() error = %v, want %v", err, store.err)
+	}
+	if _, err := manager.AcknowledgeAttention("second"); err != nil {
+		t.Fatalf("second AcknowledgeAttention() error = %v", err)
+	}
+	if !reflect.DeepEqual(observed, []uint64{2}) {
+		t.Fatalf("observed change sequences = %v, want [2]", observed)
+	}
+}
+
+func TestUpdateAgentDoesNotInstallCodexActivityWatcherAfterCloseStarts(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	manager := NewManager("/bin/sh")
+	item := &entry{
+		metadata: Metadata{
+			ID:        "terminal",
+			Name:      "Terminal",
+			State:     StateRunning,
+			CreatedAt: time.Now().UTC(),
+		},
+		session: &Session{
+			command:  exec.Command("/bin/sh"),
+			waitDone: closedTestChannel(),
+		},
+	}
+	manager.sessions[item.metadata.ID] = item
+	store := &gatedSaveMetadataStore{
+		metadataStore: &recordingMetadataStore{},
+		saveEntered:   make(chan struct{}),
+		saveRelease:   make(chan struct{}),
+	}
+	manager.store = store
+
+	refreshRelease := make(chan struct{})
+	manager.refreshMu.Lock()
+	manager.refreshLifecycleDone = refreshRelease
+	manager.refreshMu.Unlock()
+
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateAgent(item.metadata.ID, AgentUpdate{
+			Agent:          "codex",
+			AgentSessionID: "session-1",
+			TranscriptPath: transcript,
+			Status:         "blocked",
+		})
+		updateDone <- err
+	}()
+	<-store.saveEntered
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- manager.Close(context.Background())
+	}()
+	waitFor(t, time.Second, func() bool {
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
+		return manager.closing
+	})
+
+	close(store.saveRelease)
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	manager.mu.RLock()
+	watch := item.codexActivityWatch
+	manager.mu.RUnlock()
+	if watch != nil {
+		close(refreshRelease)
+		<-closeDone
+		t.Fatal("UpdateAgent() installed a Codex activity watcher after Close() started")
+	}
+
+	close(refreshRelease)
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
 func TestMetadataReturnsHiddenAgentLinkage(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -2852,6 +3142,23 @@ type gatedSaveMetadataStore struct {
 	saveEntered chan struct{}
 	saveRelease chan struct{}
 	saveOnce    sync.Once
+}
+
+type failFirstSaveMetadataStore struct {
+	recordingMetadataStore
+	err   error
+	calls int
+}
+
+func (s *failFirstSaveMetadataStore) Save(
+	ctx context.Context,
+	metadata Metadata,
+) error {
+	s.calls++
+	if s.calls == 1 {
+		return s.err
+	}
+	return s.recordingMetadataStore.Save(ctx, metadata)
 }
 
 func (s *gatedSaveMetadataStore) Save(ctx context.Context, metadata Metadata) error {
