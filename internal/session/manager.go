@@ -183,6 +183,8 @@ const defaultForegroundProcessSampleInterval = 500 * time.Millisecond
 type Manager struct {
 	mu                              sync.RWMutex
 	refreshMu                       sync.Mutex
+	refreshDone                     chan struct{}
+	storeMu                         sync.Mutex
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
@@ -296,7 +298,7 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	}
 	go item.session.pump()
 	if m.store != nil {
-		if err := m.store.Save(context.Background(), metadata); err != nil {
+		if err := m.saveMetadata(m.store, metadata); err != nil {
 			discardStartedSession(item.session)
 			return Metadata{}, err
 		}
@@ -333,7 +335,7 @@ func (m *Manager) restore(metadata Metadata) error {
 		return err
 	}
 	go item.session.pump()
-	if err := m.store.Save(context.Background(), metadata); err != nil {
+	if err := m.saveMetadata(m.store, metadata); err != nil {
 		discardStartedSession(item.session)
 		return err
 	}
@@ -537,7 +539,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		item.cwdFromAgent = true
 	}
 	if m.store != nil {
-		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+		if err := m.saveMetadata(m.store, item.metadata); err != nil {
 			m.mu.Unlock()
 			return Metadata{}, err
 		}
@@ -647,7 +649,7 @@ func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, ac
 	item.codexActivityWatch = nil
 	item.metadata.AgentStatus = activity
 	if m.store != nil {
-		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+		if err := m.saveMetadata(m.store, item.metadata); err != nil {
 			item.metadata = before
 			item.codexActivityWatch = watch
 			m.mu.Unlock()
@@ -673,7 +675,7 @@ func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) 
 	item.metadata.AgentStatus = "waiting"
 	item.metadata.NeedsAttention = true
 	if m.store != nil {
-		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+		if err := m.saveMetadata(m.store, item.metadata); err != nil {
 			item.metadata = before
 			item.interruptWatch = watch
 			m.mu.Unlock()
@@ -730,7 +732,7 @@ func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 	before := item.metadata
 	item.metadata.NeedsAttention = false
 	if m.store != nil {
-		if err := m.store.Save(context.Background(), item.metadata); err != nil {
+		if err := m.saveMetadata(m.store, item.metadata); err != nil {
 			m.mu.Unlock()
 			return Metadata{}, err
 		}
@@ -808,6 +810,11 @@ func (m *Manager) updateCWDNotReportedSince(
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
+	if m.closing {
+		metadata := item.metadata
+		m.mu.Unlock()
+		return metadata, nil
+	}
 	if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
 		metadata := item.metadata
 		m.mu.Unlock()
@@ -832,7 +839,7 @@ func (m *Manager) updateCWDNotReportedSince(
 	next.CWD = cwd
 	next.RepoRoot = repositoryRoot(cwd)
 	if m.store != nil {
-		if err := m.store.Save(context.Background(), next); err != nil {
+		if err := m.saveMetadata(m.store, next); err != nil {
 			m.mu.Unlock()
 			return Metadata{}, err
 		}
@@ -894,7 +901,7 @@ func (m *Manager) watch(item *entry) {
 		if !m.closing {
 			delete(m.sessions, item.metadata.ID)
 			if m.store != nil {
-				_ = m.store.Delete(context.Background(), item.metadata.ID)
+				_ = m.deleteMetadata(m.store, item.metadata.ID)
 			}
 			before := item.metadata
 			change := m.nextChangeLocked(ChangeDeleted, &before, nil)
@@ -909,11 +916,12 @@ func (m *Manager) watch(item *entry) {
 }
 
 func (m *Manager) List() []Metadata {
-	if m.refreshMu.TryLock() {
-		func() {
-			defer m.refreshMu.Unlock()
-			m.refreshMetadata()
-		}()
+	done, started := m.beginMetadataRefresh()
+	if started {
+		m.refreshMetadata()
+		m.finishMetadataRefresh(done)
+	} else if done != nil {
+		<-done
 	}
 	return m.ListCurrent()
 }
@@ -922,13 +930,40 @@ func (m *Manager) List() []Metadata {
 // caller. An active synchronous or asynchronous refresh owns the single-flight
 // slot, so repeated polling cannot accumulate refresh goroutines.
 func (m *Manager) RefreshMetadata() {
-	if !m.refreshMu.TryLock() {
+	done, started := m.beginMetadataRefresh()
+	if !started {
 		return
 	}
 	go func() {
-		defer m.refreshMu.Unlock()
+		defer m.finishMetadataRefresh(done)
 		m.refreshMetadata()
 	}()
+}
+
+func (m *Manager) beginMetadataRefresh() (chan struct{}, bool) {
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
+	m.mu.RLock()
+	closing := m.closing
+	m.mu.RUnlock()
+	if closing {
+		return nil, false
+	}
+	if m.refreshDone != nil {
+		return m.refreshDone, false
+	}
+	done := make(chan struct{})
+	m.refreshDone = done
+	return done, true
+}
+
+func (m *Manager) finishMetadataRefresh(done chan struct{}) {
+	m.refreshMu.Lock()
+	if m.refreshDone == done {
+		m.refreshDone = nil
+		close(done)
+	}
+	m.refreshMu.Unlock()
 }
 
 func (m *Manager) refreshMetadata() {
@@ -948,6 +983,10 @@ func (m *Manager) refreshWorkingDirectories() {
 	now := time.Now()
 	var due []sample
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return
+	}
 	for id, item := range m.sessions {
 		if item.metadata.State != StateRunning || item.cwdFromAgent {
 			continue
@@ -992,6 +1031,10 @@ func (m *Manager) refreshForegroundProcessNames() {
 	var due []sample
 	var changes []Change
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return
+	}
 	for id, item := range m.sessions {
 		if item.metadata.State != StateRunning {
 			if item.metadata.ProcessName == "" {
@@ -1029,7 +1072,7 @@ func (m *Manager) refreshForegroundProcessNames() {
 func (m *Manager) updateForegroundProcessName(id, name string) {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
-	if !ok || item.metadata.State != StateRunning || item.metadata.ProcessName == name {
+	if m.closing || !ok || item.metadata.State != StateRunning || item.metadata.ProcessName == name {
 		m.mu.Unlock()
 		return
 	}
@@ -1067,6 +1110,7 @@ func (m *Manager) refreshCodexTitles() {
 
 	type candidate struct {
 		id            string
+		entry         *entry
 		sessionID     string
 		transcript    string
 		headerScanned bool
@@ -1079,6 +1123,7 @@ func (m *Manager) refreshCodexTitles() {
 		}
 		candidates = append(candidates, candidate{
 			id:            id,
+			entry:         item,
 			sessionID:     item.metadata.AgentSessionID,
 			transcript:    item.metadata.AgentTranscriptPath,
 			headerScanned: item.codexTitleHeaderScanned,
@@ -1109,7 +1154,9 @@ func (m *Manager) refreshCodexTitles() {
 
 		m.mu.Lock()
 		item, ok := m.sessions[candidate.id]
-		if !ok ||
+		if m.closing ||
+			!ok ||
+			item != candidate.entry ||
 			item.metadata.Agent != "codex" ||
 			item.metadata.AgentSessionID != candidate.sessionID ||
 			item.metadata.AgentTranscriptPath != candidate.transcript {
@@ -1123,12 +1170,19 @@ func (m *Manager) refreshCodexTitles() {
 		}
 		before := item.metadata
 		item.metadata.AgentTitle = title
-		if m.store != nil {
-			_ = m.store.Save(context.Background(), item.metadata)
-		}
 		after := item.metadata
 		change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		store := m.store
 		m.mu.Unlock()
+		if store != nil {
+			_ = m.saveMetadata(store, after)
+		}
+		m.mu.RLock()
+		closing := m.closing
+		m.mu.RUnlock()
+		if closing {
+			continue
+		}
 		m.emitChange(change)
 	}
 }
@@ -1153,7 +1207,7 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.store != nil {
-		if err := m.store.SaveSettings(ctx, settings); err != nil {
+		if err := m.saveSettings(m.store, ctx, settings); err != nil {
 			return err
 		}
 	}
@@ -1187,7 +1241,7 @@ func (m *Manager) SaveSelection(ctx context.Context, state selection.State) erro
 		return nil
 	}
 	m.mu.Unlock()
-	return store.SaveSelection(ctx, state)
+	return m.saveSelection(store, ctx, state)
 }
 
 func cloneSelectionState(state selection.State) selection.State {
@@ -1239,7 +1293,7 @@ func (m *Manager) Delete(id string) error {
 	m.cancelCodexActivityLocked(item)
 	m.mu.Unlock()
 	if m.store != nil {
-		if err := m.store.Delete(context.Background(), id); err != nil {
+		if err := m.deleteMetadata(m.store, id); err != nil {
 			m.mu.Lock()
 			m.sessions[id] = item
 			m.mu.Unlock()
@@ -1279,7 +1333,46 @@ func (m *Manager) emitChange(change Change) {
 	}
 }
 
+func (m *Manager) saveMetadata(store metadataStore, metadata Metadata) error {
+	m.storeMu.Lock()
+	defer m.storeMu.Unlock()
+	return store.Save(context.Background(), metadata)
+}
+
+func (m *Manager) deleteMetadata(store metadataStore, id string) error {
+	m.storeMu.Lock()
+	defer m.storeMu.Unlock()
+	return store.Delete(context.Background(), id)
+}
+
+func (m *Manager) saveSettings(
+	store metadataStore,
+	ctx context.Context,
+	settings Settings,
+) error {
+	m.storeMu.Lock()
+	defer m.storeMu.Unlock()
+	return store.SaveSettings(ctx, settings)
+}
+
+func (m *Manager) saveSelection(
+	store metadataStore,
+	ctx context.Context,
+	state selection.State,
+) error {
+	m.storeMu.Lock()
+	defer m.storeMu.Unlock()
+	return store.SaveSelection(ctx, state)
+}
+
+func (m *Manager) closeStore(store metadataStore) error {
+	m.storeMu.Lock()
+	defer m.storeMu.Unlock()
+	return store.Close()
+}
+
 func (m *Manager) Close(ctx context.Context) error {
+	m.refreshMu.Lock()
 	m.mu.Lock()
 	m.closing = true
 	items := make([]*entry, 0, len(m.sessions))
@@ -1287,6 +1380,16 @@ func (m *Manager) Close(ctx context.Context) error {
 		items = append(items, item)
 	}
 	m.mu.Unlock()
+	refreshDone := m.refreshDone
+	m.refreshMu.Unlock()
+
+	if refreshDone != nil {
+		select {
+		case <-refreshDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
 	for _, item := range items {
 		m.mu.Lock()
@@ -1303,7 +1406,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		}
 	}
 	if m.store != nil {
-		return m.store.Close()
+		return m.closeStore(m.store)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ryotarai/euphony/internal/session"
+	"golang.org/x/sys/unix"
 )
 
 func TestSessionAPI(t *testing.T) {
@@ -74,9 +76,23 @@ func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
 	release := filepath.Join(directory, "release")
 	count := filepath.Join(directory, "count")
 	script := filepath.Join(directory, "ps")
+	if err := unix.Mkfifo(entered, 0o600); err != nil {
+		t.Fatalf("create metadata refresh signal: %v", err)
+	}
+	enteredReader, err := os.OpenFile(entered, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open metadata refresh signal: %v", err)
+	}
+	t.Cleanup(func() { _ = enteredReader.Close() })
+	enteredSignal := make(chan error, 1)
+	go func() {
+		var signal [1]byte
+		_, readErr := enteredReader.Read(signal[:])
+		enteredSignal <- readErr
+	}()
 	body := "#!/bin/sh\n" +
 		"printf x >> \"$METADATA_REFRESH_COUNT\"\n" +
-		"touch \"$METADATA_REFRESH_ENTERED\"\n" +
+		"printf x > \"$METADATA_REFRESH_ENTERED\"\n" +
 		"while [ ! -e \"$METADATA_REFRESH_RELEASE\" ]; do sleep 0.01; done\n" +
 		"printf 'sleep 1\\n'\n"
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
@@ -113,7 +129,14 @@ func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
 		t.Fatalf("first GET snapshot = %#v, want current process name", snapshot)
 	}
 
-	waitForFile(t, entered, time.Second)
+	select {
+	case err := <-enteredSignal:
+		if err != nil {
+			t.Fatalf("wait for metadata refresh signal: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("metadata refresh did not enter the foreground process command")
+	}
 	secondDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		secondDone <- performRequest(t, srv, http.MethodGet, "/api/sessions", "")
@@ -126,7 +149,6 @@ func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("overlapping GET /api/sessions waited for active refresh")
 	}
-	time.Sleep(50 * time.Millisecond)
 	refreshCount, err := os.ReadFile(count)
 	if err != nil {
 		t.Fatalf("read metadata refresh count: %v", err)
@@ -144,6 +166,100 @@ func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
 	})
 }
 
+func TestListSessionsDoesNotWaitForMetadataStore(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	srv, err := New(Config{
+		Token:        "token",
+		Shell:        "/bin/sh",
+		DatabasePath: databasePath,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var terminal session.Metadata
+	decodeResponse(t, created, &terminal)
+	transcript := filepath.Join(t.TempDir(), "rollout.jsonl")
+	titleRecord := `{"type":"event_msg","payload":{"type":"thread_name_updated","thread_id":"session-1","thread_name":"Stored title"}}` + "\n"
+	if err := os.WriteFile(transcript, []byte(titleRecord), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	hook := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":`+strconv.Quote(terminal.ID)+
+			`,"agent":"codex","agentSessionId":"session-1","agentTranscriptPath":`+
+			strconv.Quote(transcript)+`,"status":"running"}`)
+	if hook.Code != http.StatusOK {
+		t.Fatalf("POST hook status = %d, body = %s", hook.Code, hook.Body.String())
+	}
+
+	lockDB, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatalf("open lock database: %v", err)
+	}
+	t.Cleanup(func() { _ = lockDB.Close() })
+	connection, err := lockDB.Conn(t.Context())
+	if err != nil {
+		t.Fatalf("database Conn() error = %v", err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	if _, err := connection.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("BEGIN IMMEDIATE error = %v", err)
+	}
+	released := false
+	releaseStore := func() {
+		if released {
+			return
+		}
+		released = true
+		_, _ = connection.ExecContext(t.Context(), "ROLLBACK")
+	}
+	defer releaseStore()
+
+	first := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first GET status = %d, body = %s", first.Code, first.Body.String())
+	}
+	waitForServer(t, time.Second, func() bool {
+		current, ok := srv.sessions.Metadata(terminal.ID)
+		return ok && current.AgentTitle == "Stored title"
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		secondDone <- performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	}()
+	select {
+	case second := <-secondDone:
+		if second.Code != http.StatusOK {
+			t.Fatalf("second GET status = %d, body = %s", second.Code, second.Body.String())
+		}
+		var snapshot []session.Metadata
+		decodeResponse(t, second, &snapshot)
+		if len(snapshot) != 1 || snapshot[0].AgentTitle != "Stored title" {
+			t.Fatalf("second GET snapshot = %#v", snapshot)
+		}
+	case <-time.After(250 * time.Millisecond):
+		releaseStore()
+		<-secondDone
+		t.Fatal("GET /api/sessions blocked while metadata Save() was active")
+	}
+
+	releaseStore()
+	waitDone := make(chan struct{})
+	go func() {
+		_ = srv.sessions.List()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("metadata refresh did not finish after SQLite lock release")
+	}
+}
+
 func TestCreateSessionValidatesRequest(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {
@@ -158,14 +274,6 @@ func TestCreateSessionValidatesRequest(t *testing.T) {
 			t.Fatalf("POST body %q status = %d, want 400", body, response.Code)
 		}
 	}
-}
-
-func waitForFile(t *testing.T, path string, timeout time.Duration) {
-	t.Helper()
-	waitForServer(t, timeout, func() bool {
-		_, err := os.Stat(path)
-		return err == nil
-	})
 }
 
 func waitForServer(t *testing.T, timeout time.Duration, condition func() bool) {

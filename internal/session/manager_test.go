@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/ryotarai/euphony/internal/selection"
 	"golang.org/x/sys/unix"
 )
@@ -848,6 +849,303 @@ func TestRefreshCodexTitlesDiscardsStaleResolution(t *testing.T) {
 	}
 }
 
+func TestRefreshCodexTitlesDiscardsResolutionForReplacedEntry(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	metadata := Metadata{
+		ID:                  "terminal",
+		Name:                "Terminal",
+		State:               StateRunning,
+		Agent:               "codex",
+		AgentSessionID:      "session-1",
+		AgentTranscriptPath: "/transcripts/session-1.jsonl",
+		CreatedAt:           time.Now().UTC(),
+	}
+	original := &entry{
+		metadata:                metadata,
+		codexTitleHeaderScanned: true,
+	}
+	manager.sessions[metadata.ID] = original
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		close(entered)
+		<-release
+		return "Old entry title", nil
+	}
+
+	refreshDone := make(chan struct{})
+	go func() {
+		manager.refreshCodexTitles()
+		close(refreshDone)
+	}()
+	<-entered
+	manager.mu.Lock()
+	replacement := &entry{
+		metadata:                metadata,
+		codexTitleHeaderScanned: true,
+	}
+	manager.sessions[metadata.ID] = replacement
+	manager.mu.Unlock()
+	close(release)
+	<-refreshDone
+
+	current, ok := manager.Metadata(metadata.ID)
+	if !ok || current.AgentTitle != "" {
+		t.Fatalf("replacement metadata = %#v, %t; want old resolution discarded", current, ok)
+	}
+}
+
+func TestListWaitsForInFlightMetadataRefresh(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		close(entered)
+		<-release
+		return "Refreshed title", nil
+	}
+
+	manager.RefreshMetadata()
+	<-entered
+	listDone := make(chan []Metadata, 1)
+	go func() {
+		listDone <- manager.List()
+	}()
+	select {
+	case items := <-listDone:
+		close(release)
+		t.Fatalf("List() returned before active refresh: %#v", items)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case items := <-listDone:
+		if len(items) != 1 || items[0].AgentTitle != "Refreshed title" {
+			t.Fatalf("List() after refresh = %#v", items)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("List() did not return after active refresh completed")
+	}
+}
+
+func TestCloseWaitsForMetadataRefreshAndPreventsLateEffects(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	metadata, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent:          "codex",
+		AgentSessionID: "session-1",
+		TranscriptPath: "/transcripts/session-1.jsonl",
+		Status:         "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	store := &recordingMetadataStore{}
+	manager.store = store
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var resolverMu sync.Mutex
+	resolverCalls := 0
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		resolverMu.Lock()
+		resolverCalls++
+		call := resolverCalls
+		resolverMu.Unlock()
+		if call == 1 {
+			close(entered)
+		}
+		<-release
+		return "Late title", nil
+	}
+	var changeMu sync.Mutex
+	changeCount := 0
+	manager.SetChangeHandler(func(Change) {
+		changeMu.Lock()
+		changeCount++
+		changeMu.Unlock()
+	})
+
+	manager.RefreshMetadata()
+	<-entered
+	closeContext, cancelClose := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelClose()
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- manager.Close(closeContext)
+	}()
+	waitFor(t, time.Second, func() bool {
+		manager.mu.RLock()
+		closing := manager.closing
+		manager.mu.RUnlock()
+		return closing
+	})
+	select {
+	case err := <-closeDone:
+		close(release)
+		t.Fatalf("Close() returned before active refresh was released: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close() did not join active metadata refresh")
+	}
+
+	current, ok := manager.Metadata(metadata.ID)
+	if !ok || current.AgentTitle != "" {
+		t.Fatalf("metadata after Close() = %#v, %t; want no late title", current, ok)
+	}
+	if got := store.SaveCount(); got != 0 {
+		t.Fatalf("store saves after Close() = %d, want 0", got)
+	}
+	changeMu.Lock()
+	defer changeMu.Unlock()
+	if changeCount != 0 {
+		t.Fatalf("emitted changes after Close() = %d, want 0", changeCount)
+	}
+	manager.RefreshMetadata()
+	time.Sleep(50 * time.Millisecond)
+	resolverMu.Lock()
+	defer resolverMu.Unlock()
+	if resolverCalls != 1 {
+		t.Fatalf("resolver calls after Close() = %d, want 1", resolverCalls)
+	}
+}
+
+func TestRefreshCodexTitlesDoesNotBlockListCurrentDuringStoreSave(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	storeStarted := make(chan struct{})
+	storeRelease := make(chan struct{})
+	manager.store = &recordingMetadataStore{
+		started: storeStarted,
+		release: storeRelease,
+	}
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		return "Persisted title", nil
+	}
+
+	manager.RefreshMetadata()
+	<-storeStarted
+	listDone := make(chan []Metadata, 1)
+	go func() {
+		listDone <- manager.ListCurrent()
+	}()
+	select {
+	case items := <-listDone:
+		if len(items) != 1 || items[0].AgentTitle != "Persisted title" {
+			close(storeRelease)
+			t.Fatalf("ListCurrent() during Save() = %#v", items)
+		}
+	case <-time.After(100 * time.Millisecond):
+		close(storeRelease)
+		<-listDone
+		t.Fatal("ListCurrent() blocked while metadata Save() was active")
+	}
+	close(storeRelease)
+	waitFor(t, time.Second, func() bool {
+		manager.refreshMu.Lock()
+		done := manager.refreshDone
+		manager.refreshMu.Unlock()
+		return done == nil
+	})
+}
+
+func TestMetadataPersistencePreservesUpdateOrder(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	store := &orderedMetadataStore{
+		entered:      make(chan int, 2),
+		releaseFirst: make(chan struct{}),
+	}
+	manager.store = store
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		return "Resolved title", nil
+	}
+
+	manager.RefreshMetadata()
+	if call := <-store.entered; call != 1 {
+		t.Fatalf("first Save() call = %d", call)
+	}
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateAgent("terminal", AgentUpdate{
+			Agent:          "codex",
+			AgentSessionID: "session-1",
+			TranscriptPath: "/transcripts/session-1.jsonl",
+			Status:         "waiting",
+		})
+		updateDone <- err
+	}()
+	select {
+	case call := <-store.entered:
+		close(store.releaseFirst)
+		<-updateDone
+		t.Fatalf("Save() call %d entered before the older title Save() completed", call)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(store.releaseFirst)
+	select {
+	case err := <-updateDone:
+		if err != nil {
+			t.Fatalf("UpdateAgent() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("UpdateAgent() did not complete after persistence was released")
+	}
+	if call := <-store.entered; call != 2 {
+		t.Fatalf("second Save() call = %d", call)
+	}
+	saves := store.Saves()
+	if len(saves) != 2 ||
+		saves[0].AgentTitle != "Resolved title" ||
+		saves[1].AgentTitle != "Resolved title" ||
+		saves[1].AgentStatus != "waiting" {
+		t.Fatalf("persisted metadata order = %#v", saves)
+	}
+}
+
 func TestPersistentManagerRestoresTerminalWithItsCWD(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
 	cwd := t.TempDir()
@@ -1177,6 +1475,88 @@ func TestForegroundIsShellTracksPTYForegroundProcessGroup(t *testing.T) {
 		available, checkErr := running.ForegroundIsShell()
 		return checkErr == nil && !available
 	})
+}
+
+func TestSessionWritePreservesBytesAcrossPTYBackpressure(t *testing.T) {
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	release := filepath.Join(directory, "release")
+	output := filepath.Join(directory, "output")
+	const payloadSize = 4 * 1024 * 1024
+	command := exec.Command("/bin/sh", "-c",
+		"stty raw -echo; touch \"$PTY_READY\"; "+
+			"while [ ! -e \"$PTY_RELEASE\" ]; do sleep 0.01; done; "+
+			"exec cat > \"$PTY_OUTPUT\"",
+	)
+	command.Env = append(os.Environ(),
+		"PTY_READY="+ready,
+		"PTY_RELEASE="+release,
+		"PTY_OUTPUT="+output,
+	)
+	terminal, err := pty.Start(command)
+	if err != nil {
+		t.Fatalf("pty.Start() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(release, nil, 0o600)
+		if command.Process != nil {
+			_ = command.Process.Kill()
+		}
+		_ = terminal.Close()
+		_ = command.Wait()
+	})
+	if err := unix.SetNonblock(int(terminal.Fd()), true); err != nil {
+		t.Fatalf("SetNonblock() error = %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		_, statErr := os.Stat(ready)
+		return statErr == nil
+	})
+
+	running := &Session{
+		terminal:   terminal,
+		terminalFD: int(terminal.Fd()),
+		pumpDone:   make(chan struct{}),
+	}
+	payload := bytes.Repeat([]byte("0123456789abcdef"), payloadSize/16)
+	type writeResult struct {
+		n   int
+		err error
+	}
+	writeDone := make(chan writeResult, 1)
+	go func() {
+		n, writeErr := running.Write(payload)
+		writeDone <- writeResult{n: n, err: writeErr}
+	}()
+
+	select {
+	case result := <-writeDone:
+		t.Fatalf("Write() completed before backpressure release: n=%d, err=%v", result.n, result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatalf("release PTY reader: %v", err)
+	}
+	var result writeResult
+	select {
+	case result = <-writeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Write() did not resume after the PTY reader was released")
+	}
+	if result.err != nil || result.n != len(payload) {
+		t.Fatalf("Write() = %d, %v; want %d bytes", result.n, result.err, len(payload))
+	}
+	if err := terminal.Close(); err != nil {
+		t.Fatalf("close PTY master: %v", err)
+	}
+	_ = command.Wait()
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("read PTY output: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("PTY output mismatch: got %d bytes, want %d in original order", len(got), len(payload))
+	}
 }
 
 func TestForegroundCommandDoesNotBlockTerminalWrite(t *testing.T) {
@@ -1711,6 +2091,92 @@ func historyString(history [][]byte) string {
 		result.Write(chunk)
 	}
 	return result.String()
+}
+
+type recordingMetadataStore struct {
+	mu      sync.Mutex
+	saves   []Metadata
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+type orderedMetadataStore struct {
+	recordingMetadataStore
+	callMu       sync.Mutex
+	calls        int
+	entered      chan int
+	releaseFirst chan struct{}
+}
+
+func (s *orderedMetadataStore) Save(_ context.Context, metadata Metadata) error {
+	s.callMu.Lock()
+	s.calls++
+	call := s.calls
+	s.callMu.Unlock()
+	s.entered <- call
+	if call == 1 {
+		<-s.releaseFirst
+	}
+	s.mu.Lock()
+	s.saves = append(s.saves, metadata)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *orderedMetadataStore) Saves() []Metadata {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Metadata(nil), s.saves...)
+}
+
+func (s *recordingMetadataStore) Load(context.Context) ([]Metadata, error) {
+	return nil, nil
+}
+
+func (s *recordingMetadataStore) Save(_ context.Context, metadata Metadata) error {
+	if s.started != nil {
+		s.once.Do(func() {
+			close(s.started)
+		})
+	}
+	if s.release != nil {
+		<-s.release
+	}
+	s.mu.Lock()
+	s.saves = append(s.saves, metadata)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *recordingMetadataStore) Delete(context.Context, string) error {
+	return nil
+}
+
+func (s *recordingMetadataStore) LoadSettings(context.Context) (Settings, error) {
+	return DefaultSettings(), nil
+}
+
+func (s *recordingMetadataStore) SaveSettings(context.Context, Settings) error {
+	return nil
+}
+
+func (s *recordingMetadataStore) LoadSelection(context.Context) (selection.State, bool, error) {
+	return selection.State{}, false, nil
+}
+
+func (s *recordingMetadataStore) SaveSelection(context.Context, selection.State) error {
+	return nil
+}
+
+func (s *recordingMetadataStore) Close() error {
+	return nil
+}
+
+func (s *recordingMetadataStore) SaveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.saves)
 }
 
 func receiveUntil(t *testing.T, output <-chan []byte, needle string, timeout time.Duration) string {

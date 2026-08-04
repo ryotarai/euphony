@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +49,7 @@ type Session struct {
 	pumpDone        chan struct{}
 	close           sync.Once
 	fileMu          sync.Mutex
+	writeMu         sync.Mutex
 	dimensionsMu    sync.Mutex
 	cols            uint16
 	rows            uint16
@@ -265,9 +267,75 @@ func (s *outputSubscriber) next() (TerminalEvent, bool, bool) {
 }
 
 func (s *Session) Write(data []byte) (int, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
-	return s.terminal.Write(data)
+	if s.terminal == nil || s.terminalFD < 0 {
+		s.fileMu.Unlock()
+		return 0, errors.New("terminal is closed")
+	}
+	fd, err := unix.Dup(s.terminalFD)
+	s.fileMu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	defer unix.Close(fd)
+
+	written := 0
+	for written < len(data) {
+		n, writeErr := unix.Write(fd, data[written:])
+		if n > 0 {
+			written += n
+		}
+		if writeErr == nil {
+			if n == 0 {
+				return written, io.ErrShortWrite
+			}
+			continue
+		}
+		if errors.Is(writeErr, unix.EINTR) {
+			continue
+		}
+		if errors.Is(writeErr, unix.EAGAIN) || errors.Is(writeErr, unix.EWOULDBLOCK) {
+			if err := s.waitUntilWritable(fd); err != nil {
+				return written, err
+			}
+			continue
+		}
+		return written, writeErr
+	}
+	return written, nil
+}
+
+func (s *Session) waitUntilWritable(fd int) error {
+	pollFDs := []unix.PollFd{{
+		Fd:     int32(fd),
+		Events: unix.POLLOUT | unix.POLLHUP | unix.POLLERR,
+	}}
+	for {
+		if s.pumpDone != nil {
+			select {
+			case <-s.pumpDone:
+				return io.ErrClosedPipe
+			default:
+			}
+		}
+		_, err := unix.Poll(pollFDs, 100)
+		if err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			return err
+		}
+		events := pollFDs[0].Revents
+		if events&(unix.POLLHUP|unix.POLLERR|unix.POLLNVAL) != 0 {
+			return io.ErrClosedPipe
+		}
+		if events&unix.POLLOUT != 0 {
+			return nil
+		}
+	}
 }
 
 func (s *Session) Resize(cols, rows uint16) error {
