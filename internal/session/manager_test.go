@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1282,6 +1283,239 @@ func TestMetadataPersistenceReservesTitleBeforeNewerDelete(t *testing.T) {
 	}
 }
 
+func TestCloseCleansUpCreateBlockedInPersistence(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "shell.pid")
+	shellPath := filepath.Join(t.TempDir(), "blocked-create-shell")
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	script := fmt.Sprintf(
+		"#!/bin/sh\nprintf '%%s\\n' \"$$\" > %q\nwhile :; do sleep 1; done\n",
+		pidPath,
+	)
+	if err := os.WriteFile(shellPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write shell script: %v", err)
+	}
+	sqliteStore, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	store := &gatedSaveMetadataStore{
+		metadataStore: sqliteStore,
+		saveEntered:   make(chan struct{}),
+		saveRelease:   make(chan struct{}),
+	}
+	manager := NewManager(shellPath)
+	manager.store = store
+
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Create(context.Background(), "Blocked create")
+		createDone <- err
+	}()
+	select {
+	case <-store.saveEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Create() did not enter persistence")
+	}
+	var pid int
+	waitFor(t, time.Second, func() bool {
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			return false
+		}
+		_, err = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid)
+		return err == nil && pid > 0
+	})
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- manager.Close(context.Background())
+	}()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close() returned while Create persistence was blocked: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(store.saveRelease)
+	if err := <-createDone; !errors.Is(err, ErrManagerClosing) {
+		t.Fatalf("Create() error = %v, want ErrManagerClosing", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	reopened, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("reopen SQLite store: %v", err)
+	}
+	defer reopened.Close()
+	persisted, err := reopened.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load persisted terminals: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted terminals = %#v, want none after rejected Create", persisted)
+	}
+	waitFor(t, time.Second, func() bool {
+		return errors.Is(unix.Kill(pid, 0), unix.ESRCH)
+	})
+}
+
+func TestDeleteFailureDuringCloseDoesNotRestoreSession(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	running, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatal("created terminal is missing")
+	}
+	deleteErr := errors.New("delete failed")
+	store := newLifecycleMetadataStore()
+	store.deleteEntered = make(chan struct{})
+	store.deleteRelease = make(chan struct{})
+	store.deleteErr = deleteErr
+	manager.store = store
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- manager.Delete(metadata.ID)
+	}()
+	select {
+	case <-store.deleteEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Delete() did not enter persistence")
+	}
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- manager.Close(context.Background())
+	}()
+	waitFor(t, time.Second, func() bool {
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
+		return manager.closing
+	})
+	close(store.deleteRelease)
+	if err := <-deleteDone; !errors.Is(err, deleteErr) {
+		t.Fatalf("Delete() error = %v, want %v", err, deleteErr)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, ok := manager.Metadata(metadata.ID); ok {
+		t.Fatal("failed Delete() restored the session after Close() began")
+	}
+	select {
+	case <-running.waitDone:
+	case <-time.After(time.Second):
+		t.Fatal("session process survived failed Delete() and Close()")
+	}
+}
+
+func TestCloseRetryWaitsForShutdownAfterFirstCallerTimesOut(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	manager.mu.Lock()
+	item := manager.sessions[metadata.ID]
+	item.metadata.Agent = "codex"
+	item.metadata.AgentSessionID = "session-1"
+	item.metadata.AgentTranscriptPath = "/transcripts/session-1.jsonl"
+	item.codexTitleHeaderScanned = true
+	manager.mu.Unlock()
+	refreshEntered := make(chan struct{})
+	refreshRelease := make(chan struct{})
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		close(refreshEntered)
+		<-refreshRelease
+		return "", nil
+	}
+	store := newLifecycleMetadataStore()
+	manager.store = store
+	barrierEntered := make(chan struct{})
+	barrierRelease := make(chan struct{})
+	manager.beforeStoreOperation = func(sequence uint64) {
+		if sequence == 1 {
+			close(barrierEntered)
+			<-barrierRelease
+		}
+	}
+	manager.RefreshMetadata()
+	<-refreshEntered
+
+	firstContext, cancelFirst := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancelFirst()
+	if err := manager.Close(firstContext); !errors.Is(err, context.DeadlineExceeded) {
+		close(refreshRelease)
+		t.Fatalf("first Close() error = %v, want context deadline exceeded", err)
+	}
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- manager.Close(context.Background())
+	}()
+	select {
+	case err := <-secondDone:
+		close(refreshRelease)
+		t.Fatalf("second Close() returned before refresh completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(refreshRelease)
+	select {
+	case <-barrierEntered:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not reach the persistence barrier")
+	}
+	select {
+	case err := <-secondDone:
+		close(barrierRelease)
+		t.Fatalf("second Close() returned before persistence barrier completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(barrierRelease)
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+}
+
+func TestConcurrentCloseWaitsForSharedShutdownResult(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	closeErr := errors.New("close failed")
+	store := newLifecycleMetadataStore()
+	store.closeErr = closeErr
+	manager.store = store
+	barrierEntered := make(chan struct{})
+	barrierRelease := make(chan struct{})
+	manager.beforeStoreOperation = func(sequence uint64) {
+		if sequence == 1 {
+			close(barrierEntered)
+			<-barrierRelease
+		}
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- manager.Close(context.Background())
+	}()
+	<-barrierEntered
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- manager.Close(context.Background())
+	}()
+	select {
+	case err := <-secondDone:
+		close(barrierRelease)
+		t.Fatalf("concurrent Close() returned before shared shutdown completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(barrierRelease)
+	if err := <-firstDone; !errors.Is(err, closeErr) {
+		t.Fatalf("first Close() error = %v, want %v", err, closeErr)
+	}
+	if err := <-secondDone; !errors.Is(err, closeErr) {
+		t.Fatalf("second Close() error = %v, want %v", err, closeErr)
+	}
+}
+
 func TestCloseSealsPersistenceQueueBeforeRejectingMutations(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	item := codexTitleTestEntry()
@@ -2414,6 +2648,49 @@ type gapMetadataStore struct {
 	recordingMetadataStore
 	operations []string
 	records    map[string]Metadata
+}
+
+type lifecycleMetadataStore struct {
+	recordingMetadataStore
+	deleteEntered chan struct{}
+	deleteRelease chan struct{}
+	deleteErr     error
+	closeErr      error
+	deleteOnce    sync.Once
+}
+
+type gatedSaveMetadataStore struct {
+	metadataStore
+	saveEntered chan struct{}
+	saveRelease chan struct{}
+	saveOnce    sync.Once
+}
+
+func (s *gatedSaveMetadataStore) Save(ctx context.Context, metadata Metadata) error {
+	s.saveOnce.Do(func() { close(s.saveEntered) })
+	<-s.saveRelease
+	return s.metadataStore.Save(ctx, metadata)
+}
+
+func newLifecycleMetadataStore() *lifecycleMetadataStore {
+	return &lifecycleMetadataStore{}
+}
+
+func (s *lifecycleMetadataStore) Delete(_ context.Context, id string) error {
+	if s.deleteEntered != nil {
+		s.deleteOnce.Do(func() { close(s.deleteEntered) })
+	}
+	if s.deleteRelease != nil {
+		<-s.deleteRelease
+	}
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return nil
+}
+
+func (s *lifecycleMetadataStore) Close() error {
+	return s.closeErr
 }
 
 func newGapMetadataStore() *gapMetadataStore {

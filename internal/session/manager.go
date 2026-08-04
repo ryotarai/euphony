@@ -197,6 +197,10 @@ type Manager struct {
 	sessions                        map[string]*entry
 	store                           metadataStore
 	closing                         bool
+	activeCreates                   int
+	createsDone                     chan struct{}
+	closeDone                       chan struct{}
+	closeResult                     error
 	settings                        Settings
 	onChange                        func(Change)
 	changeSequence                  uint64
@@ -276,13 +280,10 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	if len(name) > 80 {
 		return Metadata{}, errors.New("session name must be at most 80 characters")
 	}
-	m.mu.RLock()
-	closing := m.closing
-	m.mu.RUnlock()
-	if closing {
+	if !m.beginCreate() {
 		return Metadata{}, ErrManagerClosing
 	}
-
+	defer m.finishCreate()
 	id, err := randomID()
 	if err != nil {
 		return Metadata{}, err
@@ -325,14 +326,21 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 			return Metadata{}, err
 		}
 	}
-	m.mu.RLock()
-	closing = m.closing
-	m.mu.RUnlock()
-	if closing {
-		discardStartedSession(item.session)
-		return Metadata{}, ErrManagerClosing
-	}
 	if !m.registerSession(id, item) {
+		if m.store != nil {
+			operation := m.reserveStoreOperation()
+			cleanupErr := m.runStoreOperation(operation, func() error {
+				return m.store.Delete(context.Background(), id)
+			})
+			if cleanupErr != nil {
+				discardStartedSession(item.session)
+				return Metadata{}, fmt.Errorf(
+					"%w: delete rejected terminal: %v",
+					ErrManagerClosing,
+					cleanupErr,
+				)
+			}
+		}
 		discardStartedSession(item.session)
 		return Metadata{}, ErrManagerClosing
 	}
@@ -344,6 +352,29 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 
 	go m.watch(item)
 	return item.metadata, nil
+}
+
+func (m *Manager) beginCreate() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		return false
+	}
+	if m.activeCreates == 0 {
+		m.createsDone = make(chan struct{})
+	}
+	m.activeCreates++
+	return true
+}
+
+func (m *Manager) finishCreate() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.activeCreates--
+	if m.activeCreates == 0 {
+		close(m.createsDone)
+		m.createsDone = nil
+	}
 }
 
 func (m *Manager) restore(metadata Metadata) error {
@@ -1480,9 +1511,19 @@ func (m *Manager) Delete(id string) error {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Delete(context.Background(), id)
 		}); err != nil {
+			restored := false
 			m.mu.Lock()
-			m.sessions[id] = item
+			if !m.closing {
+				if _, exists := m.sessions[id]; !exists {
+					m.sessions[id] = item
+					restored = true
+				}
+			}
 			m.mu.Unlock()
+			if !restored {
+				item.session.terminate()
+				<-item.session.waitDone
+			}
 			return err
 		}
 	}
@@ -1577,15 +1618,38 @@ func (m *Manager) runStoreOperation(operation storeOperation, persist func() err
 func (m *Manager) Close(ctx context.Context) error {
 	m.refreshMu.Lock()
 	m.mu.Lock()
-	if m.closing {
+	if m.closeDone != nil {
+		done := m.closeDone
 		m.mu.Unlock()
 		m.refreshMu.Unlock()
-		return nil
+		return m.waitForClose(ctx, done)
 	}
 	m.closing = true
+	m.closeDone = make(chan struct{})
+	done := m.closeDone
+	createsDone := m.createsDone
+	refreshDone := m.refreshLifecycleDone
 	store := m.store
-	var closeOperation storeOperation
+	m.mu.Unlock()
+	m.refreshMu.Unlock()
+
+	go m.finishClose(createsDone, refreshDone, store, done)
+	return m.waitForClose(ctx, done)
+}
+
+func (m *Manager) finishClose(
+	createsDone <-chan struct{},
+	refreshDone <-chan struct{},
+	store metadataStore,
+	done chan struct{},
+) {
+	if createsDone != nil {
+		<-createsDone
+	}
+
+	m.mu.Lock()
 	m.storeOrderMu.Lock()
+	var closeOperation storeOperation
 	if store != nil {
 		closeOperation = m.reserveStoreOperationLocked()
 	}
@@ -1596,15 +1660,9 @@ func (m *Manager) Close(ctx context.Context) error {
 		items = append(items, item)
 	}
 	m.mu.Unlock()
-	refreshDone := m.refreshLifecycleDone
-	m.refreshMu.Unlock()
 
 	if refreshDone != nil {
-		select {
-		case <-refreshDone:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		<-refreshDone
 	}
 
 	for _, item := range items {
@@ -1615,16 +1673,28 @@ func (m *Manager) Close(ctx context.Context) error {
 		item.session.terminate()
 	}
 	for _, item := range items {
-		select {
-		case <-item.session.waitDone:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		<-item.session.waitDone
 	}
+	var result error
 	if store != nil {
-		return m.runStoreOperation(closeOperation, store.Close)
+		result = m.runStoreOperation(closeOperation, store.Close)
 	}
-	return nil
+	m.mu.Lock()
+	m.closeResult = result
+	close(done)
+	m.mu.Unlock()
+}
+
+func (m *Manager) waitForClose(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		m.mu.RLock()
+		result := m.closeResult
+		m.mu.RUnlock()
+		return result
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func randomID() (string, error) {
