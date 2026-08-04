@@ -119,7 +119,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         startupComplete = true
-        let browser = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let browser = FinderDropWebView(
+            frame: .zero,
+            configuration: WKWebViewConfiguration()
+        )
         browser.autoresizingMask = [.width, .height]
         webView = browser
 

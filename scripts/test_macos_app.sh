@@ -25,10 +25,20 @@ swiftc \
 
 swiftc \
 	-module-cache-path "$module_cache_dir" \
+	"$repo_root/macos/FileDropBridge.swift" \
+	"$repo_root/macos/FileDropBridgeTests.swift" \
+	-framework AppKit \
+	-framework WebKit \
+	-o "$module_cache_dir/file-drop-bridge-tests"
+"$module_cache_dir/file-drop-bridge-tests"
+
+swiftc \
+	-module-cache-path "$module_cache_dir" \
 	-typecheck \
 	-framework AppKit \
 	-framework WebKit \
 	"$repo_root/macos/LaunchConfiguration.swift" \
+	"$repo_root/macos/FileDropBridge.swift" \
 	"$repo_root/macos/EuphonyApp.swift"
 
 printf 'macOS Swift checks passed\n'
