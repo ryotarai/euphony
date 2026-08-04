@@ -263,6 +263,38 @@ test("renders a cwd-first tree and creates a terminal from its cwd", async ({
   }).toBe("/tmp");
 });
 
+test("opens the Agents dashboard and follows a summarized agent", async ({ page }) => {
+  await clearSessions(page);
+  const agent = await createSession(page, "Needs approval", "/tmp");
+  await replaceSharedSelection(page, [agent.id], agent.id);
+  await reportAgent(page, agent.id, "claude", "Needs approval", "waiting");
+  await page.route("**/api/agent-summaries", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        terminalId: agent.id,
+        provider: "claude",
+        status: "waiting",
+        summary: "The agent is waiting for approval.",
+        action: "Approve the requested change.",
+        generatedAt: "2026-08-05T00:00:00Z",
+      }]),
+    });
+  });
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Agents" }).click();
+  await expect(page.getByRole("heading", { name: "Action required" })).toBeVisible();
+  await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: /Needs approval: The agent is waiting/ }).click();
+  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
+});
+
 test("keeps sidebar actions visible while the terminal tree scrolls", async ({
   page,
 }) => {
