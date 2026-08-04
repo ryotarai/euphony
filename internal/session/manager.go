@@ -891,20 +891,9 @@ func (m *Manager) UpdateCWD(id, cwd string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
-	metadata, err := m.updateCWD(id, cwd, true)
-	if err != nil {
-		return Metadata{}, err
-	}
-	m.noteCWDReport(id)
-	return metadata, nil
-}
-
-func (m *Manager) noteCWDReport(id string) {
-	m.mu.Lock()
-	if item, ok := m.sessions[id]; ok {
-		item.cwdReportedAt = time.Now()
-	}
-	m.mu.Unlock()
+	return m.updateCWDNotReportedSince(
+		id, cwd, true, time.Time{}, time.Now(),
+	)
 }
 
 func normalizeReportedCWD(cwd string) (string, error) {
@@ -935,7 +924,9 @@ func normalizeReportedCWD(cwd string) (string, error) {
 }
 
 func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metadata, error) {
-	return m.updateCWDNotReportedSince(id, cwd, preserveEquivalentPath, time.Time{})
+	return m.updateCWDNotReportedSince(
+		id, cwd, preserveEquivalentPath, time.Time{}, time.Time{},
+	)
 }
 
 // updateCWDNotReportedSince drops the update when the terminal named its own
@@ -944,10 +935,12 @@ func (m *Manager) updateCWD(id, cwd string, preserveEquivalentPath bool) (Metada
 // window has to be re-checked here, under the lock, and not only before the
 // sample was taken.
 func (m *Manager) updateCWDNotReportedSince(
-	id, cwd string, preserveEquivalentPath bool, sampledAt time.Time,
+	id, cwd string,
+	preserveEquivalentPath bool,
+	sampledAt, reportedAt time.Time,
 ) (Metadata, error) {
 	metadata, change, err := m.updateCWDNotReportedSinceDeferred(
-		id, cwd, preserveEquivalentPath, sampledAt,
+		id, cwd, preserveEquivalentPath, sampledAt, reportedAt,
 	)
 	if change != nil {
 		m.emitChange(*change)
@@ -956,7 +949,9 @@ func (m *Manager) updateCWDNotReportedSince(
 }
 
 func (m *Manager) updateCWDNotReportedSinceDeferred(
-	id, cwd string, preserveEquivalentPath bool, sampledAt time.Time,
+	id, cwd string,
+	preserveEquivalentPath bool,
+	sampledAt, reportedAt time.Time,
 ) (Metadata, *Change, error) {
 	m.mu.Lock()
 	item, ok := m.sessions[id]
@@ -974,6 +969,9 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 		return metadata, nil, nil
 	}
 	if item.metadata.CWD == cwd {
+		if !reportedAt.IsZero() {
+			item.cwdReportedAt = reportedAt
+		}
 		metadata := item.metadata
 		m.mu.Unlock()
 		return metadata, nil, nil
@@ -982,16 +980,23 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 		currentInfo, currentErr := os.Stat(item.metadata.CWD)
 		nextInfo, nextErr := os.Stat(cwd)
 		if currentErr == nil && nextErr == nil && os.SameFile(currentInfo, nextInfo) {
+			if !reportedAt.IsZero() {
+				item.cwdReportedAt = reportedAt
+			}
 			metadata := item.metadata
 			m.mu.Unlock()
 			return metadata, nil, nil
 		}
 	}
 	before := item.metadata
+	beforeReportedAt := item.cwdReportedAt
 	next := item.metadata
 	next.CWD = cwd
 	next.RepoRoot = repositoryRoot(cwd)
 	item.metadata = next
+	if !reportedAt.IsZero() {
+		item.cwdReportedAt = reportedAt
+	}
 	change := m.nextChangeLocked(ChangeUpdated, &before, &next)
 	store := m.store
 	var operation storeOperation
@@ -1005,8 +1010,12 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 		}); err != nil {
 			m.mu.Lock()
 			if current, exists := m.sessions[id]; exists &&
-				current == item && current.metadata == next {
+				current == item && current.metadata == next &&
+				(reportedAt.IsZero() || current.cwdReportedAt == reportedAt) {
 				item.metadata = before
+				if !reportedAt.IsZero() {
+					item.cwdReportedAt = beforeReportedAt
+				}
 			}
 			m.mu.Unlock()
 			m.skipChange(change)
@@ -1208,7 +1217,9 @@ func (m *Manager) refreshWorkingDirectories() []Change {
 		if err != nil {
 			continue
 		}
-		_, change, _ := m.updateCWDNotReportedSinceDeferred(candidate.id, cwd, true, now)
+		_, change, _ := m.updateCWDNotReportedSinceDeferred(
+			candidate.id, cwd, true, now, time.Time{},
+		)
 		if change != nil {
 			changes = append(changes, *change)
 		}

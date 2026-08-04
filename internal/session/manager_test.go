@@ -546,6 +546,76 @@ func TestUpdateCWDKeepsMemoryUnchangedWhenPersistenceFails(t *testing.T) {
 	if len(listed) != 1 || listed[0].CWD != metadata.CWD {
 		t.Fatalf("List() = %#v, want original cwd %q", listed, metadata.CWD)
 	}
+	manager.mu.RLock()
+	reportedAt := manager.sessions[metadata.ID].cwdReportedAt
+	manager.mu.RUnlock()
+	if !reportedAt.IsZero() {
+		t.Fatalf("cwdReportedAt = %v, want zero after persistence failure", reportedAt)
+	}
+}
+
+func TestReportedCWDAtomicallySupersedesInFlightProcessSample(t *testing.T) {
+	processCWD := t.TempDir()
+	reportedCWD := t.TempDir()
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:        "terminal",
+			Name:      "Terminal",
+			State:     StateRunning,
+			CWD:       processCWD,
+			RepoRoot:  processCWD,
+			CreatedAt: time.Now().UTC(),
+		},
+	}
+	store := &gatedSaveMetadataStore{
+		metadataStore: &recordingMetadataStore{},
+		saveEntered:   make(chan struct{}),
+		saveRelease:   make(chan struct{}),
+	}
+	manager.store = store
+
+	sampledAt := time.Now()
+	reportDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateCWD("terminal", reportedCWD)
+		reportDone <- err
+	}()
+	<-store.saveEntered
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := manager.updateCWDNotReportedSince(
+			"terminal", processCWD, true, sampledAt, time.Time{},
+		)
+		refreshDone <- err
+	}()
+	waitFor(t, time.Second, func() bool {
+		if len(refreshDone) > 0 {
+			return true
+		}
+		metadata, _ := manager.Metadata("terminal")
+		return metadata.CWD == processCWD
+	})
+
+	close(store.saveRelease)
+	if err := <-reportDone; err != nil {
+		t.Fatalf("UpdateCWD() error = %v", err)
+	}
+	if err := <-refreshDone; err != nil {
+		t.Fatalf("sampled CWD update error = %v", err)
+	}
+
+	metadata, _ := manager.Metadata("terminal")
+	if metadata.CWD != reportedCWD {
+		t.Fatalf("CWD = %q, want reported CWD %q", metadata.CWD, reportedCWD)
+	}
+	manager.mu.RLock()
+	reportedAt := manager.sessions["terminal"].cwdReportedAt
+	manager.mu.RUnlock()
+	if !reportedAt.After(sampledAt) {
+		t.Fatalf("cwdReportedAt = %v, want after sample time %v", reportedAt, sampledAt)
+	}
 }
 
 func TestRefreshCWDPreservesEquivalentLogicalPath(t *testing.T) {
