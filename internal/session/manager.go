@@ -214,6 +214,8 @@ type Manager struct {
 	cwdSampleInterval               time.Duration
 	foregroundProcessSampleInterval time.Duration
 	codexTitleResolver              func(string, string, bool) (string, error)
+	repositoryRootResolver          func(string) string
+	fileStat                        func(string) (os.FileInfo, error)
 	beforeStoreOperation            func(uint64)
 
 	workspaceSelection    selection.State
@@ -592,6 +594,10 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		return Metadata{}, err
 	}
 	defer releaseMetadataSave()
+	requestedRepoRoot := ""
+	if requestedCWD != "" {
+		requestedRepoRoot = m.resolveRepositoryRoot(requestedCWD)
+	}
 
 	m.mu.Lock()
 	if m.closing {
@@ -640,16 +646,6 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	if item.metadata.Agent == "" && nextStatus == "" {
 		item.metadata.NeedsAttention = false
 	}
-	var activityTarget codexActivityTarget
-	if item.metadata.Agent == "codex" && item.metadata.AgentStatus == "blocked" &&
-		item.metadata.AgentSessionID != "" && item.metadata.AgentTranscriptPath != "" {
-		if info, err := os.Stat(item.metadata.AgentTranscriptPath); err == nil && info.Mode().IsRegular() {
-			activityTarget = codexActivityTarget{
-				sessionID: item.metadata.AgentSessionID, transcriptPath: item.metadata.AgentTranscriptPath,
-				offset: info.Size(),
-			}
-		}
-	}
 	if title := strings.TrimSpace(update.Title); title != "" {
 		item.metadata.AgentTitle = title
 	} else if item.metadata.Agent == "" && nextStatus == "" {
@@ -657,7 +653,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	}
 	if requestedCWD != "" {
 		item.metadata.CWD = requestedCWD
-		item.metadata.RepoRoot = repositoryRoot(requestedCWD)
+		item.metadata.RepoRoot = requestedRepoRoot
 		item.cwdFromAgent = true
 	}
 	after := item.metadata
@@ -672,6 +668,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		operation = m.reserveStoreOperation()
 	}
 	m.mu.Unlock()
+	activityTarget := m.codexActivityTarget(after)
 	if store != nil {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Save(context.Background(), after)
@@ -691,6 +688,24 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		m.watchCodexActivity(id, activityTarget)
 	}
 	return after, nil
+}
+
+func (m *Manager) codexActivityTarget(metadata Metadata) codexActivityTarget {
+	if metadata.Agent != "codex" ||
+		metadata.AgentStatus != "blocked" ||
+		metadata.AgentSessionID == "" ||
+		metadata.AgentTranscriptPath == "" {
+		return codexActivityTarget{}
+	}
+	info, err := m.statFile(metadata.AgentTranscriptPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return codexActivityTarget{}
+	}
+	return codexActivityTarget{
+		sessionID:      metadata.AgentSessionID,
+		transcriptPath: metadata.AgentTranscriptPath,
+		offset:         info.Size(),
+	}
 }
 
 func (m *Manager) watchAgentInterrupt(id string, target agentInterruptTarget) {
@@ -1018,33 +1033,23 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 	}
 	defer releaseMetadataSave()
 
-	m.mu.Lock()
-	current, ok := m.sessions[id]
-	if !ok || current != item {
-		m.mu.Unlock()
-		return Metadata{}, nil, ErrNotFound
-	}
-	if m.closing {
-		m.mu.Unlock()
-		return Metadata{}, nil, ErrManagerClosing
-	}
-	if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
-		metadata := item.metadata
-		m.mu.Unlock()
-		return metadata, nil, nil
-	}
-	if item.metadata.CWD == cwd {
-		if !reportedAt.IsZero() {
-			item.cwdReportedAt = reportedAt
+	for {
+		m.mu.Lock()
+		current, ok := m.sessions[id]
+		if !ok || current != item {
+			m.mu.Unlock()
+			return Metadata{}, nil, ErrNotFound
 		}
-		metadata := item.metadata
-		m.mu.Unlock()
-		return metadata, nil, nil
-	}
-	if preserveEquivalentPath {
-		currentInfo, currentErr := os.Stat(item.metadata.CWD)
-		nextInfo, nextErr := os.Stat(cwd)
-		if currentErr == nil && nextErr == nil && os.SameFile(currentInfo, nextInfo) {
+		if m.closing {
+			m.mu.Unlock()
+			return Metadata{}, nil, ErrManagerClosing
+		}
+		if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
+			metadata := item.metadata
+			m.mu.Unlock()
+			return metadata, nil, nil
+		}
+		if item.metadata.CWD == cwd {
 			if !reportedAt.IsZero() {
 				item.cwdReportedAt = reportedAt
 			}
@@ -1052,46 +1057,90 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 			m.mu.Unlock()
 			return metadata, nil, nil
 		}
-	}
-	before := item.metadata
-	beforeReportedAt := item.cwdReportedAt
-	next := item.metadata
-	next.CWD = cwd
-	next.RepoRoot = repositoryRoot(cwd)
-	item.metadata = next
-	if !reportedAt.IsZero() {
-		item.cwdReportedAt = reportedAt
-	}
-	change := m.nextChangeLocked(ChangeUpdated, &before, &next)
-	store := m.store
-	var operation storeOperation
-	if store != nil {
-		operation = m.reserveStoreOperation()
-	}
-	m.mu.Unlock()
-	if store != nil {
-		if err := m.runStoreOperation(operation, func() error {
-			return store.Save(context.Background(), next)
-		}); err != nil {
-			m.mu.Lock()
-			if current, exists := m.sessions[id]; exists &&
-				current == item &&
-				current.metadata.CWD == next.CWD &&
-				current.metadata.RepoRoot == next.RepoRoot &&
-				(reportedAt.IsZero() || current.cwdReportedAt == reportedAt) {
-				item.metadata.CWD = before.CWD
-				item.metadata.RepoRoot = before.RepoRoot
-				if !reportedAt.IsZero() {
-					item.cwdReportedAt = beforeReportedAt
-				}
-			}
-			m.mu.Unlock()
-			releaseMetadataSave()
-			m.skipChange(change)
-			return Metadata{}, nil, err
+		baseCWD := item.metadata.CWD
+		m.mu.Unlock()
+
+		equivalent := false
+		if preserveEquivalentPath {
+			currentInfo, currentErr := m.statFile(baseCWD)
+			nextInfo, nextErr := m.statFile(cwd)
+			equivalent = currentErr == nil &&
+				nextErr == nil &&
+				os.SameFile(currentInfo, nextInfo)
 		}
+		repoRoot := ""
+		if !equivalent {
+			repoRoot = m.resolveRepositoryRoot(cwd)
+		}
+
+		m.mu.Lock()
+		current, ok = m.sessions[id]
+		if !ok || current != item {
+			m.mu.Unlock()
+			return Metadata{}, nil, ErrNotFound
+		}
+		if m.closing {
+			m.mu.Unlock()
+			return Metadata{}, nil, ErrManagerClosing
+		}
+		if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
+			metadata := item.metadata
+			m.mu.Unlock()
+			return metadata, nil, nil
+		}
+		if item.metadata.CWD != baseCWD {
+			m.mu.Unlock()
+			continue
+		}
+		if equivalent {
+			if !reportedAt.IsZero() {
+				item.cwdReportedAt = reportedAt
+			}
+			metadata := item.metadata
+			m.mu.Unlock()
+			return metadata, nil, nil
+		}
+
+		before := item.metadata
+		beforeReportedAt := item.cwdReportedAt
+		next := item.metadata
+		next.CWD = cwd
+		next.RepoRoot = repoRoot
+		item.metadata = next
+		if !reportedAt.IsZero() {
+			item.cwdReportedAt = reportedAt
+		}
+		change := m.nextChangeLocked(ChangeUpdated, &before, &next)
+		store := m.store
+		var operation storeOperation
+		if store != nil {
+			operation = m.reserveStoreOperation()
+		}
+		m.mu.Unlock()
+		if store != nil {
+			if err := m.runStoreOperation(operation, func() error {
+				return store.Save(context.Background(), next)
+			}); err != nil {
+				m.mu.Lock()
+				if current, exists := m.sessions[id]; exists &&
+					current == item &&
+					current.metadata.CWD == next.CWD &&
+					current.metadata.RepoRoot == next.RepoRoot &&
+					(reportedAt.IsZero() || current.cwdReportedAt == reportedAt) {
+					item.metadata.CWD = before.CWD
+					item.metadata.RepoRoot = before.RepoRoot
+					if !reportedAt.IsZero() {
+						item.cwdReportedAt = beforeReportedAt
+					}
+				}
+				m.mu.Unlock()
+				releaseMetadataSave()
+				m.skipChange(change)
+				return Metadata{}, nil, err
+			}
+		}
+		return next, &change, nil
 	}
-	return next, &change, nil
 }
 
 func (m *Manager) RefreshCWD(id string) (Metadata, error) {
@@ -1131,6 +1180,20 @@ func repositoryRoot(cwd string) string {
 		return filepath.Dir(common)
 	}
 	return resolved
+}
+
+func (m *Manager) resolveRepositoryRoot(cwd string) string {
+	if m.repositoryRootResolver != nil {
+		return m.repositoryRootResolver(cwd)
+	}
+	return repositoryRoot(cwd)
+}
+
+func (m *Manager) statFile(path string) (os.FileInfo, error) {
+	if m.fileStat != nil {
+		return m.fileStat(path)
+	}
+	return os.Stat(path)
 }
 
 func (m *Manager) watch(item *entry) {

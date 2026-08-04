@@ -161,6 +161,88 @@ func TestUpdateAgentChangesTerminalActivity(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentRepositoryResolutionDoesNotBlockManager(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	targetCWD := t.TempDir()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseResolver := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	defer releaseResolver()
+	manager.repositoryRootResolver = func(cwd string) string {
+		if cwd != targetCWD {
+			t.Errorf("repository root CWD = %q, want %q", cwd, targetCWD)
+		}
+		close(entered)
+		<-release
+		return targetCWD
+	}
+
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateAgent(metadata.ID, AgentUpdate{CWD: targetCWD})
+		updateDone <- err
+	}()
+	<-entered
+	assertManagerReadsAndWritesPromptly(t, manager, metadata.ID)
+	releaseResolver()
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+}
+
+func TestUpdateAgentTranscriptStatDoesNotBlockManager(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	transcript := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseStat := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	defer releaseStat()
+	manager.fileStat = func(path string) (os.FileInfo, error) {
+		if path != transcript {
+			t.Errorf("stat path = %q, want %q", path, transcript)
+		}
+		close(entered)
+		<-release
+		return os.Stat(path)
+	}
+
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+			Agent:          "codex",
+			AgentSessionID: "session-1",
+			TranscriptPath: transcript,
+			Status:         "blocked",
+		})
+		updateDone <- err
+	}()
+	<-entered
+	assertManagerReadsAndWritesPromptly(t, manager, metadata.ID)
+	releaseStat()
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+}
+
 func TestChangeHandlersObserveAssignedSequenceOrder(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	manager.sessions["first"] = &entry{
@@ -520,6 +602,77 @@ func TestUpdateCWDExpandsHomeDirectoryTitle(t *testing.T) {
 	}
 	if updated.CWD != home {
 		t.Fatalf("CWD = %q, want home %q", updated.CWD, home)
+	}
+}
+
+func TestUpdateCWDRepositoryResolutionDoesNotBlockManager(t *testing.T) {
+	initialCWD := t.TempDir()
+	targetCWD := t.TempDir()
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", initialCWD)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseResolver := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	defer releaseResolver()
+	manager.repositoryRootResolver = func(cwd string) string {
+		close(entered)
+		<-release
+		return cwd
+	}
+
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateCWD(metadata.ID, targetCWD)
+		updateDone <- err
+	}()
+	<-entered
+	assertManagerReadsAndWritesPromptly(t, manager, metadata.ID)
+	releaseResolver()
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateCWD() error = %v", err)
+	}
+}
+
+func TestUpdateCWDEquivalenceStatDoesNotBlockManager(t *testing.T) {
+	initialCWD := t.TempDir()
+	targetCWD := t.TempDir()
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Terminal", initialCWD)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var enterOnce sync.Once
+	var releaseOnce sync.Once
+	releaseStat := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	defer releaseStat()
+	manager.fileStat = func(path string) (os.FileInfo, error) {
+		enterOnce.Do(func() { close(entered) })
+		<-release
+		return os.Stat(path)
+	}
+
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateCWD(metadata.ID, targetCWD)
+		updateDone <- err
+	}()
+	<-entered
+	assertManagerReadsAndWritesPromptly(t, manager, metadata.ID)
+	releaseStat()
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateCWD() error = %v", err)
 	}
 }
 
@@ -3775,6 +3928,45 @@ func receiveUntilCount(t *testing.T, output <-chan []byte, needle string, count 
 		case <-timer.C:
 			t.Fatalf("timed out waiting for %q; received %q", needle, received.String())
 		}
+	}
+}
+
+func assertManagerReadsAndWritesPromptly(t *testing.T, manager *Manager, id string) {
+	t.Helper()
+	metadataDone := make(chan struct{})
+	go func() {
+		_, _ = manager.Metadata(id)
+		close(metadataDone)
+	}()
+	select {
+	case <-metadataDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Metadata() blocked on external metadata resolution")
+	}
+
+	listDone := make(chan struct{})
+	go func() {
+		_ = manager.ListCurrent()
+		close(listDone)
+	}()
+	select {
+	case <-listDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("ListCurrent() blocked on external metadata resolution")
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := manager.WriteTerminal(id, nil)
+		writeDone <- err
+	}()
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatalf("WriteTerminal() error = %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("WriteTerminal() blocked on external metadata resolution")
 	}
 }
 
