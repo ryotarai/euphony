@@ -583,20 +583,17 @@ func TestReportedCWDAtomicallySupersedesInFlightProcessSample(t *testing.T) {
 	}()
 	<-store.saveEntered
 
+	refreshStarted := make(chan struct{})
 	refreshDone := make(chan error, 1)
 	go func() {
+		close(refreshStarted)
 		_, err := manager.updateCWDNotReportedSince(
 			"terminal", processCWD, true, sampledAt, time.Time{},
 		)
 		refreshDone <- err
 	}()
-	waitFor(t, time.Second, func() bool {
-		if len(refreshDone) > 0 {
-			return true
-		}
-		metadata, _ := manager.Metadata("terminal")
-		return metadata.CWD == processCWD
-	})
+	<-refreshStarted
+	time.Sleep(100 * time.Millisecond)
 
 	close(store.saveRelease)
 	if err := <-reportDone; err != nil {
@@ -615,6 +612,329 @@ func TestReportedCWDAtomicallySupersedesInFlightProcessSample(t *testing.T) {
 	manager.mu.RUnlock()
 	if !reportedAt.After(sampledAt) {
 		t.Fatalf("cwdReportedAt = %v, want after sample time %v", reportedAt, sampledAt)
+	}
+}
+
+func TestConcurrentEquivalentCWDReportsWaitForPersistenceOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		equivalentSecond bool
+		secondErr        error
+	}{
+		{name: "same path then succeeds"},
+		{
+			name:             "equivalent path then succeeds",
+			equivalentSecond: true,
+		},
+		{
+			name:      "same path both fail",
+			secondErr: errors.New("second save failed"),
+		},
+		{
+			name:             "equivalent path both fail",
+			equivalentSecond: true,
+			secondErr:        errors.New("second save failed"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			initialCWD := t.TempDir()
+			targetCWD := t.TempDir()
+			secondCWD := targetCWD
+			if test.equivalentSecond {
+				secondCWD = filepath.Join(t.TempDir(), "target-link")
+				if err := os.Symlink(targetCWD, secondCWD); err != nil {
+					t.Fatalf("Symlink() error = %v", err)
+				}
+			}
+			manager := NewManager("/bin/sh")
+			manager.sessions["terminal"] = &entry{
+				metadata: Metadata{
+					ID:        "terminal",
+					Name:      "Terminal",
+					State:     StateRunning,
+					CWD:       initialCWD,
+					RepoRoot:  initialCWD,
+					CreatedAt: time.Now().UTC(),
+				},
+			}
+			firstErr := errors.New("first save failed")
+			store := &gatedResultMetadataStore{
+				recordingMetadataStore: recordingMetadataStore{},
+				entered:                make(chan int, 2),
+				releaseFirst:           make(chan struct{}),
+				saveErrors:             []error{firstErr, test.secondErr},
+			}
+			manager.store = store
+
+			firstDone := make(chan error, 1)
+			go func() {
+				_, err := manager.UpdateCWD("terminal", targetCWD)
+				firstDone <- err
+			}()
+			if call := <-store.entered; call != 1 {
+				t.Fatalf("first Save() call = %d, want 1", call)
+			}
+
+			secondStarted := make(chan struct{})
+			secondDone := make(chan error, 1)
+			go func() {
+				close(secondStarted)
+				_, err := manager.UpdateCWD("terminal", secondCWD)
+				secondDone <- err
+			}()
+			<-secondStarted
+			select {
+			case err := <-secondDone:
+				close(store.releaseFirst)
+				<-firstDone
+				t.Fatalf(
+					"second UpdateCWD() returned before first persistence outcome: %v",
+					err,
+				)
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			close(store.releaseFirst)
+			if err := <-firstDone; !errors.Is(err, firstErr) {
+				t.Fatalf("first UpdateCWD() error = %v, want %v", err, firstErr)
+			}
+			if call := <-store.entered; call != 2 {
+				t.Fatalf("second Save() call = %d, want 2", call)
+			}
+			if err := <-secondDone; !errors.Is(err, test.secondErr) {
+				t.Fatalf("second UpdateCWD() error = %v, want %v", err, test.secondErr)
+			}
+
+			metadata, _ := manager.Metadata("terminal")
+			wantCWD := secondCWD
+			if test.secondErr != nil {
+				wantCWD = initialCWD
+			}
+			if metadata.CWD != wantCWD {
+				t.Fatalf("CWD = %q, want %q", metadata.CWD, wantCWD)
+			}
+			manager.mu.RLock()
+			reportedAt := manager.sessions["terminal"].cwdReportedAt
+			manager.mu.RUnlock()
+			if test.secondErr == nil && reportedAt.IsZero() {
+				t.Fatal("cwdReportedAt is zero after the successful second report")
+			}
+			if test.secondErr != nil && !reportedAt.IsZero() {
+				t.Fatalf("cwdReportedAt = %v, want zero after both reports failed", reportedAt)
+			}
+		})
+	}
+}
+
+func TestAgentCWDWaitsForFailedBrowserCWDOutcome(t *testing.T) {
+	initialCWD := t.TempDir()
+	targetCWD := t.TempDir()
+	manager := NewManager("/bin/sh")
+	item := &entry{
+		metadata: Metadata{
+			ID:        "terminal",
+			Name:      "Terminal",
+			State:     StateRunning,
+			CWD:       initialCWD,
+			RepoRoot:  initialCWD,
+			CreatedAt: time.Now().UTC(),
+		},
+	}
+	manager.sessions[item.metadata.ID] = item
+	firstErr := errors.New("browser save failed")
+	store := &gatedResultMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		entered:                make(chan int, 2),
+		releaseFirst:           make(chan struct{}),
+		saveErrors:             []error{firstErr, nil},
+	}
+	manager.store = store
+
+	browserDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateCWD(item.metadata.ID, targetCWD)
+		browserDone <- err
+	}()
+	if call := <-store.entered; call != 1 {
+		t.Fatalf("browser Save() call = %d, want 1", call)
+	}
+
+	agentStarted := make(chan struct{})
+	agentDone := make(chan error, 1)
+	go func() {
+		close(agentStarted)
+		_, err := manager.UpdateAgent(item.metadata.ID, AgentUpdate{CWD: targetCWD})
+		agentDone <- err
+	}()
+	<-agentStarted
+	time.Sleep(100 * time.Millisecond)
+	close(store.releaseFirst)
+	if err := <-browserDone; !errors.Is(err, firstErr) {
+		t.Fatalf("UpdateCWD() error = %v, want %v", err, firstErr)
+	}
+	if call := <-store.entered; call != 2 {
+		t.Fatalf("agent Save() call = %d, want 2", call)
+	}
+	if err := <-agentDone; err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	metadata, _ := manager.Metadata(item.metadata.ID)
+	if metadata.CWD != targetCWD {
+		t.Fatalf("CWD = %q, want agent CWD %q", metadata.CWD, targetCWD)
+	}
+	manager.mu.RLock()
+	cwdFromAgent := item.cwdFromAgent
+	manager.mu.RUnlock()
+	if !cwdFromAgent {
+		t.Fatal("cwdFromAgent = false after successful agent update")
+	}
+}
+
+func TestStatusUpdatePersistsRolledBackCWD(t *testing.T) {
+	initialCWD := t.TempDir()
+	failedCWD := t.TempDir()
+	manager := NewManager("/bin/sh")
+	item := &entry{
+		metadata: Metadata{
+			ID:        "terminal",
+			Name:      "Terminal",
+			State:     StateRunning,
+			CWD:       initialCWD,
+			RepoRoot:  initialCWD,
+			CreatedAt: time.Now().UTC(),
+		},
+	}
+	manager.sessions[item.metadata.ID] = item
+	firstErr := errors.New("cwd save failed")
+	store := &gatedResultMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		entered:                make(chan int, 2),
+		releaseFirst:           make(chan struct{}),
+		saveErrors:             []error{firstErr, nil},
+	}
+	manager.store = store
+
+	cwdDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateCWD(item.metadata.ID, failedCWD)
+		cwdDone <- err
+	}()
+	if call := <-store.entered; call != 1 {
+		t.Fatalf("CWD Save() call = %d, want 1", call)
+	}
+
+	statusStarted := make(chan struct{})
+	statusDone := make(chan error, 1)
+	go func() {
+		close(statusStarted)
+		_, err := manager.UpdateAgent(item.metadata.ID, AgentUpdate{
+			Agent:  "codex",
+			Status: "running",
+		})
+		statusDone <- err
+	}()
+	<-statusStarted
+	time.Sleep(100 * time.Millisecond)
+	close(store.releaseFirst)
+
+	if err := <-cwdDone; !errors.Is(err, firstErr) {
+		t.Fatalf("UpdateCWD() error = %v, want %v", err, firstErr)
+	}
+	if call := <-store.entered; call != 2 {
+		t.Fatalf("status Save() call = %d, want 2", call)
+	}
+	if err := <-statusDone; err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+
+	metadata, _ := manager.Metadata(item.metadata.ID)
+	if metadata.CWD != initialCWD || metadata.AgentStatus != "running" {
+		t.Fatalf(
+			"metadata = %#v, want CWD %q and running status",
+			metadata,
+			initialCWD,
+		)
+	}
+	saves := store.Saves()
+	if len(saves) != 1 ||
+		saves[0].CWD != initialCWD ||
+		saves[0].AgentStatus != "running" {
+		t.Fatalf(
+			"successful saves = %#v, want stable CWD %q and running status",
+			saves,
+			initialCWD,
+		)
+	}
+}
+
+func TestFailedCWDChangeUnlocksBeforeDrainingLaterHandler(t *testing.T) {
+	initialCWD := t.TempDir()
+	failedCWD := t.TempDir()
+	handlerCWD := t.TempDir()
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:             "terminal",
+			Name:           "Terminal",
+			State:          StateRunning,
+			CWD:            initialCWD,
+			RepoRoot:       initialCWD,
+			NeedsAttention: true,
+			CreatedAt:      time.Now().UTC(),
+		},
+	}
+	firstErr := errors.New("cwd save failed")
+	store := &gatedResultMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		entered:                make(chan int, 2),
+		releaseFirst:           make(chan struct{}),
+		saveErrors:             []error{firstErr, nil},
+	}
+	manager.store = store
+
+	handlerDone := make(chan error, 1)
+	manager.SetChangeHandler(func(change Change) {
+		if change.Sequence != 2 {
+			return
+		}
+		_, err := manager.UpdateCWD("terminal", handlerCWD)
+		handlerDone <- err
+	})
+
+	failedDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateCWD("terminal", failedCWD)
+		failedDone <- err
+	}()
+	if call := <-store.entered; call != 1 {
+		t.Fatalf("failed CWD Save() call = %d, want 1", call)
+	}
+
+	later := manager.updateForegroundProcessName("terminal", "vim")
+	if later == nil || later.Sequence != 2 {
+		t.Fatalf("later change = %#v, want sequence 2", later)
+	}
+	manager.emitChange(*later)
+	close(store.releaseFirst)
+
+	select {
+	case err := <-failedDone:
+		if !errors.Is(err, firstErr) {
+			t.Fatalf("failed UpdateCWD() error = %v, want %v", err, firstErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed CWD skip deadlocked while draining a reentrant change handler")
+	}
+	if call := <-store.entered; call != 2 {
+		t.Fatalf("handler CWD Save() call = %d, want 2", call)
+	}
+	if err := <-handlerDone; err != nil {
+		t.Fatalf("handler UpdateCWD() error = %v", err)
+	}
+	metadata, _ := manager.Metadata("terminal")
+	if metadata.CWD != handlerCWD {
+		t.Fatalf("CWD = %q, want handler CWD %q", metadata.CWD, handlerCWD)
 	}
 }
 
@@ -1540,7 +1860,7 @@ func TestMetadataPersistencePreservesUpdateOrder(t *testing.T) {
 	}
 }
 
-func TestMetadataPersistenceReservesTitleBeforeNewerUpdate(t *testing.T) {
+func TestMetadataPersistenceSerializesTitleBeforeNewerUpdate(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	manager.sessions["terminal"] = codexTitleTestEntry()
 	store := newGapMetadataStore()
@@ -1569,16 +1889,27 @@ func TestMetadataPersistenceReservesTitleBeforeNewerUpdate(t *testing.T) {
 		})
 		updateDone <- err
 	}()
-	requireStoreReservation(t, reserved, 2)
+	select {
+	case sequence := <-reserved:
+		close(releaseFirst)
+		<-updateDone
+		t.Fatalf(
+			"store operation %d was reserved before the older metadata Save completed",
+			sequence,
+		)
+	case <-time.After(100 * time.Millisecond):
+	}
 	listDone := make(chan []Metadata, 1)
 	go func() {
 		listDone <- manager.ListCurrent()
 	}()
 	select {
 	case items := <-listDone:
-		if len(items) != 1 || items[0].AgentStatus != "waiting" {
+		if len(items) != 1 ||
+			items[0].AgentTitle != "Resolved title" ||
+			items[0].AgentStatus != "" {
 			close(releaseFirst)
-			t.Fatalf("ListCurrent() during second persistence wait = %#v", items)
+			t.Fatalf("ListCurrent() during older metadata Save = %#v", items)
 		}
 	case <-time.After(100 * time.Millisecond):
 		close(releaseFirst)
@@ -1586,6 +1917,7 @@ func TestMetadataPersistenceReservesTitleBeforeNewerUpdate(t *testing.T) {
 		t.Fatal("ListCurrent() blocked while a newer persistence job waited")
 	}
 	close(releaseFirst)
+	requireStoreReservation(t, reserved, 2)
 	if err := <-updateDone; err != nil {
 		t.Fatalf("UpdateAgent() error = %v", err)
 	}
@@ -3218,6 +3550,43 @@ type failFirstSaveMetadataStore struct {
 	recordingMetadataStore
 	err   error
 	calls int
+}
+
+type gatedResultMetadataStore struct {
+	recordingMetadataStore
+	entered      chan int
+	releaseFirst chan struct{}
+	saveErrors   []error
+	callMu       sync.Mutex
+	calls        int
+}
+
+func (s *gatedResultMetadataStore) Save(
+	ctx context.Context,
+	metadata Metadata,
+) error {
+	s.callMu.Lock()
+	s.calls++
+	call := s.calls
+	var result error
+	if call <= len(s.saveErrors) {
+		result = s.saveErrors[call-1]
+	}
+	s.callMu.Unlock()
+	s.entered <- call
+	if call == 1 {
+		<-s.releaseFirst
+	}
+	if result != nil {
+		return result
+	}
+	return s.recordingMetadataStore.Save(ctx, metadata)
+}
+
+func (s *gatedResultMetadataStore) Saves() []Metadata {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Metadata(nil), s.saves...)
 }
 
 func (s *failFirstSaveMetadataStore) Save(

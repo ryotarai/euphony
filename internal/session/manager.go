@@ -134,6 +134,9 @@ type entry struct {
 	session            *Session
 	interruptWatch     *agentInterruptWatch
 	codexActivityWatch *codexActivityWatch
+	// metadataSaveMu keeps a terminal's in-memory mutation, persistence, and
+	// rollback as one transaction without holding the manager lock during I/O.
+	metadataSaveMu sync.Mutex
 	// cwdFromAgent records that an agent hook named this terminal's working
 	// directory. An agent knows its project directory where its process only
 	// knows where it happens to stand — a worktree it entered, say — so without
@@ -560,14 +563,43 @@ func (m *Manager) WriteTerminal(id string, data []byte) (int, error) {
 	return written, nil
 }
 
+func (m *Manager) lockMetadataSaveEntry(id string) (*entry, func(), error) {
+	m.mu.RLock()
+	closing := m.closing
+	item := m.sessions[id]
+	m.mu.RUnlock()
+	if closing {
+		return nil, nil, ErrManagerClosing
+	}
+	if item == nil {
+		return nil, nil, ErrNotFound
+	}
+	item.metadataSaveMu.Lock()
+	locked := true
+	release := func() {
+		if locked {
+			item.metadataSaveMu.Unlock()
+			locked = false
+		}
+	}
+	return item, release, nil
+}
+
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
+	requestedCWD := strings.TrimSpace(update.CWD)
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer releaseMetadataSave()
+
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return Metadata{}, ErrManagerClosing
 	}
-	item, ok := m.sessions[id]
-	if !ok {
+	current, ok := m.sessions[id]
+	if !ok || current != item {
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
@@ -623,9 +655,9 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	} else if item.metadata.Agent == "" && nextStatus == "" {
 		item.metadata.AgentTitle = ""
 	}
-	if cwd := strings.TrimSpace(update.CWD); cwd != "" {
-		item.metadata.CWD = cwd
-		item.metadata.RepoRoot = repositoryRoot(cwd)
+	if requestedCWD != "" {
+		item.metadata.CWD = requestedCWD
+		item.metadata.RepoRoot = repositoryRoot(requestedCWD)
 		item.cwdFromAgent = true
 	}
 	after := item.metadata
@@ -644,12 +676,14 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Save(context.Background(), after)
 		}); err != nil {
+			releaseMetadataSave()
 			if change != nil {
 				m.skipChange(*change)
 			}
 			return Metadata{}, err
 		}
 	}
+	releaseMetadataSave()
 	if change != nil {
 		m.emitChange(*change)
 	}
@@ -738,13 +772,20 @@ func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, ac
 	if activity != agentlog.CodexActivityRunning && activity != agentlog.CodexActivityWaiting {
 		return
 	}
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return
+	}
+	defer releaseMetadataSave()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return
 	}
-	item, ok := m.sessions[id]
-	if !ok || item.codexActivityWatch != watch || !matchesCodexActivity(item.metadata, watch.target) {
+	current, ok := m.sessions[id]
+	if !ok || current != item ||
+		item.codexActivityWatch != watch ||
+		!matchesCodexActivity(item.metadata, watch.target) {
 		m.mu.Unlock()
 		return
 	}
@@ -770,22 +811,31 @@ func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, ac
 				item.codexActivityWatch = watch
 			}
 			m.mu.Unlock()
+			releaseMetadataSave()
 			m.skipChange(change)
 			return
 		}
 	}
 	watch.cancel()
+	releaseMetadataSave()
 	m.emitChange(change)
 }
 
 func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) {
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return
+	}
+	defer releaseMetadataSave()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return
 	}
-	item, ok := m.sessions[id]
-	if !ok || item.interruptWatch != watch || !matchesAgentInterrupt(item.metadata, watch.target) {
+	current, ok := m.sessions[id]
+	if !ok || current != item ||
+		item.interruptWatch != watch ||
+		!matchesAgentInterrupt(item.metadata, watch.target) {
 		m.mu.Unlock()
 		return
 	}
@@ -812,11 +862,13 @@ func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) 
 				item.interruptWatch = watch
 			}
 			m.mu.Unlock()
+			releaseMetadataSave()
 			m.skipChange(change)
 			return
 		}
 	}
 	watch.cancel()
+	releaseMetadataSave()
 	m.emitChange(change)
 }
 
@@ -849,13 +901,18 @@ func matchesCodexActivity(metadata Metadata, target codexActivityTarget) bool {
 }
 
 func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer releaseMetadataSave()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return Metadata{}, ErrManagerClosing
 	}
-	item, ok := m.sessions[id]
-	if !ok {
+	current, ok := m.sessions[id]
+	if !ok || current != item {
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
@@ -878,10 +935,12 @@ func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Save(context.Background(), after)
 		}); err != nil {
+			releaseMetadataSave()
 			m.skipChange(change)
 			return Metadata{}, err
 		}
 	}
+	releaseMetadataSave()
 	m.emitChange(change)
 	return after, nil
 }
@@ -953,9 +1012,15 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 	preserveEquivalentPath bool,
 	sampledAt, reportedAt time.Time,
 ) (Metadata, *Change, error) {
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return Metadata{}, nil, err
+	}
+	defer releaseMetadataSave()
+
 	m.mu.Lock()
-	item, ok := m.sessions[id]
-	if !ok {
+	current, ok := m.sessions[id]
+	if !ok || current != item {
 		m.mu.Unlock()
 		return Metadata{}, nil, ErrNotFound
 	}
@@ -1010,14 +1075,18 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 		}); err != nil {
 			m.mu.Lock()
 			if current, exists := m.sessions[id]; exists &&
-				current == item && current.metadata == next &&
+				current == item &&
+				current.metadata.CWD == next.CWD &&
+				current.metadata.RepoRoot == next.RepoRoot &&
 				(reportedAt.IsZero() || current.cwdReportedAt == reportedAt) {
-				item.metadata = before
+				item.metadata.CWD = before.CWD
+				item.metadata.RepoRoot = before.RepoRoot
 				if !reportedAt.IsZero() {
 					item.cwdReportedAt = beforeReportedAt
 				}
 			}
 			m.mu.Unlock()
+			releaseMetadataSave()
 			m.skipChange(change)
 			return Metadata{}, nil, err
 		}
@@ -1358,6 +1427,14 @@ func (m *Manager) refreshCodexTitles() []Change {
 			}
 		}
 
+		lockedItem, releaseMetadataSave, err := m.lockMetadataSaveEntry(candidate.id)
+		if err != nil {
+			continue
+		}
+		if lockedItem != candidate.entry {
+			releaseMetadataSave()
+			continue
+		}
 		m.mu.Lock()
 		item, ok := m.sessions[candidate.id]
 		if m.closing ||
@@ -1367,11 +1444,13 @@ func (m *Manager) refreshCodexTitles() []Change {
 			item.metadata.AgentSessionID != candidate.sessionID ||
 			item.metadata.AgentTranscriptPath != candidate.transcript {
 			m.mu.Unlock()
+			releaseMetadataSave()
 			continue
 		}
 		item.codexTitleHeaderScanned = headerScanned
 		if title == "" || title == item.metadata.AgentTitle {
 			m.mu.Unlock()
+			releaseMetadataSave()
 			continue
 		}
 		before := item.metadata
@@ -1389,6 +1468,7 @@ func (m *Manager) refreshCodexTitles() []Change {
 				return store.Save(context.Background(), after)
 			})
 		}
+		releaseMetadataSave()
 		m.mu.RLock()
 		closing := m.closing
 		m.mu.RUnlock()
