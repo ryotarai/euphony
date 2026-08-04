@@ -219,7 +219,7 @@ func (s *sqliteStore) List(ctx context.Context) ([]Task, error) {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 	defer rows.Close()
-	var result []Task
+	result := make([]Task, 0)
 	for rows.Next() {
 		task, err := scanTask(rows)
 		if err != nil {

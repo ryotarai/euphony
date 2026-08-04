@@ -12,6 +12,7 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   LoaderCircleIcon,
+  ListTodoIcon,
   PlusIcon,
   Settings2Icon,
   SquareTerminalIcon,
@@ -64,6 +65,9 @@ interface SessionNavigationProps {
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
+  tasksOpen?: boolean;
+  taskCount?: number;
+  onOpenTasks?(): void;
   agentsOpen?: boolean;
   agentSummaryCount?: number;
   onOpenAgents?(): void;
@@ -393,6 +397,11 @@ function SessionNavigationContent({
     props.onOpenAgents?.();
   };
 
+  const openTasks = () => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenTasks?.();
+  };
+
   return (
     <>
       <Sidebar
@@ -418,6 +427,24 @@ function SessionNavigationContent({
           onScroll={updateTerminalTreeOverflow}
         >
           <SidebarMenu className="sidebar-primary-navigation">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                tooltip="Tasks"
+                isActive={props.tasksOpen}
+                aria-current={props.tasksOpen ? "page" : undefined}
+                aria-label="Tasks"
+                onClick={openTasks}
+              >
+                <ListTodoIcon aria-hidden="true" />
+                <span>Tasks</span>
+                {(props.taskCount ?? 0) > 0 && (
+                  <span className="sidebar-attention-count" aria-hidden="true">
+                    {props.taskCount}
+                  </span>
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 type="button"

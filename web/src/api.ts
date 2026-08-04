@@ -12,6 +12,11 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
+  Task,
+  TaskCreateInput,
+  TaskRefinement,
+  TaskStartInput,
+  TaskUpdateInput,
   GitChangesSnapshot,
   WorkspaceDirectory,
   WorkspaceFile,
@@ -37,6 +42,49 @@ export class ApiClient {
 
   listAgentSummaries(): Promise<AgentSummary[]> {
     return this.request("/api/agent-summaries");
+  }
+
+  listTasks(): Promise<Task[]> {
+    return this.request("/api/tasks");
+  }
+
+  createTask(input: TaskCreateInput): Promise<Task> {
+    return this.request("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  updateTask(id: string, input: TaskUpdateInput): Promise<Task> {
+    return this.request(`/api/tasks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  deleteTask(id: string): Promise<void> {
+    return this.request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  startTaskAgent(id: string, input: TaskStartInput): Promise<Task> {
+    return this.request(`/api/tasks/${encodeURIComponent(id)}/start`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  promptTaskAgent(id: string, prompt: string): Promise<Task> {
+    return this.request(`/api/tasks/${encodeURIComponent(id)}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    });
+  }
+
+  refineTask(id: string): Promise<TaskRefinement> {
+    return this.request(`/api/tasks/${encodeURIComponent(id)}/refine`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   }
 
   createSession(name: string, cwd?: string): Promise<Session> {

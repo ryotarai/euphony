@@ -81,7 +81,8 @@ test("composes terminal navigation from the shadcn sidebar without a monogram", 
   expect(screen.queryByText("EU")).not.toBeInTheDocument();
 });
 
-test("places Agents above the terminal tree and opens the dashboard", async () => {
+test("places Tasks above Agents and opens each workspace dashboard", async () => {
+  const onOpenTasks = vi.fn();
   const onOpenAgents = vi.fn();
   const user = userEvent.setup();
   render(
@@ -92,6 +93,8 @@ test("places Agents above the terminal tree and opens the dashboard", async () =
       onCreate={() => undefined}
       onDelete={() => undefined}
       agentSummaryCount={2}
+      taskCount={3}
+      onOpenTasks={onOpenTasks}
       onOpenAgents={onOpenAgents}
     />,
   );
@@ -100,10 +103,15 @@ test("places Agents above the terminal tree and opens the dashboard", async () =
     .getByLabelText("Terminal sessions")
     .closest('[data-slot="sidebar-content"]') as HTMLElement | null;
   expect(terminalTree).not.toBeNull();
+  const tasks = within(terminalTree!).getByRole("button", { name: /Tasks/ });
   const agents = within(terminalTree!).getByRole("button", { name: /Agents/ });
   expect(agents).toHaveTextContent("2");
-  expect(within(terminalTree!).getAllByRole("button")[0]).toBe(agents);
+  expect(tasks).toHaveTextContent("3");
+  expect(within(terminalTree!).getAllByRole("button")[0]).toBe(tasks);
+  expect(within(terminalTree!).getAllByRole("button")[1]).toBe(agents);
 
+  await user.click(tasks);
+  expect(onOpenTasks).toHaveBeenCalledOnce();
   await user.click(agents);
   expect(onOpenAgents).toHaveBeenCalledOnce();
 });

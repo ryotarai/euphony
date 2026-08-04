@@ -118,3 +118,22 @@ func TestSQLiteStorePersistsTasksAndDeletesUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSQLiteStoreListsAnEmptyArray(t *testing.T) {
+	store, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	tasks, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tasks == nil {
+		t.Fatal("List() returned nil; JSON APIs should expose an empty task array")
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("List() = %#v, want empty", tasks)
+	}
+}

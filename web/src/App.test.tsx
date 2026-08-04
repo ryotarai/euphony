@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useEffect, type ComponentProps } from "react";
 import { App } from "./App";
 import { attentionTransitions } from "./sessionUtils";
-import type { AgentSummary, SelectionSnapshot, Session, Settings } from "./types";
+import type { AgentSummary, SelectionSnapshot, Session, Settings, Task } from "./types";
 
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100_000);
@@ -542,6 +542,47 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   await user.click(screen.getByRole("button", { name: /Needs approval/ }));
   expect(screen.queryByRole("heading", { name: "Action required" })).not.toBeInTheDocument();
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
+test("opens the Tasks workspace, loads a task, and opens its linked terminal", async () => {
+  const task: Task = {
+    id: "task-1",
+    title: "Implement task workflow",
+    description: "Connect tasks to agents.",
+    priority: "high",
+    status: "in_progress",
+    terminalId: runningSession.id,
+    agent: "codex",
+    createdAt: "2026-08-05T00:00:00Z",
+    updatedAt: "2026-08-05T00:01:00Z",
+    updates: [],
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/tasks") return jsonResponse([task]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Tasks/ }));
+
+  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
+  expect(screen.getByText(task.title)).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledWith("/api/tasks", expect.anything());
+
+  await user.click(screen.getByRole("button", { name: "Open terminal" }));
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
 });
 
 test("acknowledges a need-attention terminal when it receives focus", async () => {

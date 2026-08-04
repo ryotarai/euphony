@@ -12,6 +12,7 @@ import {
 import { ApiClient, ApiError } from "./api";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { AgentsView } from "./components/AgentsView";
+import { TasksView } from "./components/TasksView";
 import {
   agentLaunchTransitions,
   attentionTransitions,
@@ -68,6 +69,11 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
+  Task,
+  TaskCreateInput,
+  TaskRefinement,
+  TaskStartInput,
+  TaskUpdateInput,
   TerminalCursorStyle,
 } from "./types";
 import {
@@ -431,6 +437,13 @@ export function App({
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState("");
+  const [selectedTaskID, setSelectedTaskID] = useState<string | null>(null);
+  const [taskRefinement, setTaskRefinement] = useState<TaskRefinement | null>(null);
+  const [taskRefining, setTaskRefining] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
@@ -563,6 +576,32 @@ export function App({
       setAgentSummariesLoading(false);
     }
   }, [api]);
+  const loadTasks = useCallback(async () => {
+    if (!api) return;
+    setTasksLoading(true);
+    setTasksError("");
+    try {
+      const nextTasks = await api.listTasks();
+      setTasks(nextTasks);
+      setSelectedTaskID((current) =>
+        current && nextTasks.some((task) => task.id === current)
+          ? current
+          : nextTasks[0]?.id ?? null,
+      );
+    } catch (error) {
+      setTasksError(
+        error instanceof Error ? error.message : "Tasks could not be loaded.",
+      );
+    } finally {
+      setTasksLoading(false);
+    }
+  }, [api]);
+  const replaceTask = useCallback((next: Task) => {
+    setTasks((current) => [
+      ...current.filter((task) => task.id !== next.id),
+      next,
+    ]);
+  }, []);
   const cancelFilterDeselect = useCallback((id: string) => {
     const timer = filterDeselectTimersRef.current.get(id);
     if (timer !== undefined) {
@@ -946,6 +985,11 @@ export function App({
   }, [agentsOpen, api, loadAgentSummaries]);
 
   useEffect(() => {
+    if (!tasksOpen || !api) return;
+    void loadTasks();
+  }, [tasksOpen, api, loadTasks]);
+
+  useEffect(() => {
     if (!api) {
       setSessions(null);
       return;
@@ -1127,6 +1171,15 @@ export function App({
               }
               return;
             }
+            if (
+              event.type === "task.created" ||
+              event.type === "task.updated" ||
+              event.type === "task.deleted" ||
+              event.type === "task.update.created"
+            ) {
+              if (tasksOpen) void loadTasks();
+              return;
+            }
             if (event.type === "selection.changed") {
               const snapshot = event.data as SelectionSnapshot;
               if (typeof snapshot?.revision === "number") {
@@ -1180,9 +1233,11 @@ export function App({
   }, [
     api,
     applySessionSnapshot,
+    loadTasks,
     sessions !== null,
     syncSelection,
     syncEvents,
+    tasksOpen,
   ]);
 
   useEffect(() => {
@@ -2479,6 +2534,110 @@ export function App({
     setSettingsOpen(false);
   }
 
+  function openTasksWorkspace() {
+    setAgentsOpen(false);
+    setTasksOpen(true);
+  }
+
+  function openAgentsWorkspace() {
+    setTasksOpen(false);
+    setAgentsOpen(true);
+  }
+
+  function selectTask(id: string) {
+    setSelectedTaskID(id);
+    setTaskRefinement(null);
+  }
+
+  async function createTask(input: TaskCreateInput) {
+    if (!api) return;
+    try {
+      const created = await api.createTask(input);
+      replaceTask(created);
+      setSelectedTaskID(created.id);
+      setTasksError("");
+    } catch (error) {
+      setTasksError(error instanceof Error ? error.message : "Task could not be created.");
+    }
+  }
+
+  async function updateTask(id: string, input: TaskUpdateInput) {
+    if (!api) return;
+    try {
+      replaceTask(await api.updateTask(id, input));
+      setTasksError("");
+    } catch (error) {
+      setTasksError(error instanceof Error ? error.message : "Task could not be updated.");
+    }
+  }
+
+  async function deleteTask(id: string) {
+    if (!api) return;
+    try {
+      await api.deleteTask(id);
+      setTasks((current) => current.filter((task) => task.id !== id));
+      setSelectedTaskID((current) => (current === id ? null : current));
+      setTaskRefinement(null);
+      setTasksError("");
+    } catch (error) {
+      setTasksError(error instanceof Error ? error.message : "Task could not be deleted.");
+    }
+  }
+
+  async function startTaskAgent(id: string, input: TaskStartInput) {
+    if (!api) return;
+    try {
+      const updated = await api.startTaskAgent(id, input);
+      replaceTask(updated);
+      setTasksError("");
+      if (updated.terminalId) {
+        const latestSessions = await api.listSessions();
+        applySessionSnapshot(latestSessions);
+      }
+    } catch (error) {
+      setTasksError(error instanceof Error ? error.message : "The agent could not be started.");
+    }
+  }
+
+  async function promptTaskAgent(id: string, prompt: string) {
+    if (!api) return;
+    try {
+      replaceTask(await api.promptTaskAgent(id, prompt));
+      setTasksError("");
+    } catch (error) {
+      setTasksError(error instanceof Error ? error.message : "The agent could not be reached.");
+    }
+  }
+
+  async function refineTask(id: string) {
+    if (!api) return;
+    setTaskRefining(true);
+    setTasksError("");
+    try {
+      setTaskRefinement(await api.refineTask(id));
+    } catch (error) {
+      setTasksError(error instanceof Error ? error.message : "The task could not be refined.");
+    } finally {
+      setTaskRefining(false);
+    }
+  }
+
+  async function applyTaskRefinement(id: string, refinement: TaskRefinement) {
+    await updateTask(id, {
+      title: refinement.title,
+      description: refinement.description,
+      priority: refinement.priority,
+      status: refinement.status,
+    });
+    setTaskRefinement(null);
+  }
+
+  function openTaskTerminal(id: string) {
+    setTasksOpen(false);
+    setTaskRefinement(null);
+    selectSession(id, false);
+  }
+
   function openAgentTerminal(id: string) {
     setAgentsOpen(false);
     selectSession(id, false);
@@ -2537,6 +2696,7 @@ export function App({
     const status = summaryByTerminalID.get(session.id)?.status ?? session.agentStatus;
     return status === "blocked" || status === "waiting";
   }).length;
+  const taskCount = tasks.filter((task) => task.status !== "done").length;
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")
     .map((pane) => pane.id);
@@ -2737,11 +2897,33 @@ export function App({
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
+        tasksOpen={tasksOpen}
+        taskCount={taskCount}
+        onOpenTasks={openTasksWorkspace}
         agentsOpen={agentsOpen}
         agentSummaryCount={agentSummaryCount}
-        onOpenAgents={() => setAgentsOpen(true)}
+        onOpenAgents={openAgentsWorkspace}
       />
-      {agentsOpen ? (
+      {tasksOpen ? (
+        <TasksView
+          tasks={tasks}
+          sessions={sessions}
+          selectedTaskID={selectedTaskID}
+          loading={tasksLoading}
+          error={tasksError}
+          refinement={taskRefinement}
+          refining={taskRefining}
+          onSelectTask={selectTask}
+          onCreateTask={createTask}
+          onUpdateTask={updateTask}
+          onDeleteTask={deleteTask}
+          onStartAgent={startTaskAgent}
+          onOpenTerminal={openTaskTerminal}
+          onRefineTask={refineTask}
+          onApplyRefinement={applyTaskRefinement}
+          onPromptTask={promptTaskAgent}
+        />
+      ) : agentsOpen ? (
         <AgentsView
           summaries={agentSummaries}
           sessions={sessions}

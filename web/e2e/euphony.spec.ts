@@ -49,6 +49,19 @@ async function clearSessions(page: Page) {
   await replaceSharedSelection(page, []);
 }
 
+async function clearTasks(page: Page) {
+  const response = await page.request.get("/api/tasks", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(response.ok()).toBe(true);
+  const existing = (await response.json() as Array<{ id: string }> | null) ?? [];
+  for (const task of existing) {
+    await page.request.delete(`/api/tasks/${task.id}`, {
+      headers: { Authorization: "Bearer test-token" },
+    });
+  }
+}
+
 async function replaceSharedSelection(
   page: Page,
   terminalIDs: string[],
@@ -293,6 +306,109 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
   await page.getByRole("button", { name: /Needs approval: The agent is waiting/ }).click();
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
+});
+
+test("creates, refines, starts, and communicates through a task", async ({ page }) => {
+  await clearSessions(page);
+  await clearTasks(page);
+  const terminal = await createSession(page, "Task agent", "/tmp");
+  await replaceSharedSelection(page, [terminal.id], terminal.id);
+  await page.goto("/?token=test-token");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+  await page.getByRole("button", { name: "New task" }).click();
+  const dialog = page.getByRole("dialog", { name: "New task" });
+  await dialog.getByLabel("Title").fill("Document the task workflow");
+  await dialog.getByLabel("Description").fill("Capture the create, refine, start, and communicate flow.");
+  await dialog.getByLabel("Priority").selectOption("high");
+  await dialog.getByRole("button", { name: "Create task" }).click();
+
+  await expect(page.getByText("Document the task workflow", { exact: true })).toBeVisible();
+  const taskResponse = await page.request.get("/api/tasks", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(taskResponse.ok()).toBe(true);
+  const [createdTask] = await taskResponse.json() as Array<{
+    id: string;
+    title: string;
+    description: string;
+    priority: "low" | "medium" | "high";
+    status: "todo" | "in_progress" | "blocked" | "done";
+    updates: Array<unknown>;
+  }>;
+  expect(createdTask.title).toBe("Document the task workflow");
+
+  await page.route("**/api/tasks/*/refine", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        title: "Document the complete task workflow",
+        description: "Explain how a user creates, refines, starts, and communicates with an agent.",
+        priority: "high",
+        status: "todo",
+        rationale: "The outcome and workflow are now explicit.",
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Refine with AI" }).click();
+  await expect(page.getByRole("region", { name: "AI refinement proposal" })).toContainText(
+    "Document the complete task workflow",
+  );
+  await page.getByRole("button", { name: "Apply refinement" }).click();
+  await expect(page.getByLabel("Title")).toHaveValue("Document the complete task workflow");
+
+  const startedTask = {
+    ...createdTask,
+    title: "Document the complete task workflow",
+    description: "Explain how a user creates, refines, starts, and communicates with an agent.",
+    terminalId: terminal.id,
+    agent: "codex",
+    status: "in_progress" as const,
+    updates: [{
+      id: "task-started",
+      taskId: createdTask.id,
+      terminalId: terminal.id,
+      kind: "system",
+      body: "Started codex agent.",
+      createdAt: "2026-08-05T00:01:00Z",
+    }],
+  };
+  await page.route(`**/api/tasks/${createdTask.id}/start`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(startedTask),
+    });
+  });
+  await page.getByRole("button", { name: "Start agent" }).click();
+  await expect(page.getByText("Started codex agent.", { exact: true })).toBeVisible();
+
+  const communicatedTask = {
+    ...startedTask,
+    updates: [...startedTask.updates, {
+      id: "task-instruction",
+      taskId: createdTask.id,
+      terminalId: terminal.id,
+      kind: "user_instruction",
+      body: "Run the task tests and report the result.",
+      createdAt: "2026-08-05T00:02:00Z",
+    }],
+  };
+  await page.route(`**/api/tasks/${createdTask.id}/prompt`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(communicatedTask),
+    });
+  });
+  await page.getByLabel("Instruction for agent").fill("Run the task tests and report the result.");
+  await page.getByRole("button", { name: "Send instruction" }).click();
+  await expect(page.getByText("Run the task tests and report the result.", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Open terminal" }).click();
+  await expect(page.getByLabel("Task agent terminal", { exact: true })).toBeVisible();
 });
 
 test("keeps sidebar actions visible while the terminal tree scrolls", async ({
