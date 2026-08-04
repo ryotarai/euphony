@@ -25,6 +25,7 @@ const defaultSettings: Settings = {
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
+  agentSummaryProvider: "claude",
 };
 
 const runningSession: Session = {

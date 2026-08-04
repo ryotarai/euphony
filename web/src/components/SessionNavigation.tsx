@@ -490,6 +490,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalCursorBlink: defaultTerminalCursorBlink,
     terminalScrollSensitivity: defaultTerminalScrollSensitivity,
     terminalOptionAsAlt: defaultTerminalOptionAsAlt,
+    agentSummaryProvider: "claude",
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

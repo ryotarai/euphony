@@ -131,6 +131,7 @@ const defaultSettings: Settings = {
   terminalCursorBlink: defaultTerminalCursorBlink,
   terminalScrollSensitivity: defaultTerminalScrollSensitivity,
   terminalOptionAsAlt: defaultTerminalOptionAsAlt,
+  agentSummaryProvider: "claude",
 };
 
 function historyLimitDraft(limit: number): string {

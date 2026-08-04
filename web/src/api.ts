@@ -2,6 +2,7 @@ import type {
   AgentLogResult,
   AgentLogRequest,
   AgentTranscript,
+  AgentSummary,
   AnnotationComment,
   AnnotationResult,
   AnnotationSession,
@@ -32,6 +33,10 @@ export class ApiClient {
 
   listSessions(): Promise<Session[]> {
     return this.request("/api/sessions");
+  }
+
+  listAgentSummaries(): Promise<AgentSummary[]> {
+    return this.request("/api/agent-summaries");
   }
 
   createSession(name: string, cwd?: string): Promise<Session> {

@@ -17,6 +17,18 @@ export interface Session {
   message?: string;
 }
 
+export type AgentSummaryProvider = "claude" | "codex";
+
+export interface AgentSummary {
+  terminalId: string;
+  provider: AgentSummaryProvider;
+  status: "running" | "waiting" | "blocked";
+  summary: string;
+  action?: string;
+  generatedAt: string;
+  error?: string;
+}
+
 export interface ApiErrorBody {
   code: string;
   message: string;
@@ -39,6 +51,7 @@ export interface Settings {
   terminalCursorBlink: boolean;
   terminalScrollSensitivity: number;
   terminalOptionAsAlt: boolean;
+  agentSummaryProvider: AgentSummaryProvider;
 }
 
 export interface CwdSelectionFilter {
