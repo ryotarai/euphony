@@ -130,7 +130,7 @@ func (s *Service) Close(ctx context.Context) error {
 	s.cancel = nil
 	s.mu.Unlock()
 	if cancel == nil {
-		return nil
+		return s.store.Close()
 	}
 	cancel()
 	done := make(chan struct{})
@@ -140,7 +140,7 @@ func (s *Service) Close(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return nil
+		return s.store.Close()
 	case <-ctx.Done():
 		return ctx.Err()
 	}

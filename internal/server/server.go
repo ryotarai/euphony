@@ -13,6 +13,7 @@ import (
 	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
+	"github.com/ryotarai/euphony/internal/tasks"
 	webassets "github.com/ryotarai/euphony/web"
 )
 
@@ -25,6 +26,7 @@ type Config struct {
 	CodexSessionsRoot  string
 	ClaudeProjectsRoot string
 	SummaryRunner      agentsummary.Runner
+	TaskRefiner        agentsummary.Refiner
 	Assets             fs.FS
 }
 
@@ -37,6 +39,7 @@ type Server struct {
 	agentLogs     *agentlog.Resolver
 	annotations   *annotation.Store
 	summaries     *agentsummary.Service
+	tasks         *tasks.Service
 }
 
 func New(config Config) (*Server, error) {
@@ -72,6 +75,22 @@ func New(config Config) (*Server, error) {
 		Resolver: transcriptResolver,
 		Runner:   config.SummaryRunner,
 	})
+	taskStore, err := tasks.OpenStore(config.DatabasePath)
+	if err != nil {
+		_ = sessionManager.Close(context.Background())
+		return nil, err
+	}
+	taskService, err := tasks.New(tasks.Config{
+		Store: taskStore, Agents: controlService, Events: controlService,
+		Selection: controlService,
+		Provider:  func() string { return sessionManager.Settings().AgentSummaryProvider },
+		Refiner:   config.TaskRefiner,
+	})
+	if err != nil {
+		_ = taskStore.Close()
+		_ = sessionManager.Close(context.Background())
+		return nil, err
+	}
 	server := &Server{
 		sessions:      sessionManager,
 		control:       controlService,
@@ -80,8 +99,10 @@ func New(config Config) (*Server, error) {
 		agentLogs:     transcriptResolver,
 		annotations:   annotation.NewStore(time.Now, uuid.NewString),
 		summaries:     summaryService,
+		tasks:         taskService,
 	}
 	summaryService.Start()
+	taskService.Start()
 
 	public := http.NewServeMux()
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -124,6 +145,14 @@ func New(config Config) (*Server, error) {
 	})
 	protected.HandleFunc("GET /api/sessions", server.listSessions)
 	protected.HandleFunc("GET /api/agent-summaries", server.listAgentSummaries)
+	protected.HandleFunc("GET /api/tasks", server.listTasks)
+	protected.HandleFunc("POST /api/tasks", server.createTask)
+	protected.HandleFunc("GET /api/tasks/{id}", server.getTask)
+	protected.HandleFunc("PATCH /api/tasks/{id}", server.updateTask)
+	protected.HandleFunc("DELETE /api/tasks/{id}", server.deleteTask)
+	protected.HandleFunc("POST /api/tasks/{id}/start", server.startTaskAgent)
+	protected.HandleFunc("POST /api/tasks/{id}/prompt", server.promptTaskAgent)
+	protected.HandleFunc("POST /api/tasks/{id}/refine", server.refineTask)
 	protected.HandleFunc("POST /api/sessions", server.createSession)
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
 	protected.HandleFunc("POST /api/sessions/{id}/acknowledge-attention", server.acknowledgeAttention)
@@ -168,6 +197,11 @@ func (s *Server) LocalHandler() http.Handler {
 }
 
 func (s *Server) Close(ctx context.Context) error {
+	if s.tasks != nil {
+		if err := s.tasks.Close(ctx); err != nil {
+			return err
+		}
+	}
 	if s.summaries != nil {
 		if err := s.summaries.Close(ctx); err != nil {
 			return err
