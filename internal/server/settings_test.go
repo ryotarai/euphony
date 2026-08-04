@@ -46,7 +46,7 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 	}
 
 	response = performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false}`)
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false,"agentSummaryProvider":"codex"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -60,6 +60,7 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		TerminalHistoryLimit: 0,
 		TerminalLineHeight:   1.5, TerminalCursorStyle: "underline",
 		TerminalCursorBlink: true, TerminalScrollSensitivity: 5, TerminalOptionAsAlt: false,
+		AgentSummaryProvider: "codex",
 	}) {
 		t.Fatalf("updated settings = %#v", updated)
 	}
@@ -105,6 +106,7 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"   ","agentLogFontSize":14,"terminalHistoryLimit":1048576}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"` + strings.Repeat("界", 257) + `","agentLogFontSize":14,"terminalHistoryLimit":1048576}`,
 		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3}`,
+		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3,"agentSummaryProvider":"ollama"}`,
 	} {
 		response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)
 		if response.Code != http.StatusBadRequest {

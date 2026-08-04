@@ -34,11 +34,18 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorBlink       *bool    `json:"terminalCursorBlink"`
 		TerminalScrollSensitivity float64  `json:"terminalScrollSensitivity"`
 		TerminalOptionAsAlt       *bool    `json:"terminalOptionAsAlt"`
+		AgentSummaryProvider      string   `json:"agentSummaryProvider"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	decodeErr := decoder.Decode(&input)
 	terminalFontFamily := strings.TrimSpace(input.TerminalFontFamily)
+	if input.AgentSummaryProvider == "" {
+		input.AgentSummaryProvider = s.sessions.Settings().AgentSummaryProvider
+		if input.AgentSummaryProvider == "" {
+			input.AgentSummaryProvider = session.DefaultAgentSummaryProvider
+		}
+	}
 	if decodeErr != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
 		!prefixPattern.MatchString(input.PaneTabShortcut) ||
@@ -54,7 +61,8 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validTerminalCursorStyle(input.TerminalCursorStyle) ||
 		input.TerminalCursorBlink == nil ||
 		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) ||
-		input.TerminalOptionAsAlt == nil {
+		input.TerminalOptionAsAlt == nil ||
+		!validAgentSummaryProvider(input.AgentSummaryProvider) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
 	}
@@ -73,6 +81,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorBlink:       *input.TerminalCursorBlink,
 		TerminalScrollSensitivity: int(input.TerminalScrollSensitivity),
 		TerminalOptionAsAlt:       *input.TerminalOptionAsAlt,
+		AgentSummaryProvider:      input.AgentSummaryProvider,
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")
@@ -111,6 +120,10 @@ func validTerminalCursorStyle(value string) bool {
 func validTerminalScrollSensitivity(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
 		math.Trunc(value) == value && value >= 1 && value <= 5
+}
+
+func validAgentSummaryProvider(value string) bool {
+	return value == "claude" || value == "codex"
 }
 
 func shortcutsEqual(left, right string) bool {

@@ -62,6 +62,16 @@ type Metadata struct {
 	Message             string     `json:"message,omitempty"`
 }
 
+type AgentSummary struct {
+	TerminalID  string    `json:"terminalId"`
+	Provider    string    `json:"provider"`
+	Status      string    `json:"status"`
+	Summary     string    `json:"summary"`
+	Action      string    `json:"action,omitempty"`
+	GeneratedAt time.Time `json:"generatedAt"`
+	Error       string    `json:"error,omitempty"`
+}
+
 type HookConfig struct {
 	URL               string
 	Token             string
@@ -93,6 +103,7 @@ type Settings struct {
 	TerminalCursorBlink       bool    `json:"terminalCursorBlink"`
 	TerminalScrollSensitivity int     `json:"terminalScrollSensitivity"`
 	TerminalOptionAsAlt       bool    `json:"terminalOptionAsAlt"`
+	AgentSummaryProvider      string  `json:"agentSummaryProvider"`
 }
 
 const (
@@ -105,6 +116,7 @@ const (
 	DefaultTerminalCursorBlink       = false
 	DefaultTerminalScrollSensitivity = 3
 	DefaultTerminalOptionAsAlt       = true
+	DefaultAgentSummaryProvider      = "claude"
 )
 
 func DefaultSettings() Settings {
@@ -122,6 +134,7 @@ func DefaultSettings() Settings {
 		TerminalCursorBlink:       DefaultTerminalCursorBlink,
 		TerminalScrollSensitivity: DefaultTerminalScrollSensitivity,
 		TerminalOptionAsAlt:       DefaultTerminalOptionAsAlt,
+		AgentSummaryProvider:      DefaultAgentSummaryProvider,
 	}
 }
 
@@ -206,6 +219,7 @@ type Manager struct {
 	hooks                           HookConfig
 	sessions                        map[string]*entry
 	store                           metadataStore
+	agentSummaries                  map[string]AgentSummary
 	closing                         bool
 	activeCreates                   int
 	createsDone                     chan struct{}
@@ -251,6 +265,14 @@ func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager
 		_ = store.Close()
 		return nil, err
 	}
+	summaries, err := store.LoadAgentSummaries(context.Background())
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	for _, summary := range summaries {
+		manager.agentSummaries[summary.TerminalID] = summary
+	}
 	items, err := store.Load(context.Background())
 	if err != nil {
 		_ = store.Close()
@@ -285,7 +307,8 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 	return &Manager{
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
-		settings: DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
+		agentSummaries: make(map[string]AgentSummary),
+		settings:       DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
 		foregroundProcessSampleInterval: defaultForegroundProcessSampleInterval,
 		claudeTitleSampleInterval:       defaultClaudeTitleSampleInterval,
 	}
@@ -1684,6 +1707,93 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 			m.mu.Unlock()
 			return err
 		}
+	}
+	return nil
+}
+
+func (m *Manager) AgentSummaries() []AgentSummary {
+	m.mu.RLock()
+	result := make([]AgentSummary, 0, len(m.agentSummaries))
+	for _, summary := range m.agentSummaries {
+		result = append(result, summary)
+	}
+	m.mu.RUnlock()
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].GeneratedAt.Equal(result[j].GeneratedAt) {
+			return result[i].TerminalID < result[j].TerminalID
+		}
+		return result[i].GeneratedAt.Before(result[j].GeneratedAt)
+	})
+	return result
+}
+
+func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) error {
+	if strings.TrimSpace(summary.TerminalID) == "" {
+		return errors.New("agent summary terminal ID is required")
+	}
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return ErrManagerClosing
+	}
+	previous, hadPrevious := m.agentSummaries[summary.TerminalID]
+	m.agentSummaries[summary.TerminalID] = summary
+	store := m.store
+	summaryStore, _ := store.(agentSummaryStore)
+	var operation storeOperation
+	if summaryStore != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if summaryStore == nil {
+		return nil
+	}
+	if err := m.runStoreOperation(operation, func() error {
+		return summaryStore.SaveAgentSummary(ctx, summary)
+	}); err != nil {
+		m.mu.Lock()
+		if current, ok := m.agentSummaries[summary.TerminalID]; ok && current == summary {
+			if hadPrevious {
+				m.agentSummaries[summary.TerminalID] = previous
+			} else {
+				delete(m.agentSummaries, summary.TerminalID)
+			}
+		}
+		m.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) DeleteAgentSummary(ctx context.Context, terminalID string) error {
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return ErrManagerClosing
+	}
+	previous, hadPrevious := m.agentSummaries[terminalID]
+	delete(m.agentSummaries, terminalID)
+	store := m.store
+	summaryStore, _ := store.(agentSummaryStore)
+	var operation storeOperation
+	if summaryStore != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if summaryStore == nil {
+		return nil
+	}
+	if err := m.runStoreOperation(operation, func() error {
+		return summaryStore.DeleteAgentSummary(ctx, terminalID)
+	}); err != nil {
+		m.mu.Lock()
+		if !hadPrevious {
+			delete(m.agentSummaries, terminalID)
+		} else if _, ok := m.agentSummaries[terminalID]; !ok {
+			m.agentSummaries[terminalID] = previous
+		}
+		m.mu.Unlock()
+		return err
 	}
 	return nil
 }

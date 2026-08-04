@@ -25,6 +25,12 @@ type metadataStore interface {
 	Close() error
 }
 
+type agentSummaryStore interface {
+	LoadAgentSummaries(context.Context) ([]AgentSummary, error)
+	SaveAgentSummary(context.Context, AgentSummary) error
+	DeleteAgentSummary(context.Context, string) error
+}
+
 type SQLiteStore struct {
 	db *sql.DB
 }
@@ -87,7 +93,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_cursor_style TEXT NOT NULL DEFAULT 'bar',
 			terminal_cursor_blink INTEGER NOT NULL DEFAULT 0,
 			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3,
-			terminal_option_as_alt INTEGER NOT NULL DEFAULT 1
+			terminal_option_as_alt INTEGER NOT NULL DEFAULT 1,
+			agent_summary_provider TEXT NOT NULL DEFAULT 'claude'
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -100,7 +107,16 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			cwd_filters TEXT NOT NULL,
 			pinned_status_filters TEXT NOT NULL DEFAULT '[]',
 			pinned_cwd_filters TEXT NOT NULL DEFAULT '[]',
-			revision INTEGER NOT NULL
+			 revision INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_summaries (
+			terminal_id TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			status TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			action TEXT NOT NULL DEFAULT '',
+			generated_at TEXT NOT NULL,
+			error TEXT NOT NULL DEFAULT ''
 		)`,
 	}
 	for _, statement := range statements {
@@ -218,6 +234,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add terminal Option-as-Alt setting: %w", err)
 		}
 	}
+	hasAgentSummaryProvider, err := s.hasColumn(ctx, "settings", "agent_summary_provider")
+	if err != nil {
+		return err
+	}
+	if !hasAgentSummaryProvider {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN agent_summary_provider TEXT NOT NULL DEFAULT 'claude'",
+		); err != nil {
+			return fmt.Errorf("add agent summary provider setting: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name         string
 		defaultValue int
@@ -266,7 +293,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 9"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 10"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -305,7 +332,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
 			terminal_history_limit, terminal_line_height,
 			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity,
-			terminal_option_as_alt
+			terminal_option_as_alt, agent_summary_provider
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -322,6 +349,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&terminalCursorBlink,
 		&result.TerminalScrollSensitivity,
 		&terminalOptionAsAlt,
+		&result.AgentSummaryProvider,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
@@ -350,14 +378,14 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
 			terminal_history_limit = ?, terminal_line_height = ?,
 			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?,
-			terminal_option_as_alt = ?
+			terminal_option_as_alt = ?, agent_summary_provider = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
 		settings.TerminalHistoryLimit, settings.TerminalLineHeight,
 		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity,
-		terminalOptionAsAlt)
+		terminalOptionAsAlt, settings.AgentSummaryProvider)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
@@ -538,6 +566,60 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM terminals WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete terminal: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT terminal_id, provider, status,
+		summary, action, generated_at, error
+		FROM agent_summaries ORDER BY generated_at, terminal_id`)
+	if err != nil {
+		return nil, fmt.Errorf("load agent summaries: %w", err)
+	}
+	defer rows.Close()
+	var result []AgentSummary
+	for rows.Next() {
+		var item AgentSummary
+		var generatedAt string
+		if err := rows.Scan(
+			&item.TerminalID, &item.Provider, &item.Status, &item.Summary,
+			&item.Action, &generatedAt, &item.Error,
+		); err != nil {
+			return nil, fmt.Errorf("scan agent summary: %w", err)
+		}
+		item.GeneratedAt, err = time.Parse(time.RFC3339Nano, generatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse agent summary timestamp: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load agent summaries: %w", err)
+	}
+	return result, nil
+}
+
+func (s *SQLiteStore) SaveAgentSummary(ctx context.Context, item AgentSummary) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_summaries (
+		terminal_id, provider, status, summary, action, generated_at, error
+	) VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(terminal_id) DO UPDATE SET
+		provider=excluded.provider, status=excluded.status, summary=excluded.summary,
+		action=excluded.action, generated_at=excluded.generated_at, error=excluded.error`,
+		item.TerminalID, item.Provider, item.Status, item.Summary, item.Action,
+		item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
+	if err != nil {
+		return fmt.Errorf("save agent summary: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteAgentSummary(ctx context.Context, terminalID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		"DELETE FROM agent_summaries WHERE terminal_id = ?", terminalID,
+	); err != nil {
+		return fmt.Errorf("delete agent summary: %w", err)
 	}
 	return nil
 }
