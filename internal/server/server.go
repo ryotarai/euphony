@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ryotarai/euphony/internal/agentlog"
+	"github.com/ryotarai/euphony/internal/agentsummary"
 	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
@@ -23,6 +24,7 @@ type Config struct {
 	CodexSessionIndex  string
 	CodexSessionsRoot  string
 	ClaudeProjectsRoot string
+	SummaryRunner      agentsummary.Runner
 	Assets             fs.FS
 }
 
@@ -34,6 +36,7 @@ type Server struct {
 	terminalSizes *terminalSizeCoordinator
 	agentLogs     *agentlog.Resolver
 	annotations   *annotation.Store
+	summaries     *agentsummary.Service
 }
 
 func New(config Config) (*Server, error) {
@@ -62,14 +65,23 @@ func New(config Config) (*Server, error) {
 		_ = sessionManager.Close(context.Background())
 		return nil, err
 	}
+	transcriptResolver := agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot)
+	summaryService := agentsummary.New(agentsummary.Config{
+		Sessions: sessionManager,
+		Events:   controlService,
+		Resolver: transcriptResolver,
+		Runner:   config.SummaryRunner,
+	})
 	server := &Server{
 		sessions:      sessionManager,
 		control:       controlService,
 		tickets:       tickets,
 		terminalSizes: newTerminalSizeCoordinator(),
-		agentLogs:     agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot),
+		agentLogs:     transcriptResolver,
 		annotations:   annotation.NewStore(time.Now, uuid.NewString),
+		summaries:     summaryService,
 	}
+	summaryService.Start()
 
 	public := http.NewServeMux()
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -111,6 +123,7 @@ func New(config Config) (*Server, error) {
 			"The API endpoint does not exist.", nil)
 	})
 	protected.HandleFunc("GET /api/sessions", server.listSessions)
+	protected.HandleFunc("GET /api/agent-summaries", server.listAgentSummaries)
 	protected.HandleFunc("POST /api/sessions", server.createSession)
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
 	protected.HandleFunc("POST /api/sessions/{id}/acknowledge-attention", server.acknowledgeAttention)
@@ -155,5 +168,10 @@ func (s *Server) LocalHandler() http.Handler {
 }
 
 func (s *Server) Close(ctx context.Context) error {
+	if s.summaries != nil {
+		if err := s.summaries.Close(ctx); err != nil {
+			return err
+		}
+	}
 	return s.sessions.Close(ctx)
 }
