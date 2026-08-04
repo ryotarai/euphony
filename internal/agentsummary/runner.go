@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	commandTimeout        = 90 * time.Second
-	maxCommandOutputBytes = 64 << 10
+	commandTimeout               = 90 * time.Second
+	maxCommandOutputBytes        = 64 << 10
+	maxGeneratedDescriptionRunes = 2400
 )
 
 type Generation struct {
@@ -21,8 +22,20 @@ type Generation struct {
 	Action  string `json:"action"`
 }
 
+type TaskRefinement struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Priority    string `json:"priority"`
+	Status      string `json:"status"`
+	Rationale   string `json:"rationale"`
+}
+
 type Runner interface {
 	Generate(context.Context, string, string) (Generation, error)
+}
+
+type Refiner interface {
+	Refine(context.Context, string, string) (TaskRefinement, error)
 }
 
 type commandFactory func(context.Context, string, ...string) *exec.Cmd
@@ -80,6 +93,36 @@ func (r *CommandRunner) Generate(ctx context.Context, provider, prompt string) (
 	return ParseGeneration(stdout.String(), "")
 }
 
+func (r *CommandRunner) Refine(ctx context.Context, provider, prompt string) (TaskRefinement, error) {
+	name, args, err := commandSpec(provider)
+	if err != nil {
+		return TaskRefinement{}, err
+	}
+	timeout := r.timeout
+	if timeout <= 0 {
+		timeout = commandTimeout
+	}
+	commandContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	command := r.commandContext(commandContext, name, args...)
+	command.Stdin = strings.NewReader(prompt)
+	stdout := &cappedBuffer{limit: maxCommandOutputBytes}
+	stderr := &cappedBuffer{limit: maxCommandOutputBytes}
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return TaskRefinement{}, fmt.Errorf("%s refinement command failed: %s", provider, message)
+	}
+	if stdout.truncated {
+		return TaskRefinement{}, errors.New("refinement command output exceeded the limit")
+	}
+	return ParseRefinement(stdout.String())
+}
+
 func ParseGeneration(output, status string) (Generation, error) {
 	cleaned := strings.TrimSpace(output)
 	if strings.HasPrefix(cleaned, "```") {
@@ -108,6 +151,52 @@ func ParseGeneration(output, status string) (Generation, error) {
 		return Generation{}, errors.New("summary command returned no required action")
 	}
 	return generation, nil
+}
+
+func ParseRefinement(output string) (TaskRefinement, error) {
+	cleaned := strings.TrimSpace(output)
+	if strings.HasPrefix(cleaned, "```") {
+		lines := strings.Split(cleaned, "\n")
+		if len(lines) >= 3 {
+			cleaned = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+	start := strings.IndexByte(cleaned, '{')
+	end := strings.LastIndexByte(cleaned, '}')
+	if start < 0 || end <= start {
+		return TaskRefinement{}, errors.New("refinement command did not return a JSON object")
+	}
+	var raw struct {
+		Title       *string `json:"title"`
+		Description *string `json:"description"`
+		Priority    *string `json:"priority"`
+		Status      *string `json:"status"`
+		Rationale   string  `json:"rationale"`
+	}
+	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &raw); err != nil {
+		return TaskRefinement{}, fmt.Errorf("decode refinement command output: %w", err)
+	}
+	if raw.Title == nil || raw.Description == nil || raw.Priority == nil || raw.Status == nil {
+		return TaskRefinement{}, errors.New("refinement command omitted a required field")
+	}
+	refinement := TaskRefinement{
+		Title:       normalizeGeneratedText(*raw.Title, maxGeneratedSummaryRunes),
+		Description: normalizeGeneratedText(*raw.Description, maxGeneratedDescriptionRunes),
+		Priority:    strings.TrimSpace(*raw.Priority),
+		Status:      strings.TrimSpace(*raw.Status),
+		Rationale:   normalizeGeneratedText(raw.Rationale, maxGeneratedActionRunes),
+	}
+	if refinement.Title == "" {
+		return TaskRefinement{}, errors.New("refinement command returned an empty title")
+	}
+	if refinement.Priority != "low" && refinement.Priority != "medium" && refinement.Priority != "high" {
+		return TaskRefinement{}, fmt.Errorf("refinement command returned invalid priority %q", refinement.Priority)
+	}
+	if refinement.Status != "todo" && refinement.Status != "in_progress" &&
+		refinement.Status != "blocked" && refinement.Status != "done" {
+		return TaskRefinement{}, fmt.Errorf("refinement command returned invalid status %q", refinement.Status)
+	}
+	return refinement, nil
 }
 
 func normalizeGeneratedText(value string, limit int) string {
