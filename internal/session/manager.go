@@ -283,7 +283,12 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	if !m.beginCreate() {
 		return Metadata{}, ErrManagerClosing
 	}
-	defer m.finishCreate()
+	createLifecycleFinished := false
+	defer func() {
+		if !createLifecycleFinished {
+			m.finishCreate()
+		}
+	}()
 	id, err := randomID()
 	if err != nil {
 		return Metadata{}, err
@@ -348,9 +353,11 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	m.mu.Lock()
 	change := m.nextChangeLocked(ChangeCreated, nil, &created)
 	m.mu.Unlock()
-	m.emitChange(change)
 
 	go m.watch(item)
+	m.finishCreate()
+	createLifecycleFinished = true
+	m.emitChange(change)
 	return item.metadata, nil
 }
 
@@ -1116,6 +1123,9 @@ func (m *Manager) finishMetadataRefresh(done chan struct{}, changes []Change) {
 		return
 	}
 	close(done)
+	lifecycleDone := m.refreshLifecycleDone
+	m.refreshLifecycleDone = nil
+	close(lifecycleDone)
 	m.refreshMu.Unlock()
 
 	m.emitRefreshChanges(changes)
@@ -1123,9 +1133,6 @@ func (m *Manager) finishMetadataRefresh(done chan struct{}, changes []Change) {
 	m.refreshMu.Lock()
 	if m.refreshDone == done {
 		m.refreshDone = nil
-		lifecycleDone := m.refreshLifecycleDone
-		m.refreshLifecycleDone = nil
-		close(lifecycleDone)
 	}
 	m.refreshMu.Unlock()
 }
@@ -1509,27 +1516,36 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Unlock()
 	if store != nil {
 		if err := m.runStoreOperation(operation, func() error {
-			return store.Delete(context.Background(), id)
+			persistErr := store.Delete(context.Background(), id)
+			return m.completeDelete(item, id, persistErr)
 		}); err != nil {
-			restored := false
-			m.mu.Lock()
-			if !m.closing {
-				if _, exists := m.sessions[id]; !exists {
-					m.sessions[id] = item
-					restored = true
-				}
-			}
-			m.mu.Unlock()
-			if !restored {
-				item.session.terminate()
-				<-item.session.waitDone
-			}
 			return err
+		}
+	} else {
+		_ = m.completeDelete(item, id, nil)
+	}
+	m.emitChange(change)
+	return nil
+}
+
+func (m *Manager) completeDelete(item *entry, id string, persistErr error) error {
+	if persistErr != nil {
+		restored := false
+		m.mu.Lock()
+		if !m.closing {
+			if _, exists := m.sessions[id]; !exists {
+				m.sessions[id] = item
+				restored = true
+			}
+		}
+		m.mu.Unlock()
+		if restored {
+			return persistErr
 		}
 	}
 	item.session.terminate()
-	m.emitChange(change)
-	return nil
+	<-item.session.waitDone
+	return persistErr
 }
 
 func (m *Manager) SetChangeHandler(handler func(Change)) {

@@ -1243,7 +1243,10 @@ func TestMetadataPersistenceReservesTitleBeforeNewerUpdate(t *testing.T) {
 func TestMetadataPersistenceReservesTitleBeforeNewerDelete(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	item := codexTitleTestEntry()
-	item.session = &Session{command: exec.Command("/bin/sh")}
+	item.session = &Session{
+		command:  exec.Command("/bin/sh"),
+		waitDone: closedTestChannel(),
+	}
 	manager.sessions["terminal"] = item
 	store := newGapMetadataStore()
 	manager.store = store
@@ -1411,6 +1414,78 @@ func TestDeleteFailureDuringCloseDoesNotRestoreSession(t *testing.T) {
 	}
 }
 
+func TestCloseWaitsForDeleteProcessCleanup(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		deleteErr error
+	}{
+		{name: "success"},
+		{name: "persistence failure", deleteErr: errors.New("delete failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := NewManager("/bin/sh")
+			metadata, err := manager.Create(context.Background(), "Terminal")
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			running, ok := manager.Get(metadata.ID)
+			if !ok {
+				t.Fatal("created terminal is missing")
+			}
+			store := newLifecycleMetadataStore()
+			store.deleteEntered = make(chan struct{})
+			store.deleteRelease = make(chan struct{})
+			store.deleteErr = test.deleteErr
+			manager.store = store
+
+			running.fileMu.Lock()
+			fileLocked := true
+			defer func() {
+				if fileLocked {
+					running.fileMu.Unlock()
+				}
+			}()
+			deleteDone := make(chan error, 1)
+			go func() {
+				deleteDone <- manager.Delete(metadata.ID)
+			}()
+			<-store.deleteEntered
+			closeDone := make(chan error, 1)
+			go func() {
+				closeDone <- manager.Close(context.Background())
+			}()
+			waitFor(t, time.Second, func() bool {
+				manager.mu.RLock()
+				defer manager.mu.RUnlock()
+				return manager.closing
+			})
+			close(store.deleteRelease)
+			select {
+			case err := <-closeDone:
+				running.fileMu.Unlock()
+				fileLocked = false
+				<-deleteDone
+				t.Fatalf("Close() returned before Delete process cleanup completed: %v", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			running.fileMu.Unlock()
+			fileLocked = false
+			if err := <-deleteDone; !errors.Is(err, test.deleteErr) {
+				t.Fatalf("Delete() error = %v, want %v", err, test.deleteErr)
+			}
+			if err := <-closeDone; err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			select {
+			case <-running.waitDone:
+			default:
+				t.Fatal("session process was not joined before Close() returned")
+			}
+		})
+	}
+}
+
 func TestCloseRetryWaitsForShutdownAfterFirstCallerTimesOut(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	metadata, err := manager.Create(context.Background(), "Terminal")
@@ -1513,6 +1588,117 @@ func TestConcurrentCloseWaitsForSharedShutdownResult(t *testing.T) {
 	}
 	if err := <-secondDone; !errors.Is(err, closeErr) {
 		t.Fatalf("second Close() error = %v, want %v", err, closeErr)
+	}
+}
+
+func TestCreateChangeHandlerCanCloseManager(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	store := newLifecycleMetadataStore()
+	store.closeCalled = make(chan struct{})
+	manager.store = store
+	var running *Session
+	closeResult := make(chan error, 1)
+	manager.SetChangeHandler(func(change Change) {
+		if change.Kind != ChangeCreated {
+			return
+		}
+		running, _ = manager.Get(change.After.ID)
+		closeResult <- manager.Close(context.Background())
+	})
+
+	createResult := make(chan error, 1)
+	go func() {
+		_, err := manager.Create(context.Background(), "Terminal")
+		createResult <- err
+	}()
+	select {
+	case err := <-createResult:
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Create change handler deadlocked when it called Close()")
+	}
+	if err := <-closeResult; err != nil {
+		t.Fatalf("change-handler Close() error = %v", err)
+	}
+	if running == nil {
+		t.Fatal("created session was not registered before the change callback")
+	}
+	select {
+	case <-running.waitDone:
+	default:
+		t.Fatal("created process was not joined before callback Close() returned")
+	}
+	select {
+	case <-store.closeCalled:
+	default:
+		t.Fatal("store was not closed before callback Close() returned")
+	}
+}
+
+func TestRefreshChangeHandlerCanCloseManager(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.sessions["terminal"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal",
+			Name:                "Terminal",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-1",
+			AgentTranscriptPath: "/transcripts/session-1.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		session: &Session{
+			command:  exec.Command("/bin/sh"),
+			waitDone: closedTestChannel(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	manager.sessions["terminal-2"] = &entry{
+		metadata: Metadata{
+			ID:                  "terminal-2",
+			Name:                "Terminal 2",
+			State:               StateRunning,
+			Agent:               "codex",
+			AgentSessionID:      "session-2",
+			AgentTranscriptPath: "/transcripts/session-2.jsonl",
+			CreatedAt:           time.Now().UTC(),
+		},
+		session: &Session{
+			command:  exec.Command("/bin/sh"),
+			waitDone: closedTestChannel(),
+		},
+		codexTitleHeaderScanned: true,
+	}
+	manager.codexTitleResolver = func(string, string, bool) (string, error) {
+		return "Resolved title", nil
+	}
+	closeResult := make(chan error, 1)
+	var changedIDs []string
+	manager.SetChangeHandler(func(change Change) {
+		if change.Kind == ChangeUpdated {
+			changedIDs = append(changedIDs, change.After.ID)
+			closeResult <- manager.Close(context.Background())
+		}
+	})
+
+	manager.RefreshMetadata()
+	select {
+	case err := <-closeResult:
+		if err != nil {
+			t.Fatalf("refresh change-handler Close() error = %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("refresh change handler deadlocked when it called Close()")
+	}
+	waitFor(t, time.Second, func() bool {
+		manager.refreshMu.Lock()
+		defer manager.refreshMu.Unlock()
+		return manager.refreshDone == nil
+	})
+	if len(changedIDs) != 1 {
+		t.Fatalf("refresh changes after callback Close() = %#v, want only the initiating change", changedIDs)
 	}
 }
 
@@ -2656,7 +2842,9 @@ type lifecycleMetadataStore struct {
 	deleteRelease chan struct{}
 	deleteErr     error
 	closeErr      error
+	closeCalled   chan struct{}
 	deleteOnce    sync.Once
+	closeOnce     sync.Once
 }
 
 type gatedSaveMetadataStore struct {
@@ -2690,6 +2878,9 @@ func (s *lifecycleMetadataStore) Delete(_ context.Context, id string) error {
 }
 
 func (s *lifecycleMetadataStore) Close() error {
+	if s.closeCalled != nil {
+		s.closeOnce.Do(func() { close(s.closeCalled) })
+	}
 	return s.closeErr
 }
 
