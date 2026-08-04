@@ -1209,6 +1209,21 @@ func TestMetadataPersistenceReservesTitleBeforeNewerUpdate(t *testing.T) {
 		updateDone <- err
 	}()
 	requireStoreReservation(t, reserved, 2)
+	listDone := make(chan []Metadata, 1)
+	go func() {
+		listDone <- manager.ListCurrent()
+	}()
+	select {
+	case items := <-listDone:
+		if len(items) != 1 || items[0].AgentStatus != "waiting" {
+			close(releaseFirst)
+			t.Fatalf("ListCurrent() during second persistence wait = %#v", items)
+		}
+	case <-time.After(100 * time.Millisecond):
+		close(releaseFirst)
+		<-updateDone
+		t.Fatal("ListCurrent() blocked while a newer persistence job waited")
+	}
 	close(releaseFirst)
 	if err := <-updateDone; err != nil {
 		t.Fatalf("UpdateAgent() error = %v", err)
@@ -1265,6 +1280,122 @@ func TestMetadataPersistenceReservesTitleBeforeNewerDelete(t *testing.T) {
 	if store.Has("terminal") {
 		t.Fatal("deleted terminal was resurrected by an older title save")
 	}
+}
+
+func TestCloseSealsPersistenceQueueBeforeRejectingMutations(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	item := codexTitleTestEntry()
+	item.session = &Session{
+		command:  exec.Command("/bin/sh"),
+		waitDone: closedTestChannel(),
+	}
+	manager.sessions["terminal"] = item
+	manager.store = newGapMetadataStore()
+	reserved := make(chan uint64, 3)
+	releaseClose := make(chan struct{})
+	manager.beforeStoreOperation = func(sequence uint64) {
+		reserved <- sequence
+		if sequence == 1 {
+			<-releaseClose
+		}
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- manager.Close(context.Background())
+	}()
+	requireStoreReservation(t, reserved, 1)
+	before, _ := manager.Metadata("terminal")
+
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := manager.UpdateAgent("terminal", AgentUpdate{
+			Agent:          "codex",
+			AgentSessionID: "session-1",
+			TranscriptPath: "/transcripts/session-1.jsonl",
+			Status:         "waiting",
+		})
+		updateDone <- err
+	}()
+	select {
+	case err := <-updateDone:
+		if err == nil {
+			close(releaseClose)
+			<-closeDone
+			t.Fatal("UpdateAgent() after Close() began error = nil")
+		}
+	case <-time.After(100 * time.Millisecond):
+		close(releaseClose)
+		<-closeDone
+		<-updateDone
+		t.Fatal("UpdateAgent() joined the queue after the close barrier")
+	}
+
+	if err := manager.SaveSelection(context.Background(), selection.State{Revision: 1}); err == nil {
+		close(releaseClose)
+		<-closeDone
+		t.Fatal("SaveSelection() after Close() began error = nil")
+	}
+	after, _ := manager.Metadata("terminal")
+	if after != before {
+		close(releaseClose)
+		<-closeDone
+		t.Fatalf("metadata changed after Close() began: before %#v, after %#v", before, after)
+	}
+	select {
+	case sequence := <-reserved:
+		close(releaseClose)
+		<-closeDone
+		t.Fatalf("store operation %d reserved after close barrier", sequence)
+	default:
+	}
+	close(releaseClose)
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestStoreOperationHookPanicReleasesSuccessor(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.beforeStoreOperation = func(sequence uint64) {
+		if sequence == 1 {
+			panic("test hook panic")
+		}
+	}
+	first := manager.reserveStoreOperation()
+	second := manager.reserveStoreOperation()
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("runStoreOperation() did not propagate hook panic")
+			}
+		}()
+		_ = manager.runStoreOperation(first, func() error {
+			t.Fatal("persist ran after hook panic")
+			return nil
+		})
+	}()
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- manager.runStoreOperation(second, func() error {
+			return nil
+		})
+	}()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("successor store operation error = %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("successor remained blocked after predecessor hook panic")
+	}
+}
+
+func closedTestChannel() chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 func codexTitleTestEntry() *entry {

@@ -22,7 +22,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var ErrNotFound = errors.New("session not found")
+var (
+	ErrNotFound       = errors.New("session not found")
+	ErrManagerClosing = errors.New("session manager is closing")
+)
 
 type ChangeKind string
 
@@ -188,6 +191,7 @@ type Manager struct {
 	storeOrderMu                    sync.Mutex
 	storeTail                       chan struct{}
 	storeSequence                   uint64
+	storeSealed                     bool
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
@@ -210,6 +214,7 @@ type storeOperation struct {
 	done     chan struct{}
 	sequence uint64
 	hook     func(uint64)
+	err      error
 }
 
 func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager, error) {
@@ -271,6 +276,12 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	if len(name) > 80 {
 		return Metadata{}, errors.New("session name must be at most 80 characters")
 	}
+	m.mu.RLock()
+	closing := m.closing
+	m.mu.RUnlock()
+	if closing {
+		return Metadata{}, ErrManagerClosing
+	}
 
 	id, err := randomID()
 	if err != nil {
@@ -314,7 +325,17 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 			return Metadata{}, err
 		}
 	}
-	m.registerSession(id, item)
+	m.mu.RLock()
+	closing = m.closing
+	m.mu.RUnlock()
+	if closing {
+		discardStartedSession(item.session)
+		return Metadata{}, ErrManagerClosing
+	}
+	if !m.registerSession(id, item) {
+		discardStartedSession(item.session)
+		return Metadata{}, ErrManagerClosing
+	}
 	created := item.metadata
 	m.mu.Lock()
 	change := m.nextChangeLocked(ChangeCreated, nil, &created)
@@ -350,7 +371,10 @@ func (m *Manager) restore(metadata Metadata) error {
 		discardStartedSession(item.session)
 		return err
 	}
-	m.registerSession(metadata.ID, item)
+	if !m.registerSession(metadata.ID, item) {
+		discardStartedSession(item.session)
+		return ErrManagerClosing
+	}
 	go m.watch(item)
 	return nil
 }
@@ -427,11 +451,15 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 	}, nil
 }
 
-func (m *Manager) registerSession(id string, item *entry) {
+func (m *Manager) registerSession(id string, item *entry) bool {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		return false
+	}
 	item.session.setHistoryLimit(m.settings.TerminalHistoryLimit)
 	m.sessions[id] = item
-	m.mu.Unlock()
+	return true
 }
 
 // WriteTerminal writes input to the PTY. A Ctrl-C only starts watching the
@@ -487,6 +515,10 @@ func (m *Manager) WriteTerminal(id string, data []byte) (int, error) {
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return Metadata{}, ErrManagerClosing
+	}
 	item, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
@@ -549,19 +581,25 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		item.metadata.RepoRoot = repositoryRoot(cwd)
 		item.cwdFromAgent = true
 	}
-	if m.store != nil {
-		if err := m.saveMetadata(m.store, item.metadata); err != nil {
-			m.mu.Unlock()
-			return Metadata{}, err
-		}
-	}
 	after := item.metadata
 	var change *Change
 	if before != after {
 		nextChange := m.nextChangeLocked(ChangeUpdated, &before, &after)
 		change = &nextChange
 	}
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
 	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
+			return Metadata{}, err
+		}
+	}
 	if change != nil {
 		m.emitChange(*change)
 	}
@@ -651,6 +689,10 @@ func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, ac
 		return
 	}
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return
+	}
 	item, ok := m.sessions[id]
 	if !ok || item.codexActivityWatch != watch || !matchesCodexActivity(item.metadata, watch.target) {
 		m.mu.Unlock()
@@ -659,23 +701,38 @@ func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, ac
 	before := item.metadata
 	item.codexActivityWatch = nil
 	item.metadata.AgentStatus = activity
-	if m.store != nil {
-		if err := m.saveMetadata(m.store, item.metadata); err != nil {
-			item.metadata = before
-			item.codexActivityWatch = watch
+	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
+			m.mu.Lock()
+			if current, exists := m.sessions[id]; exists &&
+				current == item && current.metadata == after {
+				item.metadata = before
+				item.codexActivityWatch = watch
+			}
 			m.mu.Unlock()
 			return
 		}
 	}
-	after := item.metadata
-	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
-	m.mu.Unlock()
 	watch.cancel()
 	m.emitChange(change)
 }
 
 func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return
+	}
 	item, ok := m.sessions[id]
 	if !ok || item.interruptWatch != watch || !matchesAgentInterrupt(item.metadata, watch.target) {
 		m.mu.Unlock()
@@ -685,17 +742,28 @@ func (m *Manager) completeAgentInterrupt(id string, watch *agentInterruptWatch) 
 	item.interruptWatch = nil
 	item.metadata.AgentStatus = "waiting"
 	item.metadata.NeedsAttention = true
-	if m.store != nil {
-		if err := m.saveMetadata(m.store, item.metadata); err != nil {
-			item.metadata = before
-			item.interruptWatch = watch
+	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
+			m.mu.Lock()
+			if current, exists := m.sessions[id]; exists &&
+				current == item && current.metadata == after {
+				item.metadata = before
+				item.interruptWatch = watch
+			}
 			m.mu.Unlock()
 			return
 		}
 	}
-	after := item.metadata
-	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
-	m.mu.Unlock()
 	watch.cancel()
 	m.emitChange(change)
 }
@@ -730,6 +798,10 @@ func matchesCodexActivity(metadata Metadata, target codexActivityTarget) bool {
 
 func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return Metadata{}, ErrManagerClosing
+	}
 	item, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
@@ -742,15 +814,21 @@ func (m *Manager) AcknowledgeAttention(id string) (Metadata, error) {
 	}
 	before := item.metadata
 	item.metadata.NeedsAttention = false
-	if m.store != nil {
-		if err := m.saveMetadata(m.store, item.metadata); err != nil {
-			m.mu.Unlock()
+	after := item.metadata
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
 			return Metadata{}, err
 		}
 	}
-	after := item.metadata
-	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
-	m.mu.Unlock()
 	m.emitChange(change)
 	return after, nil
 }
@@ -834,9 +912,8 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 		return Metadata{}, nil, ErrNotFound
 	}
 	if m.closing {
-		metadata := item.metadata
 		m.mu.Unlock()
-		return metadata, nil, nil
+		return Metadata{}, nil, ErrManagerClosing
 	}
 	if !sampledAt.IsZero() && item.cwdReportedAt.After(sampledAt) {
 		metadata := item.metadata
@@ -861,15 +938,27 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 	next := item.metadata
 	next.CWD = cwd
 	next.RepoRoot = repositoryRoot(cwd)
-	if m.store != nil {
-		if err := m.saveMetadata(m.store, next); err != nil {
+	item.metadata = next
+	change := m.nextChangeLocked(ChangeUpdated, &before, &next)
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), next)
+		}); err != nil {
+			m.mu.Lock()
+			if current, exists := m.sessions[id]; exists &&
+				current == item && current.metadata == next {
+				item.metadata = before
+			}
 			m.mu.Unlock()
 			return Metadata{}, nil, err
 		}
 	}
-	item.metadata = next
-	change := m.nextChangeLocked(ChangeUpdated, &before, &next)
-	m.mu.Unlock()
 	return next, &change, nil
 }
 
@@ -916,14 +1005,17 @@ func (m *Manager) watch(item *entry) {
 	_ = item.session.command.Wait()
 
 	var deleted *Change
+	var deleteOperation storeOperation
+	var store metadataStore
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
 		m.cancelAgentInterruptLocked(item)
 		m.cancelCodexActivityLocked(item)
 		if !m.closing {
 			delete(m.sessions, item.metadata.ID)
-			if m.store != nil {
-				_ = m.deleteMetadata(m.store, item.metadata.ID)
+			store = m.store
+			if store != nil {
+				deleteOperation = m.reserveStoreOperation()
 			}
 			before := item.metadata
 			change := m.nextChangeLocked(ChangeDeleted, &before, nil)
@@ -931,6 +1023,11 @@ func (m *Manager) watch(item *entry) {
 		}
 	}
 	m.mu.Unlock()
+	if store != nil {
+		_ = m.runStoreOperation(deleteOperation, func() error {
+			return store.Delete(context.Background(), item.metadata.ID)
+		})
+	}
 	if deleted != nil {
 		m.emitChange(*deleted)
 	}
@@ -1256,15 +1353,35 @@ func (m *Manager) Settings() Settings {
 
 func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.store != nil {
-		if err := m.saveSettings(m.store, ctx, settings); err != nil {
-			return err
-		}
+	if m.closing {
+		m.mu.Unlock()
+		return ErrManagerClosing
 	}
+	before := m.settings
 	m.settings = settings
 	for _, item := range m.sessions {
 		item.session.setHistoryLimit(settings.TerminalHistoryLimit)
+	}
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.SaveSettings(ctx, settings)
+		}); err != nil {
+			m.mu.Lock()
+			if m.settings == settings {
+				m.settings = before
+				for _, item := range m.sessions {
+					item.session.setHistoryLimit(before.TerminalHistoryLimit)
+				}
+			}
+			m.mu.Unlock()
+			return err
+		}
 	}
 	return nil
 }
@@ -1284,6 +1401,10 @@ func (m *Manager) LoadSelection(ctx context.Context) (selection.State, bool, err
 
 func (m *Manager) SaveSelection(ctx context.Context, state selection.State) error {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return ErrManagerClosing
+	}
 	store := m.store
 	if store == nil {
 		m.workspaceSelection = cloneSelectionState(state)
@@ -1291,8 +1412,11 @@ func (m *Manager) SaveSelection(ctx context.Context, state selection.State) erro
 		m.mu.Unlock()
 		return nil
 	}
+	operation := m.reserveStoreOperation()
 	m.mu.Unlock()
-	return m.saveSelection(store, ctx, state)
+	return m.runStoreOperation(operation, func() error {
+		return store.SaveSelection(ctx, state)
+	})
 }
 
 func cloneSelectionState(state selection.State) selection.State {
@@ -1328,6 +1452,10 @@ func (m *Manager) Metadata(id string) (Metadata, bool) {
 
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return ErrManagerClosing
+	}
 	item, ok := m.sessions[id]
 	var change Change
 	store := m.store
@@ -1410,43 +1538,16 @@ func (m *Manager) saveMetadata(store metadataStore, metadata Metadata) error {
 	})
 }
 
-func (m *Manager) deleteMetadata(store metadataStore, id string) error {
-	operation := m.reserveStoreOperation()
-	return m.runStoreOperation(operation, func() error {
-		return store.Delete(context.Background(), id)
-	})
-}
-
-func (m *Manager) saveSettings(
-	store metadataStore,
-	ctx context.Context,
-	settings Settings,
-) error {
-	operation := m.reserveStoreOperation()
-	return m.runStoreOperation(operation, func() error {
-		return store.SaveSettings(ctx, settings)
-	})
-}
-
-func (m *Manager) saveSelection(
-	store metadataStore,
-	ctx context.Context,
-	state selection.State,
-) error {
-	operation := m.reserveStoreOperation()
-	return m.runStoreOperation(operation, func() error {
-		return store.SaveSelection(ctx, state)
-	})
-}
-
-func (m *Manager) closeStore(store metadataStore) error {
-	operation := m.reserveStoreOperation()
-	return m.runStoreOperation(operation, store.Close)
-}
-
 func (m *Manager) reserveStoreOperation() storeOperation {
 	m.storeOrderMu.Lock()
 	defer m.storeOrderMu.Unlock()
+	if m.storeSealed {
+		return storeOperation{err: ErrManagerClosing}
+	}
+	return m.reserveStoreOperationLocked()
+}
+
+func (m *Manager) reserveStoreOperationLocked() storeOperation {
 	m.storeSequence++
 	done := make(chan struct{})
 	operation := storeOperation{
@@ -1460,20 +1561,36 @@ func (m *Manager) reserveStoreOperation() storeOperation {
 }
 
 func (m *Manager) runStoreOperation(operation storeOperation, persist func() error) error {
+	if operation.err != nil {
+		return operation.err
+	}
+	defer close(operation.done)
 	if operation.hook != nil {
 		operation.hook(operation.sequence)
 	}
 	if operation.previous != nil {
 		<-operation.previous
 	}
-	defer close(operation.done)
 	return persist()
 }
 
 func (m *Manager) Close(ctx context.Context) error {
 	m.refreshMu.Lock()
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		m.refreshMu.Unlock()
+		return nil
+	}
 	m.closing = true
+	store := m.store
+	var closeOperation storeOperation
+	m.storeOrderMu.Lock()
+	if store != nil {
+		closeOperation = m.reserveStoreOperationLocked()
+	}
+	m.storeSealed = true
+	m.storeOrderMu.Unlock()
 	items := make([]*entry, 0, len(m.sessions))
 	for _, item := range m.sessions {
 		items = append(items, item)
@@ -1504,8 +1621,8 @@ func (m *Manager) Close(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
-	if m.store != nil {
-		return m.closeStore(m.store)
+	if store != nil {
+		return m.runStoreOperation(closeOperation, store.Close)
 	}
 	return nil
 }
