@@ -1512,55 +1512,6 @@ test("sends LF for Shift+Enter without submitting the prompt", async () => {
   ]);
 });
 
-test("inserts shell-safe Finder paths without submitting the command", async () => {
-  const socket = new FakeSocket();
-  const focus = vi.fn();
-  const terminal: TerminalDriver = {
-    open: () => undefined,
-    write: () => undefined,
-    focus,
-    fit: () => undefined,
-    getSelection: () => "",
-    clearSelection: () => undefined,
-    onSelectionChange: () => () => undefined,
-    onData: () => () => undefined,
-    onResize: () => () => undefined,
-    dispose: () => undefined,
-  };
-  const api = {
-    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
-  } as unknown as ApiClient;
-
-  render(
-    <TerminalView
-      session={runningSession}
-      api={api}
-      createTerminal={() => terminal}
-      createSocket={() => socket}
-    />,
-  );
-  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
-  focus.mockClear();
-
-  const drop = new CustomEvent("euphony-file-drop", {
-    bubbles: true,
-    cancelable: true,
-    detail: {
-      paths: ["/tmp/first file.txt", "/tmp/O'Brien.txt"],
-    },
-  });
-  screen.getByLabelText("Codex terminal").dispatchEvent(drop);
-
-  expect(drop.defaultPrevented).toBe(true);
-  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
-    {
-      type: "input",
-      data: "'/tmp/first file.txt' '/tmp/O'\\''Brien.txt'",
-    },
-  ]);
-  expect(focus).toHaveBeenCalledOnce();
-});
-
 test("copies a completed selection and then clears it", async () => {
   vi.useFakeTimers();
   let onSelectionChange: (() => void) | undefined;

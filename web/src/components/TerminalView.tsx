@@ -29,10 +29,6 @@ import {
   terminalOptions,
   terminalScrollback,
 } from "./terminalUtils";
-import {
-  terminalInputFromPaths,
-  terminalInputFromURIList,
-} from "./terminalDrop";
 
 export interface TerminalDriver {
   readonly cols?: number;
@@ -326,31 +322,6 @@ function useTerminalView({
       }
       return false;
     };
-    const handleDragOver = (event: DragEvent) => {
-      if (!event.dataTransfer?.types.includes("text/uri-list")) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "copy";
-    };
-    const handleDrop = (event: DragEvent) => {
-      const input = terminalInputFromURIList(
-        event.dataTransfer?.getData("text/uri-list") ?? "",
-      );
-      if (!input || !send({ type: "input", data: input })) return;
-      event.preventDefault();
-      focusTerminal(terminal);
-    };
-    const handleFinderFileDrop = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      const paths = (event.detail as { paths?: unknown } | null)?.paths;
-      if (!Array.isArray(paths) || !paths.every((path) => typeof path === "string")) return;
-      const input = terminalInputFromPaths(paths);
-      if (!input || !send({ type: "input", data: input })) return;
-      event.preventDefault();
-      focusTerminal(terminal);
-    };
-    host.addEventListener("dragover", handleDragOver);
-    host.addEventListener("drop", handleDrop);
-    host.addEventListener("euphony-file-drop", handleFinderFileDrop);
     const releaseCapacity = () => {
       if (claimActive && send({ type: "resize_release" })) {
         claimActive = false;
@@ -603,9 +574,6 @@ function useTerminalView({
 
     return () => {
       active = false;
-      host.removeEventListener("dragover", handleDragOver);
-      host.removeEventListener("drop", handleDrop);
-      host.removeEventListener("euphony-file-drop", handleFinderFileDrop);
       window.removeEventListener("resize", reportCapacity);
       resizeObserver?.disconnect();
       removeData();

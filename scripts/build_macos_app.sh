@@ -41,7 +41,6 @@ swiftc \
 	-framework AppKit \
 	-framework WebKit \
 	"$repo_root/macos/LaunchConfiguration.swift" \
-	"$repo_root/macos/FileDropBridge.swift" \
 	"$repo_root/macos/EuphonyApp.swift" \
 	-o "$stage_path/Contents/MacOS/Euphony"
 
