@@ -116,6 +116,36 @@ test("places Tasks above Agents and opens each workspace dashboard", async () =>
   expect(onOpenAgents).toHaveBeenCalledOnce();
 });
 
+test("treats Tasks and Agents as selectable panes with checkboxes", async () => {
+  const onOpenTasks = vi.fn();
+  const onOpenAgents = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenTasks={onOpenTasks}
+      onOpenAgents={onOpenAgents}
+    />,
+  );
+
+  const tasksCheckbox = screen.getByRole("checkbox", { name: "Include Tasks in split" });
+  const agentsCheckbox = screen.getByRole("checkbox", { name: "Include Agents in split" });
+  expect(tasksCheckbox).toHaveAttribute("aria-checked", "false");
+  expect(agentsCheckbox).toHaveAttribute("aria-checked", "false");
+
+  await user.click(tasksCheckbox);
+  expect(onOpenTasks).toHaveBeenCalledWith(true);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  expect(onOpenTasks).toHaveBeenCalledWith(false);
+
+  await user.click(agentsCheckbox);
+  expect(onOpenAgents).toHaveBeenCalledWith(true);
+});
+
 test("reports whether more terminal tree content remains below", () => {
   render(
     <SessionNavigation

@@ -1303,6 +1303,14 @@ input:focus-visible,
   border-bottom: 1px solid var(--sidebar-border);
 }
 
+.sidebar-primary-navigation .workspace-channel {
+  position: relative;
+}
+
+.sidebar-primary-navigation .workspace-select {
+  padding-left: 2.25rem;
+}
+
 .sidebar-primary-navigation [data-slot="sidebar-menu-button"] {
   color: var(--sidebar-foreground);
   font-weight: 560;

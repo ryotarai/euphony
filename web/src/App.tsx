@@ -28,7 +28,7 @@ import {
 } from "./keybindings";
 import { TerminalView, type ConnectionState } from "./components/TerminalView";
 import { TerminalPane } from "./components/TerminalPane";
-import { PaneCarousel } from "./components/PaneCarousel";
+import { PaneCarousel, type PaneCarouselItem } from "./components/PaneCarousel";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -99,6 +99,14 @@ const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 const filterDeselectDelayMs = 10_000;
 const maxCachedTerminalViews = 4;
+const tasksPaneID = "tasks" as const;
+const agentsPaneID = "agents" as const;
+
+type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
+
+function isDashboardPaneID(id: string | null): id is DashboardPaneID {
+  return id === tasksPaneID || id === agentsPaneID;
+}
 
 interface AppProps {
   initialToken?: string;
@@ -437,14 +445,14 @@ export function App({
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
+  const [selectedDashboardIDs, setSelectedDashboardIDs] = useState<DashboardPaneID[]>([]);
+  const [focusedPaneID, setFocusedPaneID] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState("");
   const [selectedTaskID, setSelectedTaskID] = useState<string | null>(null);
   const [taskRefinement, setTaskRefinement] = useState<TaskRefinement | null>(null);
   const [taskRefining, setTaskRefining] = useState(false);
-  const [agentsOpen, setAgentsOpen] = useState(false);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
   const [agentSummariesError, setAgentSummariesError] = useState("");
@@ -508,6 +516,8 @@ export function App({
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
+  const tasksOpen = selectedDashboardIDs.includes(tasksPaneID);
+  const agentsOpen = selectedDashboardIDs.includes(agentsPaneID);
   const commandInputRef = useRef<HTMLInputElement>(null);
   const commandListRef = useRef<HTMLDivElement>(null);
   const scrollCommandSelectionRef = useRef(false);
@@ -545,6 +555,7 @@ export function App({
     expiredFilterDeselectIDsRef.current ??= new Set();
     pendingAttentionAcknowledgementsRef.current ??= new Set();
   }, []);
+
   const currentSelectionStateRef = useRef({
     selectedIDs,
     pinnedIDs,
@@ -1752,6 +1763,7 @@ export function App({
     checkboxPin?: boolean,
   ) {
     markLocalSelectionMutation();
+    if (!multiple) setSelectedDashboardIDs([]);
     let nextPinnedIDs = pinnedIDs;
     const pinned = pinnedIDs.includes(id);
     if (checkboxPin !== undefined && pinned) {
@@ -1767,6 +1779,7 @@ export function App({
       setPinnedIDs(nextPinnedIDs);
       setSelectedIDs(nextIDs);
       setFocusedID(id);
+      setFocusedPaneID(null);
       writeWorkspaceToURL(
         nextIDs,
         nextPinnedIDs,
@@ -1778,6 +1791,7 @@ export function App({
     }
     if (checkboxPin === undefined && multiple && pinned) {
       setFocusedID(id);
+      setFocusedPaneID(null);
       writeWorkspaceToURL(
         selectedIDs,
         pinnedIDs,
@@ -1885,6 +1899,7 @@ export function App({
         setPinnedCwdFilters(nextPinnedCwdFilters);
         setSelectedIDs(nextIDs);
         setFocusedID(nextFocus);
+        setFocusedPaneID(null);
         writeWorkspaceToURL(
           nextIDs,
           nextPinnedIDs,
@@ -1911,6 +1926,7 @@ export function App({
         : id;
     setSelectedIDs(nextIDs);
     setFocusedID(nextFocus);
+    setFocusedPaneID(null);
     writeWorkspaceToURL(
       nextIDs,
       nextPinnedIDs,
@@ -2200,7 +2216,16 @@ export function App({
   function focusPane(id: string) {
     markLocalSelectionMutation();
     setFocusedID(id);
+    setFocusedPaneID(null);
     writeWorkspaceToURL(selectedIDs, pinnedIDs, id, statusFilters, cwdFilters);
+  }
+
+  function focusWorkspacePane(id: string) {
+    if (isDashboardPaneID(id)) {
+      setFocusedPaneID(id);
+      return;
+    }
+    focusPane(id);
   }
 
   function authenticate(event: FormEvent) {
@@ -2254,8 +2279,10 @@ export function App({
         }
       }
       setSessions((current) => [...(current ?? []), created]);
+      if (!split) setSelectedDashboardIDs([]);
       if (serverSelection) {
         applyServerSelection(serverSelection, "push");
+        setFocusedPaneID(null);
         setRequestError("");
         return;
       }
@@ -2278,6 +2305,7 @@ export function App({
           ];
       setSelectedIDs(nextIDs);
       setFocusedID(created.id);
+      setFocusedPaneID(null);
       setStatusFilters(split ? statusFilters : pinnedStatusFilters);
       setCwdFilters(split ? cwdFilters : pinnedCwdFilters);
       filterSelectedIDsRef.current.clear();
@@ -2534,14 +2562,90 @@ export function App({
     setSettingsOpen(false);
   }
 
-  function openTasksWorkspace() {
-    setAgentsOpen(false);
-    setTasksOpen(true);
+  function selectDashboardPane(id: DashboardPaneID, multiple: boolean) {
+    if (!multiple) {
+      const pinnedIDSet = new Set(pinnedIDs);
+      const pinnedFilterMatches: string[] = [];
+      for (const session of sessions ?? []) {
+        if (
+          matchesWorkspaceFilter(
+            session,
+            pinnedStatusFilters,
+            pinnedCwdFilters,
+          )
+        ) {
+          pinnedFilterMatches.push(session.id);
+        }
+      }
+      const nextIDs = [
+        ...new Set([
+          ...selectedIDs.filter((item) => pinnedIDSet.has(item)),
+          ...pinnedFilterMatches,
+        ]),
+      ];
+      markLocalSelectionMutation();
+      setSelectedDashboardIDs([id]);
+      setStatusFilters(pinnedStatusFilters);
+      setCwdFilters(pinnedCwdFilters);
+      filterSelectedIDsRef.current = new Set(
+        pinnedFilterMatches.filter((item) => !pinnedIDSet.has(item)),
+      );
+      decomposedStatusFiltersRef.current.clear();
+      setSelectedIDs(nextIDs);
+      setFocusedID(null);
+      setFocusedPaneID(id);
+      writeWorkspaceToURL(
+        nextIDs,
+        pinnedIDs,
+        null,
+        pinnedStatusFilters,
+        pinnedCwdFilters,
+        "push",
+        pinnedStatusFilters,
+        pinnedCwdFilters,
+      );
+      return;
+    }
+
+    const alreadySelected = selectedDashboardIDs.includes(id);
+    const nextDashboardIDs = alreadySelected
+      ? selectedDashboardIDs.filter((item) => item !== id)
+      : [...selectedDashboardIDs, id];
+    if (nextDashboardIDs.length === 0 && selectedIDs.length === 0) return;
+
+    const currentFocus = focusedPaneID ?? focusedID;
+    let nextFocus = currentFocus;
+    if (!alreadySelected) {
+      nextFocus = id;
+    } else if (nextFocus === id) {
+      nextFocus = focusedID && selectedIDs.includes(focusedID)
+        ? focusedID
+        : nextDashboardIDs[0] ?? null;
+    }
+    const nextTerminalFocus = isDashboardPaneID(nextFocus)
+      ? focusedID
+      : nextFocus;
+    if (nextTerminalFocus !== focusedID) {
+      markLocalSelectionMutation();
+      setFocusedID(nextTerminalFocus);
+      writeWorkspaceToURL(
+        selectedIDs,
+        pinnedIDs,
+        nextTerminalFocus,
+        statusFilters,
+        cwdFilters,
+      );
+    }
+    setSelectedDashboardIDs(nextDashboardIDs);
+    setFocusedPaneID(isDashboardPaneID(nextFocus) ? nextFocus : null);
   }
 
-  function openAgentsWorkspace() {
-    setTasksOpen(false);
-    setAgentsOpen(true);
+  function openTasksWorkspace(multiple = false) {
+    selectDashboardPane(tasksPaneID, multiple);
+  }
+
+  function openAgentsWorkspace(multiple = false) {
+    selectDashboardPane(agentsPaneID, multiple);
   }
 
   function selectTask(id: string) {
@@ -2633,13 +2737,11 @@ export function App({
   }
 
   function openTaskTerminal(id: string) {
-    setTasksOpen(false);
     setTaskRefinement(null);
     selectSession(id, false);
   }
 
   function openAgentTerminal(id: string) {
-    setAgentsOpen(false);
     selectSession(id, false);
   }
 
@@ -2687,7 +2789,91 @@ export function App({
       return result;
     }, []);
   const mountedPanes = [...panes, ...cachedPanes];
-  const selected = sessionsByID.get(focusedID ?? "") ?? panes[0];
+  const activePaneID = focusedPaneID ?? focusedID;
+  const dashboardPanes: PaneCarouselItem[] = [];
+  if (tasksOpen) {
+    dashboardPanes.push({
+      id: tasksPaneID,
+      label: "Tasks pane",
+      content: (
+        <TasksView
+          tasks={tasks}
+          sessions={sessions}
+          selectedTaskID={selectedTaskID}
+          loading={tasksLoading}
+          error={tasksError}
+          refinement={taskRefinement}
+          refining={taskRefining}
+          onSelectTask={selectTask}
+          onCreateTask={createTask}
+          onUpdateTask={updateTask}
+          onDeleteTask={deleteTask}
+          onStartAgent={startTaskAgent}
+          onOpenTerminal={openTaskTerminal}
+          onRefineTask={refineTask}
+          onApplyRefinement={applyTaskRefinement}
+          onPromptTask={promptTaskAgent}
+        />
+      ),
+    });
+  }
+  if (agentsOpen) {
+    dashboardPanes.push({
+      id: agentsPaneID,
+      label: "Agents pane",
+      content: (
+        <AgentsView
+          summaries={agentSummaries}
+          sessions={sessions}
+          loading={agentSummariesLoading}
+          error={agentSummariesError}
+          onSelectSession={openAgentTerminal}
+        />
+      ),
+    });
+  }
+  const terminalPanes: PaneCarouselItem[] = api
+    ? mountedPanes.map((pane) => ({
+      id: pane.id,
+      label: `${pane.name} pane`,
+      cached: !selectedIDSet.has(pane.id),
+      content: (
+        <TerminalPane
+          session={pane}
+          api={api!}
+          active={activePaneID === pane.id}
+          layoutVersion={panes.length}
+          tabShortcut={settings.paneTabShortcut}
+          agentLogFontSize={previewSettings.agentLogFontSize}
+          annotationRevision={
+            syncSelection && syncEvents ? annotationRevision : null
+          }
+          onDeselect={() => selectSession(pane.id, true, true, false)}
+          renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
+            renderTerminal(
+              pane,
+              api!,
+              terminalActive,
+              paneLayoutVersion,
+              handleConnectionChange,
+              reconnectSignals[pane.id] ?? 0,
+              previewSettings.terminalFontFamily,
+              previewSettings.terminalFontSize,
+              settings.terminalHistoryLimit,
+              sourceVisible,
+              previewSettings.terminalLineHeight,
+              previewSettings.terminalCursorStyle,
+              previewSettings.terminalCursorBlink,
+              previewSettings.terminalScrollSensitivity,
+              previewSettings.terminalOptionAsAlt,
+            )
+          }
+        />
+      ),
+    }))
+    : [];
+  const workspacePanes = [...dashboardPanes, ...terminalPanes];
+  const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
   const summaryByTerminalID = new Map(
     agentSummaries.map((summary) => [summary.terminalId, summary]),
   );
@@ -2898,44 +3084,17 @@ export function App({
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
         tasksOpen={tasksOpen}
+        focusedPaneID={focusedPaneID}
         taskCount={taskCount}
         onOpenTasks={openTasksWorkspace}
         agentsOpen={agentsOpen}
         agentSummaryCount={agentSummaryCount}
         onOpenAgents={openAgentsWorkspace}
       />
-      {tasksOpen ? (
-        <TasksView
-          tasks={tasks}
-          sessions={sessions}
-          selectedTaskID={selectedTaskID}
-          loading={tasksLoading}
-          error={tasksError}
-          refinement={taskRefinement}
-          refining={taskRefining}
-          onSelectTask={selectTask}
-          onCreateTask={createTask}
-          onUpdateTask={updateTask}
-          onDeleteTask={deleteTask}
-          onStartAgent={startTaskAgent}
-          onOpenTerminal={openTaskTerminal}
-          onRefineTask={refineTask}
-          onApplyRefinement={applyTaskRefinement}
-          onPromptTask={promptTaskAgent}
-        />
-      ) : agentsOpen ? (
-        <AgentsView
-          summaries={agentSummaries}
-          sessions={sessions}
-          loading={agentSummariesLoading}
-          error={agentSummariesError}
-          onSelectSession={openAgentTerminal}
-        />
-      ) : (
-        <section
-          className="terminal-stage"
-          data-multiple={panes.length > 1}
-        >
+      <section
+        className="terminal-stage"
+        data-multiple={workspacePanes.length > 1}
+      >
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
           <div
@@ -2968,59 +3127,21 @@ export function App({
             Terminal exited{exitedCount > 1 ? ` · ${exitedCount} panes` : ""}
           </div>
         ) : null}
-        {mountedPanes.length > 0 && api ? (
+        {workspacePanes.length > 0 ? (
           <>
             <PaneCarousel
-              focusedID={focusedID}
-              onFocus={focusPane}
-              panes={mountedPanes.map((pane) => ({
-                id: pane.id,
-                label: `${pane.name} pane`,
-                cached: !selectedIDSet.has(pane.id),
-                content: (
-                  <TerminalPane
-                    session={pane}
-                    api={api}
-                    active={focusedID === pane.id}
-                    layoutVersion={panes.length}
-                    tabShortcut={settings.paneTabShortcut}
-                    agentLogFontSize={previewSettings.agentLogFontSize}
-                    annotationRevision={
-                      syncSelection && syncEvents ? annotationRevision : null
-                    }
-                    onDeselect={() => selectSession(pane.id, true, true, false)}
-                    renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
-                      renderTerminal(
-                        pane,
-                        api,
-                        terminalActive,
-                        paneLayoutVersion,
-                        handleConnectionChange,
-                        reconnectSignals[pane.id] ?? 0,
-                        previewSettings.terminalFontFamily,
-                        previewSettings.terminalFontSize,
-                        settings.terminalHistoryLimit,
-                        sourceVisible,
-                        previewSettings.terminalLineHeight,
-                        previewSettings.terminalCursorStyle,
-                        previewSettings.terminalCursorBlink,
-                        previewSettings.terminalScrollSensitivity,
-                        previewSettings.terminalOptionAsAlt,
-                      )
-                    }
-                  />
-                ),
-              }))}
+              focusedID={activePaneID}
+              onFocus={focusWorkspacePane}
+              panes={workspacePanes}
             />
-            {panes.length === 0 && (
+            {panes.length === 0 && selectedDashboardIDs.length === 0 && (
               emptyState
             )}
           </>
         ) : (
           emptyState
         )}
-        </section>
-      )}
+      </section>
       {prefixActive && (
         <div className="prefix-command-guide" role="status" aria-label="Prefix commands">
           <span><kbd>c</kbd>: Create a terminal</span>

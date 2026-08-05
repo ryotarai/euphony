@@ -66,11 +66,12 @@ interface SessionNavigationProps {
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
   tasksOpen?: boolean;
+  focusedPaneID?: string | null;
   taskCount?: number;
-  onOpenTasks?(): void;
+  onOpenTasks?(multiple?: boolean): void;
   agentsOpen?: boolean;
   agentSummaryCount?: number;
-  onOpenAgents?(): void;
+  onOpenAgents?(multiple?: boolean): void;
 }
 
 function activity(session: Session) {
@@ -294,6 +295,13 @@ function SessionNavigationContent({
   const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
+  const mobileTitle = props.focusedPaneID === "tasks"
+    ? "Tasks"
+    : props.focusedPaneID === "agents"
+      ? "Agents"
+      : selected
+        ? sessionLabel(selected)
+        : "Euphony";
   const [terminalTree, setTerminalTree] = useState<HTMLDivElement | null>(null);
   const [hasTerminalTreeOverflowBelow, setHasTerminalTreeOverflowBelow] =
     useState(false);
@@ -392,14 +400,16 @@ function SessionNavigationContent({
     props.onOpenSettings?.();
   };
 
-  const openAgents = () => {
-    if (isMobile) setOpenMobile(false);
-    props.onOpenAgents?.();
+  const openAgents = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const multiple = event.metaKey || event.ctrlKey;
+    if (isMobile && !multiple) setOpenMobile(false);
+    props.onOpenAgents?.(multiple);
   };
 
-  const openTasks = () => {
-    if (isMobile) setOpenMobile(false);
-    props.onOpenTasks?.();
+  const openTasks = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const multiple = event.metaKey || event.ctrlKey;
+    if (isMobile && !multiple) setOpenMobile(false);
+    props.onOpenTasks?.(multiple);
   };
 
   return (
@@ -427,12 +437,24 @@ function SessionNavigationContent({
           onScroll={updateTerminalTreeOverflow}
         >
           <SidebarMenu className="sidebar-primary-navigation">
-            <SidebarMenuItem>
+            <SidebarMenuItem className="workspace-channel">
+              <Checkbox
+                className="pane-checkbox workspace-pane-checkbox"
+                aria-label="Include Tasks in split"
+                checked={props.tasksOpen ?? false}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onOpenTasks?.(true);
+                }}
+              />
               <SidebarMenuButton
+                className="workspace-select"
                 type="button"
                 tooltip="Tasks"
-                isActive={props.tasksOpen}
-                aria-current={props.tasksOpen ? "page" : undefined}
+                isActive={props.tasksOpen && props.focusedPaneID === "tasks"}
+                aria-current={
+                  props.tasksOpen && props.focusedPaneID === "tasks" ? "page" : undefined
+                }
                 aria-label="Tasks"
                 onClick={openTasks}
               >
@@ -445,12 +467,24 @@ function SessionNavigationContent({
                 )}
               </SidebarMenuButton>
             </SidebarMenuItem>
-            <SidebarMenuItem>
+            <SidebarMenuItem className="workspace-channel">
+              <Checkbox
+                className="pane-checkbox workspace-pane-checkbox"
+                aria-label="Include Agents in split"
+                checked={props.agentsOpen ?? false}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onOpenAgents?.(true);
+                }}
+              />
               <SidebarMenuButton
+                className="workspace-select"
                 type="button"
                 tooltip="Agents"
-                isActive={props.agentsOpen}
-                aria-current={props.agentsOpen ? "page" : undefined}
+                isActive={props.agentsOpen && props.focusedPaneID === "agents"}
+                aria-current={
+                  props.agentsOpen && props.focusedPaneID === "agents" ? "page" : undefined
+                }
                 aria-label="Agents"
                 onClick={openAgents}
               >
@@ -524,7 +558,7 @@ function SessionNavigationContent({
           className="menu-button"
           aria-label="Open terminal menu"
         />
-        <span>{selected ? sessionLabel(selected) : "Euphony"}</span>
+        <span>{mobileTitle}</span>
       </header>
     </>
   );

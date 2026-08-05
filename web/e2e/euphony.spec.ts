@@ -308,6 +308,27 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
   await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
 });
 
+test("treats dashboard panes like terminals and supports split checkboxes", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Terminal", "/tmp");
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
+  const tasksCheckbox = page.getByRole("checkbox", { name: "Include Tasks in split" });
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+  await expect(tasksCheckbox).toBeChecked();
+
+  await page.getByRole("button", { name: "Select Terminal" }).click();
+  await expect(page.getByRole("heading", { name: "Tasks" })).toHaveCount(0);
+  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
+
+  await tasksCheckbox.click();
+  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
+  await expect(tasksCheckbox).toBeChecked();
+});
+
 test("creates, refines, starts, and communicates through a task", async ({ page }) => {
   await clearSessions(page);
   await clearTasks(page);

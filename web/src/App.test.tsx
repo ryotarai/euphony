@@ -585,6 +585,71 @@ test("opens the Tasks workspace, loads a task, and opens its linked terminal", a
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
 });
 
+test("switches from a selected workspace pane back to a terminal", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/tasks") return jsonResponse([]);
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Tasks/ }));
+  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "Include Tasks in split" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+
+  await user.click(screen.getByRole("button", { name: "Select Codex" }));
+  expect(screen.queryByRole("heading", { name: "Tasks" })).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  expect(fetchMock).not.toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+});
+
+test("includes a dashboard pane beside a terminal through its checkbox", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/tasks") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("checkbox", { name: "Include Tasks in split" }));
+  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
+  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "Include Tasks in split" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+
+  await user.click(screen.getByRole("checkbox", { name: "Include Tasks in split" }));
+  expect(screen.queryByRole("heading", { name: "Tasks" })).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+});
+
 test("acknowledges a need-attention terminal when it receives focus", async () => {
   const attention = { ...secondRunningSession, needsAttention: true };
   const fetchMock = vi.spyOn(globalThis, "fetch");
