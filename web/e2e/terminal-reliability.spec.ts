@@ -142,9 +142,23 @@ async function terminalGrid(page: Page) {
   }));
 }
 
+async function disableWebgl(page: Page) {
+  await page.addInitScript(() => {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: function (this: HTMLCanvasElement, contextID: string, ...args: unknown[]) {
+        if (contextID === "webgl2") return null;
+        return Reflect.apply(originalGetContext, this, [contextID, ...args]);
+      },
+    });
+  });
+}
+
 test("renders a visible terminal cursor without an idle animation", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Static cursor");
+  await disableWebgl(page);
   await page.goto("/?token=test-token");
 
   const pane = page.getByLabel("Static cursor pane", { exact: true });
@@ -163,6 +177,7 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
 test("opens OSC 8 terminal links without a confirmation dialog", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Link terminal");
+  await disableWebgl(page);
   await page.goto("/?token=test-token");
 
   const terminal = page.getByLabel("Link terminal terminal", { exact: true });
@@ -542,6 +557,7 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
 test("keeps table columns aligned for full-width Japanese punctuation", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Table");
+  await disableWebgl(page);
   await page.goto("/?token=test-token");
   await page.getByRole("button", { name: "Select Table" }).click();
 

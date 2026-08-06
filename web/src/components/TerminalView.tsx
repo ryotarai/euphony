@@ -22,6 +22,7 @@ import {
 import type { Session, TerminalCursorStyle } from "../types";
 import {
   fitTerminalIfVisible,
+  loadWebglRenderer,
   openTerminalLink,
   refreshTerminalIfVisible,
   terminalElementIsVisible,
@@ -127,6 +128,7 @@ function defaultTerminal(
     },
     open: (element) => {
       terminal.open(element);
+      loadWebglRenderer(terminal);
     },
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
