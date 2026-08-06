@@ -96,6 +96,44 @@ interface TerminalGridGeometry {
 
 const terminalViewportGutter = 14;
 const maxQueuedInitialTerminalBytes = 2 * 1024 * 1024;
+// Coalesce PTY bursts without making terminal updates feel less responsive than roughly 25 fps.
+const terminalOutputBatchWindowMs = 40;
+
+function createTerminalOutputBatcher(write: (data: Uint8Array) => void) {
+  let pending: Uint8Array[] = [];
+  let pendingBytes = 0;
+  let timer: number | undefined;
+
+  const flush = () => {
+    timer = undefined;
+    if (pendingBytes === 0) return;
+    const data = new Uint8Array(pendingBytes);
+    let offset = 0;
+    for (const chunk of pending) {
+      data.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    pending = [];
+    pendingBytes = 0;
+    write(data);
+  };
+
+  return {
+    write(data: Uint8Array) {
+      if (data.byteLength === 0) return;
+      pending.push(data);
+      pendingBytes += data.byteLength;
+      if (timer === undefined) {
+        timer = window.setTimeout(flush, terminalOutputBatchWindowMs);
+      }
+    },
+    flush,
+    dispose() {
+      if (timer !== undefined) window.clearTimeout(timer);
+      flush();
+    },
+  };
+}
 
 function defaultTerminal(
   fontFamily: string,
@@ -309,6 +347,7 @@ function useTerminalView({
       scrollSensitivity,
       optionAsAlt,
     );
+    const outputBatcher = createTerminalOutputBatcher((data) => terminal.write(data));
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
@@ -498,7 +537,7 @@ function useTerminalView({
             try {
               const data = decodeTerminalData(message.data);
               if (acceptedSizeReceived) {
-                terminal.write(data);
+                outputBatcher.write(data);
               } else {
                 queueInitialData(data, false);
               }
@@ -514,6 +553,7 @@ function useTerminalView({
             message.rows! >= 1 &&
             message.rows! <= 1000
           ) {
+            outputBatcher.flush();
             terminal.resize?.(message.cols!, message.rows!);
             refreshTerminalIfVisible(host, terminal);
             const acceptedSize = { cols: message.cols!, rows: message.rows! };
@@ -540,9 +580,10 @@ function useTerminalView({
               if (entry.history) {
                 writeHistory(entry.data);
               } else {
-                terminal.write(entry.data);
+                outputBatcher.write(entry.data);
               }
             }
+            outputBatcher.flush();
             if (
               historyStreamComplete &&
               pendingHistoryWrites === 0 &&
@@ -551,9 +592,11 @@ function useTerminalView({
               replayingHistory = false;
             }
           } else if (message.type === "exit") {
+            outputBatcher.flush();
             setConnectionState("exited");
             terminal.write(`\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`);
           } else if (message.type === "error" && message.message) {
+            outputBatcher.flush();
             terminal.write(`\r\n\x1b[31m[${message.message}]\x1b[0m\r\n`);
           }
         };
@@ -584,6 +627,7 @@ function useTerminalView({
       if (gridMeasurementFrame !== undefined) {
         window.cancelAnimationFrame(gridMeasurementFrame);
       }
+      outputBatcher.dispose();
       removeSocketListeners?.();
       removeSocketListeners = undefined;
       socket?.close();

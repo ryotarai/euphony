@@ -69,7 +69,7 @@ export function terminalOptions(
   optionAsAlt = defaultTerminalOptionAsAlt,
 ): ConstructorParameters<typeof Terminal>[0] {
   return {
-    allowTransparency: true,
+    allowTransparency: false,
     fontFamily,
     fontSize,
     lineHeight,
