@@ -427,6 +427,52 @@ test("batches burst terminal output without changing byte order", async () => {
   expect(writes).toEqual([new Uint8Array([0xe3, 0x81, 0x82])]);
 });
 
+test("renders terminal echo immediately after user input", async () => {
+  const socket = new FakeSocket();
+  const writes: Array<string | Uint8Array> = [];
+  let onData: ((data: string) => void) | undefined;
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: (data) => writes.push(data),
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => ({ cols: 120, rows: 40 }),
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: (callback) => {
+      onData = callback;
+      return () => undefined;
+    },
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
+  } as unknown as ApiClient;
+  const createSocket = vi.fn(() => socket);
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={createSocket}
+    />,
+  );
+  await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(1));
+
+  vi.useFakeTimers();
+  act(() => {
+    socket.receive({ type: "resize", cols: 120, rows: 40 });
+    onData?.("a");
+    socket.receive({ type: "output", data: encodeTerminalData("a") });
+  });
+
+  expect(writes.map(terminalText)).toEqual(["a"]);
+});
+
 test("centers the accepted shared grid without scaling it", async () => {
   const socket = new FakeSocket();
   let screenElement: HTMLDivElement | undefined;
