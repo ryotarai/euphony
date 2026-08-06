@@ -156,6 +156,9 @@ func TestMarkAgentSummaryReadEndpointUpdatesAndPublishesSummary(t *testing.T) {
 	if missingError.Code != "agent_summary_not_found" {
 		t.Fatalf("missing error code = %q, want agent_summary_not_found", missingError.Code)
 	}
+	if missingError.Message != "The agent summary does not exist." {
+		t.Fatalf("missing error message = %q, want agent summary not found message", missingError.Message)
+	}
 }
 
 type blockingSummaryRunner struct{}
