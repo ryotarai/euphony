@@ -192,6 +192,70 @@ func TestInstallRejectsInvalidHooksWithoutOverwritingSettings(t *testing.T) {
 	}
 }
 
+func TestInspectReportsLegacyTemporaryEuphonyHook(t *testing.T) {
+	config := setupTestConfig(t, "claude")
+	if _, err := Install(config); err != nil {
+		t.Fatalf("initial Install() error = %v", err)
+	}
+
+	settingsPath := filepath.Join(config.ClaudeDir, "settings.json")
+	data := string(readFile(t, settingsPath))
+	data = strings.Replace(data, `"SessionEnd": [`, `"SessionEnd": [{
+              "hooks": [{
+                "type": "command",
+                "command": "'/private/tmp/euphony-update-skill' hook claude idle"
+              }]
+            },`, 1)
+	if !strings.Contains(data, "euphony-update-skill") {
+		t.Fatal("failed to add legacy hook fixture")
+	}
+	if err := os.WriteFile(settingsPath, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := Inspect(config)
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	if got := strings.Join(status.NeedsSetup, ","); got != "claude" {
+		t.Fatalf("NeedsSetup = %q, want claude", got)
+	}
+}
+
+func TestInstallRemovesLegacyTemporaryEuphonyHooks(t *testing.T) {
+	config := setupTestConfig(t, "claude")
+	if err := os.MkdirAll(config.ClaudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(config.ClaudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{
+  "hooks": {
+    "SessionEnd": [{
+      "hooks": [
+        {"type": "command", "command": "existing"},
+        {"type": "command", "command": "'/tmp/euphony-update-skill' hook claude idle"}
+      ]
+    }]
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Install(config); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	data := readFile(t, settingsPath)
+	if strings.Contains(string(data), "euphony-update-skill") {
+		t.Fatalf("legacy hook remains in settings: %s", data)
+	}
+	if !strings.Contains(string(data), "existing") {
+		t.Fatalf("existing hook was removed: %s", data)
+	}
+	if !strings.Contains(string(data), "/opt/euphony/bin/euphony' hook claude idle") {
+		t.Fatalf("current Euphony hook was not installed: %s", data)
+	}
+}
+
 func TestInstallReplacesCompactCodexHooksAssignment(t *testing.T) {
 	for _, existing := range []string{
 		"hooks=false",

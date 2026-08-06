@@ -13,7 +13,7 @@
 - Communicate with users in Japanese; write code and repository materials in English.
 - All implementation changes stay in `tmp/worktrees/agents-pane` until committed and merged.
 - The provider values are exactly `claude` and `codex`.
-- Claude runs `claude -p --model haiku --effort none`; Codex runs `codex exec --model gpt-5.6-low --effort none`.
+- Claude runs `claude -p --model haiku --effort low`; Codex runs `codex -c model_reasoning_effort=low -c service_tier=standard exec --model gpt-5.6-luna`.
 - Running summaries refresh every five minutes and on status changes; action-required summaries refresh when entering or changing `waiting`/`blocked`.
 - Transcript and terminal input are bounded before they reach the provider.
 - Existing terminal selection, URL state, sidebar pin/filter behavior, and settings are preserved.
@@ -304,4 +304,3 @@ the minimal fix, rerun the affected command, and commit with a focused message.
 After fresh verification, return to the base worktree, fast-forward or merge
 `feat/agents-pane`, and report the merge commit and verification output. Keep
 unrelated base-worktree changes untouched.
-

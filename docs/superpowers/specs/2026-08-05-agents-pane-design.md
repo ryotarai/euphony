@@ -112,8 +112,8 @@ included in the prompt. The prompt explicitly asks for a single JSON object:
 For `running`, `action` is empty. For `waiting` and `blocked`, `action` is
 required. The command runner uses these exact invocations:
 
-- Claude: `claude -p --model haiku --effort none`
-- Codex: `codex exec --model gpt-5.6-low --effort none`
+- Claude: `claude -p --model haiku --effort low`
+- Codex: `codex -c model_reasoning_effort=low -c service_tier=standard exec --model gpt-5.6-luna`
 
 The prompt is sent on stdin. A 90-second context deadline, bounded output,
 JSON extraction, and one-line fallback parsing prevent a misbehaving CLI from
@@ -164,4 +164,3 @@ The app then opens that terminal and returns to the terminal workspace.
 - Run the full Go suite, the web unit suite, web typecheck/build, and the
   existing Playwright suite. A Playwright dashboard test uses a stubbed API
   response and does not invoke a real provider CLI.
-

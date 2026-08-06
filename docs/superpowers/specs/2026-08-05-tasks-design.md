@@ -59,7 +59,7 @@ The refinement response is:
 }
 ```
 
-AI commands use the configured provider and the existing fixed command settings: Claude runs Haiku with `--effort none`; Codex runs `gpt-5.6-low` with `--effort none`. Refinement output is bounded, parsed as JSON, validated against the task enums, and rejected if required fields are missing.
+AI commands use the configured provider and fixed command settings: Claude runs Haiku with `--effort low`; Codex runs `gpt-5.6-luna` with `-c model_reasoning_effort=low -c service_tier=standard`. Refinement output is bounded, parsed as JSON, validated against the task enums, and rejected if required fields are missing.
 
 Task lifecycle changes publish `task.created`, `task.updated`, `task.deleted`, and `task.update.created` through the existing event stream. A task service subscribes to `agent.updated`, `agent.summary.updated`, and `terminal.deleted` so agent activity is persisted without browser polling. When a linked terminal disappears, the task remains but its terminal link is cleared and a system update explains why.
 

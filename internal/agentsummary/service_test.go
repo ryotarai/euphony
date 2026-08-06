@@ -39,14 +39,14 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 	}
 }
 
-func TestCommandSpecUsesRequestedProviderModelsAndEffort(t *testing.T) {
+func TestCommandSpecUsesCurrentProviderArguments(t *testing.T) {
 	tests := []struct {
 		provider string
 		name     string
 		args     []string
 	}{
-		{provider: "claude", name: "claude", args: []string{"-p", "--model", "haiku", "--effort", "none"}},
-		{provider: "codex", name: "codex", args: []string{"exec", "--model", "gpt-5.6-low", "--effort", "none"}},
+		{provider: "claude", name: "claude", args: []string{"-p", "--model", "haiku", "--effort", "low"}},
+		{provider: "codex", name: "codex", args: []string{"-c", "model_reasoning_effort=low", "-c", "service_tier=standard", "exec", "--model", "gpt-5.6-luna"}},
 	}
 	for _, test := range tests {
 		name, args, err := commandSpec(test.provider)

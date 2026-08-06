@@ -45,8 +45,8 @@ func TestCommandRunnerRefineUsesRequestedProviderCommand(t *testing.T) {
 		name     string
 		args     []string
 	}{
-		{provider: "claude", name: "claude", args: []string{"-p", "--model", "haiku", "--effort", "none"}},
-		{provider: "codex", name: "codex", args: []string{"exec", "--model", "gpt-5.6-low", "--effort", "none"}},
+		{provider: "claude", name: "claude", args: []string{"-p", "--model", "haiku", "--effort", "low"}},
+		{provider: "codex", name: "codex", args: []string{"-c", "model_reasoning_effort=low", "-c", "service_tier=standard", "exec", "--model", "gpt-5.6-luna"}},
 	} {
 		var gotName string
 		var gotArgs []string

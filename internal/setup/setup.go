@@ -35,6 +35,8 @@ type hookSpec struct {
 	status string
 }
 
+const legacyTemporaryHookName = "euphony-update-skill"
+
 var agentHooks = map[string][]hookSpec{
 	"codex": {
 		{event: "SessionStart", status: "waiting"},
@@ -118,6 +120,9 @@ func agentNeedsSetup(config Config, agent string) (bool, error) {
 	if !exists {
 		return true, nil
 	}
+	if containsLegacyTemporaryHook(hooks) {
+		return true, nil
+	}
 	for _, spec := range agentHooks[agent] {
 		command := shellQuote(config.Executable) + " hook " + agent + " " + spec.status
 		entries, _ := hooks[spec.event].([]any)
@@ -175,6 +180,7 @@ func installAgent(config Config, agent string) error {
 		hooks = make(map[string]any)
 		document["hooks"] = hooks
 	}
+	removeLegacyTemporaryHooks(hooks)
 	for _, spec := range agentHooks[agent] {
 		command := shellQuote(config.Executable) + " hook " + agent + " " + spec.status
 		entries, _ := hooks[spec.event].([]any)
@@ -240,6 +246,69 @@ func containsCommand(entries []any, command string) bool {
 		}
 	}
 	return false
+}
+
+func containsLegacyTemporaryHook(hooks map[string]any) bool {
+	for _, value := range hooks {
+		entries, _ := value.([]any)
+		for _, entry := range entries {
+			group, _ := entry.(map[string]any)
+			handlers, _ := group["hooks"].([]any)
+			for _, handler := range handlers {
+				value, _ := handler.(map[string]any)
+				command, _ := value["command"].(string)
+				if strings.Contains(command, legacyTemporaryHookName) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func removeLegacyTemporaryHooks(hooks map[string]any) {
+	for event, value := range hooks {
+		entries, ok := value.([]any)
+		if !ok {
+			continue
+		}
+		keptEntries := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			group, ok := entry.(map[string]any)
+			if !ok {
+				keptEntries = append(keptEntries, entry)
+				continue
+			}
+			handlers, ok := group["hooks"].([]any)
+			if !ok {
+				keptEntries = append(keptEntries, entry)
+				continue
+			}
+			keptHandlers := make([]any, 0, len(handlers))
+			for _, handler := range handlers {
+				value, ok := handler.(map[string]any)
+				if !ok {
+					keptHandlers = append(keptHandlers, handler)
+					continue
+				}
+				command, _ := value["command"].(string)
+				if strings.Contains(command, legacyTemporaryHookName) {
+					continue
+				}
+				keptHandlers = append(keptHandlers, handler)
+			}
+			if len(keptHandlers) == 0 {
+				continue
+			}
+			group["hooks"] = keptHandlers
+			keptEntries = append(keptEntries, group)
+		}
+		if len(keptEntries) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = keptEntries
+		}
+	}
 }
 
 func codexHooksEnabled(path string) (bool, error) {

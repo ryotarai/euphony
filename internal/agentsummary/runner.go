@@ -55,9 +55,9 @@ func NewCommandRunner() *CommandRunner {
 func commandSpec(provider string) (string, []string, error) {
 	switch provider {
 	case "claude":
-		return "claude", []string{"-p", "--model", "haiku", "--effort", "none"}, nil
+		return "claude", []string{"-p", "--model", "haiku", "--effort", "low"}, nil
 	case "codex":
-		return "codex", []string{"exec", "--model", "gpt-5.6-low", "--effort", "none"}, nil
+		return "codex", []string{"-c", "model_reasoning_effort=low", "-c", "service_tier=standard", "exec", "--model", "gpt-5.6-luna"}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported summary provider %q", provider)
 	}
