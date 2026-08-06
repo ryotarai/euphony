@@ -74,11 +74,90 @@ func TestAgentSummariesEndpointReturnsCurrentSummariesInSessionOrder(t *testing.
 	var got []session.AgentSummary
 	decodeResponse(t, response, &got)
 	want := []session.AgentSummary{
-		{TerminalID: first.ID, Provider: "codex", Status: "running", Summary: "Updating the API.", GeneratedAt: time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC)},
-		{TerminalID: second.ID, Provider: "claude", Status: "waiting", Summary: "Waiting for a decision.", Action: "Answer the question.", GeneratedAt: time.Date(2026, 8, 5, 1, 1, 0, 0, time.UTC)},
+		{TerminalID: first.ID, Provider: "codex", Status: "running", Summary: "Updating the API.", Unread: true, GeneratedAt: time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC)},
+		{TerminalID: second.ID, Provider: "claude", Status: "waiting", Summary: "Waiting for a decision.", Action: "Answer the question.", Unread: true, GeneratedAt: time.Date(2026, 8, 5, 1, 1, 0, 0, time.UTC)},
 	}
 	if !jsonEqual(got, want) {
 		t.Fatalf("summaries = %#v, want %#v", got, want)
+	}
+}
+
+func TestMarkAgentSummaryReadEndpointUpdatesAndPublishesSummary(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		SummaryRunner: blockingSummaryRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "codex", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID,
+		Provider:   "codex",
+		Status:     "waiting",
+		Summary:    "Waiting for input.",
+		Action:     "Provide the requested input.",
+		GeneratedAt: time.Date(
+			2026, 8, 5, 1, 0, 0, 0, time.UTC,
+		),
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+
+	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.summary.updated"})
+	defer unsubscribe()
+	path := "/api/agent-summaries/" + terminal.ID + "/read"
+	first := performRequest(t, srv, http.MethodPost, path, "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first POST status = %d, body = %s", first.Code, first.Body.String())
+	}
+	var firstSummary session.AgentSummary
+	decodeResponse(t, first, &firstSummary)
+	if firstSummary.TerminalID != terminal.ID || firstSummary.Unread {
+		t.Fatalf("first response = %#v, want terminal %q read", firstSummary, terminal.ID)
+	}
+
+	select {
+	case event := <-events:
+		got, ok := event.Data.(session.AgentSummary)
+		if event.Type != "agent.summary.updated" || !ok || got.TerminalID != terminal.ID || got.Unread {
+			t.Fatalf("event = %#v, want read summary for terminal %q", event, terminal.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for agent.summary.updated")
+	}
+
+	second := performRequest(t, srv, http.MethodPost, path, "")
+	if second.Code != http.StatusOK {
+		t.Fatalf("second POST status = %d, body = %s", second.Code, second.Body.String())
+	}
+	var secondSummary session.AgentSummary
+	decodeResponse(t, second, &secondSummary)
+	if secondSummary != firstSummary || secondSummary.Unread {
+		t.Fatalf("second response = %#v, want %#v", secondSummary, firstSummary)
+	}
+
+	missing := performRequest(t, srv, http.MethodPost, "/api/agent-summaries/missing/read", "")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing POST status = %d, body = %s", missing.Code, missing.Body.String())
+	}
+	var missingError errorResponse
+	decodeResponse(t, missing, &missingError)
+	if missingError.Code != "agent_summary_not_found" {
+		t.Fatalf("missing error code = %q, want agent_summary_not_found", missingError.Code)
+	}
+	if missingError.Message != "The agent summary does not exist." {
+		t.Fatalf("missing error message = %q, want agent summary not found message", missingError.Message)
 	}
 }
 

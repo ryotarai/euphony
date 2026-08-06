@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("session not found")
-	ErrManagerClosing = errors.New("session manager is closing")
+	ErrNotFound             = errors.New("session not found")
+	ErrAgentSummaryNotFound = errors.New("agent summary not found")
+	ErrManagerClosing       = errors.New("session manager is closing")
 )
 
 type ChangeKind string
@@ -68,6 +69,7 @@ type AgentSummary struct {
 	Status      string    `json:"status"`
 	Summary     string    `json:"summary"`
 	Action      string    `json:"action,omitempty"`
+	Unread      bool      `json:"unread"`
 	GeneratedAt time.Time `json:"generatedAt"`
 	Error       string    `json:"error,omitempty"`
 }
@@ -1737,6 +1739,11 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 		return ErrManagerClosing
 	}
 	previous, hadPrevious := m.agentSummaries[summary.TerminalID]
+	if !hadPrevious || strings.TrimSpace(previous.Action) != strings.TrimSpace(summary.Action) {
+		summary.Unread = true
+	} else {
+		summary.Unread = previous.Unread
+	}
 	m.agentSummaries[summary.TerminalID] = summary
 	store := m.store
 	summaryStore, _ := store.(agentSummaryStore)
@@ -1763,6 +1770,47 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 		return err
 	}
 	return nil
+}
+
+func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (AgentSummary, error) {
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return AgentSummary{}, ErrManagerClosing
+	}
+	previous, ok := m.agentSummaries[terminalID]
+	if !ok {
+		m.mu.Unlock()
+		return AgentSummary{}, ErrAgentSummaryNotFound
+	}
+	if !previous.Unread {
+		m.mu.Unlock()
+		return previous, nil
+	}
+	next := previous
+	next.Unread = false
+	m.agentSummaries[terminalID] = next
+	store := m.store
+	summaryStore, _ := store.(agentSummaryStore)
+	var operation storeOperation
+	if summaryStore != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if summaryStore == nil {
+		return next, nil
+	}
+	if err := m.runStoreOperation(operation, func() error {
+		return summaryStore.MarkAgentSummaryRead(ctx, terminalID)
+	}); err != nil {
+		m.mu.Lock()
+		if current, ok := m.agentSummaries[terminalID]; ok && current == next {
+			m.agentSummaries[terminalID] = previous
+		}
+		m.mu.Unlock()
+		return AgentSummary{}, err
+	}
+	return next, nil
 }
 
 func (m *Manager) DeleteAgentSummary(ctx context.Context, terminalID string) error {

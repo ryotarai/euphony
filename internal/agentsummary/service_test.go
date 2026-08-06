@@ -123,6 +123,90 @@ func TestServiceSchedulesStatusChangesAndRunningTicks(t *testing.T) {
 	}
 }
 
+func TestSaveResultPublishesManagerNormalizedUnreadState(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	metadata, err = manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", AgentSessionID: "thread-1", Status: "waiting",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	events := newTestEvents()
+	service := New(Config{Sessions: manager, Events: events})
+
+	service.saveResult(context.Background(), metadata, session.AgentSummary{
+		TerminalID: metadata.ID,
+		Provider:   "codex",
+		Status:     "waiting",
+		Summary:    "Waiting for input.",
+		Action:     "Provide the requested input.",
+		GeneratedAt: time.Date(
+			2026, 8, 6, 1, 2, 3, 4, time.UTC,
+		),
+	})
+
+	summaries := manager.AgentSummaries()
+	if len(summaries) != 1 || !summaries[0].Unread {
+		t.Fatalf("manager summaries = %#v, want one unread summary", summaries)
+	}
+	published := events.publishedEvents()
+	if len(published) != 1 || published[0].Type != terminalSummaryUpdatedEvent {
+		t.Fatalf("published events = %#v, want one %s event", published, terminalSummaryUpdatedEvent)
+	}
+	got, ok := published[0].Data.(session.AgentSummary)
+	if !ok {
+		t.Fatalf("published event data = %#v, want session.AgentSummary", published[0].Data)
+	}
+	if got.TerminalID != metadata.ID || !got.Unread {
+		t.Fatalf("published summary = %#v, want terminal %q with unread=true", got, metadata.ID)
+	}
+}
+
+func TestSaveResultPublishesUnreadForChangedAction(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	metadata, err = manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", AgentSessionID: "thread-1", Status: "waiting",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if err := manager.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: metadata.ID, Provider: "codex", Status: "waiting",
+		Summary: "Waiting for input.", Action: "Provide the requested input.",
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(initial) error = %v", err)
+	}
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), metadata.ID); err != nil {
+		t.Fatalf("MarkAgentSummaryRead() error = %v", err)
+	}
+	events := newTestEvents()
+	service := New(Config{Sessions: manager, Events: events})
+
+	service.saveResult(context.Background(), metadata, session.AgentSummary{
+		TerminalID: metadata.ID, Provider: "codex", Status: "waiting",
+		Summary: "Waiting for a different input.", Action: "Approve the new file access.",
+	})
+
+	published := events.publishedEvents()
+	if len(published) != 1 {
+		t.Fatalf("published events = %#v, want one event", published)
+	}
+	got, ok := published[0].Data.(session.AgentSummary)
+	if !ok || got.Action != "Approve the new file access." || !got.Unread {
+		t.Fatalf("published summary = %#v, want changed action with unread=true", published[0].Data)
+	}
+}
+
 func TestServiceDiscardsStaleGenerationAndSchedulesCurrentStatus(t *testing.T) {
 	manager := session.NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -212,6 +296,7 @@ func waitForRunnerCalls(t *testing.T, runner *testRunner, want int) {
 type testEvents struct {
 	mu          sync.Mutex
 	subscribers []chan control.Event
+	published   []control.Event
 }
 
 func newTestEvents() *testEvents {
@@ -239,8 +324,18 @@ func (e *testEvents) SubscribeEvents(_ []string) (<-chan control.Event, func()) 
 	}
 }
 
-func (e *testEvents) Publish(_ string, _ any) control.Event {
-	return control.Event{}
+func (e *testEvents) Publish(eventType string, data any) control.Event {
+	event := control.Event{Type: eventType, Data: data, OccurredAt: time.Now()}
+	e.mu.Lock()
+	e.published = append(e.published, event)
+	e.mu.Unlock()
+	return event
+}
+
+func (e *testEvents) publishedEvents() []control.Event {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]control.Event(nil), e.published...)
 }
 
 func (e *testEvents) emit(eventType string, data any) {
