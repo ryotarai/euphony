@@ -954,6 +954,85 @@ test("reloads agent summaries after an SSE reconnect", async () => {
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
 });
 
+test("does not resurrect a deleted summary from a stale reconnect snapshot", async () => {
+  const summary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "The summary that was deleted.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const encoder = new TextEncoder();
+  const eventControllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+  let summaryLoads = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: [runningSession.id],
+          manualTerminalIds: [runningSession.id],
+          pinnedTerminalIds: [],
+          focusedTerminalId: runningSession.id,
+          filters: { statuses: [], cwds: [] },
+          revision: 3,
+        },
+      });
+    }
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventControllers.push(controller);
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    if (input === "/api/agent-summaries") {
+      summaryLoads += 1;
+      return jsonResponse([summary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => {
+    expect(summaryLoads).toBe(1);
+    expect(eventControllers).toHaveLength(1);
+  });
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
+  expect(screen.getByText(summary.summary)).toBeInTheDocument();
+
+  eventControllers[0].enqueue(encoder.encode(JSON.stringify({
+    sequence: 12,
+    occurredAt: "2026-08-05T00:02:00Z",
+    type: "agent.summary.deleted",
+    data: { terminalId: summary.terminalId },
+  }) + "\n"));
+  await waitFor(() => expect(screen.queryByText(summary.summary)).not.toBeInTheDocument());
+  eventControllers[0].close();
+
+  await waitFor(() => expect(summaryLoads).toBe(2), { timeout: 2_000 });
+  expect(screen.queryByText(summary.summary)).not.toBeInTheDocument();
+  eventControllers[eventControllers.length - 1]?.close();
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+});
+
 test("retries agent summaries after an initial load failure when Agents opens", async () => {
   const summary: AgentSummary = {
     terminalId: secondRunningSession.id,
