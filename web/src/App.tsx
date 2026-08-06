@@ -648,8 +648,8 @@ export function App({
       return force ? loadAgentSummaries(false) : loaded;
     }
     const revisionsAtStart = new Map(agentSummaryRevisionsRef.current);
-    let promise: Promise<boolean>;
-    promise = (async () => {
+    const request = { promise: null as Promise<boolean> | null };
+    const promise = (async () => {
       setAgentSummariesLoading(true);
       try {
         const nextSummaries = await api.listAgentSummaries();
@@ -665,12 +665,13 @@ export function App({
         );
         return false;
       } finally {
-        if (agentSummariesInFlightRef.current?.promise === promise) {
+        if (agentSummariesInFlightRef.current?.promise === request.promise) {
           agentSummariesInFlightRef.current = null;
         }
         setAgentSummariesLoading(false);
       }
     })();
+    request.promise = promise;
     agentSummariesInFlightRef.current = { api, promise };
     return promise;
   }, [api, applyAgentSummarySnapshot]);
