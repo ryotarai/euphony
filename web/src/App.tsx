@@ -2908,9 +2908,14 @@ export function App({
     : [];
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
   const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
-  const agentSummaryCount = agentSummaries.filter(
-    (summary) => summary.unread && sessionsByID.has(summary.terminalId),
-  ).length;
+  const summaryByTerminalID = new Map(
+    agentSummaries.map((summary) => [summary.terminalId, summary]),
+  );
+  const agentSummaryCount = sessions.filter((session) => {
+    if (!session.agent) return false;
+    const status = summaryByTerminalID.get(session.id)?.status ?? session.agentStatus;
+    return status === "blocked" || status === "waiting";
+  }).length;
   const taskCount = tasks.filter((task) => task.status !== "done").length;
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")

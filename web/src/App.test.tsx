@@ -562,27 +562,32 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
-test("shows the Agents unread badge after initial app load without opening Agents", async () => {
+test("keeps the Agents sidebar count lifecycle-based while tabs count unread summaries", async () => {
+  const sessions = [
+    { ...runningSession, agentStatus: "waiting" },
+    secondRunningSession,
+  ];
   const readWaitingSummary: AgentSummary = {
     terminalId: runningSession.id,
     provider: "codex",
     status: "waiting",
-    summary: "A read lifecycle summary is not unread.",
+    summary: "A read summary still needs lifecycle attention.",
     generatedAt: "2026-08-05T00:00:00Z",
     unread: false,
   };
-  const unreadRunningSummary: AgentSummary = {
+  const unreadWaitingSummary: AgentSummary = {
     terminalId: secondRunningSession.id,
     provider: "claude",
-    status: "running",
-    summary: "An unread summary is available before opening Agents.",
+    status: "waiting",
+    summary: "An unread waiting summary belongs in the Unread tab.",
     generatedAt: "2026-08-05T00:01:00Z",
     unread: true,
   };
+  const user = userEvent.setup();
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (input === "/api/sessions") return jsonResponse([runningSession, secondRunningSession]);
+    if (input === "/api/sessions") return jsonResponse(sessions);
     if (input === "/api/agent-summaries") {
-      return jsonResponse([readWaitingSummary, unreadRunningSummary]);
+      return jsonResponse([readWaitingSummary, unreadWaitingSummary]);
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -598,55 +603,13 @@ test("shows the Agents unread badge after initial app load without opening Agent
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
   await waitFor(() => {
     const count = screen.getByRole("button", { name: "Agents" })
       .querySelector(".sidebar-attention-count");
-    expect(count).toHaveTextContent("1");
+    expect(count).toHaveTextContent("2");
   });
-  expect(screen.queryByRole("heading", { name: "Agents" })).not.toBeInTheDocument();
-  expect(fetchMock.mock.calls.filter(
-    ([input]) => input === "/api/agent-summaries",
-  )).toHaveLength(1);
-});
-
-test("does not inflate the Agents unread badge for summaries without current sessions", async () => {
-  const linkedUnreadSummary: AgentSummary = {
-    terminalId: runningSession.id,
-    provider: "codex",
-    status: "running",
-    summary: "Only the linked unread summary counts.",
-    generatedAt: "2026-08-05T00:00:00Z",
-    unread: true,
-  };
-  const missingUnreadSummary: AgentSummary = {
-    ...linkedUnreadSummary,
-    terminalId: "missing-terminal",
-    summary: "This unread summary has no current session.",
-  };
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (input === "/api/sessions") return jsonResponse([runningSession]);
-    if (input === "/api/agent-summaries") {
-      return jsonResponse([linkedUnreadSummary, missingUnreadSummary]);
-    }
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  render(
-    <App
-      syncSelection={false}
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      renderTerminal={(session) => (
-        <div aria-label={`${session.name} terminal pane`} />
-      )}
-    />,
-  );
-
-  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await waitFor(() => {
-    const count = screen.getByRole("button", { name: "Agents" })
-      .querySelector(".sidebar-attention-count");
-    expect(count).toHaveTextContent("1");
-  });
+  expect(screen.getByRole("tab", { name: /Unread 1/ })).toBeInTheDocument();
   expect(fetchMock.mock.calls.filter(
     ([input]) => input === "/api/agent-summaries",
   )).toHaveLength(1);
