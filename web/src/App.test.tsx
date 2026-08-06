@@ -615,6 +615,128 @@ test("keeps the Agents sidebar count lifecycle-based while tabs count unread sum
   )).toHaveLength(1);
 });
 
+test("does not let the startup summary snapshot overwrite an earlier SSE update", async () => {
+  const staleSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "The stale startup snapshot.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const liveSummary: AgentSummary = {
+    ...staleSummary,
+    status: "waiting",
+    summary: "The live SSE summary.",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: true,
+  };
+  const selection = {
+    ok: true,
+    result: {
+      terminalIds: [runningSession.id],
+      manualTerminalIds: [runningSession.id],
+      pinnedTerminalIds: [],
+      focusedTerminalId: runningSession.id,
+      filters: { statuses: [], cwds: [] },
+      revision: 3,
+    },
+  };
+  let summaryRequestCount = 0;
+  let releaseSummary: (() => void) | undefined;
+  const summaryGate = new Promise<void>((resolve) => {
+    releaseSummary = resolve;
+  });
+  const encoder = new TextEncoder();
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession, secondRunningSession]);
+    if (input === "/api/v1/selection") return jsonResponse(selection);
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventController = controller;
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    if (input === "/api/agent-summaries") {
+      summaryRequestCount += 1;
+      await summaryGate;
+      return jsonResponse([staleSummary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => expect(summaryRequestCount).toBe(1));
+  await waitFor(() => expect(eventController).toBeDefined());
+  eventController?.enqueue(encoder.encode(JSON.stringify({
+    sequence: 11,
+    occurredAt: "2026-08-05T00:02:00Z",
+    type: "agent.summary.updated",
+    data: liveSummary,
+  }) + "\n"));
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  expect(await screen.findByText(liveSummary.summary)).toBeInTheDocument();
+  releaseSummary?.();
+  await waitFor(() => expect(screen.getByText(liveSummary.summary)).toBeInTheDocument());
+  expect(screen.queryByText(staleSummary.summary)).not.toBeInTheDocument();
+  eventController?.close();
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+});
+
+test("retries the startup summary load when opening Agents after a failure", async () => {
+  const summary: AgentSummary = {
+    terminalId: runningSession.id,
+    provider: "codex",
+    status: "running",
+    summary: "The retry succeeded.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+  };
+  let summaryRequestCount = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/agent-summaries") {
+      summaryRequestCount += 1;
+      if (summaryRequestCount === 1) throw new Error("summary request failed");
+      return jsonResponse([summary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => expect(summaryRequestCount).toBe(1));
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await waitFor(() => expect(summaryRequestCount).toBe(2));
+  expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+});
+
 test("keeps a failed agent read unread while still opening its terminal", async () => {
   const summary: AgentSummary = {
     terminalId: secondRunningSession.id,
@@ -849,6 +971,14 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
   expect(await screen.findByText(unreadSummary.summary)).toBeInTheDocument();
 
   releaseRead?.();
+  await waitFor(() => {
+    expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText(unreadSummary.summary)).toBeInTheDocument();
+    expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
+  });
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
   eventController?.close();
 });

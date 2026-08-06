@@ -468,6 +468,9 @@ export function App({
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
   const [agentSummariesError, setAgentSummariesError] = useState("");
   const agentSummariesLoadedForApiRef = useRef<ApiClient | null>(null);
+  const agentSummariesLoadingForApiRef = useRef<ApiClient | null>(null);
+  const agentSummaryEventRevisionRef = useRef(0);
+  const agentSummaryEventRevisionsRef = useRef(new Map<string, number>());
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
@@ -583,19 +586,34 @@ export function App({
     };
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
-  const loadAgentSummaries = useCallback(async () => {
-    if (!api) return;
+  const loadAgentSummaries = useCallback(async (): Promise<boolean> => {
+    if (!api) return false;
+    const eventRevisionAtStart = agentSummaryEventRevisionRef.current;
     setAgentSummariesLoading(true);
     try {
       const nextSummaries = await api.listAgentSummaries();
-      setAgentSummaries(nextSummaries);
+      setAgentSummaries((current) => {
+        const merged = new Map(nextSummaries.map((summary) => [summary.terminalId, summary]));
+        for (const [terminalId, revision] of agentSummaryEventRevisionsRef.current) {
+          if (revision <= eventRevisionAtStart) continue;
+          const eventSummary = current.find((summary) => summary.terminalId === terminalId);
+          if (eventSummary) {
+            merged.set(terminalId, eventSummary);
+          } else {
+            merged.delete(terminalId);
+          }
+        }
+        return [...merged.values()];
+      });
       setAgentSummariesError("");
+      return true;
     } catch (error) {
       setAgentSummariesError(
         error instanceof Error
           ? error.message
           : "Agent summaries could not be loaded.",
       );
+      return false;
     } finally {
       setAgentSummariesLoading(false);
     }
@@ -1004,10 +1022,19 @@ export function App({
   }, [api, initialSettings]);
 
   useEffect(() => {
-    if (!api || !sessions || agentSummariesLoadedForApiRef.current === api) return;
-    agentSummariesLoadedForApiRef.current = api;
-    void loadAgentSummaries();
-  }, [api, loadAgentSummaries, sessions]);
+    if (
+      !api
+      || !sessions
+      || agentSummariesLoadedForApiRef.current === api
+      || agentSummariesLoadingForApiRef.current === api
+    ) return;
+    agentSummariesLoadingForApiRef.current = api;
+    void loadAgentSummaries().then((loaded) => {
+      if (agentSummariesLoadingForApiRef.current !== api) return;
+      agentSummariesLoadingForApiRef.current = null;
+      if (loaded) agentSummariesLoadedForApiRef.current = api;
+    });
+  }, [agentsOpen, api, loadAgentSummaries, sessions]);
 
   useEffect(() => {
     if (!tasksOpen || !api) return;
@@ -1181,6 +1208,9 @@ export function App({
             if (event.type === "agent.summary.updated") {
               const summary = event.data as AgentSummary;
               if (!summary?.terminalId) return;
+              const revision = agentSummaryEventRevisionRef.current + 1;
+              agentSummaryEventRevisionRef.current = revision;
+              agentSummaryEventRevisionsRef.current.set(summary.terminalId, revision);
               setAgentSummaries((current) => [
                 ...current.filter((item) => item.terminalId !== summary.terminalId),
                 summary,
@@ -1190,6 +1220,9 @@ export function App({
             if (event.type === "agent.summary.deleted") {
               const data = event.data as { terminalId?: string };
               if (data?.terminalId) {
+                const revision = agentSummaryEventRevisionRef.current + 1;
+                agentSummaryEventRevisionRef.current = revision;
+                agentSummaryEventRevisionsRef.current.set(data.terminalId, revision);
                 setAgentSummaries((current) =>
                   current.filter((item) => item.terminalId !== data.terminalId),
                 );
