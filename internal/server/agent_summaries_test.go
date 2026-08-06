@@ -203,6 +203,12 @@ func TestMarkAgentSummaryReadEndpointReturns500WithoutPublishingOnCanceledPersis
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("canceled POST status = %d, body = %s", response.Code, response.Body.String())
 	}
+	var failure errorResponse
+	decodeResponse(t, response, &failure)
+	if failure.Code != "agent_summary_read_failed" ||
+		failure.Message != "The agent summary could not be marked as read." {
+		t.Fatalf("canceled POST error = %#v, want agent_summary_read_failed", failure)
+	}
 	if got := srv.sessions.AgentSummaries()[0]; !got.Unread {
 		t.Fatalf("summary after canceled POST = %#v, want unread rollback", got)
 	}
