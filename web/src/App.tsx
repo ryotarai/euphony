@@ -583,13 +583,54 @@ export function App({
     };
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const agentSummaryRevisionsRef = useRef<Map<string, number>>(new Map());
+  const agentSummariesInFlightForApiRef = useRef<ApiClient | null>(null);
+  const bumpAgentSummaryRevision = useCallback((terminalID: string) => {
+    const revisions = agentSummaryRevisionsRef.current;
+    revisions.set(terminalID, (revisions.get(terminalID) ?? 0) + 1);
+  }, []);
+  const applyAgentSummarySnapshot = useCallback(
+    (nextSummaries: AgentSummary[], revisionsAtStart: Map<string, number>) => {
+      setAgentSummaries((current) => {
+        const currentByTerminalID = new Map(
+          current.map((summary) => [summary.terminalId, summary]),
+        );
+        const includedTerminalIDs = new Set<string>();
+        const merged: AgentSummary[] = [];
+        for (const summary of nextSummaries) {
+          const currentSummary = currentByTerminalID.get(summary.terminalId);
+          const startRevision = revisionsAtStart.get(summary.terminalId) ?? 0;
+          const currentRevision =
+            agentSummaryRevisionsRef.current.get(summary.terminalId) ?? 0;
+          merged.push(
+            currentSummary && currentRevision !== startRevision
+              ? currentSummary
+              : summary,
+          );
+          includedTerminalIDs.add(summary.terminalId);
+        }
+        for (const summary of current) {
+          if (includedTerminalIDs.has(summary.terminalId)) continue;
+          const startRevision = revisionsAtStart.get(summary.terminalId) ?? 0;
+          const currentRevision =
+            agentSummaryRevisionsRef.current.get(summary.terminalId) ?? 0;
+          if (currentRevision !== startRevision) merged.push(summary);
+        }
+        return merged;
+      });
+    },
+    [],
+  );
   const loadAgentSummaries = useCallback(async () => {
-    if (!api) return;
+    if (!api || agentSummariesInFlightForApiRef.current === api) return;
+    agentSummariesInFlightForApiRef.current = api;
+    const revisionsAtStart = new Map(agentSummaryRevisionsRef.current);
     setAgentSummariesLoading(true);
     try {
       const nextSummaries = await api.listAgentSummaries();
-      setAgentSummaries(nextSummaries);
+      applyAgentSummarySnapshot(nextSummaries, revisionsAtStart);
       setAgentSummariesError("");
+      agentSummariesLoadedForApiRef.current = api;
     } catch (error) {
       setAgentSummariesError(
         error instanceof Error
@@ -597,9 +638,12 @@ export function App({
           : "Agent summaries could not be loaded.",
       );
     } finally {
+      if (agentSummariesInFlightForApiRef.current === api) {
+        agentSummariesInFlightForApiRef.current = null;
+      }
       setAgentSummariesLoading(false);
     }
-  }, [api]);
+  }, [api, applyAgentSummarySnapshot]);
   const loadTasks = useCallback(async () => {
     if (!api) return;
     setTasksLoading(true);
@@ -1005,9 +1049,13 @@ export function App({
 
   useEffect(() => {
     if (!api || !sessions || agentSummariesLoadedForApiRef.current === api) return;
-    agentSummariesLoadedForApiRef.current = api;
     void loadAgentSummaries();
   }, [api, loadAgentSummaries, sessions]);
+
+  useEffect(() => {
+    if (!agentsOpen || !api || agentSummariesLoadedForApiRef.current === api) return;
+    void loadAgentSummaries();
+  }, [agentsOpen, api, loadAgentSummaries]);
 
   useEffect(() => {
     if (!tasksOpen || !api) return;
@@ -1140,18 +1188,27 @@ export function App({
     const controller = new AbortController();
     let retryDelay = 250;
     let refreshRunning = false;
+    let refreshNeedsAgentSummaries = false;
 
-    const refreshSnapshots = async () => {
+    const refreshSnapshots = async (includeAgentSummaries = false) => {
       if (refreshRunning || controller.signal.aborted) return;
       refreshRunning = true;
+      const revisionsAtStart = new Map(agentSummaryRevisionsRef.current);
       try {
-        const [items, selection] = await Promise.all([
+        const [items, selection, nextSummaries] = await Promise.all([
           api.listSessions(),
           api.getSelection(),
+          includeAgentSummaries
+            ? api.listAgentSummaries()
+            : Promise.resolve(null),
         ]);
         if (controller.signal.aborted) return;
         applySessionSnapshot(items);
         acceptServerSelection(selection);
+        if (nextSummaries) {
+          applyAgentSummarySnapshot(nextSummaries, revisionsAtStart);
+          agentSummariesLoadedForApiRef.current = api;
+        }
         setAnnotationRevision((current) => current + 1);
       } finally {
         refreshRunning = false;
@@ -1175,12 +1232,14 @@ export function App({
     const consume = async () => {
       while (!controller.signal.aborted) {
         try {
-          await refreshSnapshots();
+          await refreshSnapshots(refreshNeedsAgentSummaries);
+          refreshNeedsAgentSummaries = true;
           retryDelay = 250;
           await api.subscribeEvents(controller.signal, (event) => {
             if (event.type === "agent.summary.updated") {
               const summary = event.data as AgentSummary;
               if (!summary?.terminalId) return;
+              bumpAgentSummaryRevision(summary.terminalId);
               setAgentSummaries((current) => [
                 ...current.filter((item) => item.terminalId !== summary.terminalId),
                 summary,
@@ -1190,6 +1249,7 @@ export function App({
             if (event.type === "agent.summary.deleted") {
               const data = event.data as { terminalId?: string };
               if (data?.terminalId) {
+                bumpAgentSummaryRevision(data.terminalId);
                 setAgentSummaries((current) =>
                   current.filter((item) => item.terminalId !== data.terminalId),
                 );
@@ -1231,16 +1291,18 @@ export function App({
                 const data = event.data as { id?: string; terminalId?: string };
                 const deletedID = data?.id ?? data?.terminalId;
                 if (deletedID) {
+                  bumpAgentSummaryRevision(deletedID);
                   setAgentSummaries((current) =>
                     current.filter((item) => item.terminalId !== deletedID),
                   );
                 }
               }
-              void refreshSnapshots();
+              void refreshSnapshots(event.type === "subscriber_lagged");
             }
           });
         } catch (error) {
           if (controller.signal.aborted) return;
+          refreshNeedsAgentSummaries = true;
           if (error instanceof ApiError && error.status === 401) {
             sessionStorage.removeItem(tokenKey);
             setAuthError(true);
@@ -1258,6 +1320,8 @@ export function App({
   }, [
     api,
     applySessionSnapshot,
+    applyAgentSummarySnapshot,
+    bumpAgentSummaryRevision,
     loadTasks,
     sessions !== null,
     syncSelection,
@@ -2760,6 +2824,7 @@ export function App({
     if (api) {
       try {
         const summary = await api.markAgentSummaryRead(id);
+        bumpAgentSummaryRevision(id);
         setAgentSummaries((current) =>
           current.map((item) => {
             if (item.terminalId !== id) return item;

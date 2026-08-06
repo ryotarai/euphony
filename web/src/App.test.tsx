@@ -755,6 +755,125 @@ test("moves a read summary back to Unread when an SSE update is unread", async (
   eventController?.close();
 });
 
+test("reloads agent summaries after an SSE reconnect", async () => {
+  const readSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "The summary before reconnect.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const refreshedSummary: AgentSummary = {
+    ...readSummary,
+    summary: "The summary recovered after reconnect.",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: true,
+  };
+  const eventControllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+  let summaryLoads = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: [runningSession.id],
+          manualTerminalIds: [runningSession.id],
+          pinnedTerminalIds: [],
+          focusedTerminalId: runningSession.id,
+          filters: { statuses: [], cwds: [] },
+          revision: 3,
+        },
+      });
+    }
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventControllers.push(controller);
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    if (input === "/api/agent-summaries") {
+      summaryLoads += 1;
+      return jsonResponse([summaryLoads === 1 ? readSummary : refreshedSummary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => {
+    expect(summaryLoads).toBe(1);
+    expect(eventControllers).toHaveLength(1);
+  });
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
+  expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
+
+  eventControllers[0].close();
+  await waitFor(() => expect(summaryLoads).toBe(2), { timeout: 2_000 });
+  await user.click(await screen.findByRole("tab", { name: /Unread 1/ }));
+  expect(screen.getByText(refreshedSummary.summary)).toBeInTheDocument();
+  eventControllers[eventControllers.length - 1]?.close();
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+});
+
+test("retries agent summaries after an initial load failure when Agents opens", async () => {
+  const summary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "The summary loaded after retry.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+  };
+  let summaryLoads = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      summaryLoads += 1;
+      return summaryLoads === 1
+        ? jsonResponse({ code: "temporary_failure", message: "Try again." }, 500)
+        : jsonResponse([summary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => expect(summaryLoads).toBe(1));
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect(summaryLoads).toBe(2);
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+});
+
 test("does not let a stale read response overwrite a newer SSE summary", async () => {
   const readSummary: AgentSummary = {
     terminalId: secondRunningSession.id,
