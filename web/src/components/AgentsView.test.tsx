@@ -133,6 +133,20 @@ test("filters summaries through accessible unread and read tabs", async () => {
   expect(screen.queryByText("Unread summary")).not.toBeInTheDocument();
 });
 
+test("excludes unread summaries whose sessions are no longer present", () => {
+  render(
+    <AgentsView
+      summaries={summaries}
+      sessions={sessions}
+      onSelectSession={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("tab", { name: /Unread 2/ })).toBeInTheDocument();
+  expect(screen.getByLabelText("2 unread agents")).toBeInTheDocument();
+  expect(screen.queryByText("Do not render this.")).not.toBeInTheDocument();
+});
+
 test("switches tabs with arrow, Home, and End keys", async () => {
   const user = userEvent.setup();
   render(
