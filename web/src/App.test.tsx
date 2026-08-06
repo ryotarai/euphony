@@ -25,7 +25,7 @@ const defaultSettings: Settings = {
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
-  agentSummaryProvider: "claude",
+  agentSummaryProvider: "codex",
 };
 
 const runningSession: Session = {
@@ -2550,7 +2550,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const agentLogFontSize = within(dialog).getByLabelText("Agent log");
   const terminalFontFamily = within(dialog).getByLabelText("Terminal font");
   const summaryProvider = within(dialog).getByLabelText("Summary provider");
-  expect(summaryProvider).toHaveValue("claude");
+  expect(summaryProvider).toHaveValue("codex");
   fireEvent.change(interfaceFontSize, { target: { value: "18" } });
   fireEvent.change(terminalFontSize, { target: { value: "17" } });
   fireEvent.change(agentLogFontSize, { target: { value: "16" } });
@@ -2593,7 +2593,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
     defaultSettings.terminalFontFamily,
   );
   expect(within(reopenedDialog).getByLabelText("Summary provider")).toHaveValue(
-    "claude",
+    "codex",
   );
   fireEvent.change(reopenedPrefix, { target: { value: "Ctrl+A" } });
   fireEvent.change(paneTabShortcut, { target: { value: "control+j" } });

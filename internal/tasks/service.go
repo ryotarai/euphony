@@ -78,7 +78,7 @@ func New(config Config) (*Service, error) {
 	}
 	provider := config.Provider
 	if provider == nil {
-		provider = func() string { return "claude" }
+		provider = func() string { return session.DefaultAgentSummaryProvider }
 	}
 	refiner := config.Refiner
 	if refiner == nil {
@@ -329,7 +329,7 @@ func (s *Service) Refine(ctx context.Context, id string) (agentsummary.TaskRefin
 	}
 	provider := s.provider()
 	if provider != "claude" && provider != "codex" {
-		provider = "claude"
+		provider = session.DefaultAgentSummaryProvider
 	}
 	prompt := buildRefinementPrompt(task)
 	proposal, err := s.refiner.Refine(ctx, provider, prompt)

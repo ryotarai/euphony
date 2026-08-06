@@ -59,6 +59,7 @@ test("separates action-required and running agents with actionable copy", async 
   const actionSection = screen.getByRole("region", { name: "Action required" });
   const runningSection = screen.getByRole("region", { name: "Running" });
   expect(within(actionSection).getByText("Permission request")).toBeInTheDocument();
+  expect(within(actionSection).getByText("Codex · GPT-5.6-luna")).toBeInTheDocument();
   expect(within(actionSection).getByText("The agent needs permission to edit the API.")).toBeInTheDocument();
   expect(within(actionSection).getByText("Approve the requested file access.")).toBeInTheDocument();
   expect(within(runningSection).getByText("Implement dashboard")).toBeInTheDocument();

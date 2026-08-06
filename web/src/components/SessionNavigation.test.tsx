@@ -33,7 +33,7 @@ const settings: Settings = {
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
-  agentSummaryProvider: "claude",
+  agentSummaryProvider: "codex",
 };
 
 const sessions: Session[] = [

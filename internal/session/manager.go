@@ -116,7 +116,7 @@ const (
 	DefaultTerminalCursorBlink       = false
 	DefaultTerminalScrollSensitivity = 3
 	DefaultTerminalOptionAsAlt       = true
-	DefaultAgentSummaryProvider      = "claude"
+	DefaultAgentSummaryProvider      = "codex"
 )
 
 func DefaultSettings() Settings {

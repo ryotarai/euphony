@@ -126,6 +126,32 @@ func TestServiceRefineReturnsProposalWithoutMutatingTask(t *testing.T) {
 	}
 }
 
+func TestServiceRefineDefaultsToCodexProvider(t *testing.T) {
+	refiner := &testRefiner{result: agentsummary.TaskRefinement{
+		Title: "Refined title", Priority: PriorityMedium, Status: StatusTodo,
+	}}
+	service, err := New(Config{
+		Store: NewMemoryStore(), Refiner: refiner,
+		Now:   func() time.Time { return time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC) },
+		NewID: func() string { return "task-codex-default" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close(context.Background()) })
+
+	task, err := service.Create(context.Background(), CreateInput{Title: "Use the default provider"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Refine(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if refiner.provider != session.DefaultAgentSummaryProvider {
+		t.Fatalf("Refine() provider = %q, want %q", refiner.provider, session.DefaultAgentSummaryProvider)
+	}
+}
+
 func TestServicePersistsAgentEventsAndUnlinksDeletedTerminal(t *testing.T) {
 	service, events := newEventTestService(t)
 	task, err := service.Create(context.Background(), CreateInput{Title: "Follow agent"})

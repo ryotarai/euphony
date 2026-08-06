@@ -147,7 +147,7 @@ const defaultSettings: Settings = {
   terminalCursorBlink: defaultTerminalCursorBlink,
   terminalScrollSensitivity: defaultTerminalScrollSensitivity,
   terminalOptionAsAlt: defaultTerminalOptionAsAlt,
-  agentSummaryProvider: "claude",
+  agentSummaryProvider: "codex",
 };
 
 function historyLimitDraft(limit: number): string {
@@ -3318,7 +3318,7 @@ export function App({
                   }
                 >
                   <option value="claude">Claude · Haiku</option>
-                  <option value="codex">Codex · GPT-5.6-low</option>
+                  <option value="codex">Codex · GPT-5.6-luna</option>
                 </select>
                 <FieldDescription>
                   Generate agent summaries with the selected command-line model.

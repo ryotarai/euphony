@@ -94,7 +94,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_cursor_blink INTEGER NOT NULL DEFAULT 0,
 			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3,
 			terminal_option_as_alt INTEGER NOT NULL DEFAULT 1,
-			agent_summary_provider TEXT NOT NULL DEFAULT 'claude'
+			agent_summary_provider TEXT NOT NULL DEFAULT 'codex'
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -240,9 +240,16 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	}
 	if !hasAgentSummaryProvider {
 		if _, err := s.db.ExecContext(ctx,
-			"ALTER TABLE settings ADD COLUMN agent_summary_provider TEXT NOT NULL DEFAULT 'claude'",
+			"ALTER TABLE settings ADD COLUMN agent_summary_provider TEXT NOT NULL DEFAULT 'codex'",
 		); err != nil {
 			return fmt.Errorf("add agent summary provider setting: %w", err)
+		}
+	} else {
+		if _, err := s.db.ExecContext(ctx,
+			"UPDATE settings SET agent_summary_provider = ? WHERE agent_summary_provider = 'claude'",
+			DefaultAgentSummaryProvider,
+		); err != nil {
+			return fmt.Errorf("migrate legacy agent summary provider: %w", err)
 		}
 	}
 	for _, column := range []struct {

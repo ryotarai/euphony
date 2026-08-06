@@ -32,14 +32,14 @@
 
 **Interfaces:**
 - Produces `session.AgentSummary`, `Manager.AgentSummaries()`, `Manager.SaveAgentSummary(context.Context, AgentSummary)`, and `Manager.DeleteAgentSummary(context.Context, string)` for the coordinator and server.
-- Produces `Settings.AgentSummaryProvider` with default `claude` and validation for `claude`/`codex`.
+- Produces `Settings.AgentSummaryProvider` with default `codex` and validation for `claude`/`codex`.
 
 - [ ] **Step 1: Write the failing persistence tests.**
 
 Add tests that open a persistent manager, save a summary with provider, action,
 timestamp, and error, reopen the database, and assert the exact summary is
 returned. Add a migration test that creates the legacy settings table without
-the new column and asserts `LoadSettings` returns provider `claude`. Add server
+the new column and asserts `LoadSettings` returns provider `codex`. Add server
 settings cases that accept both providers and reject any other string.
 
 - [ ] **Step 2: Run the tests to verify they fail.**
@@ -54,7 +54,7 @@ Add the summary type and an in-memory map to `Manager`. Add an optional summary
 store interface so existing test stores remain valid. Add an
 `agent_summaries` table and migration, load rows during
 `NewPersistentManager`, and persist rows through the existing store operation
-queue. Add `agent_summary_provider TEXT NOT NULL DEFAULT 'claude'` to SQLite
+queue. Add `agent_summary_provider TEXT NOT NULL DEFAULT 'codex'` to SQLite
 settings and include it in load/save. Extend the settings JSON decoder and
 validator with the exact two allowed values.
 
@@ -251,7 +251,7 @@ selected.
 - [ ] **Step 4: Implement provider settings.**
 
 Add `agentSummaryProvider` to default settings and draft state. Render a
-provider `<select>` with Claude/Haiku and Codex/GPT-5.6-low labels, validate
+provider `<select>` with Claude/Haiku and Codex/GPT-5.6-luna labels, validate
 the draft client-side, reset it on load/cancel, and send it with the complete
 existing settings payload. Existing saves and old settings tests must remain
 compatible.

@@ -61,7 +61,7 @@ func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreAddsDefaultAgentSummaryProviderToLegacySettings(t *testing.T) {
+func TestSQLiteStoreDefaultsAndMigratesAgentSummaryProviderToCodex(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-settings.sqlite3")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -105,12 +105,29 @@ func TestSQLiteStoreAddsDefaultAgentSummaryProviderToLegacySettings(t *testing.T
 	if err != nil {
 		t.Fatalf("OpenSQLiteStore() error = %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() { _ = store.Close() })
 	settings, err := store.LoadSettings(context.Background())
 	if err != nil {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
-	if settings.AgentSummaryProvider != "claude" {
-		t.Fatalf("AgentSummaryProvider = %q, want claude", settings.AgentSummaryProvider)
+	if settings.AgentSummaryProvider != "codex" {
+		t.Fatalf("AgentSummaryProvider = %q, want codex", settings.AgentSummaryProvider)
+	}
+	if _, err := store.db.Exec(`UPDATE settings SET agent_summary_provider = 'claude' WHERE id = 1`); err != nil {
+		t.Fatalf("set legacy provider: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close migrated database: %v", err)
+	}
+	store, err = OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen migrated database: %v", err)
+	}
+	settings, err = store.LoadSettings(context.Background())
+	if err != nil {
+		t.Fatalf("LoadSettings() after migration error = %v", err)
+	}
+	if settings.AgentSummaryProvider != "codex" {
+		t.Fatalf("migrated AgentSummaryProvider = %q, want codex", settings.AgentSummaryProvider)
 	}
 }

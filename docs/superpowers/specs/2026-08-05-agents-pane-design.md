@@ -79,9 +79,10 @@ type AgentSummary struct {
 }
 ```
 
-`session.Settings` gains `AgentSummaryProvider`, defaulting to `claude` and
+`session.Settings` gains `AgentSummaryProvider`, defaulting to `codex` and
 accepting only `claude` or `codex`. The SQLite `settings` table receives a
-defaulted column so existing databases preserve their settings. A new
+Codex-defaulted column, and existing legacy Claude defaults are migrated to
+Codex. A new
 `agent_summaries` table stores one row per terminal; writes are atomic with
 respect to the existing store operation queue.
 

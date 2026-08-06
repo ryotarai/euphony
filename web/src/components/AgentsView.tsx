@@ -19,7 +19,7 @@ function statusLabel(status: AgentSummary["status"]) {
 }
 
 function providerLabel(provider: AgentSummary["provider"]) {
-  return provider === "claude" ? "Claude · Haiku" : "Codex · GPT-5.6-low";
+  return provider === "claude" ? "Claude · Haiku" : "Codex · GPT-5.6-luna";
 }
 
 function sessionLabel(session: Session) {
