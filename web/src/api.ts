@@ -44,6 +44,12 @@ export class ApiClient {
     return this.request("/api/agent-summaries");
   }
 
+  markAgentSummaryRead(id: string): Promise<AgentSummary> {
+    return this.request(`/api/agent-summaries/${encodeURIComponent(id)}/read`, {
+      method: "POST",
+    });
+  }
+
   listTasks(): Promise<Task[]> {
     return this.request("/api/tasks");
   }

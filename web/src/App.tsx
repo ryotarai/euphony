@@ -2741,7 +2741,22 @@ export function App({
     selectSession(id, false);
   }
 
-  function openAgentTerminal(id: string) {
+  async function openAgentTerminal(id: string) {
+    if (api) {
+      try {
+        const summary = await api.markAgentSummaryRead(id);
+        setAgentSummaries((current) =>
+          current.map((item) => item.terminalId === id ? summary : item),
+        );
+        setAgentSummariesError("");
+      } catch (error) {
+        setAgentSummariesError(
+          error instanceof Error
+            ? error.message
+            : "The agent summary could not be marked as read.",
+        );
+      }
+    }
     selectSession(id, false);
   }
 
@@ -2874,14 +2889,7 @@ export function App({
     : [];
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
   const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
-  const summaryByTerminalID = new Map(
-    agentSummaries.map((summary) => [summary.terminalId, summary]),
-  );
-  const agentSummaryCount = sessions.filter((session) => {
-    if (!session.agent) return false;
-    const status = summaryByTerminalID.get(session.id)?.status ?? session.agentStatus;
-    return status === "blocked" || status === "waiting";
-  }).length;
+  const agentSummaryCount = agentSummaries.filter((summary) => summary.unread).length;
   const taskCount = tasks.filter((task) => task.status !== "done").length;
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")

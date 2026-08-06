@@ -34,6 +34,7 @@ const summaries: AgentSummary[] = [
     summary: "The agent needs permission to edit the API.",
     action: "Approve the requested file access.",
     generatedAt: "2026-08-05T00:02:00Z",
+    unread: true,
   },
   {
     terminalId: "running-terminal",
@@ -41,6 +42,7 @@ const summaries: AgentSummary[] = [
     status: "running",
     summary: "The agent is updating the dashboard tests.",
     generatedAt: "2026-08-05T00:03:00Z",
+    unread: true,
   },
   {
     terminalId: "missing-terminal",
@@ -48,6 +50,26 @@ const summaries: AgentSummary[] = [
     status: "running",
     summary: "Do not render this.",
     generatedAt: "2026-08-05T00:04:00Z",
+    unread: true,
+  },
+];
+
+const tabSummaries: AgentSummary[] = [
+  {
+    terminalId: "blocked-terminal",
+    provider: "codex",
+    status: "blocked",
+    summary: "Unread summary",
+    generatedAt: "2026-08-05T00:02:00Z",
+    unread: true,
+  },
+  {
+    terminalId: "running-terminal",
+    provider: "claude",
+    status: "running",
+    summary: "Read summary",
+    generatedAt: "2026-08-05T00:03:00Z",
+    unread: false,
   },
 ];
 
@@ -70,6 +92,29 @@ test("separates action-required and running agents with actionable copy", async 
   expect(onSelectSession).toHaveBeenCalledWith("blocked-terminal");
 });
 
+test("filters summaries through accessible unread and read tabs", async () => {
+  const user = userEvent.setup();
+  render(
+    <AgentsView
+      summaries={tabSummaries}
+      sessions={sessions}
+      onSelectSession={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByText("Unread summary")).toBeInTheDocument();
+  expect(screen.queryByText("Read summary")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("tab", { name: /Read 1/ }));
+
+  expect(screen.getByText("Read summary")).toBeInTheDocument();
+  expect(screen.queryByText("Unread summary")).not.toBeInTheDocument();
+});
+
 test("renders loading, error, and empty section states", () => {
   const props = {
     summaries: [],
@@ -81,6 +126,6 @@ test("renders loading, error, and empty section states", () => {
 
   rerender(<AgentsView {...props} error="Summaries are unavailable." />);
   expect(screen.getByRole("alert")).toHaveTextContent("Summaries are unavailable.");
-  expect(within(screen.getByRole("region", { name: "Action required" })).getByText("No agents need attention.")).toBeInTheDocument();
-  expect(within(screen.getByRole("region", { name: "Running" })).getByText("No agents are running.")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Action required" })).getByText("No unread agents need attention.")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Running" })).getByText("No unread agents are running.")).toBeInTheDocument();
 });

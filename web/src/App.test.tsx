@@ -509,13 +509,23 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
     summary: "The agent is waiting for confirmation before editing the route.",
     action: "Approve the requested file change.",
     generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
   };
+  const readSummary: AgentSummary = { ...summary, unread: false };
+  let releaseRead: (() => void) | undefined;
+  const readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
     if (input === "/api/agent-summaries") {
       return jsonResponse([summary]);
+    }
+    if (input === "/api/agent-summaries/session-2/read") {
+      await readGate;
+      return jsonResponse(readSummary);
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -540,8 +550,155 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
 
   await user.click(screen.getByRole("button", { name: /Needs approval/ }));
-  expect(screen.queryByRole("heading", { name: "Action required" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/agent-summaries/session-2/read",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+  expect(screen.getByRole("heading", { name: "Action required" })).toBeVisible();
+  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  releaseRead?.();
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
+test("keeps a failed agent read unread while still opening its terminal", async () => {
+  const summary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "waiting",
+    summary: "Unread until the read request succeeds.",
+    action: "Approve the requested file change.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+  };
+  let summaryLoads = 0;
+  let releaseReload: (() => void) | undefined;
+  const reloadGate = new Promise<void>((resolve) => {
+    releaseReload = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      summaryLoads += 1;
+      if (summaryLoads > 1) await reloadGate;
+      return jsonResponse([summary]);
+    }
+    if (input === "/api/agent-summaries/session-2/read") {
+      return jsonResponse({ code: "read_failed", message: "The read failed." }, 500);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("button", { name: /Needs approval/ }));
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/session-2/read",
+    expect.objectContaining({ method: "POST" }),
+  );
+  releaseReload?.();
+});
+
+test("moves a read summary back to Unread when an SSE update is unread", async () => {
+  const readSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "Read summary",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const unreadSummary: AgentSummary = {
+    ...readSummary,
+    summary: "New unread summary",
+    unread: true,
+    generatedAt: "2026-08-05T00:01:00Z",
+  };
+  const encoder = new TextEncoder();
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: [runningSession.id],
+          manualTerminalIds: [runningSession.id],
+          pinnedTerminalIds: [],
+          focusedTerminalId: runningSession.id,
+          filters: { statuses: [], cwds: [] },
+          revision: 3,
+        },
+      });
+    }
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventController = controller;
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([readSummary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => expect(eventController).toBeDefined());
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
+  expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
+
+  eventController?.enqueue(encoder.encode(JSON.stringify({
+    sequence: 10,
+    occurredAt: "2026-08-05T00:02:00Z",
+    type: "agent.summary.updated",
+    data: unreadSummary,
+  }) + "\n"));
+
+  await waitFor(() => {
+    expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
+  });
+  await user.click(screen.getByRole("tab", { name: /Unread 1/ }));
+  expect(screen.getByText(unreadSummary.summary)).toBeInTheDocument();
+  eventController?.close();
 });
 
 test("opens the Tasks workspace, loads a task, and opens its linked terminal", async () => {

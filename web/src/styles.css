@@ -1677,6 +1677,76 @@ input:focus-visible,
   text-transform: uppercase;
 }
 
+.agents-tabs {
+  max-width: 62rem;
+  display: flex;
+  gap: 1.5rem;
+  margin: -2rem auto 2.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.agents-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  margin-bottom: -1px;
+  padding: 0.25rem 0 0.7rem;
+  color: #737373;
+  background: transparent;
+  border: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agents-tab::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: #f5f5f5;
+  opacity: 0;
+  transform: scaleX(0.6);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.agents-tab[aria-selected="true"] {
+  color: #f5f5f5;
+}
+
+.agents-tab[aria-selected="true"]::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.agents-tab[data-tab="unread"] .agents-tab-count {
+  color: #fbbf24;
+}
+
+.agents-tab-count {
+  min-width: 1.2rem;
+  color: #525252;
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.agents-tab:focus-visible {
+  outline: 2px solid #fbbf24;
+  outline-offset: 0.25rem;
+}
+
+.agents-tab-panel {
+  max-width: 62rem;
+  margin: 0 auto;
+}
+
 .agents-loading,
 .agents-error {
   max-width: 62rem;
@@ -1748,6 +1818,16 @@ input:focus-visible,
   background: #60a5fa;
 }
 
+.agent-summary-unread-marker {
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: 0 0 auto;
+  margin-left: -0.85rem;
+  border-radius: 999px;
+  background: #fbbf24;
+  box-shadow: 0 0 0 0.2rem rgb(251 191 36 / 10%);
+}
+
 .agent-summary-card[data-status="blocked"]::before,
 .agent-summary-card[data-status="waiting"]::before {
   background: #fbbf24;
@@ -1774,6 +1854,12 @@ input:focus-visible,
 .agent-summary-card[data-status="blocked"] .agent-summary-status,
 .agent-summary-card[data-status="waiting"] .agent-summary-status {
   color: #fbbf24;
+}
+
+.agent-summary-card[data-unread="false"] .agent-summary-title,
+.agent-summary-card[data-unread="false"] .agent-summary-copy,
+.agent-summary-card[data-unread="false"] .agent-summary-action {
+  color: #8a8a8a;
 }
 
 .agent-summary-provider,
@@ -1835,7 +1921,8 @@ input:focus-visible,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-summary-card {
+  .agent-summary-card,
+  .agents-tab::after {
     transition: none;
   }
 }
@@ -1848,6 +1935,11 @@ input:focus-visible,
   .agents-view-header {
     align-items: flex-start;
     margin-bottom: 3rem;
+  }
+
+  .agents-tabs {
+    margin-top: -1.5rem;
+    margin-bottom: 2.25rem;
   }
 
   .agents-view-count strong {

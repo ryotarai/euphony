@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { AgentSummary, Session } from "../types";
 
 interface AgentsViewProps {
@@ -43,10 +43,12 @@ function SummaryCard({ item, onSelectSession }: {
       type="button"
       className="agent-summary-card"
       data-status={summary.status}
+      data-unread={summary.unread}
       onClick={() => onSelectSession(session.id)}
       aria-label={`${label}: ${summary.summary}`}
     >
       <span className="agent-summary-card-header">
+        {summary.unread && <span className="agent-summary-unread-marker" aria-hidden="true" />}
         <span className="agent-summary-status">{statusLabel(summary.status)}</span>
         <span className="agent-summary-provider">{providerLabel(summary.provider)}</span>
         <span className="agent-summary-updated">{generatedLabel(summary.generatedAt)}</span>
@@ -109,6 +111,7 @@ export function AgentsView({
   error = "",
   onSelectSession,
 }: AgentsViewProps) {
+  const [selectedTab, setSelectedTab] = useState<"unread" | "read">("unread");
   const items = useMemo(() => {
     const sessionsByID = new Map(sessions.map((session) => [session.id, session]));
     return summaries
@@ -118,10 +121,23 @@ export function AgentsView({
       })
       .filter((item): item is AgentSummaryItem => item !== null);
   }, [sessions, summaries]);
-  const actionItems = items.filter(
+  const unreadItems = items.filter(({ summary }) => summary.unread);
+  const readItems = items.filter(({ summary }) => !summary.unread);
+  const visibleItems = selectedTab === "unread" ? unreadItems : readItems;
+  const actionItems = visibleItems.filter(
     ({ summary }) => summary.status === "blocked" || summary.status === "waiting",
   );
-  const runningItems = items.filter(({ summary }) => summary.status === "running");
+  const runningItems = visibleItems.filter(({ summary }) => summary.status === "running");
+  const emptyCopy = selectedTab === "unread"
+    ? {
+      action: "No unread agents need attention.",
+      running: "No unread agents are running.",
+    }
+    : {
+      action: "No read agents need attention.",
+      running: "No read agents are running.",
+    };
+  const tabPanelID = "agents-tabpanel";
 
   return (
     <main className="agents-view" aria-labelledby="agents-view-title">
@@ -131,9 +147,9 @@ export function AgentsView({
           <h1 id="agents-view-title">Agents</h1>
           <p>Read the latest signal from every identified agent.</p>
         </div>
-        <div className="agents-view-count" aria-label={`${actionItems.length} agents need attention`}>
-          <strong>{actionItems.length}</strong>
-          <span>need attention</span>
+        <div className="agents-view-count" aria-label={`${unreadItems.length} unread agents`}>
+          <strong>{unreadItems.length}</strong>
+          <span>unread</span>
         </div>
       </header>
       {loading && (
@@ -142,21 +158,53 @@ export function AgentsView({
         </p>
       )}
       {error && <p className="agents-error" role="alert">{error}</p>}
-      <div className="agents-sections">
-        <SummarySection
-          id="agents-action-required"
-          title="Action required"
-          empty="No agents need attention."
-          items={actionItems}
-          onSelectSession={onSelectSession}
-        />
-        <SummarySection
-          id="agents-running"
-          title="Running"
-          empty="No agents are running."
-          items={runningItems}
-          onSelectSession={onSelectSession}
-        />
+      <div className="agents-tabs" role="tablist" aria-label="Agent summaries">
+        {(["unread", "read"] as const).map((tab) => {
+          const count = tab === "unread" ? unreadItems.length : readItems.length;
+          const label = tab === "unread" ? "Unread" : "Read";
+          const tabID = `agents-${tab}-tab`;
+          return (
+            <button
+              key={tab}
+              id={tabID}
+              type="button"
+              role="tab"
+              className="agents-tab"
+              data-tab={tab}
+              aria-label={`${label} ${count}`}
+              aria-controls={tabPanelID}
+              aria-selected={tab === selectedTab}
+              tabIndex={tab === selectedTab ? 0 : -1}
+              onClick={() => setSelectedTab(tab)}
+            >
+              <span>{label}</span>
+              <span className="agents-tab-count">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div
+        id={tabPanelID}
+        className="agents-tab-panel"
+        role="tabpanel"
+        aria-labelledby={`agents-${selectedTab}-tab`}
+      >
+        <div className="agents-sections">
+          <SummarySection
+            id="agents-action-required"
+            title="Action required"
+            empty={emptyCopy.action}
+            items={actionItems}
+            onSelectSession={onSelectSession}
+          />
+          <SummarySection
+            id="agents-running"
+            title="Running"
+            empty={emptyCopy.running}
+            items={runningItems}
+            onSelectSession={onSelectSession}
+          />
+        </div>
       </div>
     </main>
   );
