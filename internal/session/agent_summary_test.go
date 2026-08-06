@@ -3,11 +3,132 @@ package session
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestManagerAgentSummaryUnreadTransitions(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	first := AgentSummary{TerminalID: "terminal-1", Action: "Approve the change."}
+	if err := manager.SaveAgentSummary(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	got := manager.AgentSummaries()[0]
+	if !got.Unread {
+		t.Fatalf("new summary unread = false, want true")
+	}
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), first.TerminalID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: first.TerminalID, Action: "  Approve the change.  ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if manager.AgentSummaries()[0].Unread {
+		t.Fatal("whitespace-only action change made summary unread")
+	}
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: first.TerminalID, Action: "Reject the change.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.AgentSummaries()[0].Unread {
+		t.Fatal("action change did not make summary unread")
+	}
+}
+
+func TestManagerAgentSummaryUnreadPreservesUnchangedAction(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: "terminal-1", Action: "Approve the change.", Status: "blocked",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: "terminal-1", Action: "Approve the change.", Status: "waiting",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.AgentSummaries()[0].Unread {
+		t.Fatal("unchanged action cleared unread state")
+	}
+}
+
+func TestManagerMarkAgentSummaryReadIsIdempotent(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	want := AgentSummary{TerminalID: "terminal-1", Action: "Approve the change."}
+	if err := manager.SaveAgentSummary(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.MarkAgentSummaryRead(context.Background(), want.TerminalID)
+	if err != nil {
+		t.Fatalf("first MarkAgentSummaryRead() error = %v", err)
+	}
+	second, err := manager.MarkAgentSummaryRead(context.Background(), want.TerminalID)
+	if err != nil {
+		t.Fatalf("second MarkAgentSummaryRead() error = %v", err)
+	}
+	if first.Unread || second.Unread {
+		t.Fatalf("read summaries = %#v, %#v; want unread false", first, second)
+	}
+	if first != second {
+		t.Fatalf("second MarkAgentSummaryRead() = %#v, want %#v", second, first)
+	}
+}
+
+func TestManagerMarkAgentSummaryReadRejectsUnknownTerminal(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("MarkAgentSummaryRead() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSQLiteStoreMarksAgentSummaryRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	want := AgentSummary{
+		TerminalID:  "terminal-1",
+		Provider:    "codex",
+		Status:      "blocked",
+		Summary:     "The agent is waiting for permission.",
+		Action:      "Approve the requested access.",
+		Unread:      true,
+		GeneratedAt: time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC),
+		Error:       "",
+	}
+	if err := store.SaveAgentSummary(context.Background(), want); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if err := store.MarkAgentSummaryRead(context.Background(), want.TerminalID); err != nil {
+		t.Fatalf("MarkAgentSummaryRead() error = %v", err)
+	}
+
+	want.Unread = false
+	got, err := store.LoadAgentSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAgentSummaries() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, []AgentSummary{want}) {
+		t.Fatalf("LoadAgentSummaries() = %#v, want %#v", got, []AgentSummary{want})
+	}
+}
 
 func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
@@ -21,6 +142,7 @@ func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 		Status:      "blocked",
 		Summary:     "The agent is waiting for permission to edit the API.",
 		Action:      "Approve the requested file access.",
+		Unread:      true,
 		GeneratedAt: time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC),
 		Error:       "",
 	}
@@ -58,6 +180,49 @@ func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 	}
 	if got := manager.AgentSummaries(); !reflect.DeepEqual(got, []AgentSummary{want}) {
 		t.Fatalf("Manager.AgentSummaries() = %#v, want %#v", got, []AgentSummary{want})
+	}
+}
+
+func TestManagerPersistsAgentSummaryReadState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	want := AgentSummary{
+		TerminalID:  "terminal-1",
+		Provider:    "codex",
+		Status:      "waiting",
+		Summary:     "The agent is waiting for input.",
+		Action:      "Provide the requested input.",
+		GeneratedAt: time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC),
+	}
+	if err := manager.SaveAgentSummary(context.Background(), want); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if got := manager.AgentSummaries()[0]; !got.Unread {
+		t.Fatalf("new summary unread = false, want true")
+	}
+	got, err := manager.MarkAgentSummaryRead(context.Background(), want.TerminalID)
+	if err != nil {
+		t.Fatalf("MarkAgentSummaryRead() error = %v", err)
+	}
+	if got.Unread {
+		t.Fatalf("read summary unread = true, want false")
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	manager, err = NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() after read error = %v", err)
+	}
+	gotSummaries := manager.AgentSummaries()
+	if len(gotSummaries) != 1 || gotSummaries[0].Unread {
+		t.Fatalf("AgentSummaries() after reopen = %#v, want one read summary", gotSummaries)
 	}
 }
 

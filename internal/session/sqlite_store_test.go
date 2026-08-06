@@ -55,6 +55,51 @@ func TestSQLiteStoreMigratesLegacyAttentionStatus(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreMigratesAgentSummaryUnreadColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-agent-summary.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE agent_summaries (
+		terminal_id TEXT PRIMARY KEY,
+		provider TEXT NOT NULL,
+		status TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		action TEXT NOT NULL DEFAULT '',
+		generated_at TEXT NOT NULL,
+		error TEXT NOT NULL DEFAULT ''
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy agent summary schema: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO agent_summaries (
+		terminal_id, provider, status, summary, action, generated_at, error
+	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"terminal-1", "codex", "waiting", "Waiting for input.",
+		"Provide the requested input.",
+		time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC).Format(time.RFC3339Nano), "")
+	if err != nil {
+		t.Fatalf("insert legacy agent summary: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	summaries, err := store.LoadAgentSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAgentSummaries() error = %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].Unread {
+		t.Fatalf("migrated summaries = %#v, want one read summary", summaries)
+	}
+}
+
 func TestSQLiteStorePersistsTerminalMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
 	store, err := OpenSQLiteStore(path)

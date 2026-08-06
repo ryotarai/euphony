@@ -115,6 +115,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			status TEXT NOT NULL,
 			summary TEXT NOT NULL,
 			action TEXT NOT NULL DEFAULT '',
+			unread INTEGER NOT NULL DEFAULT 0,
 			generated_at TEXT NOT NULL,
 			error TEXT NOT NULL DEFAULT ''
 		)`,
@@ -293,6 +294,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		)
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("add %s selection field: %w", column, err)
+		}
+	}
+	hasAgentSummaryUnread, err := s.hasColumn(ctx, "agent_summaries", "unread")
+	if err != nil {
+		return err
+	}
+	if !hasAgentSummaryUnread {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE agent_summaries ADD COLUMN unread INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add agent summary unread flag: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE terminals
@@ -579,7 +591,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT terminal_id, provider, status,
-		summary, action, generated_at, error
+		summary, action, unread, generated_at, error
 		FROM agent_summaries ORDER BY generated_at, terminal_id`)
 	if err != nil {
 		return nil, fmt.Errorf("load agent summaries: %w", err)
@@ -588,13 +600,15 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 	var result []AgentSummary
 	for rows.Next() {
 		var item AgentSummary
+		var unread int
 		var generatedAt string
 		if err := rows.Scan(
 			&item.TerminalID, &item.Provider, &item.Status, &item.Summary,
-			&item.Action, &generatedAt, &item.Error,
+			&item.Action, &unread, &generatedAt, &item.Error,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent summary: %w", err)
 		}
+		item.Unread = unread != 0
 		item.GeneratedAt, err = time.Parse(time.RFC3339Nano, generatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse agent summary timestamp: %w", err)
@@ -609,13 +623,14 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 
 func (s *SQLiteStore) SaveAgentSummary(ctx context.Context, item AgentSummary) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_summaries (
-		terminal_id, provider, status, summary, action, generated_at, error
-	) VALUES (?, ?, ?, ?, ?, ?, ?)
+		terminal_id, provider, status, summary, action, unread, generated_at, error
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(terminal_id) DO UPDATE SET
 		provider=excluded.provider, status=excluded.status, summary=excluded.summary,
-		action=excluded.action, generated_at=excluded.generated_at, error=excluded.error`,
+		action=excluded.action, unread=excluded.unread,
+		generated_at=excluded.generated_at, error=excluded.error`,
 		item.TerminalID, item.Provider, item.Status, item.Summary, item.Action,
-		item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
+		item.Unread, item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
 	if err != nil {
 		return fmt.Errorf("save agent summary: %w", err)
 	}
