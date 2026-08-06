@@ -72,6 +72,15 @@ test("applies the configured agent log font size", () => {
   expect(agentLogRegion).not.toHaveAttribute("role", "region");
 });
 
+test("does not mount an animated loading skeleton while inactive", () => {
+  const api = { getAgentLog: vi.fn() } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active={false} />);
+
+  expect(screen.queryByLabelText("Loading agent log")).not.toBeInTheDocument();
+  expect(api.getAgentLog).not.toHaveBeenCalled();
+});
+
 test("renders normalized transcript as safe semantic HTML", async () => {
   const api = {
     getAgentLog: vi.fn().mockResolvedValue({ log: initialLog, etag: 'W/"first"' }),
