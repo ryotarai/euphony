@@ -23,9 +23,8 @@ import (
 )
 
 var (
-	ErrNotFound             = errors.New("session not found")
-	ErrAgentSummaryNotFound = errors.New("agent summary not found")
-	ErrManagerClosing       = errors.New("session manager is closing")
+	ErrNotFound       = errors.New("session not found")
+	ErrManagerClosing = errors.New("session manager is closing")
 )
 
 type ChangeKind string
@@ -1781,7 +1780,7 @@ func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (
 	previous, ok := m.agentSummaries[terminalID]
 	if !ok {
 		m.mu.Unlock()
-		return AgentSummary{}, ErrAgentSummaryNotFound
+		return AgentSummary{}, ErrNotFound
 	}
 	if !previous.Unread {
 		m.mu.Unlock()
@@ -1801,7 +1800,7 @@ func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (
 		return next, nil
 	}
 	if err := m.runStoreOperation(operation, func() error {
-		return summaryStore.SaveAgentSummary(ctx, next)
+		return summaryStore.MarkAgentSummaryRead(ctx, terminalID)
 	}); err != nil {
 		m.mu.Lock()
 		if current, ok := m.agentSummaries[terminalID]; ok && current == next {

@@ -28,6 +28,7 @@ type metadataStore interface {
 type agentSummaryStore interface {
 	LoadAgentSummaries(context.Context) ([]AgentSummary, error)
 	SaveAgentSummary(context.Context, AgentSummary) error
+	MarkAgentSummaryRead(context.Context, string) error
 	DeleteAgentSummary(context.Context, string) error
 }
 
@@ -633,6 +634,15 @@ func (s *SQLiteStore) SaveAgentSummary(ctx context.Context, item AgentSummary) e
 		item.Unread, item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
 	if err != nil {
 		return fmt.Errorf("save agent summary: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) MarkAgentSummaryRead(ctx context.Context, terminalID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE agent_summaries SET unread = 0 WHERE terminal_id = ?", terminalID,
+	); err != nil {
+		return fmt.Errorf("mark agent summary read: %w", err)
 	}
 	return nil
 }
