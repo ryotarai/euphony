@@ -38,11 +38,16 @@ func (p *agentSummaryEventPublisher) Publish(eventType string, data any) control
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	found := false
 	for _, current := range p.sessions.AgentSummaries() {
 		if current.TerminalID == summary.TerminalID {
 			summary = current
+			found = true
 			break
 		}
+	}
+	if !found {
+		return control.Event{}
 	}
 	return p.events.Publish(eventType, summary)
 }

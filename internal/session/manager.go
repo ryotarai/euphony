@@ -217,6 +217,7 @@ type Manager struct {
 	changeCompletions               map[uint64]changeCompletion
 	changeDeliverySequence          uint64
 	changeDeliveryActive            bool
+	agentSummaryMutationMu          sync.Mutex
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
@@ -1733,6 +1734,8 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	if strings.TrimSpace(summary.TerminalID) == "" {
 		return errors.New("agent summary terminal ID is required")
 	}
+	m.agentSummaryMutationMu.Lock()
+	defer m.agentSummaryMutationMu.Unlock()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -1744,7 +1747,6 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	} else {
 		summary.Unread = previous.Unread
 	}
-	m.agentSummaries[summary.TerminalID] = summary
 	store := m.store
 	summaryStore, _ := store.(agentSummaryStore)
 	var operation storeOperation
@@ -1753,26 +1755,25 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	}
 	m.mu.Unlock()
 	if summaryStore == nil {
+		m.mu.Lock()
+		m.agentSummaries[summary.TerminalID] = summary
+		m.mu.Unlock()
 		return nil
 	}
 	if err := m.runStoreOperation(operation, func() error {
 		return summaryStore.SaveAgentSummary(ctx, summary)
 	}); err != nil {
-		m.mu.Lock()
-		if current, ok := m.agentSummaries[summary.TerminalID]; ok && current == summary {
-			if hadPrevious {
-				m.agentSummaries[summary.TerminalID] = previous
-			} else {
-				delete(m.agentSummaries, summary.TerminalID)
-			}
-		}
-		m.mu.Unlock()
 		return err
 	}
+	m.mu.Lock()
+	m.agentSummaries[summary.TerminalID] = summary
+	m.mu.Unlock()
 	return nil
 }
 
 func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (AgentSummary, error) {
+	m.agentSummaryMutationMu.Lock()
+	defer m.agentSummaryMutationMu.Unlock()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -1789,7 +1790,6 @@ func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (
 	}
 	next := previous
 	next.Unread = false
-	m.agentSummaries[terminalID] = next
 	store := m.store
 	summaryStore, _ := store.(agentSummaryStore)
 	var operation storeOperation
@@ -1798,29 +1798,30 @@ func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (
 	}
 	m.mu.Unlock()
 	if summaryStore == nil {
+		m.mu.Lock()
+		m.agentSummaries[terminalID] = next
+		m.mu.Unlock()
 		return next, nil
 	}
 	if err := m.runStoreOperation(operation, func() error {
 		return summaryStore.MarkAgentSummaryRead(ctx, terminalID)
 	}); err != nil {
-		m.mu.Lock()
-		if current, ok := m.agentSummaries[terminalID]; ok && current == next {
-			m.agentSummaries[terminalID] = previous
-		}
-		m.mu.Unlock()
 		return AgentSummary{}, err
 	}
+	m.mu.Lock()
+	m.agentSummaries[terminalID] = next
+	m.mu.Unlock()
 	return next, nil
 }
 
 func (m *Manager) DeleteAgentSummary(ctx context.Context, terminalID string) error {
+	m.agentSummaryMutationMu.Lock()
+	defer m.agentSummaryMutationMu.Unlock()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return ErrManagerClosing
 	}
-	previous, hadPrevious := m.agentSummaries[terminalID]
-	delete(m.agentSummaries, terminalID)
 	store := m.store
 	summaryStore, _ := store.(agentSummaryStore)
 	var operation storeOperation
@@ -1829,20 +1830,19 @@ func (m *Manager) DeleteAgentSummary(ctx context.Context, terminalID string) err
 	}
 	m.mu.Unlock()
 	if summaryStore == nil {
+		m.mu.Lock()
+		delete(m.agentSummaries, terminalID)
+		m.mu.Unlock()
 		return nil
 	}
 	if err := m.runStoreOperation(operation, func() error {
 		return summaryStore.DeleteAgentSummary(ctx, terminalID)
 	}); err != nil {
-		m.mu.Lock()
-		if !hadPrevious {
-			delete(m.agentSummaries, terminalID)
-		} else if _, ok := m.agentSummaries[terminalID]; !ok {
-			m.agentSummaries[terminalID] = previous
-		}
-		m.mu.Unlock()
 		return err
 	}
+	m.mu.Lock()
+	delete(m.agentSummaries, terminalID)
+	m.mu.Unlock()
 	return nil
 }
 

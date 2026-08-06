@@ -254,6 +254,32 @@ func TestAgentSummaryEventPublisherUsesCurrentManagerState(t *testing.T) {
 	}
 }
 
+func TestAgentSummaryEventPublisherDropsDeletedSummary(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		SummaryRunner: blockingSummaryRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.summary.updated"})
+	defer unsubscribe()
+	got := srv.summaryEvents.Publish("agent.summary.updated", session.AgentSummary{
+		TerminalID: "deleted-terminal", Provider: "codex", Status: "running",
+		Summary: "This summary must not be resurrected.", Unread: true,
+	})
+	if got.Type != "" {
+		t.Fatalf("published event = %#v, want zero event for deleted summary", got)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected event for deleted summary: %#v", event)
+	default:
+	}
+}
+
 type blockingSummaryRunner struct{}
 
 func (blockingSummaryRunner) Generate(ctx context.Context, _ string, _ string) (agentsummary.Generation, error) {
