@@ -8,10 +8,12 @@ import {
 } from "./TerminalView";
 import {
   fitTerminalIfVisible as fitTerminalIfVisibleUtil,
+  loadWebglRenderer as loadWebglRendererUtil,
   openTerminalLink as openTerminalLinkUtil,
   terminalOptions as terminalOptionsUtil,
   terminalScrollback as terminalScrollbackUtil,
 } from "./terminalUtils";
+import type { ITerminalAddon } from "@xterm/xterm";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
@@ -88,9 +90,63 @@ test("maps finite and unlimited history limits to xterm scrollback rows", () => 
 
 test("treats macOS Option input as Alt in xterm", () => {
   expect(terminalOptionsUtil("monospace", 14, 1000, 1, "block", true, 1, true))
-    .toMatchObject({ macOptionIsMeta: true, allowTransparency: false });
+    .toMatchObject({ macOptionIsMeta: true });
   expect(terminalOptionsUtil("monospace", 14, 1000, 1, "block", true, 1, false))
-    .toMatchObject({ macOptionIsMeta: false, allowTransparency: false });
+    .toMatchObject({ macOptionIsMeta: false });
+});
+
+test("loads the WebGL addon into an xterm terminal", () => {
+  const addon: ITerminalAddon = {
+    activate: () => undefined,
+    dispose: () => undefined,
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRendererUtil({ loadAddon }, () => addon)).toBe(true);
+  expect(loadAddon).toHaveBeenCalledOnce();
+  expect(loadAddon).toHaveBeenCalledWith(addon);
+});
+
+test("disposes the WebGL addon after a context loss", () => {
+  let onContextLoss: (() => void) | undefined;
+  const dispose = vi.fn();
+  const addon = {
+    activate: () => undefined,
+    dispose,
+    onContextLoss: (listener: () => void) => {
+      onContextLoss = listener;
+      return { dispose: () => undefined };
+    },
+  };
+  const loadAddon = vi.fn();
+
+  expect(loadWebglRendererUtil({ loadAddon }, () => addon)).toBe(true);
+  expect(onContextLoss).toBeDefined();
+
+  onContextLoss?.();
+
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
+test("keeps the DOM renderer when WebGL addon loading fails", () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const loadAddon = vi.fn(() => {
+    throw new Error("WebGL is unavailable");
+  });
+
+  expect(
+    loadWebglRendererUtil(
+      { loadAddon },
+      () => ({
+        activate: () => undefined,
+        dispose: () => undefined,
+      }),
+    ),
+  ).toBe(false);
+  expect(warning).toHaveBeenCalledWith(
+    "WebGL terminal renderer unavailable; using DOM renderer",
+    expect.any(Error),
+  );
 });
 
 test("opens an HTTP terminal link with one popup navigation", () => {
