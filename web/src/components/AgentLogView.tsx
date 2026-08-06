@@ -518,7 +518,7 @@ function AgentLogViewContent({ session, api, active, fontSize = 14 }: AgentLogVi
           onLoadMore={() => void loadMore()}
           viewportRef={viewportRef}
         />
-      ) : loading ? (
+      ) : loading && active ? (
         <div className="agent-log-loading" aria-label="Loading agent log">
           <Skeleton />
           <Skeleton />
