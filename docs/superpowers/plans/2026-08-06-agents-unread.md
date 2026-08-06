@@ -297,6 +297,10 @@ git commit -m "feat: add Agents unread and read tabs"
 
 ### Task 4: Integrate, verify, and prepare the branch for merge
 
+Status: Complete. The isolated backend/Web branches were merged into
+`feat/agents-unread`, the integrated suites passed, and the branch is ready
+for the final fast-forward merge into `main` and push.
+
 **Files:**
 - Modify: docs/superpowers/specs/2026-08-06-agents-unread-design.md only when implementation exposes a confirmed contract mismatch; if that happens, update the affected contract and record the reason in the commit message
 - Modify: docs/superpowers/plans/2026-08-06-agents-unread.md to check off completed steps
