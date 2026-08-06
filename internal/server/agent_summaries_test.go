@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -158,6 +160,97 @@ func TestMarkAgentSummaryReadEndpointUpdatesAndPublishesSummary(t *testing.T) {
 	}
 	if missingError.Message != "The agent summary does not exist." {
 		t.Fatalf("missing error message = %q, want agent summary not found message", missingError.Message)
+	}
+}
+
+func TestMarkAgentSummaryReadEndpointReturns500WithoutPublishingOnCanceledPersistence(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		DatabasePath:  filepath.Join(t.TempDir(), "euphony.sqlite3"),
+		SummaryRunner: blockingSummaryRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "codex", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "waiting",
+		Summary: "Waiting for input.", Action: "Provide the requested input.",
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+
+	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.summary.updated"})
+	defer unsubscribe()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost,
+		"/api/agent-summaries/"+terminal.ID+"/read", bytes.NewBufferString("{}"))
+	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("canceled POST status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := srv.sessions.AgentSummaries()[0]; !got.Unread {
+		t.Fatalf("summary after canceled POST = %#v, want unread rollback", got)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected event after canceled POST: %#v", event)
+	default:
+	}
+}
+
+func TestAgentSummaryEventPublisherUsesCurrentManagerState(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		SummaryRunner: blockingSummaryRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "running",
+		Summary: "Working.", Unread: true,
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if _, err := srv.sessions.MarkAgentSummaryRead(context.Background(), terminal.ID); err != nil {
+		t.Fatalf("MarkAgentSummaryRead() error = %v", err)
+	}
+
+	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.summary.updated"})
+	defer unsubscribe()
+	srv.summaryEvents.Publish("agent.summary.updated", session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "running",
+		Summary: "Working.", Unread: true,
+	})
+	select {
+	case event := <-events:
+		got, ok := event.Data.(session.AgentSummary)
+		if !ok || got.Unread {
+			t.Fatalf("published event = %#v, want manager-normalized unread=false", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for agent.summary.updated")
 	}
 }
 

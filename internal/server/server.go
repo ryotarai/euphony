@@ -34,6 +34,7 @@ type Server struct {
 	handler       http.Handler
 	sessions      *session.Manager
 	control       *control.Service
+	summaryEvents *agentSummaryEventPublisher
 	tickets       *ticketStore
 	terminalSizes *terminalSizeCoordinator
 	agentLogs     *agentlog.Resolver
@@ -68,10 +69,11 @@ func New(config Config) (*Server, error) {
 		_ = sessionManager.Close(context.Background())
 		return nil, err
 	}
+	summaryEvents := newAgentSummaryEventPublisher(controlService, sessionManager)
 	transcriptResolver := agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot)
 	summaryService := agentsummary.New(agentsummary.Config{
 		Sessions: sessionManager,
-		Events:   controlService,
+		Events:   summaryEvents,
 		Resolver: transcriptResolver,
 		Runner:   config.SummaryRunner,
 	})
@@ -94,6 +96,7 @@ func New(config Config) (*Server, error) {
 	server := &Server{
 		sessions:      sessionManager,
 		control:       controlService,
+		summaryEvents: summaryEvents,
 		tickets:       tickets,
 		terminalSizes: newTerminalSizeCoordinator(),
 		agentLogs:     transcriptResolver,
