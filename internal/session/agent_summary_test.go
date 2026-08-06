@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/ryotarai/euphony/internal/selection"
 )
 
 func TestManagerAgentSummaryUnreadTransitions(t *testing.T) {
@@ -86,12 +88,53 @@ func TestManagerMarkAgentSummaryReadIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestManagerMarkAgentSummaryReadDoesNotPersistWhenAlreadyRead(t *testing.T) {
+	store := &agentSummaryTestStore{}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	summary := AgentSummary{TerminalID: "terminal-1", Action: "Approve the change."}
+	if err := manager.SaveAgentSummary(context.Background(), summary); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), summary.TerminalID); err != nil {
+		t.Fatalf("first MarkAgentSummaryRead() error = %v", err)
+	}
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), summary.TerminalID); err != nil {
+		t.Fatalf("second MarkAgentSummaryRead() error = %v", err)
+	}
+	if store.saveCalls != 1 || store.markReadCalls != 1 {
+		t.Fatalf("store writes = SaveAgentSummary:%d, MarkAgentSummaryRead:%d; want 1, 1", store.saveCalls, store.markReadCalls)
+	}
+}
+
+func TestManagerMarkAgentSummaryReadRollsBackWhenPersistenceFails(t *testing.T) {
+	persistErr := errors.New("persist read state")
+	store := &agentSummaryTestStore{markReadErr: persistErr}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	summary := AgentSummary{TerminalID: "terminal-1", Action: "Approve the change."}
+	if err := manager.SaveAgentSummary(context.Background(), summary); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), summary.TerminalID); !errors.Is(err, persistErr) {
+		t.Fatalf("MarkAgentSummaryRead() error = %v, want %v", err, persistErr)
+	}
+	got := manager.AgentSummaries()[0]
+	if !got.Unread {
+		t.Fatalf("summary after persistence failure unread = false, want true")
+	}
+}
+
 func TestManagerMarkAgentSummaryReadRejectsUnknownTerminal(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
-	if _, err := manager.MarkAgentSummaryRead(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("MarkAgentSummaryRead() error = %v, want ErrNotFound", err)
+	if _, err := manager.MarkAgentSummaryRead(context.Background(), "missing"); !errors.Is(err, ErrAgentSummaryNotFound) {
+		t.Fatalf("MarkAgentSummaryRead() error = %v, want ErrAgentSummaryNotFound", err)
 	}
 }
 
@@ -295,4 +338,60 @@ func TestSQLiteStoreDefaultsAndMigratesAgentSummaryProviderToCodex(t *testing.T)
 	if settings.AgentSummaryProvider != "codex" {
 		t.Fatalf("migrated AgentSummaryProvider = %q, want codex", settings.AgentSummaryProvider)
 	}
+}
+
+type agentSummaryTestStore struct {
+	saveCalls     int
+	markReadCalls int
+	markReadErr   error
+}
+
+func (*agentSummaryTestStore) Load(context.Context) ([]Metadata, error) {
+	return nil, nil
+}
+
+func (*agentSummaryTestStore) Save(context.Context, Metadata) error {
+	return nil
+}
+
+func (*agentSummaryTestStore) Delete(context.Context, string) error {
+	return nil
+}
+
+func (*agentSummaryTestStore) LoadSettings(context.Context) (Settings, error) {
+	return Settings{}, nil
+}
+
+func (*agentSummaryTestStore) SaveSettings(context.Context, Settings) error {
+	return nil
+}
+
+func (*agentSummaryTestStore) LoadSelection(context.Context) (selection.State, bool, error) {
+	return selection.State{}, false, nil
+}
+
+func (*agentSummaryTestStore) SaveSelection(context.Context, selection.State) error {
+	return nil
+}
+
+func (*agentSummaryTestStore) Close() error {
+	return nil
+}
+
+func (*agentSummaryTestStore) LoadAgentSummaries(context.Context) ([]AgentSummary, error) {
+	return nil, nil
+}
+
+func (s *agentSummaryTestStore) SaveAgentSummary(context.Context, AgentSummary) error {
+	s.saveCalls++
+	return nil
+}
+
+func (s *agentSummaryTestStore) MarkAgentSummaryRead(context.Context, string) error {
+	s.markReadCalls++
+	return s.markReadErr
+}
+
+func (*agentSummaryTestStore) DeleteAgentSummary(context.Context, string) error {
+	return nil
 }
