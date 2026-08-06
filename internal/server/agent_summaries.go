@@ -10,7 +10,7 @@ import (
 func (s *Server) markAgentSummaryRead(w http.ResponseWriter, r *http.Request) {
 	summary, err := s.sessions.MarkAgentSummaryRead(r.Context(), r.PathValue("id"))
 	switch {
-	case errors.Is(err, session.ErrNotFound):
+	case errors.Is(err, session.ErrAgentSummaryNotFound):
 		writeError(w, http.StatusNotFound, "agent_summary_not_found", "The agent summary does not exist.")
 		return
 	case err != nil:

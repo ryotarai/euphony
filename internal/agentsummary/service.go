@@ -280,8 +280,15 @@ func (s *Service) saveResult(ctx context.Context, expected session.Metadata, sum
 		s.finishInflight(ctx, expected.ID)
 		return
 	}
+	persisted := summary
+	for _, current := range s.sessions.AgentSummaries() {
+		if current.TerminalID == expected.ID {
+			persisted = current
+			break
+		}
+	}
 	s.finishInflight(ctx, expected.ID)
-	s.events.Publish(terminalSummaryUpdatedEvent, summary)
+	s.events.Publish(terminalSummaryUpdatedEvent, persisted)
 }
 
 func (s *Service) finishInflight(ctx context.Context, id string) bool {
