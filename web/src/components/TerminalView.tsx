@@ -98,14 +98,23 @@ const terminalViewportGutter = 14;
 const maxQueuedInitialTerminalBytes = 2 * 1024 * 1024;
 // Coalesce PTY bursts without making terminal updates feel less responsive than roughly 25 fps.
 const terminalOutputBatchWindowMs = 40;
+// Let xterm's own write buffer handle output immediately after interactive input.
+const terminalInteractiveOutputWindowMs = 100;
 
 function createTerminalOutputBatcher(write: (data: Uint8Array) => void) {
   let pending: Uint8Array[] = [];
   let pendingBytes = 0;
   let timer: number | undefined;
+  let interactive = false;
+  let interactiveTimer: number | undefined;
+
+  const cancelFlushTimer = () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+    timer = undefined;
+  };
 
   const flush = () => {
-    timer = undefined;
+    cancelFlushTimer();
     if (pendingBytes === 0) return;
     const data = new Uint8Array(pendingBytes);
     let offset = 0;
@@ -119,8 +128,22 @@ function createTerminalOutputBatcher(write: (data: Uint8Array) => void) {
   };
 
   return {
+    noteInput() {
+      interactive = true;
+      if (interactiveTimer !== undefined) window.clearTimeout(interactiveTimer);
+      interactiveTimer = window.setTimeout(() => {
+        interactive = false;
+        interactiveTimer = undefined;
+      }, terminalInteractiveOutputWindowMs);
+      flush();
+    },
     write(data: Uint8Array) {
       if (data.byteLength === 0) return;
+      if (interactive) {
+        flush();
+        write(data);
+        return;
+      }
       pending.push(data);
       pendingBytes += data.byteLength;
       if (timer === undefined) {
@@ -129,7 +152,10 @@ function createTerminalOutputBatcher(write: (data: Uint8Array) => void) {
     },
     flush,
     dispose() {
-      if (timer !== undefined) window.clearTimeout(timer);
+      cancelFlushTimer();
+      if (interactiveTimer !== undefined) window.clearTimeout(interactiveTimer);
+      interactiveTimer = undefined;
+      interactive = false;
       flush();
     },
   };
@@ -449,7 +475,9 @@ function useTerminalView({
       return false;
     });
     const removeData = terminal.onData((data) => {
-      if (!replayingHistory) send({ type: "input", data });
+      if (replayingHistory) return;
+      outputBatcher.noteInput();
+      send({ type: "input", data });
     });
     const removeTitleChange = terminal.onTitleChange?.((title) => {
       const cwd = title.trim();
