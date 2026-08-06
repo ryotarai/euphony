@@ -26,6 +26,10 @@ function encodeTerminalData(data: string): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
+function encodeTerminalBytes(data: Uint8Array): string {
+  return btoa(String.fromCharCode(...data));
+}
+
 function terminalText(data: string | Uint8Array): string {
   return typeof data === "string" ? data : new TextDecoder().decode(data);
 }
@@ -93,6 +97,11 @@ test("treats macOS Option input as Alt in xterm", () => {
     .toMatchObject({ macOptionIsMeta: true });
   expect(terminalOptionsUtil("monospace", 14, 1000, 1, "block", true, 1, false))
     .toMatchObject({ macOptionIsMeta: false });
+});
+
+test("uses an opaque terminal surface", () => {
+  expect(terminalOptionsUtil("monospace", 14, 1000, 1, "block", true, 1))
+    .toMatchObject({ allowTransparency: false });
 });
 
 test("loads the WebGL addon into an xterm terminal", () => {
@@ -370,6 +379,54 @@ test("gets a ticket before connecting and relays terminal traffic", async () => 
   ]);
 });
 
+test("batches burst terminal output without changing byte order", async () => {
+  const socket = new FakeSocket();
+  const writes: Array<string | Uint8Array> = [];
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: (data) => writes.push(data),
+    focus: () => undefined,
+    fit: () => undefined,
+    proposeDimensions: () => ({ cols: 120, rows: 40 }),
+    resize: () => undefined,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "one-time-ticket" }),
+  } as unknown as ApiClient;
+  const createSocket = vi.fn(() => socket);
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={createSocket}
+    />,
+  );
+  await waitFor(() => expect(createSocket).toHaveBeenCalledTimes(1));
+
+  vi.useFakeTimers();
+  act(() => {
+    socket.receive({ type: "resize", cols: 120, rows: 40 });
+    socket.receive({ type: "output", data: encodeTerminalBytes(new Uint8Array([0xe3])) });
+    socket.receive({ type: "output", data: encodeTerminalBytes(new Uint8Array([0x81, 0x82])) });
+  });
+
+  expect(writes).toHaveLength(0);
+
+  act(() => {
+    vi.advanceTimersByTime(40);
+  });
+
+  expect(writes).toEqual([new Uint8Array([0xe3, 0x81, 0x82])]);
+});
+
 test("centers the accepted shared grid without scaling it", async () => {
   const socket = new FakeSocket();
   let screenElement: HTMLDivElement | undefined;
@@ -638,7 +695,11 @@ test("does not report a stale working directory from replayed history", async ()
   });
   expect(socket.sent).toEqual([]);
 
+  vi.useFakeTimers();
   act(() => socket.receive({ type: "output", data: encodeTerminalData("current title") }));
+  act(() => {
+    vi.advanceTimersByTime(40);
+  });
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "cwd", data: "/etc" },
   ]);
@@ -671,11 +732,15 @@ test("decodes terminal output into the original bytes", async () => {
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
 
+  vi.useFakeTimers();
   act(() => {
     socket.receive({ type: "resize", cols: 80, rows: 24 });
     socket.receive({ type: "output", data: "44GC" });
   });
 
+  act(() => {
+    vi.advanceTimersByTime(40);
+  });
   expect(writes).toEqual([new Uint8Array([0xe3, 0x81, 0x82])]);
 });
 
@@ -1410,7 +1475,11 @@ test("does not send terminal query responses generated while replaying history",
   expect(writes).toEqual(["query"]);
   expect(socket.sent).toEqual([]);
 
+  vi.useFakeTimers();
   act(() => socket.receive({ type: "output", data: encodeTerminalData("query") }));
+  act(() => {
+    vi.advanceTimersByTime(40);
+  });
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "input", data: "\u001b[1;2R" },
   ]);
