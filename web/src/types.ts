@@ -26,6 +26,7 @@ export interface AgentSummary {
   summary: string;
   action?: string;
   generatedAt: string;
+  unread: boolean;
   error?: string;
 }
 

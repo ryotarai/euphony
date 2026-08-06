@@ -1,5 +1,5 @@
 import { ApiClient } from "./api";
-import type { AnnotationSession, SelectionSnapshot } from "./types";
+import type { AgentSummary, AnnotationSession, SelectionSnapshot } from "./types";
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
@@ -64,6 +64,30 @@ test("turns a non-JSON v1 error response into an API error", async () => {
     code: "request_failed",
     message: "The request failed.",
   });
+});
+
+test("marks an agent summary as read and returns the normalized summary", async () => {
+  const summary: AgentSummary = {
+    terminalId: "terminal/one",
+    provider: "codex",
+    status: "waiting",
+    summary: "The agent is waiting for input.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(summary));
+  const api = new ApiClient("token");
+
+  expect(await api.markAgentSummaryRead(summary.terminalId)).toEqual(summary);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/terminal%2Fone/read",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
 });
 
 test("creates and deletes terminals through v1 with returned selection", async () => {
