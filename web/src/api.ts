@@ -47,6 +47,7 @@ export class ApiClient {
   markAgentSummaryRead(id: string): Promise<AgentSummary> {
     return this.request(`/api/agent-summaries/${encodeURIComponent(id)}/read`, {
       method: "POST",
+      body: JSON.stringify({}),
     });
   }
 

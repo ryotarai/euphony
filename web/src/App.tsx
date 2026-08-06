@@ -104,6 +104,17 @@ const agentsPaneID = "agents" as const;
 
 type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
 
+function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSummary) {
+  return summary.terminalId === snapshot.terminalId
+    && summary.provider === snapshot.provider
+    && summary.status === snapshot.status
+    && summary.summary === snapshot.summary
+    && summary.action === snapshot.action
+    && summary.generatedAt === snapshot.generatedAt
+    && summary.unread === snapshot.unread
+    && summary.error === snapshot.error;
+}
+
 function isDashboardPaneID(id: string | null): id is DashboardPaneID {
   return id === tasksPaneID || id === agentsPaneID;
 }
@@ -456,6 +467,7 @@ export function App({
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
   const [agentSummariesError, setAgentSummariesError] = useState("");
+  const agentSummariesLoadedForApiRef = useRef<ApiClient | null>(null);
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
@@ -574,9 +586,10 @@ export function App({
   const loadAgentSummaries = useCallback(async () => {
     if (!api) return;
     setAgentSummariesLoading(true);
-    setAgentSummariesError("");
     try {
-      setAgentSummaries(await api.listAgentSummaries());
+      const nextSummaries = await api.listAgentSummaries();
+      setAgentSummaries(nextSummaries);
+      setAgentSummariesError("");
     } catch (error) {
       setAgentSummariesError(
         error instanceof Error
@@ -991,9 +1004,10 @@ export function App({
   }, [api, initialSettings]);
 
   useEffect(() => {
-    if (!agentsOpen || !api) return;
+    if (!api || !sessions || agentSummariesLoadedForApiRef.current === api) return;
+    agentSummariesLoadedForApiRef.current = api;
     void loadAgentSummaries();
-  }, [agentsOpen, api, loadAgentSummaries]);
+  }, [api, loadAgentSummaries, sessions]);
 
   useEffect(() => {
     if (!tasksOpen || !api) return;
@@ -2742,11 +2756,16 @@ export function App({
   }
 
   async function openAgentTerminal(id: string) {
+    const snapshot = agentSummaries.find((item) => item.terminalId === id);
     if (api) {
       try {
         const summary = await api.markAgentSummaryRead(id);
         setAgentSummaries((current) =>
-          current.map((item) => item.terminalId === id ? summary : item),
+          current.map((item) => {
+            if (item.terminalId !== id) return item;
+            if (snapshot && !agentSummaryMatchesSnapshot(item, snapshot)) return item;
+            return summary;
+          }),
         );
         setAgentSummariesError("");
       } catch (error) {
@@ -2889,7 +2908,9 @@ export function App({
     : [];
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
   const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
-  const agentSummaryCount = agentSummaries.filter((summary) => summary.unread).length;
+  const agentSummaryCount = agentSummaries.filter(
+    (summary) => summary.unread && sessionsByID.has(summary.terminalId),
+  ).length;
   const taskCount = tasks.filter((task) => task.status !== "done").length;
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")

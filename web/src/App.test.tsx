@@ -562,6 +562,96 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
+test("shows the Agents unread badge after initial app load without opening Agents", async () => {
+  const readWaitingSummary: AgentSummary = {
+    terminalId: runningSession.id,
+    provider: "codex",
+    status: "waiting",
+    summary: "A read lifecycle summary is not unread.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const unreadRunningSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "An unread summary is available before opening Agents.",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: true,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession, secondRunningSession]);
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([readWaitingSummary, unreadRunningSummary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => {
+    const count = screen.getByRole("button", { name: "Agents" })
+      .querySelector(".sidebar-attention-count");
+    expect(count).toHaveTextContent("1");
+  });
+  expect(screen.queryByRole("heading", { name: "Agents" })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(
+    ([input]) => input === "/api/agent-summaries",
+  )).toHaveLength(1);
+});
+
+test("does not inflate the Agents unread badge for summaries without current sessions", async () => {
+  const linkedUnreadSummary: AgentSummary = {
+    terminalId: runningSession.id,
+    provider: "codex",
+    status: "running",
+    summary: "Only the linked unread summary counts.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+  };
+  const missingUnreadSummary: AgentSummary = {
+    ...linkedUnreadSummary,
+    terminalId: "missing-terminal",
+    summary: "This unread summary has no current session.",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([linkedUnreadSummary, missingUnreadSummary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => {
+    const count = screen.getByRole("button", { name: "Agents" })
+      .querySelector(".sidebar-attention-count");
+    expect(count).toHaveTextContent("1");
+  });
+  expect(fetchMock.mock.calls.filter(
+    ([input]) => input === "/api/agent-summaries",
+  )).toHaveLength(1);
+});
+
 test("keeps a failed agent read unread while still opening its terminal", async () => {
   const summary: AgentSummary = {
     terminalId: secondRunningSession.id,
@@ -610,6 +700,7 @@ test("keeps a failed agent read unread while still opening its terminal", async 
 
   await user.click(screen.getByRole("button", { name: /Agents/ }));
   expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("The read failed.");
   expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -701,6 +792,104 @@ test("moves a read summary back to Unread when an SSE update is unread", async (
   eventController?.close();
 });
 
+test("does not let a stale read response overwrite a newer SSE summary", async () => {
+  const readSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "running",
+    summary: "The old read summary.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const unreadSummary: AgentSummary = {
+    ...readSummary,
+    status: "waiting",
+    summary: "The newer unread summary.",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: true,
+  };
+  let releaseRead: (() => void) | undefined;
+  const readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const encoder = new TextEncoder();
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: [runningSession.id],
+          manualTerminalIds: [runningSession.id],
+          pinnedTerminalIds: [],
+          focusedTerminalId: runningSession.id,
+          filters: { statuses: [], cwds: [] },
+          revision: 3,
+        },
+      });
+    }
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventController = controller;
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([readSummary]);
+    }
+    if (input === "/api/agent-summaries/session-2/read") {
+      await readGate;
+      return jsonResponse(readSummary);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => expect(eventController).toBeDefined());
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
+  await user.click(screen.getByRole("button", { name: /The old read summary/ }));
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/agent-summaries/session-2/read",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  eventController?.enqueue(encoder.encode(JSON.stringify({
+    sequence: 11,
+    occurredAt: "2026-08-05T00:02:00Z",
+    type: "agent.summary.updated",
+    data: unreadSummary,
+  }) + "\n"));
+  await waitFor(() => {
+    expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
+  });
+
+  await user.click(await screen.findByRole("tab", { name: /Unread 1/ }));
+  expect(await screen.findByText(unreadSummary.summary)).toBeInTheDocument();
+
+  releaseRead?.();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  eventController?.close();
+});
+
 test("opens the Tasks workspace, loads a task, and opens its linked terminal", async () => {
   const task: Task = {
     id: "task-1",
@@ -772,7 +961,7 @@ test("switches from a selected workspace pane back to a terminal", async () => {
   await user.click(screen.getByRole("button", { name: "Select Codex" }));
   expect(screen.queryByRole("heading", { name: "Tasks" })).not.toBeInTheDocument();
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  expect(fetchMock).not.toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
+  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
 });
 
 test("includes a dashboard pane beside a terminal through its checkbox", async () => {
@@ -812,6 +1001,7 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession, attention]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       jsonResponse({ ...attention, needsAttention: false }),
     );
@@ -830,7 +1020,7 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       "/api/sessions/session-2/acknowledge-attention",
       expect.objectContaining({ method: "POST" }),
     );
@@ -890,7 +1080,8 @@ test("stores a valid token and starts one terminal when the session list is empt
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([]))
-    .mockImplementationOnce(() => jsonResponse(runningSession, 201));
+    .mockImplementationOnce(() => jsonResponse(runningSession, 201))
+    .mockImplementationOnce(() => jsonResponse([]));
   const user = userEvent.setup();
   render(
     <App syncSelection={false}
@@ -906,14 +1097,16 @@ test("stores a valid token and starts one terminal when the session list is empt
     "aria-current",
     "true",
   );
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(fetchMock).toHaveBeenLastCalledWith(
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ name: "Terminal" }),
     }),
   );
+  expect(fetchMock).toHaveBeenLastCalledWith("/api/agent-summaries", expect.anything());
   expect(sessionStorage.getItem("euphony.token")).toBe("valid-token");
 });
 
@@ -922,7 +1115,8 @@ test("consumes a token from the URL without leaving it in browser history", asyn
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([]))
-    .mockImplementationOnce(() => jsonResponse(runningSession, 201));
+    .mockImplementationOnce(() => jsonResponse(runningSession, 201))
+    .mockImplementationOnce(() => jsonResponse([]));
 
   render(
     <App syncSelection={false}
@@ -968,6 +1162,7 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
     .mockImplementationOnce(() =>
       jsonResponse([runningSession, secondRunningSession]),
     )
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(created, 201));
 
   const user = userEvent.setup();
@@ -987,7 +1182,7 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
   );
 
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
@@ -1005,6 +1200,7 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(secondRunningSession, 201))
     .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })));
 
@@ -1021,7 +1217,7 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
 
   expect(screen.queryByLabelText("Terminal name")).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
@@ -1037,13 +1233,13 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   expect(screen.getByRole("dialog", { name: "Delete terminal?" })).toBeVisible();
   expect(screen.getByText(/“Claude” will be stopped/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 
   await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   expect(screen.queryByRole("dialog", { name: "Delete terminal?" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Delete Claude" })).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 
   await user.click(screen.getByRole("button", { name: "Delete Claude" }));
   await user.click(screen.getByRole("button", { name: "Delete terminal" }));
@@ -1051,9 +1247,9 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Delete Claude" })).not.toBeInTheDocument();
   });
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenCalledTimes(4);
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions/session-2",
     expect.objectContaining({ method: "DELETE" }),
   );
@@ -1064,6 +1260,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       jsonResponse(
         { code: "invalid_cwd", message: "Choose an existing working directory." },
@@ -1083,7 +1280,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
   await user.click(await screen.findByRole("button", { name: "New terminal" }));
 
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({
@@ -1093,7 +1290,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
     }),
   );
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({ name: "Terminal" }),
@@ -1106,6 +1303,7 @@ test("does not fall back when an explicit terminal cwd is invalid", async () => 
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       jsonResponse(
         { code: "invalid_cwd", message: "Choose an existing working directory." },
@@ -1134,9 +1332,9 @@ test("does not fall back when an explicit terminal cwd is invalid", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Choose an existing working directory.",
   );
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({
@@ -1152,6 +1350,7 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const user = userEvent.setup();
   render(
@@ -1174,7 +1373,7 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
   await user.click(screen.getByRole("button", { name: "Create terminal" }));
 
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
@@ -1240,6 +1439,7 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
     .mockImplementationOnce(() =>
       jsonResponse([runningSession, secondRunningSession]),
     )
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       Promise.resolve(new Response(null, { status: 204 })),
     )
@@ -1273,13 +1473,13 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
   expect(
     screen.getByText(/2 selected terminals will be stopped/),
   ).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(
     screen.queryByRole("dialog", { name: "Delete selected terminals?" }),
   ).not.toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 
   fireEvent.keyDown(window, { key: "k", metaKey: true });
   await user.click(
@@ -1294,12 +1494,12 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
     expect(screen.queryByRole("button", { name: "Select Claude" })).not.toBeInTheDocument();
   });
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions/session-1",
     expect.objectContaining({ method: "DELETE" }),
   );
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions/session-2",
     expect.objectContaining({ method: "DELETE" }),
   );
@@ -2154,10 +2354,16 @@ test("does not render terminal panes again for an unchanged polling response", a
         initialToken="valid-token"
         initialSettings={defaultSettings}
         renderTerminal={() => <TerminalProbe />}
-      />,
+    />,
     );
     await screen.findByLabelText("terminal probe");
-    expect(renders).toBe(1);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(
+        ([input]) => input === "/api/agent-summaries",
+      )).toHaveLength(1);
+    });
+    const initialRenders = renders;
+    expect(initialRenders).toBeGreaterThanOrEqual(1);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
@@ -2166,7 +2372,7 @@ test("does not render terminal panes again for an unchanged polling response", a
     expect(
       fetchMock.mock.calls.filter(([input]) => input === "/api/sessions"),
     ).toHaveLength(2);
-    expect(renders).toBe(1);
+    expect(renders).toBe(initialRenders);
   } finally {
     vi.useRealTimers();
   }
@@ -2586,6 +2792,7 @@ test("tmux split keys are not delivered to the focused terminal", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const terminalKeyDown = vi.fn();
   render(
@@ -2618,6 +2825,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(createdByC, 201))
     .mockImplementationOnce(() => jsonResponse(createdByV, 201));
   render(
@@ -2634,7 +2842,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   expect(await screen.findByLabelText("created-c terminal pane")).toBeVisible();
   expectTerminalPaneHidden("session-1 terminal pane");
   expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
+    3,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({
@@ -2649,7 +2857,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   expect(await screen.findByLabelText("created-v terminal pane")).toBeVisible();
   expect(screen.getByLabelText("created-c terminal pane")).toBeVisible();
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { AgentSummary, Session } from "../types";
 
 interface AgentsViewProps {
@@ -13,6 +13,9 @@ interface AgentSummaryItem {
   summary: AgentSummary;
   session: Session;
 }
+
+const agentTabs = ["unread", "read"] as const;
+type AgentTab = (typeof agentTabs)[number];
 
 function statusLabel(status: AgentSummary["status"]) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -111,7 +114,11 @@ export function AgentsView({
   error = "",
   onSelectSession,
 }: AgentsViewProps) {
-  const [selectedTab, setSelectedTab] = useState<"unread" | "read">("unread");
+  const [selectedTab, setSelectedTab] = useState<AgentTab>("unread");
+  const tabRefs = useRef<Record<AgentTab, HTMLButtonElement | null>>({
+    unread: null,
+    read: null,
+  });
   const items = useMemo(() => {
     const sessionsByID = new Map(sessions.map((session) => [session.id, session]));
     return summaries
@@ -159,7 +166,7 @@ export function AgentsView({
       )}
       {error && <p className="agents-error" role="alert">{error}</p>}
       <div className="agents-tabs" role="tablist" aria-label="Agent summaries">
-        {(["unread", "read"] as const).map((tab) => {
+        {agentTabs.map((tab) => {
           const count = tab === "unread" ? unreadItems.length : readItems.length;
           const label = tab === "unread" ? "Unread" : "Read";
           const tabID = `agents-${tab}-tab`;
@@ -175,7 +182,36 @@ export function AgentsView({
               aria-controls={tabPanelID}
               aria-selected={tab === selectedTab}
               tabIndex={tab === selectedTab ? 0 : -1}
+              ref={(element) => {
+                tabRefs.current[tab] = element;
+              }}
               onClick={() => setSelectedTab(tab)}
+              onKeyDown={(event) => {
+                const currentIndex = agentTabs.indexOf(tab);
+                let nextIndex: number;
+                switch (event.key) {
+                  case "ArrowRight":
+                  case "ArrowDown":
+                    nextIndex = (currentIndex + 1) % agentTabs.length;
+                    break;
+                  case "ArrowLeft":
+                  case "ArrowUp":
+                    nextIndex = (currentIndex - 1 + agentTabs.length) % agentTabs.length;
+                    break;
+                  case "Home":
+                    nextIndex = 0;
+                    break;
+                  case "End":
+                    nextIndex = agentTabs.length - 1;
+                    break;
+                  default:
+                    return;
+                }
+                event.preventDefault();
+                const nextTab = agentTabs[nextIndex];
+                setSelectedTab(nextTab);
+                tabRefs.current[nextTab]?.focus();
+              }}
             >
               <span>{label}</span>
               <span className="agents-tab-count">{count}</span>

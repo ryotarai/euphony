@@ -68,7 +68,7 @@ test("turns a non-JSON v1 error response into an API error", async () => {
 
 test("marks an agent summary as read and returns the normalized summary", async () => {
   const summary: AgentSummary = {
-    terminalId: "terminal-1",
+    terminalId: "terminal/one",
     provider: "codex",
     status: "waiting",
     summary: "The agent is waiting for input.",
@@ -79,11 +79,12 @@ test("marks an agent summary as read and returns the normalized summary", async 
     .mockImplementationOnce(() => jsonResponse(summary));
   const api = new ApiClient("token");
 
-  expect(await api.markAgentSummaryRead("terminal-1")).toEqual(summary);
+  expect(await api.markAgentSummaryRead(summary.terminalId)).toEqual(summary);
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/agent-summaries/terminal-1/read",
+    "/api/agent-summaries/terminal%2Fone/read",
     expect.objectContaining({
       method: "POST",
+      body: JSON.stringify({}),
       headers: expect.objectContaining({ Authorization: "Bearer token" }),
     }),
   );
