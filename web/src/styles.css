@@ -701,12 +701,6 @@ input {
   }
 }
 
-@keyframes session-status-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes copied-toast-in {
   from {
     opacity: 0;
@@ -1501,7 +1495,7 @@ input:focus-visible,
 .session-status-running {
   color: #60a5fa;
   transform-origin: center;
-  animation: session-status-spin 900ms linear infinite;
+  animation: none;
 }
 
 .session-status-blocked {

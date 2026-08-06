@@ -21,11 +21,10 @@ compositing.
 
 Reduce unnecessary WindowServer and browser compositor work while preserving
 terminal byte order, terminal input, history replay, resize negotiation,
-status semantics, and the existing WebGL-to-DOM fallback.
+status semantics, and xterm's DOM renderer behavior.
 
 ## Non-goals
 
-- Do not remove the WebGL renderer.
 - Do not drop terminal output or parse/drop intermediate ANSI frames.
 - Do not change terminal selection, pane residency, source tabs, or keyboard
   behavior.
@@ -33,30 +32,26 @@ status semantics, and the existing WebGL-to-DOM fallback.
 
 ## Considered approaches
 
-1. Remove WebGL entirely. This would reduce GPU work but regresses the
-   existing renderer performance improvement and increases DOM layout work.
-2. Keep WebGL and only remove the running spinner. This fixes the continuous
+1. Keep WebGL and only remove the running spinner. This fixes the continuous
    page compositor loop but leaves high-rate terminal surface submissions.
-3. Keep WebGL, make its surface opaque, coalesce live output for at most one
-   write every 50ms, and make the running indicator static. This preserves the
-   renderer and terminal bytes while addressing both trace signatures. This is
-   the selected approach.
+2. Keep WebGL, make its surface opaque, and coalesce live output. xterm already
+   schedules writes through its own animation frame, so this adds latency and
+   complexity without removing the WebGL mailbox work seen in the trace.
+3. Remove the WebGL addon, keep xterm's DOM renderer, and make the running
+   indicator static. This removes the terminal's GPU surface submissions and
+   the independent page animation while preserving terminal bytes and DOM
+   fallback behavior. This is the selected approach.
 
 ## Design
 
-### Live terminal output scheduler
+### DOM terminal renderer
 
-Add a small, dependency-free scheduler that accepts `Uint8Array` chunks,
-queues them for at most 50ms, concatenates all queued chunks in arrival order,
-and calls xterm's `write` once. It exposes `flush` and `dispose`; disposal
-flushes pending data before the terminal is disposed. Empty chunks are ignored.
+Do not load `@xterm/addon-webgl` after `Terminal.open()`. xterm's built-in DOM
+renderer remains active for every terminal, so output continues through the
+same `terminal.write` path without adding an application-level delay or
+dropping bytes. Remove the unused addon dependency and its loader tests.
 
-Only live output after the first accepted terminal size uses this scheduler.
-History replay, the initial pre-size queue, error text, and exit text keep their
-existing immediate ordering behavior. The scheduler delays visual display by
-at most 50ms but never discards bytes.
-
-### Opaque WebGL surface
+### Opaque terminal surface
 
 Set xterm's `allowTransparency` option to `false`. Euphony's terminal host and
 theme already use an opaque `#050505` background, so this changes composition
@@ -70,20 +65,18 @@ status remains visually distinct without forcing a display frame forever.
 
 ## Testing
 
-- Unit-test the output scheduler's batching, byte preservation, empty-chunk
-  handling, and disposal flush.
 - Assert terminal options are opaque.
 - Keep existing SessionNavigation assertions for the running class and
   accessible label; add a CSS contract test that the running selector has no
   animation and that the old infinite keyframe is absent.
-- Run focused Vitest tests, the full web suite, typecheck, production build,
-  React Doctor, and the terminal Playwright suite when the local server is
-  available.
+- Remove the WebGL-specific unit tests and dependency, then run focused Vitest
+  tests, the full web suite, typecheck, production build, React Doctor, and the
+  terminal Playwright suite when the local server is available.
 
 ## Acceptance criteria
 
-1. Live output remains byte-for-byte ordered after batching.
-2. No terminal output is lost when a terminal view is disposed.
+1. The normal terminal path does not create a WebGL renderer or mailbox.
+2. Live output remains byte-for-byte ordered through the existing write path.
 3. xterm is configured with an opaque surface.
 4. `running` status no longer has an infinite CSS animation.
 5. Existing terminal and status behavior tests remain green.

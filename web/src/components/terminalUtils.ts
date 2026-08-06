@@ -1,11 +1,6 @@
-import { Terminal, type ITerminalAddon } from "@xterm/xterm";
-import { WebglAddon } from "@xterm/addon-webgl";
+import { Terminal } from "@xterm/xterm";
 import { defaultTerminalOptionAsAlt } from "../settings";
 import type { TerminalCursorStyle } from "../types";
-
-type WebglRendererAddon = ITerminalAddon & {
-  onContextLoss?: (listener: () => void) => unknown;
-};
 
 const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
@@ -43,21 +38,6 @@ export function openTerminalLink(uri: string): void {
   }
 }
 
-export function loadWebglRenderer(
-  terminal: Pick<Terminal, "loadAddon">,
-  createAddon: () => WebglRendererAddon = () => new WebglAddon(),
-): boolean {
-  try {
-    const addon = createAddon();
-    addon.onContextLoss?.(() => addon.dispose());
-    terminal.loadAddon(addon);
-    return true;
-  } catch (error) {
-    console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
-    return false;
-  }
-}
-
 export function terminalOptions(
   fontFamily: string,
   fontSize: number,
@@ -69,7 +49,7 @@ export function terminalOptions(
   optionAsAlt = defaultTerminalOptionAsAlt,
 ): ConstructorParameters<typeof Terminal>[0] {
   return {
-    allowTransparency: true,
+    allowTransparency: false,
     fontFamily,
     fontSize,
     lineHeight,
