@@ -584,8 +584,11 @@ export function App({
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const agentSummaryRevisionsRef = useRef<Map<string, number>>(new Map());
-  const agentSummaryDeletedTerminalIDsRef = useRef<Set<string>>(new Set());
-  const agentSummariesInFlightForApiRef = useRef<ApiClient | null>(null);
+  const agentSummaryDeletedAtRef = useRef<Map<string, string>>(new Map());
+  const agentSummariesInFlightRef = useRef<{
+    api: ApiClient;
+    promise: Promise<boolean>;
+  } | null>(null);
   const bumpAgentSummaryRevision = useCallback((terminalID: string) => {
     const revisions = agentSummaryRevisionsRef.current;
     revisions.set(terminalID, (revisions.get(terminalID) ?? 0) + 1);
@@ -599,9 +602,19 @@ export function App({
         const includedTerminalIDs = new Set<string>();
         const merged: AgentSummary[] = [];
         for (const summary of nextSummaries) {
-          if (agentSummaryDeletedTerminalIDsRef.current.has(summary.terminalId)) {
-            includedTerminalIDs.add(summary.terminalId);
-            continue;
+          const deletedAt = agentSummaryDeletedAtRef.current.get(summary.terminalId);
+          if (deletedAt) {
+            const deletedTimestamp = Date.parse(deletedAt);
+            const summaryTimestamp = Date.parse(summary.generatedAt);
+            if (
+              Number.isNaN(summaryTimestamp)
+              || Number.isNaN(deletedTimestamp)
+              || summaryTimestamp <= deletedTimestamp
+            ) {
+              includedTerminalIDs.add(summary.terminalId);
+              continue;
+            }
+            agentSummaryDeletedAtRef.current.delete(summary.terminalId);
           }
           const currentSummary = currentByTerminalID.get(summary.terminalId);
           const startRevision = revisionsAtStart.get(summary.terminalId) ?? 0;
@@ -616,7 +629,7 @@ export function App({
         }
         for (const summary of current) {
           if (includedTerminalIDs.has(summary.terminalId)) continue;
-          if (agentSummaryDeletedTerminalIDsRef.current.has(summary.terminalId)) continue;
+          if (agentSummaryDeletedAtRef.current.has(summary.terminalId)) continue;
           const startRevision = revisionsAtStart.get(summary.terminalId) ?? 0;
           const currentRevision =
             agentSummaryRevisionsRef.current.get(summary.terminalId) ?? 0;
@@ -627,29 +640,39 @@ export function App({
     },
     [],
   );
-  const loadAgentSummaries = useCallback(async () => {
-    if (!api || agentSummariesInFlightForApiRef.current === api) return;
-    agentSummariesInFlightForApiRef.current = api;
-    const revisionsAtStart = new Map(agentSummaryRevisionsRef.current);
-    setAgentSummariesLoading(true);
-    try {
-      const nextSummaries = await api.listAgentSummaries();
-      applyAgentSummarySnapshot(nextSummaries, revisionsAtStart);
-      setAgentSummariesError("");
-      agentSummariesLoadedForApiRef.current = api;
-    } catch (error) {
-      setAgentSummariesError(
-        error instanceof Error
-          ? error.message
-          : "Agent summaries could not be loaded.",
-      );
-      return false;
-    } finally {
-      if (agentSummariesInFlightForApiRef.current === api) {
-        agentSummariesInFlightForApiRef.current = null;
-      }
-      setAgentSummariesLoading(false);
+  const loadAgentSummaries = useCallback(async (force = false): Promise<boolean> => {
+    if (!api) return false;
+    const existing = agentSummariesInFlightRef.current;
+    if (existing?.api === api) {
+      const loaded = await existing.promise;
+      return force ? loadAgentSummaries(false) : loaded;
     }
+    const revisionsAtStart = new Map(agentSummaryRevisionsRef.current);
+    let promise: Promise<boolean>;
+    promise = (async () => {
+      setAgentSummariesLoading(true);
+      try {
+        const nextSummaries = await api.listAgentSummaries();
+        applyAgentSummarySnapshot(nextSummaries, revisionsAtStart);
+        setAgentSummariesError("");
+        agentSummariesLoadedForApiRef.current = api;
+        return true;
+      } catch (error) {
+        setAgentSummariesError(
+          error instanceof Error
+            ? error.message
+            : "Agent summaries could not be loaded.",
+        );
+        return false;
+      } finally {
+        if (agentSummariesInFlightRef.current?.promise === promise) {
+          agentSummariesInFlightRef.current = null;
+        }
+        setAgentSummariesLoading(false);
+      }
+    })();
+    agentSummariesInFlightRef.current = { api, promise };
+    return promise;
   }, [api, applyAgentSummarySnapshot]);
   const loadTasks = useCallback(async () => {
     if (!api) return;
@@ -1200,22 +1223,15 @@ export function App({
     const refreshSnapshots = async (includeAgentSummaries = false) => {
       if (refreshRunning || controller.signal.aborted) return;
       refreshRunning = true;
-      const revisionsAtStart = new Map(agentSummaryRevisionsRef.current);
       try {
-        const [items, selection, nextSummaries] = await Promise.all([
+        const [items, selection] = await Promise.all([
           api.listSessions(),
           api.getSelection(),
-          includeAgentSummaries
-            ? api.listAgentSummaries()
-            : Promise.resolve(null),
         ]);
         if (controller.signal.aborted) return;
         applySessionSnapshot(items);
         acceptServerSelection(selection);
-        if (nextSummaries) {
-          applyAgentSummarySnapshot(nextSummaries, revisionsAtStart);
-          agentSummariesLoadedForApiRef.current = api;
-        }
+        if (includeAgentSummaries) await loadAgentSummaries(true);
         setAnnotationRevision((current) => current + 1);
       } finally {
         refreshRunning = false;
@@ -1246,7 +1262,7 @@ export function App({
             if (event.type === "agent.summary.updated") {
               const summary = event.data as AgentSummary;
               if (!summary?.terminalId) return;
-              agentSummaryDeletedTerminalIDsRef.current.delete(summary.terminalId);
+              agentSummaryDeletedAtRef.current.delete(summary.terminalId);
               bumpAgentSummaryRevision(summary.terminalId);
               setAgentSummaries((current) => [
                 ...current.filter((item) => item.terminalId !== summary.terminalId),
@@ -1257,7 +1273,7 @@ export function App({
             if (event.type === "agent.summary.deleted") {
               const data = event.data as { terminalId?: string };
               if (data?.terminalId) {
-                agentSummaryDeletedTerminalIDsRef.current.add(data.terminalId);
+                agentSummaryDeletedAtRef.current.set(data.terminalId, event.occurredAt);
                 bumpAgentSummaryRevision(data.terminalId);
                 setAgentSummaries((current) =>
                   current.filter((item) => item.terminalId !== data.terminalId),
@@ -1300,7 +1316,7 @@ export function App({
                 const data = event.data as { id?: string; terminalId?: string };
                 const deletedID = data?.id ?? data?.terminalId;
                 if (deletedID) {
-                  agentSummaryDeletedTerminalIDsRef.current.add(deletedID);
+                  agentSummaryDeletedAtRef.current.set(deletedID, event.occurredAt);
                   bumpAgentSummaryRevision(deletedID);
                   setAgentSummaries((current) =>
                     current.filter((item) => item.terminalId !== deletedID),
@@ -1332,6 +1348,7 @@ export function App({
     applySessionSnapshot,
     applyAgentSummarySnapshot,
     bumpAgentSummaryRevision,
+    loadAgentSummaries,
     loadTasks,
     sessions !== null,
     syncSelection,
