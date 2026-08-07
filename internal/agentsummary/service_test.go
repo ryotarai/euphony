@@ -22,10 +22,12 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 		ID: "entry-1", Kind: "message", Role: "assistant",
 		Content: "I am updating the request handler.",
 	}}
-	prompt := BuildPrompt(metadata, entries, []byte("\x1b[31mterminal output\x1b[0m\n"))
+	prompt := BuildPrompt(metadata, entries, []byte("\x1b[31mterminal output\x1b[0m\n"), "Prioritize user-visible blockers.\nKeep the wording concise.")
 	if !strings.Contains(prompt, "I am updating the request handler.") ||
 		!strings.Contains(prompt, "terminal output") ||
-		!strings.Contains(prompt, "Agent status: running") {
+		!strings.Contains(prompt, "Agent status: running") ||
+		!strings.Contains(prompt, "Prioritize user-visible blockers.") ||
+		!strings.Contains(prompt, "Keep the wording concise.") {
 		t.Fatalf("prompt = %q", prompt)
 	}
 	if strings.Contains(prompt, "\x1b[") {
@@ -39,9 +41,45 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 	}
 
 	largeTerminal := []byte(strings.Repeat("x", maxTerminalContextBytes+100))
-	bounded := BuildPrompt(metadata, nil, largeTerminal)
+	bounded := BuildPrompt(metadata, nil, largeTerminal, strings.Repeat("追加指示", maxAdditionalPromptRunes+100))
 	if len(bounded) > maxPromptBytes {
 		t.Fatalf("prompt length = %d, want <= %d", len(bounded), maxPromptBytes)
+	}
+}
+
+func TestBuildPromptOmitsEmptyAdditionalInstructions(t *testing.T) {
+	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
+	prompt := BuildPrompt(metadata, nil, nil, "   \n\t")
+	if strings.Contains(prompt, "Additional instructions from the workspace owner:") {
+		t.Fatalf("prompt includes an empty additional instruction section: %q", prompt)
+	}
+}
+
+func TestServicePassesConfiguredAdditionalPromptToRunner(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	settings := manager.Settings()
+	settings.AgentSummaryPrompt = "Focus on the user's immediate next action."
+	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	metadata, err := manager.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	metadata, err = manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", AgentSessionID: "thread-1", Status: "running",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	runner := &promptCaptureRunner{result: Generation{Summary: "Working."}}
+	service := New(Config{Sessions: manager, Events: newTestEvents(), Runner: runner})
+
+	service.generate(context.Background(), metadata)
+
+	if !strings.Contains(runner.prompt, "Focus on the user's immediate next action.") {
+		t.Fatalf("runner prompt = %q", runner.prompt)
 	}
 }
 
@@ -371,6 +409,16 @@ type testRunner struct {
 	result  Generation
 	started chan struct{}
 	release chan struct{}
+}
+
+type promptCaptureRunner struct {
+	prompt string
+	result Generation
+}
+
+func (r *promptCaptureRunner) Generate(_ context.Context, _, prompt string) (Generation, error) {
+	r.prompt = prompt
+	return r.result, nil
 }
 
 func (r *testRunner) Generate(ctx context.Context, provider, _ string) (Generation, error) {
