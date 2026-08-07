@@ -35,16 +35,22 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalScrollSensitivity float64  `json:"terminalScrollSensitivity"`
 		TerminalOptionAsAlt       *bool    `json:"terminalOptionAsAlt"`
 		AgentSummaryProvider      string   `json:"agentSummaryProvider"`
+		AgentSummaryPrompt        *string  `json:"agentSummaryPrompt"`
 	}
+	currentSettings := s.sessions.Settings()
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	decodeErr := decoder.Decode(&input)
 	terminalFontFamily := strings.TrimSpace(input.TerminalFontFamily)
 	if input.AgentSummaryProvider == "" {
-		input.AgentSummaryProvider = s.sessions.Settings().AgentSummaryProvider
+		input.AgentSummaryProvider = currentSettings.AgentSummaryProvider
 		if input.AgentSummaryProvider == "" {
 			input.AgentSummaryProvider = session.DefaultAgentSummaryProvider
 		}
+	}
+	agentSummaryPrompt := currentSettings.AgentSummaryPrompt
+	if input.AgentSummaryPrompt != nil {
+		agentSummaryPrompt = *input.AgentSummaryPrompt
 	}
 	if decodeErr != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
@@ -62,7 +68,8 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		input.TerminalCursorBlink == nil ||
 		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) ||
 		input.TerminalOptionAsAlt == nil ||
-		!validAgentSummaryProvider(input.AgentSummaryProvider) {
+		!validAgentSummaryProvider(input.AgentSummaryProvider) ||
+		(input.AgentSummaryPrompt != nil && utf8.RuneCountInString(*input.AgentSummaryPrompt) > 8000) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
 	}
@@ -82,6 +89,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalScrollSensitivity: int(input.TerminalScrollSensitivity),
 		TerminalOptionAsAlt:       *input.TerminalOptionAsAlt,
 		AgentSummaryProvider:      input.AgentSummaryProvider,
+		AgentSummaryPrompt:        agentSummaryPrompt,
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")

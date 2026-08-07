@@ -110,6 +110,7 @@ type Settings struct {
 	TerminalScrollSensitivity int     `json:"terminalScrollSensitivity"`
 	TerminalOptionAsAlt       bool    `json:"terminalOptionAsAlt"`
 	AgentSummaryProvider      string  `json:"agentSummaryProvider"`
+	AgentSummaryPrompt        string  `json:"agentSummaryPrompt"`
 }
 
 const (
@@ -123,6 +124,7 @@ const (
 	DefaultTerminalScrollSensitivity = 3
 	DefaultTerminalOptionAsAlt       = true
 	DefaultAgentSummaryProvider      = "codex"
+	DefaultAgentSummaryPrompt        = ""
 )
 
 func DefaultSettings() Settings {
@@ -141,6 +143,7 @@ func DefaultSettings() Settings {
 		TerminalScrollSensitivity: DefaultTerminalScrollSensitivity,
 		TerminalOptionAsAlt:       DefaultTerminalOptionAsAlt,
 		AgentSummaryProvider:      DefaultAgentSummaryProvider,
+		AgentSummaryPrompt:        DefaultAgentSummaryPrompt,
 	}
 }
 
