@@ -64,6 +64,83 @@ func TestManagerAgentSummaryUnreadPreservesUnchangedAction(t *testing.T) {
 	}
 }
 
+func TestManagerAgentSummaryDoneTransitions(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	first := AgentSummary{
+		TerminalID: "terminal-1", Action: "Approve the change.", Priority: "high",
+	}
+	if err := manager.SaveAgentSummary(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.AgentSummaries()[0]; got.Done || !got.Unread {
+		t.Fatalf("new summary = %#v, want done=false unread=true", got)
+	}
+
+	done, err := manager.MarkAgentSummaryDone(context.Background(), first.TerminalID)
+	if err != nil {
+		t.Fatalf("MarkAgentSummaryDone() error = %v", err)
+	}
+	if !done.Done || done.Unread {
+		t.Fatalf("done summary = %#v, want done=true unread=false", done)
+	}
+
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: first.TerminalID, Action: "  Approve the change.  ", Priority: "low",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.AgentSummaries()[0]; !got.Done || got.Unread {
+		t.Fatalf("same-action summary = %#v, want done=true unread=false", got)
+	}
+
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: first.TerminalID, Action: "Reject the change.", Priority: "high",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.AgentSummaries()[0]; got.Done || !got.Unread {
+		t.Fatalf("changed-action summary = %#v, want done=false unread=true", got)
+	}
+
+	second, err := manager.MarkAgentSummaryDone(context.Background(), first.TerminalID)
+	if err != nil {
+		t.Fatalf("second MarkAgentSummaryDone() error = %v", err)
+	}
+	if !second.Done || second.Unread {
+		t.Fatalf("second done summary = %#v, want done=true unread=false", second)
+	}
+}
+
+func TestManagerMarkAgentSummaryDoneRejectsUnknownTerminal(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	if _, err := manager.MarkAgentSummaryDone(context.Background(), "missing"); !errors.Is(err, ErrAgentSummaryNotFound) {
+		t.Fatalf("MarkAgentSummaryDone() error = %v, want ErrAgentSummaryNotFound", err)
+	}
+}
+
+func TestManagerMarkAgentSummaryDoneRollsBackWhenPersistenceFails(t *testing.T) {
+	persistErr := errors.New("persist done state")
+	store := &agentSummaryTestStore{markDoneErr: persistErr}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	summary := AgentSummary{TerminalID: "terminal-1", Action: "Approve the change."}
+	if err := manager.SaveAgentSummary(context.Background(), summary); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if _, err := manager.MarkAgentSummaryDone(context.Background(), summary.TerminalID); !errors.Is(err, persistErr) {
+		t.Fatalf("MarkAgentSummaryDone() error = %v, want %v", err, persistErr)
+	}
+	if got := manager.AgentSummaries()[0]; got.Done || !got.Unread {
+		t.Fatalf("summary after persistence failure = %#v, want done=false unread=true", got)
+	}
+}
+
 func TestManagerMarkAgentSummaryReadIsIdempotent(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -173,6 +250,83 @@ func TestSQLiteStoreMarksAgentSummaryRead(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreMarksAgentSummaryDone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	want := AgentSummary{
+		TerminalID: "terminal-1", Provider: "codex", Status: "blocked",
+		Summary: "The agent is waiting for permission.", Action: "Approve the requested access.",
+		Priority: "high", Unread: true, GeneratedAt: time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC),
+	}
+	if err := store.SaveAgentSummary(context.Background(), want); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	if err := store.MarkAgentSummaryDone(context.Background(), want.TerminalID); err != nil {
+		t.Fatalf("MarkAgentSummaryDone() error = %v", err)
+	}
+
+	want.Done = true
+	want.Unread = false
+	got, err := store.LoadAgentSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAgentSummaries() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, []AgentSummary{want}) {
+		t.Fatalf("LoadAgentSummaries() = %#v, want %#v", got, []AgentSummary{want})
+	}
+}
+
+func TestSQLiteStoreMigratesAgentSummaryPriorityAndDoneColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-agent-summary.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE agent_summaries (
+		terminal_id TEXT PRIMARY KEY,
+		provider TEXT NOT NULL,
+		status TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		action TEXT NOT NULL DEFAULT '',
+		unread INTEGER NOT NULL DEFAULT 0,
+		generated_at TEXT NOT NULL,
+		error TEXT NOT NULL DEFAULT ''
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy agent summary schema: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO agent_summaries (
+		terminal_id, provider, status, summary, action, unread, generated_at, error
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"terminal-1", "codex", "waiting", "Waiting for input.",
+		"Provide the requested input.", 0,
+		time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC).Format(time.RFC3339Nano), "")
+	if err != nil {
+		t.Fatalf("insert legacy agent summary: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	got, err := store.LoadAgentSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAgentSummaries() error = %v", err)
+	}
+	if len(got) != 1 || got[0].Priority != "" || got[0].Done {
+		t.Fatalf("migrated summaries = %#v, want empty priority and done=false", got)
+	}
+}
+
 func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
 	store, err := OpenSQLiteStore(path)
@@ -269,6 +423,43 @@ func TestManagerPersistsAgentSummaryReadState(t *testing.T) {
 	}
 }
 
+func TestManagerPersistsAgentSummaryDoneState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+
+	want := AgentSummary{
+		TerminalID: "terminal-1", Provider: "codex", Status: "waiting",
+		Summary: "The agent is waiting for input.", Action: "Provide the requested input.",
+		Priority: "high",
+	}
+	if err := manager.SaveAgentSummary(context.Background(), want); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	got, err := manager.MarkAgentSummaryDone(context.Background(), want.TerminalID)
+	if err != nil {
+		t.Fatalf("MarkAgentSummaryDone() error = %v", err)
+	}
+	if !got.Done || got.Unread {
+		t.Fatalf("done summary = %#v, want done=true unread=false", got)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	manager, err = NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() after done error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	gotSummaries := manager.AgentSummaries()
+	if len(gotSummaries) != 1 || !gotSummaries[0].Done || gotSummaries[0].Unread || gotSummaries[0].Priority != "high" {
+		t.Fatalf("AgentSummaries() after reopen = %#v, want persisted done summary", gotSummaries)
+	}
+}
+
 func TestSQLiteStoreDefaultsAndMigratesAgentSummaryProviderToCodex(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-settings.sqlite3")
 	db, err := sql.Open("sqlite", path)
@@ -344,6 +535,8 @@ type agentSummaryTestStore struct {
 	saveCalls     int
 	markReadCalls int
 	markReadErr   error
+	markDoneCalls int
+	markDoneErr   error
 }
 
 func (*agentSummaryTestStore) Load(context.Context) ([]Metadata, error) {
@@ -390,6 +583,11 @@ func (s *agentSummaryTestStore) SaveAgentSummary(context.Context, AgentSummary) 
 func (s *agentSummaryTestStore) MarkAgentSummaryRead(context.Context, string) error {
 	s.markReadCalls++
 	return s.markReadErr
+}
+
+func (s *agentSummaryTestStore) MarkAgentSummaryDone(context.Context, string) error {
+	s.markDoneCalls++
+	return s.markDoneErr
 }
 
 func (*agentSummaryTestStore) DeleteAgentSummary(context.Context, string) error {

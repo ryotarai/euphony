@@ -67,6 +67,20 @@ func (s *Server) markAgentSummaryRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
+func (s *Server) markAgentSummaryDone(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.sessions.MarkAgentSummaryDone(r.Context(), r.PathValue("id"))
+	switch {
+	case errors.Is(err, session.ErrAgentSummaryNotFound):
+		writeError(w, http.StatusNotFound, "agent_summary_not_found", "The agent summary does not exist.")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "agent_summary_done_failed", "The agent summary could not be marked as done.")
+		return
+	}
+	s.summaryEvents.Publish("agent.summary.updated", summary)
+	writeJSON(w, http.StatusOK, summary)
+}
+
 func (s *Server) listAgentSummaries(w http.ResponseWriter, _ *http.Request) {
 	summaries := make(map[string]session.AgentSummary)
 	for _, summary := range s.sessions.AgentSummaries() {

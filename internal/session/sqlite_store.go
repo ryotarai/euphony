@@ -29,6 +29,7 @@ type agentSummaryStore interface {
 	LoadAgentSummaries(context.Context) ([]AgentSummary, error)
 	SaveAgentSummary(context.Context, AgentSummary) error
 	MarkAgentSummaryRead(context.Context, string) error
+	MarkAgentSummaryDone(context.Context, string) error
 	DeleteAgentSummary(context.Context, string) error
 }
 
@@ -116,7 +117,9 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			status TEXT NOT NULL,
 			summary TEXT NOT NULL,
 			action TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL DEFAULT '',
 			unread INTEGER NOT NULL DEFAULT 0,
+			done INTEGER NOT NULL DEFAULT 0,
 			generated_at TEXT NOT NULL,
 			error TEXT NOT NULL DEFAULT ''
 		)`,
@@ -306,6 +309,28 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE agent_summaries ADD COLUMN unread INTEGER NOT NULL DEFAULT 0",
 		); err != nil {
 			return fmt.Errorf("add agent summary unread flag: %w", err)
+		}
+	}
+	hasAgentSummaryPriority, err := s.hasColumn(ctx, "agent_summaries", "priority")
+	if err != nil {
+		return err
+	}
+	if !hasAgentSummaryPriority {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE agent_summaries ADD COLUMN priority TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("add agent summary priority: %w", err)
+		}
+	}
+	hasAgentSummaryDone, err := s.hasColumn(ctx, "agent_summaries", "done")
+	if err != nil {
+		return err
+	}
+	if !hasAgentSummaryDone {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE agent_summaries ADD COLUMN done INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add agent summary done flag: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE terminals
@@ -592,7 +617,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT terminal_id, provider, status,
-		summary, action, unread, generated_at, error
+		summary, action, priority, unread, done, generated_at, error
 		FROM agent_summaries ORDER BY generated_at, terminal_id`)
 	if err != nil {
 		return nil, fmt.Errorf("load agent summaries: %w", err)
@@ -601,15 +626,16 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 	var result []AgentSummary
 	for rows.Next() {
 		var item AgentSummary
-		var unread int
+		var unread, done int
 		var generatedAt string
 		if err := rows.Scan(
 			&item.TerminalID, &item.Provider, &item.Status, &item.Summary,
-			&item.Action, &unread, &generatedAt, &item.Error,
+			&item.Action, &item.Priority, &unread, &done, &generatedAt, &item.Error,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent summary: %w", err)
 		}
 		item.Unread = unread != 0
+		item.Done = done != 0
 		item.GeneratedAt, err = time.Parse(time.RFC3339Nano, generatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse agent summary timestamp: %w", err)
@@ -624,14 +650,15 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 
 func (s *SQLiteStore) SaveAgentSummary(ctx context.Context, item AgentSummary) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_summaries (
-		terminal_id, provider, status, summary, action, unread, generated_at, error
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		terminal_id, provider, status, summary, action, priority, unread, done, generated_at, error
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(terminal_id) DO UPDATE SET
 		provider=excluded.provider, status=excluded.status, summary=excluded.summary,
-		action=excluded.action, unread=excluded.unread,
+		action=excluded.action, priority=excluded.priority, unread=excluded.unread,
+		done=excluded.done,
 		generated_at=excluded.generated_at, error=excluded.error`,
 		item.TerminalID, item.Provider, item.Status, item.Summary, item.Action,
-		item.Unread, item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
+		item.Priority, item.Unread, item.Done, item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
 	if err != nil {
 		return fmt.Errorf("save agent summary: %w", err)
 	}
@@ -643,6 +670,15 @@ func (s *SQLiteStore) MarkAgentSummaryRead(ctx context.Context, terminalID strin
 		"UPDATE agent_summaries SET unread = 0 WHERE terminal_id = ?", terminalID,
 	); err != nil {
 		return fmt.Errorf("mark agent summary read: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) MarkAgentSummaryDone(ctx context.Context, terminalID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE agent_summaries SET done = 1, unread = 0 WHERE terminal_id = ?", terminalID,
+	); err != nil {
+		return fmt.Errorf("mark agent summary done: %w", err)
 	}
 	return nil
 }

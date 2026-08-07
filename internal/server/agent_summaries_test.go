@@ -163,6 +163,69 @@ func TestMarkAgentSummaryReadEndpointUpdatesAndPublishesSummary(t *testing.T) {
 	}
 }
 
+func TestMarkAgentSummaryDoneEndpointUpdatesAndPublishesSummary(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "codex", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "waiting",
+		Summary: "Waiting for input.", Action: "Provide the requested input.", Priority: "high",
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+
+	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.summary.updated"})
+	defer unsubscribe()
+	path := "/api/agent-summaries/" + terminal.ID + "/done"
+	response := performRequest(t, srv, http.MethodPost, path, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST done status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var got session.AgentSummary
+	decodeResponse(t, response, &got)
+	if got.TerminalID != terminal.ID || !got.Done || got.Unread || got.Priority != "high" {
+		t.Fatalf("done response = %#v, want done=true unread=false priority=high", got)
+	}
+	select {
+	case event := <-events:
+		published, ok := event.Data.(session.AgentSummary)
+		if event.Type != "agent.summary.updated" || !ok || !published.Done || published.Unread {
+			t.Fatalf("event = %#v, want done summary", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for agent.summary.updated")
+	}
+
+	second := performRequest(t, srv, http.MethodPost, path, "")
+	if second.Code != http.StatusOK {
+		t.Fatalf("second POST done status = %d, body = %s", second.Code, second.Body.String())
+	}
+	var secondSummary session.AgentSummary
+	decodeResponse(t, second, &secondSummary)
+	if secondSummary != got {
+		t.Fatalf("second done response = %#v, want %#v", secondSummary, got)
+	}
+
+	missing := performRequest(t, srv, http.MethodPost, "/api/agent-summaries/missing/done", "")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing POST done status = %d, body = %s", missing.Code, missing.Body.String())
+	}
+}
+
 func TestMarkAgentSummaryReadEndpointReturns500WithoutPublishingOnCanceledPersistence(t *testing.T) {
 	srv, err := New(Config{
 		Token: "token", Shell: "/bin/sh",

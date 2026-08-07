@@ -69,7 +69,9 @@ type AgentSummary struct {
 	Status      string    `json:"status"`
 	Summary     string    `json:"summary"`
 	Action      string    `json:"action,omitempty"`
+	Priority    string    `json:"priority,omitempty"`
 	Unread      bool      `json:"unread"`
+	Done        bool      `json:"done"`
 	GeneratedAt time.Time `json:"generatedAt"`
 	Error       string    `json:"error,omitempty"`
 }
@@ -1744,8 +1746,10 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	previous, hadPrevious := m.agentSummaries[summary.TerminalID]
 	if !hadPrevious || strings.TrimSpace(previous.Action) != strings.TrimSpace(summary.Action) {
 		summary.Unread = true
+		summary.Done = false
 	} else {
 		summary.Unread = previous.Unread
+		summary.Done = previous.Done
 	}
 	store := m.store
 	summaryStore, _ := store.(agentSummaryStore)
@@ -1805,6 +1809,50 @@ func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (
 	}
 	if err := m.runStoreOperation(operation, func() error {
 		return summaryStore.MarkAgentSummaryRead(ctx, terminalID)
+	}); err != nil {
+		return AgentSummary{}, err
+	}
+	m.mu.Lock()
+	m.agentSummaries[terminalID] = next
+	m.mu.Unlock()
+	return next, nil
+}
+
+func (m *Manager) MarkAgentSummaryDone(ctx context.Context, terminalID string) (AgentSummary, error) {
+	m.agentSummaryMutationMu.Lock()
+	defer m.agentSummaryMutationMu.Unlock()
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return AgentSummary{}, ErrManagerClosing
+	}
+	previous, ok := m.agentSummaries[terminalID]
+	if !ok {
+		m.mu.Unlock()
+		return AgentSummary{}, ErrAgentSummaryNotFound
+	}
+	if previous.Done && !previous.Unread {
+		m.mu.Unlock()
+		return previous, nil
+	}
+	next := previous
+	next.Done = true
+	next.Unread = false
+	store := m.store
+	summaryStore, _ := store.(agentSummaryStore)
+	var operation storeOperation
+	if summaryStore != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if summaryStore == nil {
+		m.mu.Lock()
+		m.agentSummaries[terminalID] = next
+		m.mu.Unlock()
+		return next, nil
+	}
+	if err := m.runStoreOperation(operation, func() error {
+		return summaryStore.MarkAgentSummaryDone(ctx, terminalID)
 	}); err != nil {
 		return AgentSummary{}, err
 	}

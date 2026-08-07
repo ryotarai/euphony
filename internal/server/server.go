@@ -149,6 +149,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("GET /api/sessions", server.listSessions)
 	protected.HandleFunc("GET /api/agent-summaries", server.listAgentSummaries)
 	protected.HandleFunc("POST /api/agent-summaries/{id}/read", server.markAgentSummaryRead)
+	protected.HandleFunc("POST /api/agent-summaries/{id}/done", server.markAgentSummaryDone)
 	protected.HandleFunc("GET /api/tasks", server.listTasks)
 	protected.HandleFunc("POST /api/tasks", server.createTask)
 	protected.HandleFunc("GET /api/tasks/{id}", server.getTask)
