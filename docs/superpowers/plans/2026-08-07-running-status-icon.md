@@ -48,7 +48,7 @@ expect(screen.getByRole("img", { name: "Starting" })).toHaveAttribute(
 Run:
 
 ```bash
-npm test -- --run src/components/SessionNavigation.test.tsx -t "renders status icons"
+npm test -- --run src/components/SessionNavigation.test.tsx -t "renders a cwd-first tree with lifecycle icons"
 ```
 
 Expected: FAIL because the current implementation renders `LoaderCircleIcon` for
