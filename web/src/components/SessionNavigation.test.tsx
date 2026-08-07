@@ -34,6 +34,7 @@ const settings: Settings = {
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
   agentSummaryProvider: "codex",
+  agentSummaryPrompt: "",
 };
 
 const sessions: Session[] = [

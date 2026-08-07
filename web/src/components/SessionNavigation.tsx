@@ -583,6 +583,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalScrollSensitivity: defaultTerminalScrollSensitivity,
     terminalOptionAsAlt: defaultTerminalOptionAsAlt,
     agentSummaryProvider: "codex",
+    agentSummaryPrompt: "",
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
   const [collapsed, setCollapsed] = useState(settings.sidebarCollapsed);

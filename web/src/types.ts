@@ -115,6 +115,7 @@ export interface Settings {
   terminalScrollSensitivity: number;
   terminalOptionAsAlt: boolean;
   agentSummaryProvider: AgentSummaryProvider;
+  agentSummaryPrompt: string;
 }
 
 export interface CwdSelectionFilter {
