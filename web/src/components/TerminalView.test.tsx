@@ -275,6 +275,27 @@ test("disposes the WebGL addon after a context loss", () => {
   expect(dispose).toHaveBeenCalledOnce();
 });
 
+test("disposes the WebGL addon immediately when its canvas loses context", () => {
+  const host = document.createElement("div");
+  const canvas = document.createElement("canvas");
+  vi.spyOn(canvas, "getContext").mockImplementation((kind) =>
+    kind === "webgl2" ? {} as WebGL2RenderingContext : null,
+  );
+  host.append(canvas);
+  const dispose = vi.fn();
+  const addon = {
+    activate: () => undefined,
+    dispose,
+    onContextLoss: () => ({ dispose: () => undefined }),
+  };
+
+  expect(loadWebglRendererUtil({ element: host, loadAddon: vi.fn() }, () => addon)).toBe(true);
+
+  canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
 test("keeps the DOM renderer when WebGL addon loading fails", () => {
   const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const loadAddon = vi.fn(() => {
