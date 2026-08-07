@@ -106,22 +106,28 @@ test("uses an opaque terminal surface", () => {
 
 test("uses terminal scroll sensitivity for alternate-buffer wheel input", async () => {
   const socket = new FakeSocket();
+  let onData: ((data: string) => void) | undefined;
   let wheelHandler: ((event: WheelEvent) => boolean) | undefined;
   const terminal = {
     open: () => undefined,
     write: () => undefined,
     focus: () => undefined,
     fit: () => undefined,
+    cellHeight: 16,
     activeBufferType: "alternate" as const,
     mouseTrackingMode: "none" as const,
     applicationCursorKeysMode: false,
+    input: vi.fn((data: string) => onData?.(data)),
     attachCustomWheelEventHandler: (handler: (event: WheelEvent) => boolean) => {
       wheelHandler = handler;
     },
     getSelection: () => "",
     clearSelection: () => undefined,
     onSelectionChange: () => () => undefined,
-    onData: () => () => undefined,
+    onData: (callback: (data: string) => void) => {
+      onData = callback;
+      return () => undefined;
+    },
     onResize: () => () => undefined,
     dispose: () => undefined,
   } as TerminalDriver & {
@@ -159,9 +165,27 @@ test("uses terminal scroll sensitivity for alternate-buffer wheel input", async 
   });
 
   expect(preventDefault).toHaveBeenCalledOnce();
+  expect(terminal.input).toHaveBeenCalledWith("\u001b[B".repeat(3), true);
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "input", data: "\u001b[B".repeat(3) },
   ]);
+
+  vi.spyOn(window, "devicePixelRatio", "get").mockReturnValue(2);
+  const pixelEvent = {
+    deltaY: 50,
+    deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+    shiftKey: false,
+    preventDefault,
+  } as unknown as WheelEvent;
+  act(() => {
+    expect(wheelHandler?.(pixelEvent)).toBe(false);
+  });
+
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "input", data: "\u001b[B".repeat(3) },
+    { type: "input", data: "\u001b[B".repeat(9) },
+  ]);
+  expect(terminal.input).toHaveBeenCalledWith("\u001b[B".repeat(9), true);
 });
 
 test("leaves alternate-buffer wheel input with mouse tracking to xterm", async () => {

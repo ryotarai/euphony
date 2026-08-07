@@ -37,6 +37,8 @@ export interface TerminalDriver {
   readonly activeBufferType?: "normal" | "alternate";
   readonly mouseTrackingMode?: "none" | "x10" | "vt200" | "drag" | "any";
   readonly applicationCursorKeysMode?: boolean;
+  readonly fastScrollSensitivity?: number;
+  input?(data: string, wasUserInput?: boolean): void;
   open(element: HTMLElement): void;
   write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
@@ -173,6 +175,7 @@ function alternateBufferWheelInput(
     | "activeBufferType"
     | "mouseTrackingMode"
     | "applicationCursorKeysMode"
+    | "fastScrollSensitivity"
     | "cellHeight"
     | "rows"
   >,
@@ -186,12 +189,16 @@ function alternateBufferWheelInput(
     partialScroll.value = 0;
     return;
   }
-  if (event.deltaY === 0 || event.shiftKey) return "";
+  if (event.deltaY === 0) return;
+  if (event.shiftKey) return "";
 
-  let amount = event.deltaY * scrollSensitivity;
+  const modifier = event.altKey || event.ctrlKey
+    ? terminal.fastScrollSensitivity ?? 5
+    : 1;
+  let amount = event.deltaY * scrollSensitivity * modifier;
   if (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
     const cellHeight = terminal.cellHeight ?? 16;
-    amount /= cellHeight / (window.devicePixelRatio || 1);
+    amount /= cellHeight;
     if (Math.abs(event.deltaY) < 50) amount *= 0.3;
     partialScroll.value += amount;
     amount = Math.floor(Math.abs(partialScroll.value)) *
@@ -250,6 +257,10 @@ function defaultTerminal(
     get applicationCursorKeysMode() {
       return terminal.modes.applicationCursorKeysMode;
     },
+    get fastScrollSensitivity() {
+      return terminal.options.fastScrollSensitivity;
+    },
+    input: (data, wasUserInput = true) => terminal.input(data, wasUserInput),
     open: (element) => {
       terminal.open(element);
       loadWebglRenderer(terminal);
@@ -459,8 +470,12 @@ function useTerminalView({
       if (data === undefined) return true;
       event.preventDefault();
       if (!data) return false;
-      outputBatcher.noteInput();
-      send({ type: "input", data });
+      if (terminal.input) {
+        terminal.input(data, true);
+      } else {
+        outputBatcher.noteInput();
+        send({ type: "input", data });
+      }
       return false;
     });
     const releaseCapacity = () => {
