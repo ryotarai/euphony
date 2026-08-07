@@ -175,19 +175,34 @@ test("recovers the DOM terminal after WebGL context loss", async ({ page }) => {
   await page.keyboard.press("Enter");
 
   const canvases = terminal.locator("canvas");
-  const hasWebglCanvas = await canvases.evaluateAll((elements) =>
-    elements.some((element) => {
+  const webglCanvasCount = () => canvases.evaluateAll((elements) =>
+    elements.filter((element) => {
       try {
         return (element as HTMLCanvasElement).getContext("webgl2") !== null;
       } catch {
         return false;
       }
-    }),
+    }).length,
   );
-  if (!hasWebglCanvas) {
-    test.skip(true, "This browser does not provide a WebGL2 terminal canvas");
+
+  const browserSupportsWebgl2 = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    try {
+      return canvas.getContext("webgl2") !== null;
+    } catch {
+      return false;
+    }
+  });
+  if (!browserSupportsWebgl2) {
+    test.skip(true, "This browser does not support WebGL2");
     return;
   }
+  await expect
+    .poll(webglCanvasCount, {
+      timeout: 5_000,
+      message: "The terminal WebGL2 canvas should initialize before context loss",
+    })
+    .toBeGreaterThan(0);
 
   const dispatchedCancelableEvent = await canvases.evaluateAll((elements) => {
     const canvas = elements.find((element) => {
@@ -206,20 +221,11 @@ test("recovers the DOM terminal after WebGL context loss", async ({ page }) => {
   expect(dispatchedCancelableEvent).toBe(true);
 
   const rows = terminal.locator(".xterm-rows");
-  const webglCanvasCount = () => canvases.evaluateAll((elements) =>
-    elements.filter((element) => {
-      try {
-        return (element as HTMLCanvasElement).getContext("webgl2") !== null;
-      } catch {
-        return false;
-      }
-    }).length,
-  );
   const oneSecond = { timeout: 1_000 };
   await Promise.all([
     expect(rows).toBeVisible(oneSecond),
     expect(rows).toContainText(marker, oneSecond),
-    expect.poll(webglCanvasCount, oneSecond).toBe(0),
+    expect(canvases).toHaveCount(0, oneSecond),
   ]);
 });
 
