@@ -44,6 +44,13 @@ export class ApiClient {
     return this.request("/api/agent-summaries");
   }
 
+  refreshAgentSummaries(): Promise<{ queued: number }> {
+    return this.request("/api/agent-summaries/refresh", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
   markAgentSummaryRead(id: string): Promise<AgentSummary> {
     return this.request(`/api/agent-summaries/${encodeURIComponent(id)}/read`, {
       method: "POST",

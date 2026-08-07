@@ -56,6 +56,7 @@ type Service struct {
 
 	mu       sync.Mutex
 	started  bool
+	ctx      context.Context
 	cancel   context.CancelFunc
 	inflight map[string]bool
 	pending  map[string]session.Metadata
@@ -100,10 +101,35 @@ func (s *Service) Start() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.started = true
+	s.ctx = ctx
 	s.cancel = cancel
 	s.mu.Unlock()
 	s.wg.Add(1)
 	go s.run(ctx)
+}
+
+// RefreshAll queues a new summary generation for every current identified
+// agent, even when a successful summary already exists for that state.
+func (s *Service) RefreshAll() int {
+	if s.sessions == nil {
+		return 0
+	}
+	s.mu.Lock()
+	ctx := s.ctx
+	s.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return 0
+	}
+
+	queued := 0
+	for _, metadata := range s.sessions.ListCurrent() {
+		if !isAgentState(metadata) {
+			continue
+		}
+		s.schedule(ctx, metadata)
+		queued++
+	}
+	return queued
 }
 
 func (s *Service) Close(ctx context.Context) error {

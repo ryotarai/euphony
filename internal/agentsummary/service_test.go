@@ -152,6 +152,63 @@ func TestServiceSchedulesStatusChangesAndRunningTicks(t *testing.T) {
 	}
 }
 
+func TestServiceRefreshAllQueuesEveryCurrentAgentState(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	statuses := []string{"running", "waiting", "blocked"}
+	for index, status := range statuses {
+		metadata, err := manager.Create(context.Background(), "Agent", t.TempDir())
+		if err != nil {
+			t.Fatalf("Create(%s) error = %v", status, err)
+		}
+		metadata, err = manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+			Agent: "codex", Status: status,
+		})
+		if err != nil {
+			t.Fatalf("UpdateAgent(%s) error = %v", status, err)
+		}
+		if err := manager.SaveAgentSummary(context.Background(), session.AgentSummary{
+			TerminalID: metadata.ID, Provider: "codex", Status: status,
+			Summary: "Previous summary.", Action: "Previous action.",
+			GeneratedAt: time.Date(2026, 8, 7, 1, index, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatalf("SaveAgentSummary(%s) error = %v", status, err)
+		}
+	}
+	if _, err := manager.Create(context.Background(), "Shell", t.TempDir()); err != nil {
+		t.Fatalf("Create(plain) error = %v", err)
+	}
+
+	runner := &testRunner{result: Generation{
+		Summary: "Refreshed summary.", Action: "Refreshed action.", Priority: "medium",
+	}}
+	service := New(Config{
+		Sessions: manager, Events: newTestEvents(), Runner: runner, Interval: time.Hour,
+	})
+	service.Start()
+	t.Cleanup(func() { _ = service.Close(context.Background()) })
+
+	if queued := service.RefreshAll(); queued != len(statuses) {
+		t.Fatalf("RefreshAll() queued = %d, want %d", queued, len(statuses))
+	}
+	waitForRunnerCalls(t, runner, len(statuses))
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		summaries := manager.AgentSummaries()
+		refreshed := 0
+		for _, summary := range summaries {
+			if summary.Summary == "Refreshed summary." {
+				refreshed++
+			}
+		}
+		if refreshed == len(statuses) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("agent summaries were not all refreshed: %#v", manager.AgentSummaries())
+}
+
 func TestSaveResultPublishesManagerNormalizedUnreadState(t *testing.T) {
 	manager := session.NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

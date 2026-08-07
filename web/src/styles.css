@@ -1671,6 +1671,57 @@ input:focus-visible,
   text-transform: uppercase;
 }
 
+.agents-view-header-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+.agents-refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  border: 1px solid #2a2a2a;
+  padding: 0.45rem 0.65rem;
+  color: #a3a3a3;
+  background: transparent;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.agents-refresh-button svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.agents-refresh-button:hover:not(:disabled) {
+  border-color: #737373;
+  color: #f5f5f5;
+}
+
+.agents-refresh-button:focus-visible {
+  outline: 2px solid #fbbf24;
+  outline-offset: 0.25rem;
+}
+
+.agents-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.agents-refresh-button[data-refreshing="true"] svg {
+  animation: agents-refresh-spin 900ms linear infinite;
+}
+
+@keyframes agents-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .agents-tabs {
   max-width: 62rem;
   display: flex;
@@ -1984,8 +2035,10 @@ input:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .agent-summary-card,
   .agent-summary-done,
-  .agents-tab::after {
+  .agents-tab::after,
+  .agents-refresh-button[data-refreshing="true"] svg {
     transition: none;
+    animation: none;
   }
 }
 
@@ -1997,6 +2050,10 @@ input:focus-visible,
   .agents-view-header {
     align-items: flex-start;
     margin-bottom: 3rem;
+  }
+
+  .agents-view-header-actions {
+    align-items: flex-start;
   }
 
   .agents-tabs {

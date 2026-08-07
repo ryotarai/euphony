@@ -98,6 +98,12 @@ func (s *Server) listAgentSummaries(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) refreshAgentSummaries(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusAccepted, map[string]int{
+		"queued": s.summaries.RefreshAll(),
+	})
+}
+
 func activeAgentMetadata(metadata session.Metadata) bool {
 	return metadata.Agent != "" &&
 		(metadata.AgentStatus == "running" || metadata.AgentStatus == "waiting" || metadata.AgentStatus == "blocked")

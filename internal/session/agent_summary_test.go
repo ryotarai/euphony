@@ -460,7 +460,7 @@ func TestManagerPersistsAgentSummaryDoneState(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreDefaultsAndMigratesAgentSummaryProviderToCodex(t *testing.T) {
+func TestSQLiteStoreDefaultsAndPreservesAgentSummaryProvider(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-settings.sqlite3")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -526,8 +526,8 @@ func TestSQLiteStoreDefaultsAndMigratesAgentSummaryProviderToCodex(t *testing.T)
 	if err != nil {
 		t.Fatalf("LoadSettings() after migration error = %v", err)
 	}
-	if settings.AgentSummaryProvider != "codex" {
-		t.Fatalf("migrated AgentSummaryProvider = %q, want codex", settings.AgentSummaryProvider)
+	if settings.AgentSummaryProvider != "claude" {
+		t.Fatalf("saved AgentSummaryProvider = %q, want claude", settings.AgentSummaryProvider)
 	}
 }
 

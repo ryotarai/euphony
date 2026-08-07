@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, RefreshCwIcon } from "lucide-react";
 import type { AgentSummary, AgentSummaryPriority, Session } from "../types";
 
 interface AgentsViewProps {
@@ -7,7 +7,9 @@ interface AgentsViewProps {
   sessions: Session[];
   loading?: boolean;
   error?: string;
+  refreshing?: boolean;
   onSelectSession(id: string): void;
+  onRefresh?(): Promise<void> | void;
   onMarkDone?(id: string): Promise<boolean> | boolean | void;
 }
 
@@ -191,10 +193,13 @@ export function AgentsView({
   sessions,
   loading = false,
   error = "",
+  refreshing = false,
   onSelectSession,
   onMarkDone,
+  onRefresh,
 }: AgentsViewProps) {
   const [selectedTab, setSelectedTab] = useState<AgentTab>("action");
+  const [refreshPending, setRefreshPending] = useState(false);
   const tabRefs = useRef<Record<AgentTab, HTMLButtonElement | null>>({
     action: null,
     done: null,
@@ -220,6 +225,16 @@ export function AgentsView({
     ? { action: "No actions require attention.", running: "No agents are running." }
     : { action: "No completed actions yet.", running: "" };
   const tabPanelID = "agents-tabpanel";
+  const isRefreshing = refreshing || refreshPending;
+  const handleRefresh = async () => {
+    if (!onRefresh || isRefreshing) return;
+    setRefreshPending(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshPending(false);
+    }
+  };
 
   return (
     <main className="agents-view" aria-labelledby="agents-view-title">
@@ -229,9 +244,23 @@ export function AgentsView({
           <h1 id="agents-view-title">Agents</h1>
           <p>Read the latest signal from every identified agent.</p>
         </div>
-        <div className="agents-view-count" aria-label={`${actionItems.length} open agent items`}>
-          <strong>{actionItems.length}</strong>
-          <span>open</span>
+        <div className="agents-view-header-actions">
+          <div className="agents-view-count" aria-label={`${actionItems.length} open agent items`}>
+            <strong>{actionItems.length}</strong>
+            <span>open</span>
+          </div>
+          <button
+            type="button"
+            className="agents-refresh-button"
+            aria-label="Refresh all agent summaries"
+            aria-busy={isRefreshing}
+            data-refreshing={isRefreshing}
+            disabled={!onRefresh || isRefreshing}
+            onClick={() => void handleRefresh()}
+          >
+            <RefreshCwIcon aria-hidden="true" />
+            <span>{isRefreshing ? "Refreshing…" : "Refresh"}</span>
+          </button>
         </div>
       </header>
       {loading && (

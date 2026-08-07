@@ -84,6 +84,43 @@ func TestAgentSummariesEndpointReturnsCurrentSummariesInSessionOrder(t *testing.
 	}
 }
 
+func TestRefreshAgentSummariesEndpointQueuesAllCurrentAgents(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	for _, status := range []string{"running", "waiting", "blocked"} {
+		terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+		if err != nil {
+			t.Fatalf("Create(%s) error = %v", status, err)
+		}
+		if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+			Agent: "codex", Status: status,
+		}); err != nil {
+			t.Fatalf("UpdateAgent(%s) error = %v", status, err)
+		}
+	}
+	if _, err := srv.sessions.Create(context.Background(), "Shell", t.TempDir()); err != nil {
+		t.Fatalf("Create(plain) error = %v", err)
+	}
+
+	response := performRequest(t, srv, http.MethodPost, "/api/agent-summaries/refresh", "")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("POST refresh status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Queued int `json:"queued"`
+	}
+	decodeResponse(t, response, &result)
+	if result.Queued != 3 {
+		t.Fatalf("queued = %d, want 3", result.Queued)
+	}
+}
+
 func TestMarkAgentSummaryReadEndpointUpdatesAndPublishesSummary(t *testing.T) {
 	srv, err := New(Config{
 		Token: "token", Shell: "/bin/sh",

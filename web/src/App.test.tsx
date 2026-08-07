@@ -562,6 +562,61 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
+test("queues a refresh for every identified agent from the Agents dashboard", async () => {
+  const summary: AgentSummary = {
+    terminalId: runningSession.id,
+    provider: "codex",
+    status: "running",
+    summary: "The agent is updating the API.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+  };
+  let releaseRefresh: (() => void) | undefined;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([summary]);
+    }
+    if (input === "/api/agent-summaries/refresh" && init?.method === "POST") {
+      await refreshGate;
+      return jsonResponse({ queued: 2 }, 202);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  const refresh = await screen.findByRole("button", {
+    name: "Refresh all agent summaries",
+  });
+  await user.click(refresh);
+  expect(refresh).toBeDisabled();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/refresh",
+    expect.objectContaining({ method: "POST" }),
+  );
+
+  releaseRefresh?.();
+  await waitFor(() => expect(refresh).not.toBeDisabled());
+});
+
 test("marks an Agent action Done and shows it in the Done tab", async () => {
   const summary: AgentSummary = {
     terminalId: secondRunningSession.id,
@@ -3504,7 +3559,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   fireEvent.change(terminalFontFamily, {
     target: { value: '"JetBrains Mono", monospace' },
   });
-  await user.selectOptions(summaryProvider, "codex");
+  await user.selectOptions(summaryProvider, "claude");
   expect(document.documentElement).toHaveStyle({ fontSize: "18px" });
   expect(screen.getByLabelText("session-1 terminal pane")).toHaveAttribute(
     "data-font-size",
@@ -3557,7 +3612,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   fireEvent.change(within(reopenedDialog).getByLabelText("Terminal font"), {
     target: { value: "  Iosevka, monospace  " },
   });
-  await user.selectOptions(within(reopenedDialog).getByLabelText("Summary provider"), "codex");
+  await user.selectOptions(within(reopenedDialog).getByLabelText("Summary provider"), "claude");
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
@@ -3573,7 +3628,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         terminalFontFamily: "Iosevka, monospace",
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
-        agentSummaryProvider: "codex",
+        agentSummaryProvider: "claude",
       }),
     }),
   );
