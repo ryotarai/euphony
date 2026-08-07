@@ -8,10 +8,11 @@ import {
 import {
   BotIcon,
   CircleCheckIcon,
+  CircleDotIcon,
   CircleHelpIcon,
   CirclePauseIcon,
   CircleXIcon,
-  LoaderCircleIcon,
+  Clock3Icon,
   ListTodoIcon,
   PlusIcon,
   Settings2Icon,
@@ -140,7 +141,7 @@ function sessionStatusIcon(status: string) {
 
   switch (status) {
     case "running":
-      return <LoaderCircleIcon {...props} />;
+      return <CircleDotIcon {...props} />;
     case "blocked":
       return (
         <span {...props}>
@@ -152,7 +153,7 @@ function sessionStatusIcon(status: string) {
     case "terminal":
       return <SquareTerminalIcon {...props} />;
     case "starting":
-      return <LoaderCircleIcon {...props} />;
+      return <Clock3Icon {...props} />;
     case "exited":
       return <CircleCheckIcon {...props} />;
     case "failed":
