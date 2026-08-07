@@ -281,6 +281,13 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
   const agent = await createSession(page, "Needs approval", "/tmp");
   await replaceSharedSelection(page, [agent.id], agent.id);
   await reportAgent(page, agent.id, "claude", "Needs approval", "waiting");
+  await page.route("**/api/v1/events", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: "",
+    });
+  });
   await page.route("**/api/agent-summaries", async (route) => {
     await route.fulfill({
       status: 200,
@@ -291,8 +298,28 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
         status: "waiting",
         summary: "The agent is waiting for approval.",
         action: "Approve the requested change.",
+        priority: "high",
         generatedAt: "2026-08-05T00:00:00Z",
+        unread: true,
+        done: false,
       }]),
+    });
+  });
+  await page.route(`**/api/agent-summaries/${agent.id}/done`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        terminalId: agent.id,
+        provider: "claude",
+        status: "waiting",
+        summary: "The agent is waiting for approval.",
+        action: "Approve the requested change.",
+        priority: "high",
+        generatedAt: "2026-08-05T00:00:00Z",
+        unread: false,
+        done: true,
+      }),
     });
   });
   await page.goto("/?token=test-token");
@@ -302,10 +329,16 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
   await expect(page.getByRole("heading", { name: "Action required" })).toBeVisible();
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
   await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("agent-summary-priority")).toHaveAttribute("data-priority", "high");
 
-  await page.getByRole("button", { name: /Needs approval: The agent is waiting/ }).click();
+  await page.getByRole("button", { name: "Open Needs approval" }).click();
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("button", { name: "Mark Needs approval as done" }).click();
+  await expect(page.getByRole("tab", { name: "Done 1" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
 });
 
 test("treats dashboard panes like terminals and supports split checkboxes", async ({ page }) => {

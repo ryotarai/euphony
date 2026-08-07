@@ -549,7 +549,7 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(screen.getByText(summary.action!)).toBeVisible();
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
 
-  await user.click(screen.getByRole("button", { name: /Needs approval/ }));
+  await user.click(screen.getByRole("button", { name: "Open Needs approval" }));
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/agent-summaries/session-2/read",
@@ -562,7 +562,155 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 });
 
-test("keeps the Agents sidebar count lifecycle-based while tabs count unread summaries", async () => {
+test("marks an Agent action Done and shows it in the Done tab", async () => {
+  const summary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "waiting",
+    summary: "The agent is waiting for confirmation before editing the route.",
+    action: "Approve the requested file change.",
+    priority: "high",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+    done: false,
+  };
+  const doneSummary: AgentSummary = { ...summary, unread: false, done: true };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([summary]);
+    }
+    if (input === "/api/agent-summaries/session-2/done" && init?.method === "POST") {
+      return jsonResponse(doneSummary);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("button", { name: "Mark Needs approval as done" }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/agent-summaries/session-2/done",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+  expect(await screen.findByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByText(doneSummary.summary)).toBeVisible();
+});
+
+test("moves a Done action back to Action required when the agent updates it", async () => {
+  const doneSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "waiting",
+    summary: "The agent is waiting for confirmation before editing the route.",
+    action: "Approve the requested file change.",
+    priority: "medium",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+    done: true,
+  };
+  const updatedSummary: AgentSummary = {
+    ...doneSummary,
+    summary: "The agent needs a fresh confirmation after updating the route.",
+    action: "Review the updated route before continuing.",
+    priority: "high",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: true,
+    done: false,
+  };
+  const encoder = new TextEncoder();
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([doneSummary]);
+    }
+    if (input === "/api/v1/selection") {
+      return jsonResponse({
+        ok: true,
+        result: {
+          terminalIds: [runningSession.id],
+          manualTerminalIds: [runningSession.id],
+          pinnedTerminalIds: [],
+          focusedTerminalId: runningSession.id,
+          filters: { statuses: [], cwds: [] },
+          revision: 3,
+        },
+      });
+    }
+    if (input === "/api/v1/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventController = controller;
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await waitFor(() => expect(eventController).toBeDefined());
+  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(await screen.findByRole("tab", { name: /Done 1/ }));
+  expect(screen.getByText(doneSummary.summary)).toBeVisible();
+
+  eventController?.enqueue(encoder.encode(JSON.stringify({
+    sequence: 12,
+    occurredAt: "2026-08-05T00:02:00Z",
+    type: "agent.summary.updated",
+    data: updatedSummary,
+  }) + "\n"));
+
+  await waitFor(() => {
+    expect(screen.queryByText(doneSummary.summary)).not.toBeInTheDocument();
+  });
+  await user.click(screen.getByRole("tab", { name: /Action required 1/ }));
+  expect(screen.getByText(updatedSummary.summary)).toBeVisible();
+  expect(screen.getByText(updatedSummary.action!)).toBeVisible();
+  expect(screen.getByTestId("agent-summary-priority")).toHaveAttribute(
+    "data-priority",
+    "high",
+  );
+
+  eventController?.close();
+  expect(fetchMock).toHaveBeenCalledWith("/api/v1/events", expect.anything());
+});
+
+test("keeps the Agents sidebar count lifecycle-based while the queue includes read summaries", async () => {
   const sessions = [
     { ...runningSession, agentStatus: "waiting" },
     secondRunningSession,
@@ -579,7 +727,7 @@ test("keeps the Agents sidebar count lifecycle-based while tabs count unread sum
     terminalId: secondRunningSession.id,
     provider: "claude",
     status: "waiting",
-    summary: "An unread waiting summary belongs in the Unread tab.",
+    summary: "An unread waiting summary belongs in the Action required queue.",
     generatedAt: "2026-08-05T00:01:00Z",
     unread: true,
   };
@@ -609,7 +757,7 @@ test("keeps the Agents sidebar count lifecycle-based while tabs count unread sum
       .querySelector(".sidebar-attention-count");
     expect(count).toHaveTextContent("2");
   });
-  expect(screen.getByRole("tab", { name: /Unread 1/ })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /Action required 2/ })).toBeInTheDocument();
   expect(fetchMock.mock.calls.filter(
     ([input]) => input === "/api/agent-summaries",
   )).toHaveLength(1);
@@ -780,16 +928,13 @@ test("keeps a failed agent read unread while still opening its terminal", async 
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await user.click(screen.getByRole("button", { name: /Agents/ }));
-  await user.click(await screen.findByRole("button", { name: /Needs approval/ }));
+  await user.click(await screen.findByRole("button", { name: "Open Needs approval" }));
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: /Agents/ }));
   expect(await screen.findByText(summary.summary)).toBeInTheDocument();
   expect(await screen.findByRole("alert")).toHaveTextContent("The read failed.");
-  expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(screen.getByTestId("agent-summary-card-session-2")).toHaveAttribute("data-unread", "true");
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/agent-summaries/session-2/read",
     expect.objectContaining({ method: "POST" }),
@@ -797,7 +942,7 @@ test("keeps a failed agent read unread while still opening its terminal", async 
   releaseReload?.();
 });
 
-test("moves a read summary back to Unread when an SSE update is unread", async () => {
+test("keeps an updated summary in Action required while changing its unread weight", async () => {
   const readSummary: AgentSummary = {
     terminalId: secondRunningSession.id,
     provider: "claude",
@@ -859,7 +1004,6 @@ test("moves a read summary back to Unread when an SSE update is unread", async (
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(eventController).toBeDefined());
   await user.click(screen.getByRole("button", { name: /Agents/ }));
-  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
   expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
 
   eventController?.enqueue(encoder.encode(JSON.stringify({
@@ -872,7 +1016,6 @@ test("moves a read summary back to Unread when an SSE update is unread", async (
   await waitFor(() => {
     expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
   });
-  await user.click(screen.getByRole("tab", { name: /Unread 1/ }));
   expect(screen.getByText(unreadSummary.summary)).toBeInTheDocument();
   eventController?.close();
 });
@@ -943,12 +1086,10 @@ test("reloads agent summaries after an SSE reconnect", async () => {
     expect(eventControllers).toHaveLength(1);
   });
   await user.click(screen.getByRole("button", { name: /Agents/ }));
-  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
   expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
 
   eventControllers[0].close();
   await waitFor(() => expect(summaryLoads).toBe(2), { timeout: 2_000 });
-  await user.click(await screen.findByRole("tab", { name: /Unread 1/ }));
   expect(screen.getByText(refreshedSummary.summary)).toBeInTheDocument();
   eventControllers[eventControllers.length - 1]?.close();
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
@@ -1015,7 +1156,6 @@ test("does not resurrect a deleted summary from a stale reconnect snapshot", asy
     expect(eventControllers).toHaveLength(1);
   });
   await user.click(screen.getByRole("button", { name: /Agents/ }));
-  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
   expect(screen.getByText(summary.summary)).toBeInTheDocument();
 
   eventControllers[0].enqueue(encoder.encode(JSON.stringify({
@@ -1146,8 +1286,7 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(eventController).toBeDefined());
   await user.click(screen.getByRole("button", { name: /Agents/ }));
-  await user.click(await screen.findByRole("tab", { name: /Read 1/ }));
-  await user.click(screen.getByRole("button", { name: /The old read summary/ }));
+  await user.click(screen.getByRole("button", { name: "Open Needs approval" }));
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/agent-summaries/session-2/read",
@@ -1165,12 +1304,11 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
     expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
   });
 
-  await user.click(await screen.findByRole("tab", { name: /Unread 1/ }));
   expect(await screen.findByText(unreadSummary.summary)).toBeInTheDocument();
 
   releaseRead?.();
   await waitFor(() => {
-    expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: /Action required/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );

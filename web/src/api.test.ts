@@ -90,6 +90,33 @@ test("marks an agent summary as read and returns the normalized summary", async 
   );
 });
 
+test("marks an agent summary as done and returns the normalized summary", async () => {
+  const summary: AgentSummary = {
+    terminalId: "terminal/one",
+    provider: "codex",
+    status: "waiting",
+    summary: "The agent is waiting for input.",
+    action: "Approve the requested access.",
+    priority: "high",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+    done: true,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(summary));
+  const api = new ApiClient("token");
+
+  expect(await api.markAgentSummaryDone(summary.terminalId)).toEqual(summary);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/terminal%2Fone/done",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("creates and deletes terminals through v1 with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],

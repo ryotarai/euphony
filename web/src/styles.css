@@ -1718,7 +1718,7 @@ input:focus-visible,
   transform: scaleX(1);
 }
 
-.agents-tab[data-tab="unread"] .agents-tab-count {
+.agents-tab[data-tab="action"] .agents-tab-count {
   color: #fbbf24;
 }
 
@@ -1792,14 +1792,12 @@ input:focus-visible,
 .agent-summary-card {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
-  gap: 0.55rem;
-  padding: 1.1rem 1rem 1.25rem 1.45rem;
-  color: #f5f5f5;
-  background: transparent;
+  gap: 0;
   border-bottom: 1px solid var(--border);
-  text-align: left;
-  transition: background 140ms ease, padding-left 140ms ease;
+  background: transparent;
+  transition: background 140ms ease;
 }
 
 .agent-summary-card::before {
@@ -1812,14 +1810,16 @@ input:focus-visible,
   background: #60a5fa;
 }
 
-.agent-summary-unread-marker {
-  width: 0.4rem;
-  height: 0.4rem;
-  flex: 0 0 auto;
-  margin-left: -0.85rem;
-  border-radius: 999px;
-  background: #fbbf24;
-  box-shadow: 0 0 0 0.2rem rgb(251 191 36 / 10%);
+.agent-summary-open {
+  display: grid;
+  min-width: 0;
+  gap: 0.55rem;
+  padding: 1.1rem 0.75rem 1.25rem 1.45rem;
+  color: #f5f5f5;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
 }
 
 .agent-summary-card[data-status="blocked"]::before,
@@ -1827,10 +1827,14 @@ input:focus-visible,
   background: #fbbf24;
 }
 
-.agent-summary-card:hover,
-.agent-summary-card:focus-visible {
+.agent-summary-card:hover {
   background: #0d0d0d;
-  padding-left: 1.7rem;
+}
+
+.agent-summary-open:focus-visible,
+.agent-summary-done:focus-visible {
+  outline: 2px solid #fbbf24;
+  outline-offset: -2px;
 }
 
 .agent-summary-card-header {
@@ -1854,6 +1858,12 @@ input:focus-visible,
 .agent-summary-card[data-unread="false"] .agent-summary-copy,
 .agent-summary-card[data-unread="false"] .agent-summary-action {
   color: #8a8a8a;
+}
+
+.agent-summary-card[data-unread="true"] .agent-summary-title,
+.agent-summary-card[data-unread="true"] .agent-summary-copy,
+.agent-summary-card[data-unread="true"] .agent-summary-action {
+  font-weight: 700;
 }
 
 .agent-summary-provider,
@@ -1886,7 +1896,9 @@ input:focus-visible,
 
 .agent-summary-action {
   display: grid;
-  gap: 0.18rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.18rem 0.65rem;
   margin-top: 0.35rem;
   color: #f5f5f5;
   font-size: 0.85rem;
@@ -1896,6 +1908,61 @@ input:focus-visible,
 .agent-summary-action-label {
   color: #fbbf24;
   font-size: 0.6rem;
+}
+
+.agent-summary-action-value {
+  min-width: 0;
+}
+
+.agent-summary-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.2rem 0.48rem;
+  color: #fbbf24;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.59rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-summary-priority[data-priority="high"] {
+  color: #f87171;
+}
+
+.agent-summary-priority[data-priority="low"] {
+  color: #60a5fa;
+}
+
+.agent-summary-done {
+  align-self: start;
+  display: inline-grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  margin: 1rem 0.75rem 0 0;
+  place-items: center;
+  color: #737373;
+  background: transparent;
+  border: 1px solid #404040;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.agent-summary-done:hover {
+  color: #fbbf24;
+  background: rgb(251 191 36 / 8%);
+  border-color: #fbbf24;
+}
+
+.agent-summary-done svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .agent-summary-error {
@@ -1916,6 +1983,7 @@ input:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .agent-summary-card,
+  .agent-summary-done,
   .agents-tab::after {
     transition: none;
   }
@@ -1943,6 +2011,14 @@ input:focus-visible,
   .agent-summary-updated {
     width: 100%;
     margin-left: 0;
+  }
+
+  .agent-summary-action {
+    grid-template-columns: 1fr auto;
+  }
+
+  .agent-summary-action-label {
+    grid-column: 1 / -1;
   }
 }
 

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import type { AgentSummary, Session } from "../types";
+import { CheckIcon } from "lucide-react";
+import type { AgentSummary, AgentSummaryPriority, Session } from "../types";
 
 interface AgentsViewProps {
   summaries: AgentSummary[];
@@ -7,6 +8,7 @@ interface AgentsViewProps {
   loading?: boolean;
   error?: string;
   onSelectSession(id: string): void;
+  onMarkDone?(id: string): Promise<boolean> | boolean | void;
 }
 
 interface AgentSummaryItem {
@@ -14,8 +16,14 @@ interface AgentSummaryItem {
   session: Session;
 }
 
-const agentTabs = ["unread", "read"] as const;
+const agentTabs = ["action", "done"] as const;
 type AgentTab = (typeof agentTabs)[number];
+
+const priorityRank: Record<AgentSummaryPriority, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
 
 function statusLabel(status: AgentSummary["status"]) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -35,39 +43,103 @@ function generatedLabel(value: string) {
   return `Updated ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-function SummaryCard({ item, onSelectSession }: {
+function summaryPriority(summary: AgentSummary): AgentSummaryPriority {
+  return summary.priority ?? "medium";
+}
+
+function priorityLabel(priority: AgentSummaryPriority) {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
+}
+
+function sortByPriority(items: AgentSummaryItem[]) {
+  return [...items].sort((left, right) => {
+    const priorityDifference = priorityRank[summaryPriority(left.summary)] -
+      priorityRank[summaryPriority(right.summary)];
+    if (priorityDifference !== 0) return priorityDifference;
+    const generatedDifference = Date.parse(right.summary.generatedAt) -
+      Date.parse(left.summary.generatedAt);
+    if (!Number.isNaN(generatedDifference) && generatedDifference !== 0) {
+      return generatedDifference;
+    }
+    return left.summary.terminalId.localeCompare(right.summary.terminalId);
+  });
+}
+
+function SummaryCard({
+  item,
+  onSelectSession,
+  onMarkDone,
+  onDone,
+}: {
   item: AgentSummaryItem;
   onSelectSession(id: string): void;
+  onMarkDone?: (id: string) => Promise<boolean> | boolean | void;
+  onDone(): void;
 }) {
   const { summary, session } = item;
   const label = sessionLabel(session);
+  const unread = summary.unread;
+  const isDone = summary.done === true;
+  const priority = summaryPriority(summary);
+  const markDone = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!onMarkDone) return;
+    const result = await onMarkDone(session.id);
+    if (result !== false) onDone();
+  };
+
   return (
-    <button
-      type="button"
+    <article
       className="agent-summary-card"
       data-status={summary.status}
-      data-unread={summary.unread}
-      onClick={() => onSelectSession(session.id)}
-      aria-label={`${label}: ${summary.summary}`}
+      data-unread={unread}
+      data-done={isDone}
+      data-testid={`agent-summary-card-${summary.terminalId}`}
     >
-      <span className="agent-summary-card-header">
-        {summary.unread && <span className="agent-summary-unread-marker" aria-hidden="true" />}
-        <span className="agent-summary-status">{statusLabel(summary.status)}</span>
-        <span className="agent-summary-provider">{providerLabel(summary.provider)}</span>
-        <span className="agent-summary-updated">{generatedLabel(summary.generatedAt)}</span>
-      </span>
-      <span className="agent-summary-title">{label}</span>
-      <span className="agent-summary-copy">{summary.summary || "Summary unavailable."}</span>
-      {summary.action && (
-        <span className="agent-summary-action">
-          <span className="agent-summary-action-label">Next action</span>
-          <span>{summary.action}</span>
+      <button
+        type="button"
+        className="agent-summary-open"
+        onClick={() => onSelectSession(session.id)}
+        aria-label={`Open ${label}`}
+      >
+        <span className="agent-summary-card-header">
+          <span className="agent-summary-status">{statusLabel(summary.status)}</span>
+          <span className="agent-summary-provider">{providerLabel(summary.provider)}</span>
+          <span className="agent-summary-updated">{generatedLabel(summary.generatedAt)}</span>
         </span>
+        <span className="agent-summary-title" data-unread={unread}>{label}</span>
+        <span className="agent-summary-copy" data-unread={unread}>
+          {summary.summary || "Summary unavailable."}
+        </span>
+        {summary.action && (
+          <span className="agent-summary-action" data-unread={unread}>
+            <span className="agent-summary-action-label">Next action</span>
+            <span className="agent-summary-action-value">{summary.action}</span>
+            <span
+              className="agent-summary-priority"
+              data-priority={priority}
+              data-testid="agent-summary-priority"
+              aria-label={`${priorityLabel(priority)} priority`}
+            >
+              {priorityLabel(priority)}
+            </span>
+          </span>
+        )}
+        {summary.error && (
+          <span className="agent-summary-error">Summary unavailable · {summary.error}</span>
+        )}
+      </button>
+      {summary.action && !isDone && onMarkDone && (
+        <button
+          type="button"
+          className="agent-summary-done"
+          aria-label={`Mark ${label} as done`}
+          onClick={(event) => void markDone(event)}
+        >
+          <CheckIcon aria-hidden="true" />
+        </button>
       )}
-      {summary.error && (
-        <span className="agent-summary-error">Summary unavailable · {summary.error}</span>
-      )}
-    </button>
+    </article>
   );
 }
 
@@ -77,12 +149,16 @@ function SummarySection({
   empty,
   items,
   onSelectSession,
+  onMarkDone,
+  onDone,
 }: {
   id: string;
   title: string;
   empty: string;
   items: AgentSummaryItem[];
   onSelectSession(id: string): void;
+  onMarkDone?: (id: string) => Promise<boolean> | boolean | void;
+  onDone(): void;
 }) {
   return (
     <section className="agents-section" aria-labelledby={id}>
@@ -97,6 +173,8 @@ function SummarySection({
               key={item.summary.terminalId}
               item={item}
               onSelectSession={onSelectSession}
+              onMarkDone={onMarkDone}
+              onDone={onDone}
             />
           ))}
         </div>
@@ -113,11 +191,12 @@ export function AgentsView({
   loading = false,
   error = "",
   onSelectSession,
+  onMarkDone,
 }: AgentsViewProps) {
-  const [selectedTab, setSelectedTab] = useState<AgentTab>("unread");
+  const [selectedTab, setSelectedTab] = useState<AgentTab>("action");
   const tabRefs = useRef<Record<AgentTab, HTMLButtonElement | null>>({
-    unread: null,
-    read: null,
+    action: null,
+    done: null,
   });
   const items = useMemo(() => {
     const sessionsByID = new Map(sessions.map((session) => [session.id, session]));
@@ -128,22 +207,17 @@ export function AgentsView({
       })
       .filter((item): item is AgentSummaryItem => item !== null);
   }, [sessions, summaries]);
-  const unreadItems = items.filter(({ summary }) => summary.unread);
-  const readItems = items.filter(({ summary }) => !summary.unread);
-  const visibleItems = selectedTab === "unread" ? unreadItems : readItems;
-  const actionItems = visibleItems.filter(
+  const actionItems = items.filter(({ summary }) => summary.done !== true);
+  const actionRequiredItems = sortByPriority(actionItems.filter(
     ({ summary }) => summary.status === "blocked" || summary.status === "waiting",
-  );
-  const runningItems = visibleItems.filter(({ summary }) => summary.status === "running");
-  const emptyCopy = selectedTab === "unread"
-    ? {
-      action: "No unread agents need attention.",
-      running: "No unread agents are running.",
-    }
-    : {
-      action: "No read agents need attention.",
-      running: "No read agents are running.",
-    };
+  ));
+  const runningItems = sortByPriority(actionItems.filter(
+    ({ summary }) => summary.status === "running",
+  ));
+  const doneItems = sortByPriority(items.filter(({ summary }) => summary.done === true));
+  const emptyCopy = selectedTab === "action"
+    ? { action: "No actions require attention.", running: "No agents are running." }
+    : { action: "No completed actions yet.", running: "" };
   const tabPanelID = "agents-tabpanel";
 
   return (
@@ -154,9 +228,9 @@ export function AgentsView({
           <h1 id="agents-view-title">Agents</h1>
           <p>Read the latest signal from every identified agent.</p>
         </div>
-        <div className="agents-view-count" aria-label={`${unreadItems.length} unread agents`}>
-          <strong>{unreadItems.length}</strong>
-          <span>unread</span>
+        <div className="agents-view-count" aria-label={`${actionItems.length} open agent items`}>
+          <strong>{actionItems.length}</strong>
+          <span>open</span>
         </div>
       </header>
       {loading && (
@@ -167,8 +241,8 @@ export function AgentsView({
       {error && <p className="agents-error" role="alert">{error}</p>}
       <div className="agents-tabs" role="tablist" aria-label="Agent summaries">
         {agentTabs.map((tab) => {
-          const count = tab === "unread" ? unreadItems.length : readItems.length;
-          const label = tab === "unread" ? "Unread" : "Read";
+          const count = tab === "action" ? actionItems.length : doneItems.length;
+          const label = tab === "action" ? "Action required" : "Done";
           const tabID = `agents-${tab}-tab`;
           return (
             <button
@@ -225,22 +299,39 @@ export function AgentsView({
         role="tabpanel"
         aria-labelledby={`agents-${selectedTab}-tab`}
       >
-        <div className="agents-sections">
-          <SummarySection
-            id="agents-action-required"
-            title="Action required"
-            empty={emptyCopy.action}
-            items={actionItems}
-            onSelectSession={onSelectSession}
-          />
-          <SummarySection
-            id="agents-running"
-            title="Running"
-            empty={emptyCopy.running}
-            items={runningItems}
-            onSelectSession={onSelectSession}
-          />
-        </div>
+        {selectedTab === "action" ? (
+          <div className="agents-sections">
+            <SummarySection
+              id="agents-action-required"
+              title="Action required"
+              empty={emptyCopy.action}
+              items={actionRequiredItems}
+              onSelectSession={onSelectSession}
+              onMarkDone={onMarkDone}
+              onDone={() => setSelectedTab("done")}
+            />
+            <SummarySection
+              id="agents-running"
+              title="Running"
+              empty={emptyCopy.running}
+              items={runningItems}
+              onSelectSession={onSelectSession}
+              onMarkDone={onMarkDone}
+              onDone={() => setSelectedTab("done")}
+            />
+          </div>
+        ) : (
+          <div className="agents-sections">
+            <SummarySection
+              id="agents-done"
+              title="Done"
+              empty={emptyCopy.action}
+              items={doneItems}
+              onSelectSession={onSelectSession}
+              onDone={() => undefined}
+            />
+          </div>
+        )}
       </div>
     </main>
   );

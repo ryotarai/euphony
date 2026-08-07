@@ -18,6 +18,7 @@ export interface Session {
 }
 
 export type AgentSummaryProvider = "claude" | "codex";
+export type AgentSummaryPriority = "high" | "medium" | "low";
 
 export interface AgentSummary {
   terminalId: string;
@@ -25,8 +26,10 @@ export interface AgentSummary {
   status: "running" | "waiting" | "blocked";
   summary: string;
   action?: string;
+  priority?: AgentSummaryPriority;
   generatedAt: string;
   unread: boolean;
+  done?: boolean;
   error?: string;
 }
 

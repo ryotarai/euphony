@@ -110,8 +110,10 @@ function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSumma
     && summary.status === snapshot.status
     && summary.summary === snapshot.summary
     && summary.action === snapshot.action
+    && (summary.priority ?? "medium") === (snapshot.priority ?? "medium")
     && summary.generatedAt === snapshot.generatedAt
     && summary.unread === snapshot.unread
+    && (summary.done === true) === (snapshot.done === true)
     && summary.error === snapshot.error;
 }
 
@@ -2872,6 +2874,33 @@ export function App({
     selectSession(id, false);
   }
 
+  async function markAgentSummaryDone(id: string): Promise<boolean> {
+    const snapshot = agentSummaries.find((item) => item.terminalId === id);
+    if (!api) return false;
+    try {
+      const summary = await api.markAgentSummaryDone(id);
+      bumpAgentSummaryRevision(id);
+      let applied = false;
+      setAgentSummaries((current) =>
+        current.map((item) => {
+          if (item.terminalId !== id) return item;
+          if (snapshot && !agentSummaryMatchesSnapshot(item, snapshot)) return item;
+          applied = true;
+          return summary;
+        }),
+      );
+      setAgentSummariesError("");
+      return applied;
+    } catch (error) {
+      setAgentSummariesError(
+        error instanceof Error
+          ? error.message
+          : "The agent summary could not be marked as done.",
+      );
+      return false;
+    }
+  }
+
   if (!token) {
     return (
       <main className="auth-shell">
@@ -2955,6 +2984,7 @@ export function App({
           loading={agentSummariesLoading}
           error={agentSummariesError}
           onSelectSession={openAgentTerminal}
+          onMarkDone={markAgentSummaryDone}
         />
       ),
     });

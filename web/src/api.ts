@@ -51,6 +51,13 @@ export class ApiClient {
     });
   }
 
+  markAgentSummaryDone(id: string): Promise<AgentSummary> {
+    return this.request(`/api/agent-summaries/${encodeURIComponent(id)}/done`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
   listTasks(): Promise<Task[]> {
     return this.request("/api/tasks");
   }

@@ -5,14 +5,34 @@ import type { AgentSummary, Session } from "../types";
 
 const sessions: Session[] = [
   {
-    id: "blocked-terminal",
-    name: "Codex",
+    id: "high-terminal",
+    name: "Codex high",
     state: "running",
     cwd: "/workspace/api",
     agent: "codex",
     agentStatus: "blocked",
     agentTitle: "Permission request",
     createdAt: "2026-08-05T00:00:00Z",
+  },
+  {
+    id: "medium-terminal",
+    name: "Codex medium",
+    state: "running",
+    cwd: "/workspace/api",
+    agent: "codex",
+    agentStatus: "waiting",
+    agentTitle: "Review request",
+    createdAt: "2026-08-05T00:01:00Z",
+  },
+  {
+    id: "low-terminal",
+    name: "Claude low",
+    state: "running",
+    cwd: "/workspace/web",
+    agent: "claude",
+    agentStatus: "blocked",
+    agentTitle: "Routine follow-up",
+    createdAt: "2026-08-05T00:02:00Z",
   },
   {
     id: "running-terminal",
@@ -22,209 +42,184 @@ const sessions: Session[] = [
     agent: "claude",
     agentStatus: "running",
     agentTitle: "Implement dashboard",
-    createdAt: "2026-08-05T00:01:00Z",
+    createdAt: "2026-08-05T00:03:00Z",
   },
   {
-    id: "read-blocked-terminal",
-    name: "Codex",
+    id: "done-terminal",
+    name: "Codex done",
     state: "running",
     cwd: "/workspace/read",
     agent: "codex",
     agentStatus: "blocked",
-    agentTitle: "Read permission request",
-    createdAt: "2026-08-05T00:02:00Z",
+    agentTitle: "Completed permission request",
+    createdAt: "2026-08-05T00:04:00Z",
   },
 ];
 
 const summaries: AgentSummary[] = [
   {
-    terminalId: "blocked-terminal",
+    terminalId: "low-terminal",
+    provider: "claude",
+    status: "blocked",
+    summary: "A routine follow-up is ready.",
+    action: "Review the generated notes.",
+    priority: "low",
+    generatedAt: "2026-08-05T00:05:00Z",
+    unread: false,
+    done: false,
+  },
+  {
+    terminalId: "medium-terminal",
+    provider: "codex",
+    status: "waiting",
+    summary: "The agent is waiting for review.",
+    action: "Review the requested change.",
+    priority: "medium",
+    generatedAt: "2026-08-05T00:06:00Z",
+    unread: false,
+    done: false,
+  },
+  {
+    terminalId: "high-terminal",
     provider: "codex",
     status: "blocked",
     summary: "The agent needs permission to edit the API.",
     action: "Approve the requested file access.",
-    generatedAt: "2026-08-05T00:02:00Z",
+    priority: "high",
+    generatedAt: "2026-08-05T00:07:00Z",
     unread: true,
+    done: false,
   },
   {
     terminalId: "running-terminal",
     provider: "claude",
     status: "running",
     summary: "The agent is updating the dashboard tests.",
-    generatedAt: "2026-08-05T00:03:00Z",
+    generatedAt: "2026-08-05T00:08:00Z",
     unread: true,
+    done: false,
+  },
+  {
+    terminalId: "done-terminal",
+    provider: "codex",
+    status: "blocked",
+    summary: "The permission request was completed.",
+    action: "Approve the requested file access.",
+    priority: "high",
+    generatedAt: "2026-08-05T00:09:00Z",
+    unread: false,
+    done: true,
   },
   {
     terminalId: "missing-terminal",
     provider: "claude",
     status: "running",
     summary: "Do not render this.",
-    generatedAt: "2026-08-05T00:04:00Z",
+    generatedAt: "2026-08-05T00:10:00Z",
     unread: true,
+    done: false,
   },
 ];
 
-const tabSummaries: AgentSummary[] = [
-  {
-    terminalId: "blocked-terminal",
-    provider: "codex",
-    status: "blocked",
-    summary: "Unread summary",
-    generatedAt: "2026-08-05T00:02:00Z",
-    unread: true,
-  },
-  {
-    terminalId: "running-terminal",
-    provider: "claude",
-    status: "running",
-    summary: "Read summary",
-    generatedAt: "2026-08-05T00:03:00Z",
-    unread: false,
-  },
-  {
-    terminalId: "read-blocked-terminal",
-    provider: "codex",
-    status: "blocked",
-    summary: "Read action summary",
-    generatedAt: "2026-08-05T00:04:00Z",
-    unread: false,
-  },
-];
-
-test("separates action-required and running agents with actionable copy", async () => {
-  const onSelectSession = vi.fn();
-  const user = userEvent.setup();
-  render(<AgentsView summaries={summaries} sessions={sessions} onSelectSession={onSelectSession} />);
-
-  const actionSection = screen.getByRole("region", { name: "Action required" });
-  const runningSection = screen.getByRole("region", { name: "Running" });
-  expect(within(actionSection).getByText("Permission request")).toBeInTheDocument();
-  expect(within(actionSection).getByText("Codex · GPT-5.6-luna")).toBeInTheDocument();
-  expect(within(actionSection).getByText("The agent needs permission to edit the API.")).toBeInTheDocument();
-  expect(within(actionSection).getByText("Approve the requested file access.")).toBeInTheDocument();
-  expect(within(runningSection).getByText("Implement dashboard")).toBeInTheDocument();
-  expect(within(runningSection).getByText("The agent is updating the dashboard tests.")).toBeInTheDocument();
-  expect(screen.queryByText("Do not render this.")).not.toBeInTheDocument();
-
-  await user.click(within(actionSection).getByRole("button", { name: /Permission request/ }));
-  expect(onSelectSession).toHaveBeenCalledWith("blocked-terminal");
-});
-
-test("filters summaries through accessible unread and read tabs", async () => {
-  const user = userEvent.setup();
-  render(
-    <AgentsView
-      summaries={tabSummaries}
-      sessions={sessions}
-      onSelectSession={vi.fn()}
-    />,
-  );
-
-  expect(screen.getByRole("tab", { name: /Unread 1/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByText("Unread summary")).toBeInTheDocument();
-  expect(screen.queryByText("Read summary")).not.toBeInTheDocument();
-
-  await user.click(screen.getByRole("tab", { name: /Read 2/ }));
-
-  expect(screen.getByText("Read summary")).toBeInTheDocument();
-  expect(screen.queryByText("Unread summary")).not.toBeInTheDocument();
-});
-
-test("excludes unread summaries whose sessions are no longer present", () => {
-  render(
+function renderAgents(overrides: Partial<React.ComponentProps<typeof AgentsView>> = {}) {
+  return render(
     <AgentsView
       summaries={summaries}
       sessions={sessions}
       onSelectSession={vi.fn()}
+      onMarkDone={vi.fn().mockResolvedValue(undefined)}
+      {...overrides}
     />,
   );
+}
 
-  expect(screen.getByRole("tab", { name: /Unread 2/ })).toBeInTheDocument();
-  expect(screen.getByLabelText("2 unread agents")).toBeInTheDocument();
-  expect(screen.queryByText("Do not render this.")).not.toBeInTheDocument();
+test("keeps unread and read summaries in one Action required queue", () => {
+  renderAgents();
+
+  expect(screen.getByRole("tab", { name: /Action required 4/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: /Done 1/ })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /Unread|Read/ })).not.toBeInTheDocument();
+  expect(screen.getByText("Approve the requested file access.")).toBeInTheDocument();
+  expect(screen.getByText("The agent is updating the dashboard tests.")).toBeInTheDocument();
+  expect(screen.queryByText("The permission request was completed.")).not.toBeInTheDocument();
 });
 
-test("switches tabs with arrow, Home, and End keys", async () => {
+test("sorts action cards by AI priority and renders text badges", () => {
+  renderAgents();
+
+  const cards = screen.getByRole("region", { name: "Action required" })
+    .querySelectorAll("[data-testid^='agent-summary-card-']");
+  expect([...cards].map((card) => card.querySelector("[data-testid='agent-summary-priority']")?.textContent))
+    .toEqual(["High", "Medium", "Low"]);
+  expect(screen.getByLabelText("High priority")).toBeInTheDocument();
+  expect(screen.getByLabelText("Medium priority")).toBeInTheDocument();
+  expect(screen.getByLabelText("Low priority")).toBeInTheDocument();
+});
+
+test("marks unread content for bold presentation without an unread tab", () => {
+  renderAgents();
+
+  const unreadCard = screen.getByTestId("agent-summary-card-high-terminal");
+  const readCard = screen.getByTestId("agent-summary-card-medium-terminal");
+  expect(unreadCard).toHaveAttribute("data-unread", "true");
+  expect(readCard).toHaveAttribute("data-unread", "false");
+  expect(unreadCard.querySelector(".agent-summary-title")).toHaveAttribute("data-unread", "true");
+  expect(unreadCard.querySelector(".agent-summary-copy")).toHaveAttribute("data-unread", "true");
+  expect(unreadCard.querySelector(".agent-summary-action")).toHaveAttribute("data-unread", "true");
+  expect(unreadCard.querySelector(".agent-summary-unread-marker")).toBeNull();
+});
+
+test("moves Done summaries to the Done tab while keeping the two status sections there", async () => {
   const user = userEvent.setup();
-  render(
-    <AgentsView
-      summaries={tabSummaries}
-      sessions={sessions}
-      onSelectSession={vi.fn()}
-    />,
-  );
+  renderAgents();
 
-  const unreadTab = screen.getByRole("tab", { name: /Unread 1/ });
-  const readTab = screen.getByRole("tab", { name: /Read 2/ });
-  unreadTab.focus();
-  expect(unreadTab).toHaveAttribute("tabindex", "0");
-  expect(readTab).toHaveAttribute("tabindex", "-1");
+  await user.click(screen.getByRole("tab", { name: /Done 1/ }));
 
-  await user.keyboard("{ArrowRight}");
-  expect(readTab).toHaveFocus();
-  expect(readTab).toHaveAttribute("aria-selected", "true");
-  expect(readTab).toHaveAttribute("tabindex", "0");
-  expect(unreadTab).toHaveAttribute("tabindex", "-1");
-  expect(screen.getByText("Read summary")).toBeInTheDocument();
-
-  await user.keyboard("{ArrowLeft}");
-  expect(unreadTab).toHaveFocus();
-  expect(unreadTab).toHaveAttribute("aria-selected", "true");
-  expect(unreadTab).toHaveAttribute("tabindex", "0");
-  expect(readTab).toHaveAttribute("tabindex", "-1");
-
-  await user.keyboard("{ArrowDown}");
-  expect(readTab).toHaveFocus();
-  expect(readTab).toHaveAttribute("aria-selected", "true");
-
-  await user.keyboard("{ArrowUp}");
-  expect(unreadTab).toHaveFocus();
-  expect(unreadTab).toHaveAttribute("aria-selected", "true");
-
-  await user.keyboard("{Home}");
-  expect(unreadTab).toHaveFocus();
-  expect(unreadTab).toHaveAttribute("aria-selected", "true");
-
-  await user.keyboard("{End}");
-  expect(readTab).toHaveFocus();
-  expect(readTab).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("region", { name: "Done" })).toBeInTheDocument();
+  expect(screen.getByText("The permission request was completed.")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Running" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Approve the requested file access.")).toBeInTheDocument();
 });
 
-test("keeps both status sections when the Read tab is selected", async () => {
-  const user = userEvent.setup();
-  render(
-    <AgentsView
-      summaries={tabSummaries}
-      sessions={sessions}
-      onSelectSession={vi.fn()}
-    />,
-  );
-
-  await user.click(screen.getByRole("tab", { name: /Read 2/ }));
-
-  expect(
-    within(screen.getByRole("region", { name: "Action required" }))
-      .getByText("Read action summary"),
-  ).toBeInTheDocument();
-  expect(
-    within(screen.getByRole("region", { name: "Running" }))
-      .getByText("Read summary"),
-  ).toBeInTheDocument();
-});
-
-test("activates an agent card with the keyboard", async () => {
+test("marks an action Done with the separate checkmark button", async () => {
   const onSelectSession = vi.fn();
+  const onMarkDone = vi.fn().mockResolvedValue(undefined);
   const user = userEvent.setup();
-  render(<AgentsView summaries={summaries} sessions={sessions} onSelectSession={onSelectSession} />);
+  renderAgents({ onSelectSession, onMarkDone });
 
-  const card = screen.getByRole("button", { name: /Permission request/ });
-  card.focus();
+  const doneButton = screen.getByRole("button", { name: "Mark Permission request as done" });
+  await user.click(doneButton);
+
+  expect(onMarkDone).toHaveBeenCalledWith("high-terminal");
+  expect(onSelectSession).not.toHaveBeenCalled();
+  expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute("aria-selected", "true");
+});
+
+test("activates the Done checkmark with the keyboard", async () => {
+  const onMarkDone = vi.fn().mockResolvedValue(undefined);
+  const user = userEvent.setup();
+  renderAgents({ onMarkDone });
+
+  const doneButton = screen.getByRole("button", { name: "Mark Permission request as done" });
+  doneButton.focus();
   await user.keyboard("{Enter}");
 
-  expect(onSelectSession).toHaveBeenCalledWith("blocked-terminal");
+  expect(onMarkDone).toHaveBeenCalledWith("high-terminal");
+});
+
+test("opens a card body with the keyboard", async () => {
+  const onSelectSession = vi.fn();
+  const user = userEvent.setup();
+  renderAgents({ onSelectSession });
+
+  const openButton = screen.getByRole("button", { name: "Open Permission request" });
+  openButton.focus();
+  await user.keyboard("{Enter}");
+
+  expect(onSelectSession).toHaveBeenCalledWith("high-terminal");
 });
 
 test("renders loading, error, and empty section states", () => {
@@ -238,6 +233,6 @@ test("renders loading, error, and empty section states", () => {
 
   rerender(<AgentsView {...props} error="Summaries are unavailable." />);
   expect(screen.getByRole("alert")).toHaveTextContent("Summaries are unavailable.");
-  expect(within(screen.getByRole("region", { name: "Action required" })).getByText("No unread agents need attention.")).toBeInTheDocument();
-  expect(within(screen.getByRole("region", { name: "Running" })).getByText("No unread agents are running.")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Action required" })).getByText("No actions require attention.")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Running" })).getByText("No agents are running.")).toBeInTheDocument();
 });
