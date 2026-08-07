@@ -26,6 +26,27 @@ func TestEncodeKeysValidatesBeforeEncoding(t *testing.T) {
 	}
 }
 
+func TestRenameTerminalTrimsNameAndMarksCustomName(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	created, err := manager.Create(t.Context(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	renamed, err := service.RenameTerminal(created.ID, "  Renamed  ")
+	if err != nil {
+		t.Fatalf("RenameTerminal() error = %v", err)
+	}
+	if renamed.Name != "Renamed" || !renamed.CustomName {
+		t.Fatalf("RenameTerminal() = %#v, want trimmed custom name", renamed)
+	}
+}
+
 func TestWaitOutputObservesFutureBytesAndReadPreservesRawHistory(t *testing.T) {
 	manager := session.NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(t.Context()) })

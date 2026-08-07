@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"github.com/ryotarai/euphony/internal/agentlog"
@@ -46,6 +47,7 @@ type Change struct {
 type Metadata struct {
 	ID                  string     `json:"id"`
 	Name                string     `json:"name"`
+	CustomName          bool       `json:"customName,omitempty"`
 	State               State      `json:"state"`
 	CWD                 string     `json:"cwd"`
 	RepoRoot            string     `json:"repoRoot"`
@@ -717,6 +719,64 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	}
 	if activityTarget.transcriptPath != "" {
 		m.watchCodexActivity(id, activityTarget)
+	}
+	return after, nil
+}
+
+func (m *Manager) Rename(id, name string) (Metadata, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Metadata{}, errors.New("session name is required")
+	}
+	if utf8.RuneCountInString(name) > 80 {
+		return Metadata{}, errors.New("session name must be at most 80 characters")
+	}
+
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer releaseMetadataSave()
+
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return Metadata{}, ErrManagerClosing
+	}
+	current, ok := m.sessions[id]
+	if !ok || current != item {
+		m.mu.Unlock()
+		return Metadata{}, ErrNotFound
+	}
+	before := item.metadata
+	item.metadata.Name = name
+	item.metadata.CustomName = true
+	after := item.metadata
+	var change *Change
+	if before != after {
+		nextChange := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		change = &nextChange
+	}
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
+			releaseMetadataSave()
+			if change != nil {
+				m.skipChange(*change)
+			}
+			return Metadata{}, err
+		}
+	}
+	releaseMetadataSave()
+	if change != nil {
+		m.emitChange(*change)
 	}
 	return after, nil
 }

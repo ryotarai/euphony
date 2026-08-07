@@ -80,6 +80,14 @@ func (s *Service) GetTerminal(id string) (session.Metadata, error) {
 	return metadata, nil
 }
 
+func (s *Service) RenameTerminal(id, name string) (session.Metadata, error) {
+	metadata, err := s.sessions.Rename(id, name)
+	if errors.Is(err, session.ErrNotFound) {
+		return session.Metadata{}, ErrTerminalNotFound
+	}
+	return metadata, err
+}
+
 func (s *Service) CreateTerminal(
 	ctx context.Context,
 	name, cwd string,

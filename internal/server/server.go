@@ -121,6 +121,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("GET /api/v1/terminals", server.v1ListTerminals)
 	protected.HandleFunc("POST /api/v1/terminals", server.v1CreateTerminal)
 	protected.HandleFunc("GET /api/v1/terminals/{id}", server.v1GetTerminal)
+	protected.HandleFunc("PATCH /api/v1/terminals/{id}", server.v1RenameTerminal)
 	protected.HandleFunc("DELETE /api/v1/terminals/{id}", server.v1DeleteTerminal)
 	protected.HandleFunc("GET /api/v1/terminals/{id}/output", server.v1ReadTerminal)
 	protected.HandleFunc("POST /api/v1/terminals/{id}/input", server.v1SendTerminalInput)
