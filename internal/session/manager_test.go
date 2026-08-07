@@ -1854,8 +1854,8 @@ func TestRestoredCommandResumesKnownAgents(t *testing.T) {
 		id    string
 		want  []string
 	}{
-		{agent: "codex", id: "codex-session", want: []string{"codex", "resume", "codex-session"}},
-		{agent: "claude", id: "claude-session", want: []string{"claude", "--resume", "claude-session"}},
+		{agent: "codex", id: "codex-session", want: []string{"/bin/bash", "-lc", `exec "$0" "$@"`, "codex", "resume", "codex-session"}},
+		{agent: "claude", id: "claude-session", want: []string{"/bin/bash", "-lc", `exec "$0" "$@"`, "claude", "--resume", "claude-session"}},
 		{want: []string{"/bin/sh"}},
 	}
 	for _, test := range tests {

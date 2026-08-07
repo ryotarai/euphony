@@ -495,9 +495,9 @@ func restoredCommand(shell string, metadata Metadata) *exec.Cmd {
 	if metadata.AgentSessionID != "" {
 		switch agent {
 		case "codex":
-			return exec.Command("codex", "resume", metadata.AgentSessionID)
+			return exec.Command("/bin/bash", "-lc", `exec "$0" "$@"`, "codex", "resume", metadata.AgentSessionID)
 		case "claude":
-			return exec.Command("claude", "--resume", metadata.AgentSessionID)
+			return exec.Command("/bin/bash", "-lc", `exec "$0" "$@"`, "claude", "--resume", metadata.AgentSessionID)
 		}
 	}
 	return exec.Command(shell)
