@@ -117,6 +117,22 @@ test("marks an agent summary as done and returns the normalized summary", async 
   );
 });
 
+test("queues a refresh for all agent summaries", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse({ queued: 3 }, 202));
+  const api = new ApiClient("token");
+
+  expect(await api.refreshAgentSummaries()).toEqual({ queued: 3 });
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/refresh",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("creates and deletes terminals through v1 with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],

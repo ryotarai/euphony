@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentsView } from "./AgentsView";
 import type { AgentSummary, Session } from "../types";
@@ -170,6 +170,26 @@ test("marks unread content for bold presentation without an unread tab", () => {
   expect(unreadCard.querySelector(".agent-summary-copy")).toHaveAttribute("data-unread", "true");
   expect(unreadCard.querySelector(".agent-summary-action")).toHaveAttribute("data-unread", "true");
   expect(unreadCard.querySelector(".agent-summary-unread-marker")).toBeNull();
+});
+
+test("refreshes every agent summary from the header", async () => {
+  const onRefresh = vi.fn<() => Promise<void>>();
+  let release: (() => void) | undefined;
+  onRefresh.mockImplementation(() => new Promise<void>((resolve) => {
+    release = resolve;
+  }));
+  const user = userEvent.setup();
+  renderAgents({ onRefresh });
+
+  const refresh = screen.getByRole("button", { name: "Refresh all agent summaries" });
+  await user.click(refresh);
+
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+  expect(refresh).toBeDisabled();
+  expect(refresh).toHaveTextContent("Refreshing…");
+  release?.();
+  await waitFor(() => expect(refresh).not.toBeDisabled());
+  expect(refresh).toHaveTextContent("Refresh");
 });
 
 test("moves Done summaries to the Done tab while keeping the two status sections there", async () => {

@@ -469,6 +469,7 @@ export function App({
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
   const [agentSummariesError, setAgentSummariesError] = useState("");
+  const [agentSummariesRefreshing, setAgentSummariesRefreshing] = useState(false);
   const agentSummariesLoadedForApiRef = useRef<ApiClient | null>(null);
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
@@ -681,6 +682,24 @@ export function App({
     agentSummariesInFlightRef.current = { api, promise };
     return promise;
   }, [api, applyAgentSummarySnapshot]);
+
+  const refreshAgentSummaries = useCallback(async () => {
+    if (!api || agentSummariesRefreshing) return;
+    setAgentSummariesRefreshing(true);
+    try {
+      await api.refreshAgentSummaries();
+      setAgentSummariesError("");
+    } catch (error) {
+      setAgentSummariesError(
+        error instanceof Error
+          ? error.message
+          : "Agent summaries could not be refreshed.",
+      );
+    } finally {
+      setAgentSummariesRefreshing(false);
+    }
+  }, [agentSummariesRefreshing, api]);
+
   const loadTasks = useCallback(async () => {
     if (!api) return;
     setTasksLoading(true);
@@ -3035,7 +3054,9 @@ export function App({
           sessions={sessions}
           loading={agentSummariesLoading}
           error={agentSummariesError}
+          refreshing={agentSummariesRefreshing}
           onSelectSession={openAgentTerminal}
+          onRefresh={refreshAgentSummaries}
           onMarkDone={markAgentSummaryDone}
         />
       ),
