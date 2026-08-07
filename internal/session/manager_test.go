@@ -331,6 +331,7 @@ func TestUpdateAgentRepositoryResolutionDoesNotBlockManager(t *testing.T) {
 
 func TestUpdateAgentTranscriptStatDoesNotBlockManager(t *testing.T) {
 	manager := NewManager("/bin/sh")
+	manager.blockedStatusGracePeriod = 0
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	metadata, err := manager.Create(context.Background(), "Terminal")
 	if err != nil {
@@ -598,6 +599,7 @@ func TestUpdateAgentDoesNotInstallCodexActivityWatcherAfterCloseStarts(t *testin
 	}
 
 	manager := NewManager("/bin/sh")
+	manager.blockedStatusGracePeriod = 0
 	item := &entry{
 		metadata: Metadata{
 			ID:        "terminal",
@@ -1383,7 +1385,7 @@ func TestUpdateAgentMarksEnteringBlockedAsNeedingAttention(t *testing.T) {
 	}
 
 	updated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
-		Agent: "codex", Status: "blocked", Title: "Request permission",
+		Agent: "claude", Status: "blocked", Title: "Request permission",
 	})
 	if err != nil {
 		t.Fatalf("UpdateAgent(blocked) error = %v", err)
@@ -1401,13 +1403,169 @@ func TestUpdateAgentMarksEnteringBlockedAsNeedingAttention(t *testing.T) {
 	}
 
 	repeated, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
-		Agent: "codex", Status: "blocked",
+		Agent: "claude", Status: "blocked",
 	})
 	if err != nil {
 		t.Fatalf("UpdateAgent(blocked again) error = %v", err)
 	}
 	if repeated.NeedsAttention {
 		t.Fatal("NeedsAttention = true for repeated blocked status, want false")
+	}
+}
+
+func TestCodexBlockedHookWaitsBeforePublishingStatus(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.blockedStatusGracePeriod = 200 * time.Millisecond
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Codex")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running) error = %v", err)
+	}
+	store := &recordingMetadataStore{}
+	manager.store = store
+	changes := make(chan Change, 4)
+	manager.SetChangeHandler(func(change Change) { changes <- change })
+
+	blocked, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "blocked",
+		Title: "Request permission",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(blocked) error = %v", err)
+	}
+	if blocked.AgentStatus != "running" || blocked.NeedsAttention || blocked.AgentTitle != "" {
+		t.Fatalf("blocked hook metadata = %#v, want unchanged running metadata", blocked)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	current, ok := manager.Metadata(metadata.ID)
+	if !ok || current.AgentStatus != "running" || current.NeedsAttention || current.AgentTitle != "" {
+		t.Fatalf("metadata during blocked grace period = %#v, want unchanged running metadata", current)
+	}
+	if store.SaveCount() != 0 {
+		t.Fatalf("store saves during blocked grace period = %d, want 0", store.SaveCount())
+	}
+	select {
+	case change := <-changes:
+		t.Fatalf("change during blocked grace period = %#v, want none", change)
+	default:
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		current, ok := manager.Metadata(metadata.ID)
+		return ok && current.AgentStatus == "blocked" &&
+			current.NeedsAttention && current.AgentTitle == "Request permission"
+	})
+	waitFor(t, time.Second, func() bool { return store.SaveCount() == 1 })
+	select {
+	case change := <-changes:
+		if change.After == nil || change.After.AgentStatus != "blocked" || !change.After.NeedsAttention {
+			t.Fatalf("confirmed blocked change = %#v, want blocked with attention", change)
+		}
+	default:
+		t.Fatal("confirmed blocked change was not emitted")
+	}
+}
+
+func TestCodexBlockedHookIsCanceledByLaterHook(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.blockedStatusGracePeriod = 200 * time.Millisecond
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Codex")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running) error = %v", err)
+	}
+	store := &recordingMetadataStore{}
+	manager.store = store
+	changes := make(chan Change, 4)
+	manager.SetChangeHandler(func(change Change) { changes <- change })
+
+	blocked, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "blocked",
+		Title: "Transient permission request",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(blocked) error = %v", err)
+	}
+	if blocked.AgentStatus != "running" || blocked.NeedsAttention {
+		t.Fatalf("blocked hook metadata = %#v, want unchanged running metadata", blocked)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	running, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "running",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent(later running) error = %v", err)
+	}
+	if running.AgentStatus != "running" || running.NeedsAttention || running.AgentTitle != "" {
+		t.Fatalf("later running metadata = %#v, want running without attention", running)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	current, ok := manager.Metadata(metadata.ID)
+	if !ok || current.AgentStatus != "running" || current.NeedsAttention || current.AgentTitle != "" {
+		t.Fatalf("metadata after canceled blocked hook = %#v, want running without attention", current)
+	}
+	if store.SaveCount() != 1 {
+		t.Fatalf("store saves after canceled blocked hook = %d, want 1 later-running save", store.SaveCount())
+	}
+	for {
+		select {
+		case change := <-changes:
+			if change.After != nil && change.After.AgentStatus == "blocked" {
+				t.Fatalf("blocked change after canceled hook = %#v", change)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestCodexBlockedHookDoesNotPublishAfterDelete(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	manager.blockedStatusGracePeriod = 200 * time.Millisecond
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Codex")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(running) error = %v", err)
+	}
+	changes := make(chan Change, 4)
+	manager.SetChangeHandler(func(change Change) { changes <- change })
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "blocked",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(blocked) error = %v", err)
+	}
+	if err := manager.Delete(metadata.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	for {
+		select {
+		case change := <-changes:
+			if change.After != nil && change.After.AgentStatus == "blocked" {
+				t.Fatalf("blocked change after deleted terminal = %#v", change)
+			}
+		default:
+			return
+		}
 	}
 }
 
@@ -1419,6 +1577,7 @@ func TestCodexBlockedStatusReconcilesFromTranscript(t *testing.T) {
 	}
 
 	manager := NewManager("/bin/sh")
+	manager.blockedStatusGracePeriod = 20 * time.Millisecond
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	metadata, err := manager.Create(context.Background(), "Codex")
 	if err != nil {
@@ -1434,9 +1593,13 @@ func TestCodexBlockedStatusReconcilesFromTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateAgent(blocked) error = %v", err)
 	}
-	if blocked.AgentStatus != "blocked" {
-		t.Fatalf("blocked status = %q, want blocked", blocked.AgentStatus)
+	if blocked.AgentStatus != "running" {
+		t.Fatalf("blocked hook status = %q, want running before confirmation", blocked.AgentStatus)
 	}
+	waitFor(t, time.Second, func() bool {
+		current, ok := manager.Metadata(metadata.ID)
+		return ok && current.AgentStatus == "blocked"
+	})
 	if err := appendSessionTestTranscript(transcriptPath,
 		`{"type":"event_msg","payload":{"type":"exec_approval_request","call_id":"call-1"}}`+"\n"+
 			`{"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{}"}}`+"\n",

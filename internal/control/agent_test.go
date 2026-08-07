@@ -169,13 +169,13 @@ func TestWaitAgentReturnsImmediatelyForMatchingBlockedState(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	if _, err := manager.UpdateAgent(metadata.ID, session.AgentUpdate{
-		Agent: "codex", Status: "blocked",
+		Agent: "claude", Status: "blocked",
 	}); err != nil {
 		t.Fatalf("UpdateAgent() error = %v", err)
 	}
 
 	agent, err := service.WaitAgent(context.Background(), metadata.ID, []string{"blocked"})
-	if err != nil || agent.Agent != "codex" || agent.AgentStatus != "blocked" {
+	if err != nil || agent.Agent != "claude" || agent.AgentStatus != "blocked" {
 		t.Fatalf("WaitAgent() = %#v, %v", agent, err)
 	}
 }

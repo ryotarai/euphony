@@ -98,8 +98,12 @@ func TestRefreshAgentSummariesEndpointQueuesAllCurrentAgents(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create(%s) error = %v", status, err)
 		}
+		agent := "codex"
+		if status == "blocked" {
+			agent = "claude"
+		}
 		if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
-			Agent: "codex", Status: status,
+			Agent: agent, Status: status,
 		}); err != nil {
 			t.Fatalf("UpdateAgent(%s) error = %v", status, err)
 		}

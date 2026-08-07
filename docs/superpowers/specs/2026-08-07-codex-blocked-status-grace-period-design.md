@@ -42,6 +42,9 @@ pending watch, starts a new 10-second watch, and returns the current metadata
 without saving or emitting a change.
 
 Every other agent hook cancels the pending watch before applying its update.
+When the later hook is also blocked, it becomes a fresh candidate and starts a
+new quiet 10-second window; continuous blocked hooks therefore never confirm
+an older candidate.
 The timer callback verifies that the session still exists, the manager is not
 closing, and the entry still owns the same watch. It then applies the stored
 update through the normal metadata/persistence/change path with delayed
@@ -92,6 +95,8 @@ Add manager regression coverage for:
 3. Claude blocked hooks retain their existing immediate attention behavior.
 4. The existing Codex transcript reconciliation still changes a confirmed
    blocked state to running after durable rollout progress.
+5. Pending blocked updates produce no store save or change event, and deleting
+   a terminal cancels its timer without a late blocked publication.
 
 Run the focused session tests, the complete Go suite, and the existing web
 focused tests/build to confirm that the notification path remains unchanged.

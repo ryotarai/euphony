@@ -24,7 +24,7 @@ func TestV1AgentListGetInputPromptAndWait(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	agentPath := filepath.Join(t.TempDir(), "codex-test-agent")
+	agentPath := filepath.Join(t.TempDir(), "claude-test-agent")
 	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
 		t.Fatalf("WriteFile(agent) error = %v", err)
 	}
@@ -35,7 +35,7 @@ func TestV1AgentListGetInputPromptAndWait(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for {
 		command, commandErr := running.ForegroundCommand()
-		if commandErr == nil && strings.Contains(command, "codex-test-agent") {
+		if commandErr == nil && strings.Contains(command, "claude-test-agent") {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -44,7 +44,7 @@ func TestV1AgentListGetInputPromptAndWait(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
-		Agent: "codex", AgentSessionID: "session-1", Status: "blocked",
+		Agent: "claude", AgentSessionID: "session-1", Status: "blocked",
 	}); err != nil {
 		t.Fatalf("UpdateAgent() error = %v", err)
 	}
@@ -63,7 +63,7 @@ func TestV1AgentListGetInputPromptAndWait(t *testing.T) {
 	}
 
 	got := performRequest(t, srv, http.MethodGet, "/api/v1/agents/"+terminal.ID, "")
-	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"agent":"codex"`) {
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"agent":"claude"`) {
 		t.Fatalf("get response = %d, %s", got.Code, got.Body.String())
 	}
 	waited := performRequest(t, srv, http.MethodPost, "/api/v1/agents/"+terminal.ID+"/wait",

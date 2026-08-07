@@ -152,6 +152,7 @@ type entry struct {
 	session            *Session
 	interruptWatch     *agentInterruptWatch
 	codexActivityWatch *codexActivityWatch
+	blockedStatusWatch *blockedStatusWatch
 	// metadataSaveMu keeps a terminal's in-memory mutation, persistence, and
 	// rollback as one transaction without holding the manager lock during I/O.
 	metadataSaveMu sync.Mutex
@@ -197,6 +198,11 @@ type codexActivityWatch struct {
 	cancel context.CancelFunc
 }
 
+type blockedStatusWatch struct {
+	update AgentUpdate
+	cancel context.CancelFunc
+}
+
 // defaultCWDSampleInterval bounds how often a terminal's working directory is
 // sampled from its live process. Keystrokes arriving over the terminal
 // WebSocket sample on demand; this backstop is what corrects a terminal driven
@@ -204,6 +210,10 @@ type codexActivityWatch struct {
 // otherwise keep displaying a directory it left long ago.
 const defaultCWDSampleInterval = 5 * time.Second
 const defaultForegroundProcessSampleInterval = 500 * time.Millisecond
+
+// defaultBlockedStatusGracePeriod gives Codex Auto Approvers time to emit a
+// follow-up hook before Euphony publishes a blocked status and attention.
+const defaultBlockedStatusGracePeriod = 10 * time.Second
 
 // defaultClaudeTitleSampleInterval bounds how often a Claude transcript is
 // re-read for its title. `/rename` fires no hook, so nothing reports it; this
@@ -241,6 +251,7 @@ type Manager struct {
 	cwdSampleInterval               time.Duration
 	claudeTitleSampleInterval       time.Duration
 	foregroundProcessSampleInterval time.Duration
+	blockedStatusGracePeriod        time.Duration
 	codexTitleResolver              func(string, string, bool) (string, error)
 	repositoryRootResolver          func(string) string
 	fileStat                        func(string) (os.FileInfo, error)
@@ -321,6 +332,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 		settings:       DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
 		foregroundProcessSampleInterval: defaultForegroundProcessSampleInterval,
 		claudeTitleSampleInterval:       defaultClaudeTitleSampleInterval,
+		blockedStatusGracePeriod:        defaultBlockedStatusGracePeriod,
 	}
 }
 
@@ -626,12 +638,60 @@ func (m *Manager) lockMetadataSaveEntry(id string) (*entry, func(), error) {
 }
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
-	requestedCWD := strings.TrimSpace(update.CWD)
 	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
 	if err != nil {
 		return Metadata{}, err
 	}
+	if strings.TrimSpace(update.Agent) == "codex" &&
+		strings.TrimSpace(update.Status) == "blocked" {
+		return m.deferBlockedStatus(id, item, update, releaseMetadataSave)
+	}
+	return m.applyAgentUpdate(id, item, update, releaseMetadataSave)
+}
+
+func (m *Manager) deferBlockedStatus(
+	id string,
+	item *entry,
+	update AgentUpdate,
+	releaseMetadataSave func(),
+) (Metadata, error) {
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		releaseMetadataSave()
+		return Metadata{}, ErrManagerClosing
+	}
+	current, ok := m.sessions[id]
+	if !ok || current != item {
+		m.mu.Unlock()
+		releaseMetadataSave()
+		return Metadata{}, ErrNotFound
+	}
+	// Each blocked hook is a fresh candidate. A later blocked hook discards the
+	// older candidate and starts a new quiet window from its arrival.
+	m.cancelAgentInterruptLocked(item)
+	m.cancelCodexActivityLocked(item)
+	m.cancelBlockedStatusLocked(item)
+	ctx, cancel := context.WithCancel(context.Background())
+	watch := &blockedStatusWatch{update: update, cancel: cancel}
+	item.blockedStatusWatch = watch
+	metadata := item.metadata
+	delay := m.blockedStatusGracePeriod
+	m.mu.Unlock()
+	releaseMetadataSave()
+
+	go m.awaitBlockedStatus(ctx, id, watch, delay)
+	return metadata, nil
+}
+
+func (m *Manager) applyAgentUpdate(
+	id string,
+	item *entry,
+	update AgentUpdate,
+	releaseMetadataSave func(),
+) (Metadata, error) {
 	defer releaseMetadataSave()
+	requestedCWD := strings.TrimSpace(update.CWD)
 	requestedRepoRoot := ""
 	if requestedCWD != "" {
 		requestedRepoRoot = m.resolveRepositoryRoot(requestedCWD)
@@ -649,6 +709,7 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 	}
 	m.cancelAgentInterruptLocked(item)
 	m.cancelCodexActivityLocked(item)
+	m.cancelBlockedStatusLocked(item)
 	before := item.metadata
 	item.metadata.Agent = strings.TrimSpace(update.Agent)
 	if item.metadata.Agent != "codex" {
@@ -887,6 +948,45 @@ func (m *Manager) awaitCodexActivity(ctx context.Context, id string, watch *code
 	}
 }
 
+func (m *Manager) awaitBlockedStatus(
+	ctx context.Context,
+	id string,
+	watch *blockedStatusWatch,
+	delay time.Duration,
+) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+		m.completeBlockedStatus(id, watch)
+	}
+}
+
+func (m *Manager) completeBlockedStatus(id string, watch *blockedStatusWatch) {
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		releaseMetadataSave()
+		return
+	}
+	current, ok := m.sessions[id]
+	if !ok || current != item || item.blockedStatusWatch != watch {
+		m.mu.Unlock()
+		releaseMetadataSave()
+		return
+	}
+	item.blockedStatusWatch = nil
+	m.mu.Unlock()
+
+	_, _ = m.applyAgentUpdate(id, item, watch.update, releaseMetadataSave)
+}
+
 func (m *Manager) completeCodexActivity(id string, watch *codexActivityWatch, activity string) {
 	if activity != agentlog.CodexActivityRunning && activity != agentlog.CodexActivityWaiting {
 		return
@@ -1011,6 +1111,14 @@ func (m *Manager) cancelCodexActivityLocked(item *entry) {
 	}
 	item.codexActivityWatch.cancel()
 	item.codexActivityWatch = nil
+}
+
+func (m *Manager) cancelBlockedStatusLocked(item *entry) {
+	if item.blockedStatusWatch == nil {
+		return
+	}
+	item.blockedStatusWatch.cancel()
+	item.blockedStatusWatch = nil
 }
 
 func matchesCodexActivity(metadata Metadata, target codexActivityTarget) bool {
@@ -1310,6 +1418,7 @@ func (m *Manager) watch(item *entry) {
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
 		m.cancelAgentInterruptLocked(item)
 		m.cancelCodexActivityLocked(item)
+		m.cancelBlockedStatusLocked(item)
 		if !m.closing {
 			delete(m.sessions, item.metadata.ID)
 			store = m.store
@@ -2054,6 +2163,7 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	m.cancelAgentInterruptLocked(item)
 	m.cancelCodexActivityLocked(item)
+	m.cancelBlockedStatusLocked(item)
 	m.mu.Unlock()
 	if store != nil {
 		if err := m.runStoreOperation(operation, func() error {
@@ -2292,6 +2402,7 @@ func (m *Manager) finishClose(
 		m.mu.Lock()
 		m.cancelAgentInterruptLocked(item)
 		m.cancelCodexActivityLocked(item)
+		m.cancelBlockedStatusLocked(item)
 		m.mu.Unlock()
 		item.session.terminate()
 	}

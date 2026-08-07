@@ -12,6 +12,7 @@
 
 - Delay Codex blocked updates for exactly 10 * time.Second in production.
 - Cancel a pending blocked update when any later agent hook is received for the same terminal.
+- Treat a later blocked hook as a new candidate with a fresh 10-second quiet window; never publish an older blocked candidate after a later hook.
 - Do not publish, persist, or emit attention for a transient blocked update.
 - Preserve immediate behavior for Claude and all non-blocked agent updates.
 - Preserve the existing Codex transcript watcher after a blocked update is confirmed.
@@ -23,6 +24,7 @@
 
 **Files:**
 - Modify: internal/session/manager_test.go around the existing blocked-status tests near TestUpdateAgentMarksEnteringBlockedAsNeedingAttention.
+- Modify: internal/control/agent_test.go, internal/server/agent_summaries_test.go, internal/server/v1_agent_test.go, and internal/agentsummary/service_test.go where generic immediate blocked-state fixtures are used.
 
 **Interfaces:**
 - Consumes: Manager, AgentUpdate, Metadata, waitFor, and the existing Codex transcript fixture helpers.
@@ -85,6 +87,17 @@ the short manager delay, wait for blocked confirmation before appending durable
 transcript output, and keep its assertion that durable activity changes the
 status to running while preserving attention.
 
+Update generic control, API, and summary-service fixtures that only need to
+exercise an already-available blocked state to use Claude for their blocked
+fixture. These tests are not testing the Codex grace period; keeping their
+immediate setup avoids adding a real 10-second wait to unrelated tests while
+the Codex-specific manager tests cover the delayed behavior.
+
+Use a recording metadata store and change handler in the Codex grace tests to
+assert that the pending hook causes neither a save nor a change before expiry,
+and add a Delete regression test that waits past the short delay and rejects
+any late blocked change.
+
 ### Task 2: Implement the pending blocked-status watch
 
 **Files:**
@@ -115,7 +128,8 @@ For an update with trimmed Agent == "codex" and trimmed Status == "blocked",
 cancel the entry's previous pending watch, create a new context, store the
 candidate update, release the metadata-save lock, start awaitBlockedStatus in a
 goroutine, and return the unchanged current metadata. Do not save or emit a
-change at this point.
+change at this point. A later blocked hook follows the same path and resets the
+quiet window from the later hook.
 
 - [ ] **Step 4: Apply or cancel the pending watch safely**
 
@@ -174,12 +188,14 @@ longer emits a transient needsAttention transition.
 - [ ] **Step 3: Run diff hygiene checks**
 
 Run git diff --check and git diff --stat. Confirm that only the design, plan,
-session manager, and session tests are changed.
+session manager, related compatibility tests, and session tests are changed.
 
 - [ ] **Step 4: Commit the implementation**
 
 ~~~bash
 git add internal/session/manager.go internal/session/manager_test.go \
+  internal/control/agent_test.go internal/server/agent_summaries_test.go \
+  internal/server/v1_agent_test.go internal/agentsummary/service_test.go \
   docs/superpowers/specs/2026-08-07-codex-blocked-status-grace-period-design.md \
   docs/superpowers/plans/2026-08-07-codex-blocked-status-grace-period.md
 git commit -m "fix: delay transient Codex blocked hooks"
