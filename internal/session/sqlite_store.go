@@ -60,6 +60,10 @@ func OpenSQLiteStore(path string) (*SQLiteStore, error) {
 }
 
 func (s *SQLiteStore) migrate(ctx context.Context) error {
+	var schemaVersion int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		return fmt.Errorf("read SQLite schema version: %w", err)
+	}
 	statements := []string{
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA busy_timeout = 5000",
@@ -261,7 +265,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		); err != nil {
 			return fmt.Errorf("add agent summary provider setting: %w", err)
 		}
-	} else {
+	} else if schemaVersion < 11 {
 		if _, err := s.db.ExecContext(ctx,
 			"UPDATE settings SET agent_summary_provider = ? WHERE agent_summary_provider = 'claude'",
 			DefaultAgentSummaryProvider,
