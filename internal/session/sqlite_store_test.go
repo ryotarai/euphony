@@ -112,6 +112,7 @@ func TestSQLiteStorePersistsTerminalMetadata(t *testing.T) {
 	want := Metadata{
 		ID: "terminal-1", Name: "Terminal", State: StateExited, CWD: "/repo",
 		Agent: "codex", ResumeAgent: "codex", AgentStatus: "waiting", AgentTitle: "SQLite",
+		CustomName:          true,
 		NeedsAttention:      true,
 		AgentSessionID:      "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
 		AgentTranscriptPath: "/home/me/.codex/sessions/2026/07/30/rollout-session.jsonl",
@@ -287,8 +288,8 @@ func TestSQLiteStorePersistsSelection(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 10 {
-		t.Fatalf("user_version = %d, want 10", version)
+	if version != 11 {
+		t.Fatalf("user_version = %d, want 11", version)
 	}
 }
 
@@ -420,6 +421,7 @@ func metadataEqual(left, right Metadata) bool {
 		left.CWD == right.CWD && left.Agent == right.Agent &&
 		left.ResumeAgent == right.ResumeAgent &&
 		left.AgentStatus == right.AgentStatus && left.AgentTitle == right.AgentTitle &&
+		left.CustomName == right.CustomName &&
 		left.NeedsAttention == right.NeedsAttention &&
 		left.AgentSessionID == right.AgentSessionID &&
 		left.AgentTranscriptPath == right.AgentTranscriptPath &&

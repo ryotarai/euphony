@@ -69,6 +69,28 @@ func (s *Server) v1GetTerminal(w http.ResponseWriter, r *http.Request) {
 	writeV1Result(w, http.StatusOK, map[string]any{"terminal": metadata})
 }
 
+func (s *Server) v1RenameTerminal(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeV1JSON(r, &request); err != nil {
+		writeV1DecodeError(w, err, "Provide one valid terminal rename object.")
+		return
+	}
+	metadata, err := s.control.RenameTerminal(r.PathValue("id"), request.Name)
+	if err != nil {
+		switch {
+		case strings.Contains(err.Error(), "name"):
+			writeV1Error(w, http.StatusBadRequest, "invalid_name",
+				"Terminal names must contain 1 to 80 characters.", nil)
+		default:
+			writeTerminalControlError(w, err)
+		}
+		return
+	}
+	writeV1Result(w, http.StatusOK, map[string]any{"terminal": metadata})
+}
+
 func (s *Server) v1DeleteTerminal(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	selected, err := s.control.DeleteTerminal(id)

@@ -84,6 +84,70 @@ func TestV1TerminalCreateListGetAndDelete(t *testing.T) {
 	}
 }
 
+func TestV1TerminalRename(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"API","cwd":`+strconv.Quote(t.TempDir())+`}`)
+	var createEnvelope struct {
+		Result struct {
+			Terminal session.Metadata `json:"terminal"`
+		} `json:"result"`
+	}
+	decodeResponse(t, created, &createEnvelope)
+	id := createEnvelope.Result.Terminal.ID
+
+	for _, name := range []string{"   ", strings.Repeat("あ", 81)} {
+		response := performRequest(t, srv, http.MethodPatch,
+			"/api/v1/terminals/"+id, `{"name":`+strconv.Quote(name)+`}`)
+		var envelope struct {
+			OK    bool `json:"ok"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		decodeResponse(t, response, &envelope)
+		if response.Code != http.StatusBadRequest || envelope.OK || envelope.Error.Code != "invalid_name" {
+			t.Fatalf("invalid rename %q response = %d %#v", name, response.Code, envelope)
+		}
+	}
+
+	renamed := performRequest(t, srv, http.MethodPatch,
+		"/api/v1/terminals/"+id, `{"name":"  Renamed API  "}`)
+	if renamed.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, body = %s", renamed.Code, renamed.Body.String())
+	}
+	var renameEnvelope struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Terminal session.Metadata `json:"terminal"`
+		} `json:"result"`
+	}
+	decodeResponse(t, renamed, &renameEnvelope)
+	if !renameEnvelope.OK || renameEnvelope.Result.Terminal.Name != "Renamed API" ||
+		!renameEnvelope.Result.Terminal.CustomName {
+		t.Fatalf("rename envelope = %#v", renameEnvelope)
+	}
+
+	missing := performRequest(t, srv, http.MethodPatch,
+		"/api/v1/terminals/missing", `{"name":"Renamed"}`)
+	var errorEnvelope struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeResponse(t, missing, &errorEnvelope)
+	if missing.Code != http.StatusNotFound || errorEnvelope.OK ||
+		errorEnvelope.Error.Code != "terminal_not_found" {
+		t.Fatalf("missing rename response = %d %#v", missing.Code, errorEnvelope)
+	}
+}
+
 func TestV1TerminalInputWaitAndReadPreserveBytes(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

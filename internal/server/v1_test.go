@@ -93,7 +93,7 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 	for path, method := range map[string]string{
 		"/api/v1/events":                     "get",
 		"/api/v1/terminals":                  "post",
-		"/api/v1/terminals/{id}":             "delete",
+		"/api/v1/terminals/{id}":             "patch",
 		"/api/v1/terminals/{id}/output":      "get",
 		"/api/v1/terminals/{id}/input":       "post",
 		"/api/v1/terminals/{id}/run":         "post",
@@ -124,6 +124,9 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 			t.Errorf("schema path %s missing method %s", path, method)
 		}
 	}
+	if _, ok := document.Paths["/api/v1/terminals/{id}"]["delete"]; !ok {
+		t.Error("schema path /api/v1/terminals/{id} missing method delete")
+	}
 	replaceRequired, ok := document.Components.Schemas["ReplaceSelectionRequest"]["required"].([]any)
 	if !ok {
 		t.Fatalf("ReplaceSelectionRequest.required = %#v",
@@ -140,6 +143,7 @@ func TestV1SchemaDescribesTerminalSelectionAndEventOperations(t *testing.T) {
 	for _, schema := range []string{
 		"Annotation", "AnnotationComment", "AnnotationResult",
 		"CreateAnnotationRequest", "CompleteAnnotationRequest",
+		"RenameTerminalRequest",
 	} {
 		if _, ok := document.Components.Schemas[schema]; !ok {
 			t.Errorf("schema missing %s", schema)

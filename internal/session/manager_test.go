@@ -30,6 +30,137 @@ func TestCreateRejectsBlankName(t *testing.T) {
 	}
 }
 
+func TestManagerRenameTrimsNameAndPreservesDynamicMetadata(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	before, err := manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "codex", Status: "waiting", Title: "Dynamic title",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	changes := make(chan Change, 1)
+	manager.SetChangeHandler(func(change Change) { changes <- change })
+
+	renamed, err := manager.Rename(created.ID, "  Manual terminal  ")
+	if err != nil {
+		t.Fatalf("Rename() error = %v", err)
+	}
+	if renamed.Name != "Manual terminal" || !renamed.CustomName {
+		t.Fatalf("renamed metadata = %#v, want trimmed custom name", renamed)
+	}
+	if renamed.Agent != before.Agent || renamed.AgentStatus != before.AgentStatus ||
+		renamed.AgentTitle != before.AgentTitle || renamed.ProcessName != before.ProcessName {
+		t.Fatalf("dynamic metadata changed by Rename(): before=%#v after=%#v", before, renamed)
+	}
+
+	select {
+	case change := <-changes:
+		if change.Kind != ChangeUpdated || change.After == nil ||
+			change.After.Name != "Manual terminal" || !change.After.CustomName {
+			t.Fatalf("rename change = %#v, want ChangeUpdated with renamed metadata", change)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for rename change")
+	}
+}
+
+func TestManagerRenameValidatesNameWithoutMutatingMetadata(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	for _, name := range []string{"   ", strings.Repeat("あ", 81)} {
+		if _, err := manager.Rename(created.ID, name); err == nil {
+			t.Fatalf("Rename(%q) error = nil, want validation error", name)
+		}
+		current, ok := manager.Metadata(created.ID)
+		if !ok {
+			t.Fatal("renamed terminal disappeared after validation error")
+		}
+		if current.Name != created.Name || current.CustomName {
+			t.Fatalf("metadata after invalid Rename(%q) = %#v, want unchanged", name, current)
+		}
+	}
+}
+
+func TestManagerRenameRollsBackWhenPersistenceFails(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	store := &failFirstSaveMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		err:                    errors.New("save failed"),
+	}
+	manager.store = store
+
+	if _, err := manager.Rename(created.ID, "Renamed terminal"); !errors.Is(err, store.err) {
+		t.Fatalf("Rename() error = %v, want %v", err, store.err)
+	}
+	current, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("terminal disappeared after failed Rename()")
+	}
+	if current != created {
+		t.Fatalf("metadata after failed Rename() = %#v, want %#v", current, created)
+	}
+}
+
+func TestManagerRenameRollsBackOwnedFieldsAfterConcurrentProcessRefresh(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	storeErr := errors.New("save failed")
+	store := &gatedResultMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		entered:                make(chan int, 1),
+		releaseFirst:           make(chan struct{}),
+		saveErrors:             []error{storeErr},
+	}
+	manager.store = store
+
+	renameDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Rename(created.ID, "Renamed terminal")
+		renameDone <- err
+	}()
+	if call := <-store.entered; call != 1 {
+		t.Fatalf("Rename() Save() call = %d, want 1", call)
+	}
+	if change := manager.updateForegroundProcessName(created.ID, "vim"); change == nil {
+		t.Fatal("concurrent process refresh did not update metadata")
+	}
+	close(store.releaseFirst)
+
+	if err := <-renameDone; !errors.Is(err, storeErr) {
+		t.Fatalf("Rename() error = %v, want %v", err, storeErr)
+	}
+	current, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("terminal disappeared after failed Rename()")
+	}
+	if current.Name != created.Name || current.CustomName {
+		t.Fatalf("rename-owned metadata after failed Rename() = %#v, want original name", current)
+	}
+	if current.ProcessName != "vim" {
+		t.Fatalf("concurrent process name after failed Rename() = %q, want vim", current.ProcessName)
+	}
+}
+
 func TestInMemoryManagerRetainsSelectionState(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	want := selection.State{

@@ -199,6 +199,30 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
+test("renames the focused terminal from Quick Actions and updates the sidebar", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Terminal", "/tmp");
+  await replaceSharedSelection(page, [terminal.id], terminal.id);
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByRole("button", { name: "Select Terminal" })).toBeVisible();
+  await page.keyboard.press("Meta+k");
+  await page.getByRole("option", { name: /^Rename terminal/ }).click();
+
+  const renameDialog = page.getByRole("dialog", { name: "Rename terminal" });
+  await expect(renameDialog).toBeVisible();
+  const nameInput = renameDialog.getByLabel("Terminal name");
+  await expect(nameInput).toHaveValue("Terminal");
+  await expect(nameInput).toBeFocused();
+  await nameInput.fill("Build shell");
+  await renameDialog.getByRole("button", { name: "Rename terminal" }).click();
+
+  await expect(page.getByRole("button", { name: "Select Build shell" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Select Terminal" })).toHaveCount(0);
+});
+
 test("follows the previous terminal when the focused shell exits", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "First", "/tmp");

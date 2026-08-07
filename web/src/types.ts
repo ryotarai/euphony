@@ -11,6 +11,7 @@ export interface Session {
   needsAttention?: boolean;
   agentTitle?: string;
   processName?: string;
+  customName?: boolean;
   createdAt: string;
   exitedAt?: string;
   exitCode?: number;

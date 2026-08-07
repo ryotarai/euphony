@@ -121,6 +121,30 @@
           }
         }
       },
+      "patch": {
+        "operationId": "renameTerminal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameTerminalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Terminal"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "delete": {
         "operationId": "deleteTerminal",
         "responses": {
@@ -843,6 +867,18 @@
         },
         "additionalProperties": false
       },
+      "RenameTerminalRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "additionalProperties": false
+      },
       "TerminalInputRequest": {
         "type": "object",
         "oneOf": [
@@ -1490,6 +1526,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "customName": {
+            "type": "boolean"
           },
           "state": {
             "type": "string",
