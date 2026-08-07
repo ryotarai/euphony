@@ -27,34 +27,29 @@
 - Consumes: the current `SessionNavigation` rendered status icons and accessible labels.
 - Produces: assertions that distinguish the running and starting icon SVGs while preserving their accessible labels.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Extend the existing status icon test so it asserts the running and starting icons
-use different SVG `data-lucide` names. Keep the existing `aria-label` assertions:
+use different Lucide SVG classes. Keep the existing `aria-label` assertions:
 
 ```tsx
-expect(screen.getByRole("img", { name: "Running" })).toHaveAttribute(
-  "data-lucide",
-  "circle-dot",
-);
-expect(screen.getByRole("img", { name: "Starting" })).toHaveAttribute(
-  "data-lucide",
-  "clock-3",
-);
+expect(screen.getByRole("img", { name: "Running" })).toHaveClass("lucide-circle-dot");
+expect(screen.getByRole("img", { name: "Starting" })).toHaveClass("lucide-clock-3");
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+- [x] **Step 2: Run the focused test to verify it fails**
 
 Run:
 
 ```bash
+cd web
 npm test -- --run src/components/SessionNavigation.test.tsx -t "renders a cwd-first tree with lifecycle icons"
 ```
 
 Expected: FAIL because the current implementation renders `LoaderCircleIcon` for
 both `running` and `starting`.
 
-- [ ] **Step 3: Commit the test change**
+- [x] **Step 3: Commit the test change**
 
 ```bash
 git add web/src/components/SessionNavigation.test.tsx
@@ -70,7 +65,7 @@ git commit -m "test: define static running status icons"
 - Consumes: the existing `statusLabel`, icon props, and status switch.
 - Produces: `CircleDotIcon` for `running` and `Clock3Icon` for `starting`, with unchanged props and labels.
 
-- [ ] **Step 1: Update icon imports and the status mapping**
+- [x] **Step 1: Update icon imports and the status mapping**
 
 Import `CircleDotIcon` and `Clock3Icon` from `lucide-react`, then update only the
 two switch cases:
@@ -84,18 +79,19 @@ case "starting":
 
 Leave all other cases untouched.
 
-- [ ] **Step 2: Run the focused tests to verify they pass**
+- [x] **Step 2: Run the focused tests to verify they pass**
 
 Run:
 
 ```bash
+cd web
 npm test -- --run src/components/SessionNavigation.test.tsx src/styles.test.ts
 ```
 
 Expected: PASS, including the new icon identity assertions and the existing
 assertion that running status has no perpetual animation.
 
-- [ ] **Step 3: Commit the implementation**
+- [x] **Step 3: Commit the implementation**
 
 ```bash
 git add web/src/components/SessionNavigation.tsx web/src/components/SessionNavigation.test.tsx
@@ -112,22 +108,24 @@ git commit -m "fix(web): clarify running session status icon"
 - Consumes: the built Vite application and isolated E2E server.
 - Produces: browser evidence that sidebar layout and status accessibility remain stable.
 
-- [ ] **Step 1: Run the complete web unit suite and typecheck**
+- [x] **Step 1: Run the complete web unit suite and typecheck**
 
 Run:
 
 ```bash
+cd web
 npm test -- --run --maxWorkers=1 --testTimeout=30000
 npm run typecheck
 ```
 
 Expected: all unit tests pass and TypeScript exits with code 0.
 
-- [ ] **Step 2: Build and run the terminal E2E suite**
+- [x] **Step 2: Build and run the terminal E2E suite**
 
 Run:
 
 ```bash
+cd web
 npm run build
 EUPHONY_E2E_PORT=18087 npm run e2e -- e2e/terminal-reliability.spec.ts
 ```
@@ -135,7 +133,7 @@ EUPHONY_E2E_PORT=18087 npm run e2e -- e2e/terminal-reliability.spec.ts
 Expected: build succeeds and all terminal reliability tests pass on the new
 isolated port/database.
 
-- [ ] **Step 3: Inspect the final diff**
+- [x] **Step 3: Inspect the final diff**
 
 Run:
 
