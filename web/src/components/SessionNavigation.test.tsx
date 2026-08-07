@@ -440,6 +440,28 @@ test("labels rows with agent titles, process names, and fallback names", () => {
   expect(screen.queryByRole("img", { name: "Codex" })).not.toBeInTheDocument();
 });
 
+test("prefers a custom terminal name over dynamic agent labels", () => {
+  render(
+    <SessionNavigation
+      sessions={[{
+        ...sessions[0],
+        id: "renamed",
+        name: "Personal terminal",
+        customName: true,
+        agentTitle: "Current task",
+        processName: "codex",
+      }]}
+      selectedIDs={[]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(screen.getByText("Personal terminal")).toBeInTheDocument();
+  expect(screen.queryByText("Current task")).not.toBeInTheDocument();
+});
+
 test("creates a terminal from the cwd heading", async () => {
   const onCreate = vi.fn();
   const user = userEvent.setup();

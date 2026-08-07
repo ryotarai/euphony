@@ -126,6 +126,16 @@ export class ApiClient {
     });
   }
 
+  renameTerminal(id: string, name: string): Promise<Session> {
+    return this.v1Request<{ terminal: Session }>(
+      `/api/v1/terminals/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      },
+    ).then((result) => result.terminal);
+  }
+
   getCurrentAnnotation(terminalID: string): Promise<AnnotationSession | null> {
     return this.v1Request<{ annotation: AnnotationSession | null }>(
       `/api/v1/terminals/${encodeURIComponent(terminalID)}/annotation`,

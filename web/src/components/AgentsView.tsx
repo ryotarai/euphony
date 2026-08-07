@@ -26,6 +26,7 @@ function providerLabel(provider: AgentSummary["provider"]) {
 }
 
 function sessionLabel(session: Session) {
+  if (session.customName) return session.name;
   return session.agentTitle?.trim() || session.processName?.trim() || session.name;
 }
 

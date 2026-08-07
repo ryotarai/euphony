@@ -125,6 +125,32 @@ test("creates and deletes terminals through v1 with returned selection", async (
   });
 });
 
+test("renames a terminal through v1 and unwraps the returned terminal", async () => {
+  const terminal = {
+    id: "terminal/one",
+    name: "Renamed terminal",
+    customName: true,
+    state: "running" as const,
+    cwd: "/repo",
+    createdAt: "2026-07-30T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() =>
+      jsonResponse({ ok: true, result: { terminal } }),
+    );
+  const api = new ApiClient("token");
+
+  expect(await api.renameTerminal(terminal.id, terminal.name)).toEqual(terminal);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/terminals/terminal%2Fone",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ name: "Renamed terminal" }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("parses split NDJSON event chunks without losing records", async () => {
   const encoder = new TextEncoder();
   vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>

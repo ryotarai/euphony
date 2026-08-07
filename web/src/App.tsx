@@ -224,7 +224,7 @@ function availableQuickActionValues(
     "new-terminal",
     "attention-alerts",
     ...(selectedIDs.some((id) => availableSessionIDs.has(id))
-      ? ["delete-selected-terminals"]
+      ? ["delete-selected-terminals", "rename-terminal"]
       : []),
     ...sessions.map((session) => `session:${session.id}`),
     ...quickActionStatuses
@@ -526,6 +526,10 @@ export function App({
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
+  const [pendingRename, setPendingRename] = useState<Session | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
   const tasksOpen = selectedDashboardIDs.includes(tasksPaneID);
@@ -2442,6 +2446,54 @@ export function App({
     setCreateOpen(false);
   }
 
+  function openRenameDialog(session: Session) {
+    setCommandOpen(false);
+    setPendingRename(session);
+    setRenameDraft(session.name);
+    setRenameError("");
+  }
+
+  async function submitRename(event: FormEvent) {
+    event.preventDefault();
+    if (!api || !pendingRename || renameSubmitting) return;
+    const name = renameDraft.trim();
+    const characterCount = Array.from(name).length;
+    if (characterCount === 0) {
+      setRenameError("Enter a terminal name.");
+      return;
+    }
+    if (characterCount > 80) {
+      setRenameError("Terminal name must be 80 characters or fewer.");
+      return;
+    }
+
+    setRenameSubmitting(true);
+    setRenameError("");
+    try {
+      const renamed = await api.renameTerminal(pendingRename.id, name);
+      setSessions((current) =>
+        current?.map((session) =>
+          session.id === renamed.id ? renamed : session,
+        ) ?? current,
+      );
+      previousSessionsRef.current = previousSessionsRef.current.map((session) =>
+        session.id === renamed.id ? renamed : session,
+      );
+      previousSessionOrderRef.current = previousSessionOrderRef.current.map((session) =>
+        session.id === renamed.id ? renamed : session,
+      );
+      setPendingRename(null);
+    } catch (error) {
+      setRenameError(
+        error instanceof Error
+          ? error.message
+          : "The terminal could not be renamed.",
+      );
+    } finally {
+      setRenameSubmitting(false);
+    }
+  }
+
   async function deleteSessions(items: Session[]) {
     if (!api || items.length === 0) return;
     const previousSessions = sessions ?? [];
@@ -3019,6 +3071,8 @@ export function App({
   const exitedCount = panes.filter(
     (pane) => connectionStates[pane.id] === "exited",
   ).length;
+  const renameTarget = selectedSessions.find((session) => session.id === focusedID)
+    ?? selectedSessions[0];
   const quickActions = [
     ...(selectedSessions.length > 0
       ? [{
@@ -3030,6 +3084,16 @@ export function App({
           setCommandOpen(false);
           setPendingDelete(selectedSessions);
         },
+        group: "Actions",
+      }]
+      : []),
+    ...(renameTarget
+      ? [{
+        value: "rename-terminal",
+        label: "Rename terminal…",
+        detail: renameTarget.name,
+        search: "rename terminal name",
+        run: () => openRenameDialog(renameTarget),
         group: "Actions",
       }]
       : []),
@@ -3067,7 +3131,7 @@ export function App({
       })),
     ...sessions.map((session) => ({
       value: `session:${session.id}`,
-      label: session.agentTitle || session.name,
+      label: session.customName ? session.name : session.agentTitle || session.name,
       detail: session.cwd,
       search: `${session.agentTitle ?? ""} ${session.name} ${session.cwd}`,
       run: () => {
@@ -3351,6 +3415,57 @@ export function App({
                 Cancel
               </Button>
               <Button type="submit">Create terminal</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={pendingRename !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingRename(null);
+            setRenameError("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename terminal</DialogTitle>
+            <DialogDescription>
+              Choose a name between 1 and 80 characters.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => void submitRename(event)}>
+            <Field data-invalid={Boolean(renameError)}>
+              <FieldLabel htmlFor="terminal-name">Terminal name</FieldLabel>
+              <Input
+                id="terminal-name"
+                value={renameDraft}
+                onChange={(event) => {
+                  setRenameDraft(event.target.value);
+                  if (renameError) setRenameError("");
+                }}
+                aria-invalid={Boolean(renameError)}
+                aria-describedby={renameError ? "terminal-name-error" : undefined}
+                autoFocus
+                disabled={renameSubmitting}
+              />
+              {renameError && (
+                <FieldError id="terminal-name-error">{renameError}</FieldError>
+              )}
+            </Field>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPendingRename(null)}
+                disabled={renameSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={renameSubmitting}>
+                {renameSubmitting ? "Renaming…" : "Rename terminal"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

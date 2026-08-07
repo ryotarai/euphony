@@ -1723,6 +1723,159 @@ test("opens Quick Actions with Command-K but not Control-K", async () => {
   ).toBeVisible();
 });
 
+test("renames the focused selected terminal from Quick Actions and updates the sidebar", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/?terminal=session-1&terminal=session-2&focus=session-2",
+  );
+  const renamed = {
+    ...secondRunningSession,
+    name: "Renamed Claude",
+    customName: true,
+  };
+  let serverSessions: Session[] = [runningSession, secondRunningSession];
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") {
+      return jsonResponse(serverSessions);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/settings") return jsonResponse(defaultSettings);
+    if (input === "/api/v1/terminals/session-2" && init?.method === "PATCH") {
+      expect(JSON.parse(String(init.body))).toEqual({ name: "Renamed Claude" });
+      serverSessions = [runningSession, renamed];
+      return jsonResponse({ ok: true, result: { terminal: renamed } });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  await screen.findByLabelText("Claude terminal pane");
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(await screen.findByRole("option", { name: /^Rename terminal…/ }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Rename terminal" });
+  const input = within(dialog).getByRole("textbox", { name: "Terminal name" });
+  expect(input).toHaveValue("Claude");
+  expect(input).toHaveFocus();
+  await user.clear(input);
+  await user.type(input, "  Renamed Claude  ");
+  await user.click(within(dialog).getByRole("button", { name: "Rename terminal" }));
+
+  await waitFor(() => {
+    expect(screen.getByText("Renamed Claude")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Rename terminal" })).not.toBeInTheDocument();
+  });
+  expect(screen.queryByText("Needs approval")).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions:v1") ?? "[]"))
+    .toContain("rename-terminal");
+  expect(fetchMock.mock.calls.filter(
+    ([input, init]) => input === "/api/v1/terminals/session-2" && init?.method === "PATCH",
+  )).toHaveLength(1);
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/v1/terminals/session-1" && init?.method === "PATCH",
+  )).toBe(false);
+});
+
+test("keeps the rename dialog open with useful validation errors", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/settings") return jsonResponse(defaultSettings);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+
+  await screen.findByRole("button", { name: "Select Codex" });
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(await screen.findByRole("option", { name: /^Rename terminal…/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Rename terminal" });
+  const input = within(dialog).getByRole("textbox", { name: "Terminal name" });
+
+  fireEvent.change(input, { target: { value: "" } });
+  expect(input).toHaveValue("");
+  await user.click(within(dialog).getByRole("button", { name: "Rename terminal" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Enter a terminal name.",
+  );
+  expect(screen.getByRole("dialog", { name: "Rename terminal" })).toBeVisible();
+
+  fireEvent.change(input, { target: { value: "x".repeat(81) } });
+  expect(input).toHaveValue("x".repeat(81));
+  await user.click(within(dialog).getByRole("button", { name: "Rename terminal" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Terminal name must be 80 characters or fewer.",
+  );
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => typeof input === "string" && input.includes("/api/v1/terminals/") && init?.method === "PATCH",
+  )).toBe(false);
+});
+
+test("keeps the rename dialog open when the API rejects the new name", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/settings") return jsonResponse(defaultSettings);
+    if (input === "/api/v1/terminals/session-1" && init?.method === "PATCH") {
+      return jsonResponse(
+        {
+          ok: false,
+          error: { code: "rename_failed", message: "That terminal name is unavailable." },
+        },
+        409,
+      );
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div>{session.id}</div>}
+    />,
+  );
+
+  await screen.findByRole("button", { name: "Select Codex" });
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  await user.click(await screen.findByRole("option", { name: /^Rename terminal…/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Rename terminal" });
+  const input = within(dialog).getByRole("textbox", { name: "Terminal name" });
+  await user.clear(input);
+  await user.type(input, "Unavailable");
+  await user.click(within(dialog).getByRole("button", { name: "Rename terminal" }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "That terminal name is unavailable.",
+  );
+  expect(screen.getByRole("dialog", { name: "Rename terminal" })).toBeVisible();
+  expect(fetchMock.mock.calls.filter(
+    ([input, init]) => input === "/api/v1/terminals/session-1" && init?.method === "PATCH",
+  )).toHaveLength(1);
+});
+
 test("deletes selected terminals from Quick Actions after confirmation", async () => {
   history.replaceState(null, "", "/?terminal=session-1&terminal=session-2");
   const fetchMock = vi.spyOn(globalThis, "fetch");
