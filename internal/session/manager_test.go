@@ -117,6 +117,50 @@ func TestManagerRenameRollsBackWhenPersistenceFails(t *testing.T) {
 	}
 }
 
+func TestManagerRenameRollsBackOwnedFieldsAfterConcurrentProcessRefresh(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	storeErr := errors.New("save failed")
+	store := &gatedResultMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		entered:                make(chan int, 1),
+		releaseFirst:           make(chan struct{}),
+		saveErrors:             []error{storeErr},
+	}
+	manager.store = store
+
+	renameDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Rename(created.ID, "Renamed terminal")
+		renameDone <- err
+	}()
+	if call := <-store.entered; call != 1 {
+		t.Fatalf("Rename() Save() call = %d, want 1", call)
+	}
+	if change := manager.updateForegroundProcessName(created.ID, "vim"); change == nil {
+		t.Fatal("concurrent process refresh did not update metadata")
+	}
+	close(store.releaseFirst)
+
+	if err := <-renameDone; !errors.Is(err, storeErr) {
+		t.Fatalf("Rename() error = %v, want %v", err, storeErr)
+	}
+	current, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("terminal disappeared after failed Rename()")
+	}
+	if current.Name != created.Name || current.CustomName {
+		t.Fatalf("rename-owned metadata after failed Rename() = %#v, want original name", current)
+	}
+	if current.ProcessName != "vim" {
+		t.Fatalf("concurrent process name after failed Rename() = %q, want vim", current.ProcessName)
+	}
+}
+
 func TestInMemoryManagerRetainsSelectionState(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	want := selection.State{

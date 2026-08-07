@@ -769,8 +769,10 @@ func (m *Manager) Rename(id, name string) (Metadata, error) {
 		}); err != nil {
 			m.mu.Lock()
 			if current, exists := m.sessions[id]; exists &&
-				current == item && current.metadata == after {
-				item.metadata = before
+				current == item && current.metadata.Name == after.Name &&
+				current.metadata.CustomName == after.CustomName {
+				item.metadata.Name = before.Name
+				item.metadata.CustomName = before.CustomName
 			}
 			m.mu.Unlock()
 			releaseMetadataSave()
