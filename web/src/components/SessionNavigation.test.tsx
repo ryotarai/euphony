@@ -250,6 +250,15 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
       agentStatus: "running",
     },
     {
+      ...sessions[0],
+      id: "starting",
+      name: "Starting",
+      state: "starting",
+      cwd: "/workspace/project",
+      agentStatus: undefined,
+      agentTitle: "",
+    },
+    {
       ...sessions[1],
       id: "blocked",
       name: "Permission request",
@@ -278,6 +287,8 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
   expect(screen.queryByRole("heading", { name: "Running" })).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox", { name: /Show all/ })).not.toBeInTheDocument();
   expect(screen.getByRole("img", { name: "Running" })).toHaveClass("session-status-running");
+  expect(screen.getByRole("img", { name: "Running" })).toHaveClass("lucide-circle-dot");
+  expect(screen.getByRole("img", { name: "Starting" })).toHaveClass("lucide-clock-3");
   expect(screen.getByRole("img", { name: "Blocked" })).toHaveTextContent("🚫");
 
   const attentionButton = screen.getByRole("button", {
