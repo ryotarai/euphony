@@ -26,6 +26,7 @@ const defaultSettings: Settings = {
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
   agentSummaryProvider: "codex",
+  agentSummaryPrompt: "Focus on risks and next steps.",
 };
 
 const runningSession: Session = {
@@ -3553,6 +3554,9 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const terminalFontFamily = within(dialog).getByLabelText("Terminal font");
   const summaryProvider = within(dialog).getByLabelText("Summary provider");
   expect(summaryProvider).toHaveValue("codex");
+  const summaryPrompt = within(dialog).getByLabelText("Additional summary instructions");
+  expect(summaryPrompt).toHaveValue(defaultSettings.agentSummaryPrompt);
+  expect(summaryPrompt).toHaveAttribute("maxLength", "8000");
   fireEvent.change(interfaceFontSize, { target: { value: "18" } });
   fireEvent.change(terminalFontSize, { target: { value: "17" } });
   fireEvent.change(agentLogFontSize, { target: { value: "16" } });
@@ -3597,6 +3601,10 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   expect(within(reopenedDialog).getByLabelText("Summary provider")).toHaveValue(
     "codex",
   );
+  const reopenedSummaryPrompt = within(reopenedDialog).getByLabelText(
+    "Additional summary instructions",
+  );
+  expect(reopenedSummaryPrompt).toHaveValue(defaultSettings.agentSummaryPrompt);
   fireEvent.change(reopenedPrefix, { target: { value: "Ctrl+A" } });
   fireEvent.change(paneTabShortcut, { target: { value: "control+j" } });
   fireEvent.change(historyBuffer, { target: { value: "8" } });
@@ -3613,6 +3621,9 @@ test("loads settings and saves changed workspace shortcuts", async () => {
     target: { value: "  Iosevka, monospace  " },
   });
   await user.selectOptions(within(reopenedDialog).getByLabelText("Summary provider"), "claude");
+  fireEvent.change(reopenedSummaryPrompt, {
+    target: { value: "Highlight risks and concrete next steps." },
+  });
   await user.click(screen.getByRole("button", { name: "Save settings" }));
 
   expect(fetchMock).toHaveBeenCalledWith(
@@ -3629,9 +3640,17 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         agentLogFontSize: 16,
         terminalHistoryLimit: 8 * 1024 * 1024,
         agentSummaryProvider: "claude",
+        agentSummaryPrompt: "Highlight risks and concrete next steps.",
       }),
     }),
   );
+
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+  const savedDialog = screen.getByRole("dialog", { name: "Settings" });
+  expect(within(savedDialog).getByLabelText("Additional summary instructions")).toHaveValue(
+    "Highlight risks and concrete next steps.",
+  );
+  await user.keyboard("{Escape}");
 });
 
 test("previews, cancels, and saves terminal appearance settings", async () => {

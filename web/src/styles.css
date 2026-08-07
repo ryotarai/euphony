@@ -2787,6 +2787,11 @@ input:focus-visible,
   min-height: 2.5rem;
 }
 
+.settings-form [data-slot="textarea"] {
+  min-height: 7rem;
+  resize: vertical;
+}
+
 .font-size-section {
   display: grid;
   gap: 0.65rem;

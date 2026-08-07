@@ -60,9 +60,43 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		TerminalHistoryLimit: 0,
 		TerminalLineHeight:   1.5, TerminalCursorStyle: "underline",
 		TerminalCursorBlink: true, TerminalScrollSensitivity: 5, TerminalOptionAsAlt: false,
-		AgentSummaryProvider: "codex",
+		AgentSummaryProvider: "codex", AgentSummaryPrompt: "",
 	}) {
 		t.Fatalf("updated settings = %#v", updated)
+	}
+}
+
+func TestSettingsAPIPreservesOmittedSummaryPrompt(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		DatabasePath: filepath.Join(t.TempDir(), "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	const prompt = "Keep the summary focused.\nCall out blockers and next steps."
+	response := performRequest(t, srv, http.MethodPatch, "/api/settings",
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false,"agentSummaryProvider":"codex","agentSummaryPrompt":"Keep the summary focused.\nCall out blockers and next steps."}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH /api/settings with prompt status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var saved session.Settings
+	decodeResponse(t, response, &saved)
+	if saved.AgentSummaryPrompt != prompt {
+		t.Fatalf("saved prompt = %q, want %q", saved.AgentSummaryPrompt, prompt)
+	}
+
+	response = performRequest(t, srv, http.MethodPatch, "/api/settings",
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false,"agentSummaryProvider":"codex"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH /api/settings without prompt status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var preserved session.Settings
+	decodeResponse(t, response, &preserved)
+	if preserved.AgentSummaryPrompt != prompt {
+		t.Fatalf("preserved prompt = %q, want %q", preserved.AgentSummaryPrompt, prompt)
 	}
 }
 
@@ -135,6 +169,15 @@ func TestSettingsAPIRejectsInvalidSettings(t *testing.T) {
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("terminal appearance body %s status = %d, want 400", body, response.Code)
 		}
+	}
+
+	overlongPromptBody := strings.Replace(validBody,
+		`"terminalOptionAsAlt":true}`,
+		`"terminalOptionAsAlt":true,"agentSummaryPrompt":"`+strings.Repeat("x", 8001)+`"}`,
+		1)
+	response := performRequest(t, srv, http.MethodPatch, "/api/settings", overlongPromptBody)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("overlong summary prompt status = %d, want 400", response.Code)
 	}
 }
 

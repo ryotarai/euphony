@@ -15,13 +15,14 @@ const (
 	maxTranscriptContextBytes = 64 << 10
 	maxTranscriptEntries      = 40
 	maxPromptBytes            = 128 << 10
+	maxAdditionalPromptRunes  = 8000
 	maxGeneratedSummaryRunes  = 1200
 	maxGeneratedActionRunes   = 600
 )
 
 var ansiSequence = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
 
-func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTail []byte) string {
+func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTail []byte, additionalPrompt string) string {
 	transcript := formatTranscript(entries)
 	if len(transcript) > maxTranscriptContextBytes {
 		transcript = transcript[len(transcript)-maxTranscriptContextBytes:]
@@ -29,6 +30,11 @@ func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTa
 	terminal := sanitizeTerminalText(string(terminalTail))
 	if len(terminal) > maxTerminalContextBytes {
 		terminal = terminal[len(terminal)-maxTerminalContextBytes:]
+	}
+	additionalPrompt = limitPromptRunes(additionalPrompt, maxAdditionalPromptRunes)
+	additionalInstructions := ""
+	if strings.TrimSpace(additionalPrompt) != "" {
+		additionalInstructions = fmt.Sprintf("Additional instructions from the workspace owner:\n%s\n\n", additionalPrompt)
 	}
 	prompt := fmt.Sprintf(`You are an assistant for a local terminal workspace. Summarize what one coding agent is doing right now for a human who is monitoring several terminals.
 
@@ -43,7 +49,7 @@ Rules:
 - Priority describes the user's action urgency, not the agent lifecycle status. Use high for blocking or time-sensitive decisions, medium for important but non-blocking work, and low for routine follow-up.
 - Do not invent details that are absent from the context. Say that context is unavailable when necessary.
 
-Session name: %s
+%sSession name: %s
 Agent: %s
 Agent status: %s
 Agent title: %s
@@ -54,11 +60,19 @@ Recent agent transcript:
 
 Terminal output tail:
 %s
-`, metadata.Name, metadata.Agent, metadata.AgentStatus, metadata.AgentTitle, metadata.CWD, transcript, terminal)
+`, additionalInstructions, metadata.Name, metadata.Agent, metadata.AgentStatus, metadata.AgentTitle, metadata.CWD, transcript, terminal)
 	if len(prompt) <= maxPromptBytes {
 		return prompt
 	}
 	return prompt[:maxPromptBytes]
+}
+
+func limitPromptRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func formatTranscript(entries []agentlog.Entry) string {

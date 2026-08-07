@@ -57,6 +57,7 @@ import {
 } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   InputGroup,
   InputGroupAddon,
@@ -161,6 +162,7 @@ const defaultSettings: Settings = {
   terminalScrollSensitivity: defaultTerminalScrollSensitivity,
   terminalOptionAsAlt: defaultTerminalOptionAsAlt,
   agentSummaryProvider: "codex",
+  agentSummaryPrompt: "",
 };
 
 function historyLimitDraft(limit: number): string {
@@ -501,6 +503,9 @@ export function App({
   );
   const [agentSummaryProviderDraft, setAgentSummaryProviderDraft] = useState(
     settings.agentSummaryProvider,
+  );
+  const [agentSummaryPromptDraft, setAgentSummaryPromptDraft] = useState(
+    settings.agentSummaryPrompt,
   );
   const [fontSizeDrafts, setFontSizeDrafts] = useState<Record<FontSizeSetting, string>>({
     interfaceFontSize: String(settings.interfaceFontSize),
@@ -1093,6 +1098,7 @@ export function App({
       setTerminalScrollSensitivityDraft(String(loaded.terminalScrollSensitivity));
       setTerminalOptionAsAltDraft(loaded.terminalOptionAsAlt);
       setAgentSummaryProviderDraft(loaded.agentSummaryProvider);
+      setAgentSummaryPromptDraft(loaded.agentSummaryPrompt);
     }).catch((error: unknown) => {
       if (active) {
         setRequestError(error instanceof Error ? error.message : "Settings could not be loaded.");
@@ -2623,6 +2629,7 @@ export function App({
     setTerminalScrollSensitivityDraft(String(settings.terminalScrollSensitivity));
     setTerminalOptionAsAltDraft(settings.terminalOptionAsAlt);
     setAgentSummaryProviderDraft(settings.agentSummaryProvider);
+    setAgentSummaryPromptDraft(settings.agentSummaryPrompt);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
       terminalFontSize: String(settings.terminalFontSize),
@@ -2737,6 +2744,7 @@ export function App({
       terminalScrollSensitivity,
       terminalOptionAsAlt: terminalOptionAsAltDraft,
       agentSummaryProvider: agentSummaryProviderDraft,
+      agentSummaryPrompt: agentSummaryPromptDraft,
     });
     setSettingsOpen(false);
   }
@@ -3615,6 +3623,21 @@ export function App({
                 </select>
                 <FieldDescription>
                   Generate agent summaries with the selected command-line model.
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="agentSummaryPrompt">
+                  Additional summary instructions
+                </FieldLabel>
+                <Textarea
+                  id="agentSummaryPrompt"
+                  name="agentSummaryPrompt"
+                  value={agentSummaryPromptDraft}
+                  onChange={(event) => setAgentSummaryPromptDraft(event.target.value)}
+                  maxLength={8000}
+                />
+                <FieldDescription>
+                  Optional guidance added to every agent summary.
                 </FieldDescription>
               </Field>
               <Field data-invalid={settingsError?.field === "terminalHistoryLimit"}>

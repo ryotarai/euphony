@@ -363,7 +363,7 @@ func (s *Service) promptFor(metadata session.Metadata) string {
 	if terminal, ok := s.sessions.Get(metadata.ID); ok {
 		terminalTail, _ = terminal.HistorySnapshot(maxTerminalContextBytes)
 	}
-	return BuildPrompt(metadata, transcript, terminalTail)
+	return BuildPrompt(metadata, transcript, terminalTail, s.sessions.Settings().AgentSummaryPrompt)
 }
 
 func isAgentState(metadata session.Metadata) bool {
