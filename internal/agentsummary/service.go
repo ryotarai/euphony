@@ -241,6 +241,7 @@ func (s *Service) generate(ctx context.Context, metadata session.Metadata) {
 	}
 	generation.Summary = normalizeGeneratedText(generation.Summary, maxGeneratedSummaryRunes)
 	generation.Action = normalizeGeneratedText(generation.Action, maxGeneratedActionRunes)
+	generation.Priority = strings.ToLower(strings.TrimSpace(generation.Priority))
 	if generation.Summary == "" || (metadata.AgentStatus != "running" && generation.Action == "") {
 		s.saveResult(ctx, metadata, session.AgentSummary{
 			TerminalID: metadata.ID, Provider: provider, Status: metadata.AgentStatus,
@@ -250,7 +251,8 @@ func (s *Service) generate(ctx context.Context, metadata session.Metadata) {
 	}
 	summary := session.AgentSummary{
 		TerminalID: metadata.ID, Provider: provider, Status: metadata.AgentStatus,
-		Summary: generation.Summary, Action: generation.Action, GeneratedAt: s.now().UTC(),
+		Summary: generation.Summary, Action: generation.Action, Priority: generation.Priority,
+		GeneratedAt: s.now().UTC(),
 	}
 	s.saveResult(ctx, metadata, summary)
 }
@@ -272,6 +274,7 @@ func (s *Service) saveResult(ctx context.Context, expected session.Metadata, sum
 			if previous.TerminalID == expected.ID && previous.Error == "" {
 				summary.Summary = previous.Summary
 				summary.Action = previous.Action
+				summary.Priority = previous.Priority
 				break
 			}
 		}

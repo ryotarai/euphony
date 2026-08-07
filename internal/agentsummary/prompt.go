@@ -33,12 +33,14 @@ func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTa
 	prompt := fmt.Sprintf(`You are an assistant for a local terminal workspace. Summarize what one coding agent is doing right now for a human who is monitoring several terminals.
 
 Return exactly one JSON object and no markdown:
-{"summary":"what the agent is doing now","action":"what the user should do next, or an empty string"}
+{"summary":"what the agent is doing now","action":"what the user should do next, or an empty string","priority":"high, medium, low, or an empty string"}
 
 Rules:
 - Keep summary concrete and short. Mention the current goal, file, command, or blocker when the context supports it.
 - For running agents, action must be an empty string.
-- For waiting or blocked agents, action must describe the user's next action in plain language.
+- For running agents, priority must be an empty string.
+- For waiting or blocked agents, action must describe the user's next action in plain language and priority must be exactly high, medium, or low based on the urgency and impact of that action.
+- Priority describes the user's action urgency, not the agent lifecycle status. Use high for blocking or time-sensitive decisions, medium for important but non-blocking work, and low for routine follow-up.
 - Do not invent details that are absent from the context. Say that context is unavailable when necessary.
 
 Session name: %s

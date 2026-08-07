@@ -31,11 +31,40 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 	if strings.Contains(prompt, "\x1b[") {
 		t.Fatalf("prompt contains ANSI escape sequence: %q", prompt)
 	}
+	if !strings.Contains(prompt, `"priority"`) ||
+		!strings.Contains(prompt, "high") ||
+		!strings.Contains(prompt, "medium") ||
+		!strings.Contains(prompt, "low") {
+		t.Fatalf("prompt does not describe action priority: %q", prompt)
+	}
 
 	largeTerminal := []byte(strings.Repeat("x", maxTerminalContextBytes+100))
 	bounded := BuildPrompt(metadata, nil, largeTerminal)
 	if len(bounded) > maxPromptBytes {
 		t.Fatalf("prompt length = %d, want <= %d", len(bounded), maxPromptBytes)
+	}
+}
+
+func TestParseGenerationValidatesActionPriority(t *testing.T) {
+	got, err := ParseGeneration(
+		`{"summary":"Waiting.","action":"Approve it.","priority":"high"}`,
+		"waiting",
+	)
+	if err != nil || got.Priority != "high" {
+		t.Fatalf("generation = %#v, %v", got, err)
+	}
+	if _, err := ParseGeneration(
+		`{"summary":"Blocked.","action":"Approve it.","priority":"urgent"}`,
+		"blocked",
+	); err == nil {
+		t.Fatal("invalid priority accepted")
+	}
+	got, err = ParseGeneration(
+		`{"summary":"Working.","action":"Ignore me.","priority":"high"}`,
+		"running",
+	)
+	if err != nil || got.Action != "" || got.Priority != "" {
+		t.Fatalf("running generation = %#v, %v", got, err)
 	}
 }
 
@@ -64,8 +93,8 @@ func TestParseGenerationAcceptsJSONAndRejectsIncompleteOutput(t *testing.T) {
 	if err != nil || got.Summary != "Updating tests." || got.Action != "" {
 		t.Fatalf("ParseGeneration() = %#v, %v", got, err)
 	}
-	got, err = ParseGeneration("```json\n{\"summary\":\"Waiting for input.\",\"action\":\"Answer the question.\"}\n```", "waiting")
-	if err != nil || got.Summary != "Waiting for input." || got.Action != "Answer the question." {
+	got, err = ParseGeneration("```json\n{\"summary\":\"Waiting for input.\",\"action\":\"Answer the question.\",\"priority\":\"medium\"}\n```", "waiting")
+	if err != nil || got.Summary != "Waiting for input." || got.Action != "Answer the question." || got.Priority != "medium" {
 		t.Fatalf("ParseGeneration(fenced) = %#v, %v", got, err)
 	}
 	if _, err := ParseGeneration("not JSON", "running"); err == nil {
@@ -164,6 +193,35 @@ func TestSaveResultPublishesManagerNormalizedUnreadState(t *testing.T) {
 	}
 	if got.TerminalID != metadata.ID || !got.Unread {
 		t.Fatalf("published summary = %#v, want terminal %q with unread=true", got, metadata.ID)
+	}
+}
+
+func TestServicePersistsGeneratedActionPriority(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	metadata, err = manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", AgentSessionID: "thread-1", Status: "waiting",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	service := New(Config{
+		Sessions: manager,
+		Events:   newTestEvents(),
+		Runner: &testRunner{result: Generation{
+			Summary: "Waiting for input.", Action: "Approve it.", Priority: "high",
+		}},
+	})
+
+	service.generate(context.Background(), metadata)
+
+	summaries := manager.AgentSummaries()
+	if len(summaries) != 1 || summaries[0].Priority != "high" {
+		t.Fatalf("summaries = %#v, want one high-priority summary", summaries)
 	}
 }
 

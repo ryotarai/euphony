@@ -18,8 +18,9 @@ const (
 )
 
 type Generation struct {
-	Summary string `json:"summary"`
-	Action  string `json:"action"`
+	Summary  string `json:"summary"`
+	Action   string `json:"action"`
+	Priority string `json:"priority"`
 }
 
 type TaskRefinement struct {
@@ -142,15 +143,31 @@ func ParseGeneration(output, status string) (Generation, error) {
 	}
 	generation.Summary = normalizeGeneratedText(generation.Summary, maxGeneratedSummaryRunes)
 	generation.Action = normalizeGeneratedText(generation.Action, maxGeneratedActionRunes)
+	generation.Priority = strings.ToLower(strings.TrimSpace(generation.Priority))
 	if generation.Summary == "" {
 		return Generation{}, errors.New("summary command returned an empty summary")
 	}
 	if status == "running" {
 		generation.Action = ""
-	} else if status != "" && generation.Action == "" {
-		return Generation{}, errors.New("summary command returned no required action")
+		generation.Priority = ""
+	} else if status != "" {
+		if generation.Action == "" {
+			return Generation{}, errors.New("summary command returned no required action")
+		}
+		if !validActionPriority(generation.Priority) {
+			return Generation{}, fmt.Errorf("summary command returned invalid action priority %q", generation.Priority)
+		}
 	}
 	return generation, nil
+}
+
+func validActionPriority(value string) bool {
+	switch value {
+	case "high", "medium", "low":
+		return true
+	default:
+		return false
+	}
 }
 
 func ParseRefinement(output string) (TaskRefinement, error) {
