@@ -28,7 +28,7 @@
 - Consumes: `restoredCommand(shell string, metadata Metadata) *exec.Cmd` and the existing `Metadata.Agent`, `Metadata.ResumeAgent`, and `Metadata.AgentSessionID` fields.
 - Produces: `exec.Cmd` values with args shaped as `[/bin/bash, -lc, exec "$0" "$@", agent, resume-args..., sessionID]` for known agents, and the configured shell command for other metadata.
 
-- [ ] **Step 1: Update the unit test with the required Bash command shape.**
+- [x] **Step 1: Update the unit test with the required Bash command shape.**
 
 Replace the known-agent expectations in `TestRestoredCommandResumesKnownAgents` with:
 
@@ -44,7 +44,7 @@ want := []string{"/bin/bash", "-lc", `exec "$0" "$@"`, "claude", "--resume", "cl
 
 Keep the no-agent expectation as `[]string{"/bin/sh"}`.
 
-- [ ] **Step 2: Run the focused test and verify it fails for the missing Bash wrapper.**
+- [x] **Step 2: Run the focused test and verify it fails for the missing Bash wrapper.**
 
 Run:
 
@@ -54,7 +54,7 @@ go test ./internal/session -run '^TestRestoredCommandResumesKnownAgents$' -count
 
 Expected: FAIL because the current implementation returns `codex` and `claude` as the command executable instead of `/bin/bash`.
 
-- [ ] **Step 3: Implement the minimal Bash command construction.**
+- [x] **Step 3: Implement the minimal Bash command construction.**
 
 In `restoredCommand`, replace each recognized-agent direct command with:
 
@@ -70,7 +70,7 @@ return exec.Command("/bin/bash", "-lc", `exec "$0" "$@"`, "claude", "--resume", 
 
 Do not change agent selection, session-ID checks, or the configured-shell fallback.
 
-- [ ] **Step 4: Run focused and full Go tests.**
+- [x] **Step 4: Run focused and full Go tests.**
 
 Run:
 
@@ -81,7 +81,7 @@ go test ./...
 
 Expected: both commands exit successfully with zero failed tests.
 
-- [ ] **Step 5: Review and commit the implementation.**
+- [x] **Step 5: Review and commit the implementation.**
 
 Run:
 
