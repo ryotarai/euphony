@@ -104,6 +104,120 @@ test("uses an opaque terminal surface", () => {
     .toMatchObject({ allowTransparency: false });
 });
 
+test("uses terminal scroll sensitivity for alternate-buffer wheel input", async () => {
+  const socket = new FakeSocket();
+  let wheelHandler: ((event: WheelEvent) => boolean) | undefined;
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    activeBufferType: "alternate" as const,
+    mouseTrackingMode: "none" as const,
+    applicationCursorKeysMode: false,
+    attachCustomWheelEventHandler: (handler: (event: WheelEvent) => boolean) => {
+      wheelHandler = handler;
+    },
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    activeBufferType: "normal" | "alternate";
+    mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+    applicationCursorKeysMode: boolean;
+    attachCustomWheelEventHandler: (handler: (event: WheelEvent) => boolean) => void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      scrollSensitivity={3}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  const preventDefault = vi.fn();
+  const event = {
+    deltaY: 1,
+    deltaMode: WheelEvent.DOM_DELTA_LINE,
+    shiftKey: false,
+    preventDefault,
+  } as unknown as WheelEvent;
+
+  expect(wheelHandler).toBeDefined();
+  act(() => {
+    expect(wheelHandler?.(event)).toBe(false);
+  });
+
+  expect(preventDefault).toHaveBeenCalledOnce();
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "input", data: "\u001b[B".repeat(3) },
+  ]);
+});
+
+test("leaves alternate-buffer wheel input with mouse tracking to xterm", async () => {
+  const socket = new FakeSocket();
+  let wheelHandler: ((event: WheelEvent) => boolean) | undefined;
+  const terminal = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    activeBufferType: "alternate" as const,
+    mouseTrackingMode: "vt200" as const,
+    applicationCursorKeysMode: false,
+    attachCustomWheelEventHandler: (handler: (event: WheelEvent) => boolean) => {
+      wheelHandler = handler;
+    },
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  } as TerminalDriver & {
+    activeBufferType: "normal" | "alternate";
+    mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+    applicationCursorKeysMode: boolean;
+    attachCustomWheelEventHandler: (handler: (event: WheelEvent) => boolean) => void;
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+
+  render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  const preventDefault = vi.fn();
+  const event = {
+    deltaY: 1,
+    deltaMode: WheelEvent.DOM_DELTA_LINE,
+    shiftKey: false,
+    preventDefault,
+  } as unknown as WheelEvent;
+
+  expect(wheelHandler).toBeDefined();
+  expect(wheelHandler?.(event)).toBe(true);
+  expect(preventDefault).not.toHaveBeenCalled();
+  expect(socket.sent).toEqual([]);
+});
+
 test("loads the WebGL addon into an xterm terminal", () => {
   const addon: ITerminalAddon = {
     activate: () => undefined,

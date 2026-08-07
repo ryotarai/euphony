@@ -33,6 +33,9 @@
 
 - Preserve arbitrary terminal byte streams across JSON boundaries with a
   lossless encoding such as base64; never stringify independent PTY chunks.
+- Preserve configured wheel movement in alternate-buffer fullscreen TUIs:
+  expand wheel deltas into repeated cursor input only when application mouse
+  tracking is disabled, and leave mouse-tracked applications to xterm.js.
 - Bound browser-owned terminal size claims with server-driven WebSocket
   Ping/Pong; do not rely on JavaScript heartbeat timers for liveness.
 - Read agent metadata that hooks do not carry from the artifacts they point at

@@ -33,6 +33,10 @@ import {
 export interface TerminalDriver {
   readonly cols?: number;
   readonly rows?: number;
+  readonly cellHeight?: number;
+  readonly activeBufferType?: "normal" | "alternate";
+  readonly mouseTrackingMode?: "none" | "x10" | "vt200" | "drag" | "any";
+  readonly applicationCursorKeysMode?: boolean;
   open(element: HTMLElement): void;
   write(data: string | Uint8Array, callback?: () => void): void;
   focus(): void;
@@ -44,6 +48,7 @@ export interface TerminalDriver {
   getSelection(): string;
   clearSelection(): void;
   attachCustomKeyEventHandler?(handler: (event: KeyboardEvent) => boolean): void;
+  attachCustomWheelEventHandler?(handler: (event: WheelEvent) => boolean): void;
   onSelectionChange(callback: () => void): () => void;
   onData(callback: (data: string) => void): () => void;
   onResize(callback: (cols: number, rows: number) => void): () => void;
@@ -161,6 +166,48 @@ function createTerminalOutputBatcher(write: (data: Uint8Array) => void) {
   };
 }
 
+function alternateBufferWheelInput(
+  event: WheelEvent,
+  terminal: Pick<
+    TerminalDriver,
+    | "activeBufferType"
+    | "mouseTrackingMode"
+    | "applicationCursorKeysMode"
+    | "cellHeight"
+    | "rows"
+  >,
+  scrollSensitivity: number,
+  partialScroll: { value: number },
+): string | undefined {
+  if (
+    terminal.activeBufferType !== "alternate" ||
+    terminal.mouseTrackingMode !== "none"
+  ) {
+    partialScroll.value = 0;
+    return;
+  }
+  if (event.deltaY === 0 || event.shiftKey) return "";
+
+  let amount = event.deltaY * scrollSensitivity;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+    const cellHeight = terminal.cellHeight ?? 16;
+    amount /= cellHeight / (window.devicePixelRatio || 1);
+    if (Math.abs(event.deltaY) < 50) amount *= 0.3;
+    partialScroll.value += amount;
+    amount = Math.floor(Math.abs(partialScroll.value)) *
+      (partialScroll.value > 0 ? 1 : -1);
+    partialScroll.value %= 1;
+  } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    amount *= terminal.rows ?? 1;
+  }
+
+  const lines = Math.ceil(Math.abs(amount)) * (amount > 0 ? 1 : -1);
+  if (lines === 0) return "";
+  const cursorPrefix = terminal.applicationCursorKeysMode ? "\u001bO" : "\u001b[";
+  const cursor = `${cursorPrefix}${event.deltaY < 0 ? "A" : "B"}`;
+  return cursor.repeat(Math.abs(lines));
+}
+
 function defaultTerminal(
   fontFamily: string,
   fontSize: number,
@@ -190,6 +237,19 @@ function defaultTerminal(
     get rows() {
       return terminal.rows;
     },
+    get cellHeight() {
+      const height = terminal.element?.getBoundingClientRect().height;
+      return terminal.rows > 0 && height ? height / terminal.rows : undefined;
+    },
+    get activeBufferType() {
+      return terminal.buffer.active.type;
+    },
+    get mouseTrackingMode() {
+      return terminal.modes.mouseTrackingMode;
+    },
+    get applicationCursorKeysMode() {
+      return terminal.modes.applicationCursorKeysMode;
+    },
     open: (element) => {
       terminal.open(element);
       loadWebglRenderer(terminal);
@@ -206,6 +266,7 @@ function defaultTerminal(
     getSelection: () => terminal.getSelection(),
     clearSelection: () => terminal.clearSelection(),
     attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
+    attachCustomWheelEventHandler: (handler) => terminal.attachCustomWheelEventHandler(handler),
     onSelectionChange: (callback) => {
       const disposable = terminal.onSelectionChange(callback);
       return () => disposable.dispose();
@@ -374,6 +435,7 @@ function useTerminalView({
       optionAsAlt,
     );
     const outputBatcher = createTerminalOutputBatcher((data) => terminal.write(data));
+    const partialWheelScroll = { value: 0 };
     terminalRef.current = terminal;
     terminal.open(host);
     if (activeRef.current) focusTerminal(terminal);
@@ -387,6 +449,20 @@ function useTerminalView({
       }
       return false;
     };
+    terminal.attachCustomWheelEventHandler?.((event) => {
+      const data = alternateBufferWheelInput(
+        event,
+        terminal,
+        scrollSensitivity,
+        partialWheelScroll,
+      );
+      if (data === undefined) return true;
+      event.preventDefault();
+      if (!data) return false;
+      outputBatcher.noteInput();
+      send({ type: "input", data });
+      return false;
+    });
     const releaseCapacity = () => {
       if (claimActive && send({ type: "resize_release" })) {
         claimActive = false;
