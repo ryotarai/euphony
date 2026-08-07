@@ -155,6 +155,80 @@ async function disableWebgl(page: Page) {
   });
 }
 
+test("recovers the DOM terminal after WebGL context loss", async ({ page }) => {
+  await clearSessions(page);
+  const session = await createSession(page, "WebGL recovery");
+  await replaceSharedSelection(page, session.id);
+  await page.goto("/?token=test-token");
+
+  const terminal = page.getByLabel("WebGL recovery terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute(
+    "data-connection",
+    "connected",
+  );
+  await terminal.click();
+  await terminal.locator(".xterm-helper-textarea").focus();
+
+  const marker = "webgl-recovery-marker";
+  await page.keyboard.type(`printf ${marker}`);
+  await page.keyboard.press("Enter");
+
+  const canvases = terminal.locator("canvas");
+  const webglCanvasCount = () => canvases.evaluateAll((elements) =>
+    elements.filter((element) => {
+      try {
+        return (element as HTMLCanvasElement).getContext("webgl2") !== null;
+      } catch {
+        return false;
+      }
+    }).length,
+  );
+
+  const browserSupportsWebgl2 = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    try {
+      return canvas.getContext("webgl2") !== null;
+    } catch {
+      return false;
+    }
+  });
+  if (!browserSupportsWebgl2) {
+    test.skip(true, "This browser does not support WebGL2");
+    return;
+  }
+  await expect
+    .poll(webglCanvasCount, {
+      timeout: 5_000,
+      message: "The terminal WebGL2 canvas should initialize before context loss",
+    })
+    .toBeGreaterThan(0);
+
+  const dispatchedCancelableEvent = await canvases.evaluateAll((elements) => {
+    const canvas = elements.find((element) => {
+      try {
+        return (element as HTMLCanvasElement).getContext("webgl2") !== null;
+      } catch {
+        return false;
+      }
+    }) as HTMLCanvasElement | undefined;
+    if (!canvas) return false;
+
+    const event = new Event("webglcontextlost", { cancelable: true });
+    canvas.dispatchEvent(event);
+    return event.cancelable;
+  });
+  expect(dispatchedCancelableEvent).toBe(true);
+
+  const rows = terminal.locator(".xterm-rows");
+  const oneSecond = { timeout: 1_000 };
+  await Promise.all([
+    expect(rows).toBeVisible(oneSecond),
+    expect(rows).toContainText(marker, oneSecond),
+    expect(canvases).toHaveCount(0, oneSecond),
+  ]);
+});
+
 test("renders a visible terminal cursor without an idle animation", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Static cursor");

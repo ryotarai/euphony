@@ -263,7 +263,7 @@ function defaultTerminal(
     input: (data, wasUserInput = true) => terminal.input(data, wasUserInput),
     open: (element) => {
       terminal.open(element);
-      loadWebglRenderer(terminal);
+      loadWebglRenderer({ element, loadAddon: terminal.loadAddon.bind(terminal) });
     },
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),

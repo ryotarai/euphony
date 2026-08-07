@@ -43,14 +43,35 @@ export function openTerminalLink(uri: string): void {
   }
 }
 
+function webglCanvases(element: HTMLElement | undefined): HTMLCanvasElement[] {
+  if (!element) return [];
+  return Array.from(element.querySelectorAll("canvas")).filter((canvas) => {
+    try {
+      return canvas.getContext("webgl2") !== null;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export function loadWebglRenderer(
-  terminal: Pick<Terminal, "loadAddon">,
+  terminal: Pick<Terminal, "loadAddon"> & { readonly element?: HTMLElement },
   createAddon: () => WebglRendererAddon = () => new WebglAddon(),
 ): boolean {
   try {
     const addon = createAddon();
-    addon.onContextLoss?.(() => addon.dispose());
+    let disposed = false;
+    const disposeAddon = () => {
+      if (disposed) return;
+      disposed = true;
+      addon.dispose();
+    };
+
+    addon.onContextLoss?.(disposeAddon);
     terminal.loadAddon(addon);
+    for (const canvas of webglCanvases(terminal.element)) {
+      canvas.addEventListener("webglcontextlost", disposeAddon, { once: true });
+    }
     return true;
   } catch (error) {
     console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
