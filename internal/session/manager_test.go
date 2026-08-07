@@ -92,6 +92,31 @@ func TestManagerRenameValidatesNameWithoutMutatingMetadata(t *testing.T) {
 	}
 }
 
+func TestManagerRenameRollsBackWhenPersistenceFails(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	store := &failFirstSaveMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		err:                    errors.New("save failed"),
+	}
+	manager.store = store
+
+	if _, err := manager.Rename(created.ID, "Renamed terminal"); !errors.Is(err, store.err) {
+		t.Fatalf("Rename() error = %v, want %v", err, store.err)
+	}
+	current, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("terminal disappeared after failed Rename()")
+	}
+	if current != created {
+		t.Fatalf("metadata after failed Rename() = %#v, want %#v", current, created)
+	}
+}
+
 func TestInMemoryManagerRetainsSelectionState(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	want := selection.State{

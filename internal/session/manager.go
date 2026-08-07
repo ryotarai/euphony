@@ -767,6 +767,12 @@ func (m *Manager) Rename(id, name string) (Metadata, error) {
 		if err := m.runStoreOperation(operation, func() error {
 			return store.Save(context.Background(), after)
 		}); err != nil {
+			m.mu.Lock()
+			if current, exists := m.sessions[id]; exists &&
+				current == item && current.metadata == after {
+				item.metadata = before
+			}
+			m.mu.Unlock()
 			releaseMetadataSave()
 			if change != nil {
 				m.skipChange(*change)
