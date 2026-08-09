@@ -49,6 +49,7 @@ export interface TerminalDriver {
   setScrollback?(scrollback: number): void;
   getSelection(): string;
   clearSelection(): void;
+  getScreenText?(): string;
   attachCustomKeyEventHandler?(handler: (event: KeyboardEvent) => boolean): void;
   attachCustomWheelEventHandler?(handler: (event: WheelEvent) => boolean): void;
   onSelectionChange(callback: () => void): () => void;
@@ -81,6 +82,7 @@ interface TerminalViewProps {
   scrollSensitivity?: number;
   optionAsAlt?: boolean;
   locked?: boolean;
+  onScreenSnapshot?(getter: (() => string) | null): void;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
   createTerminal?: (
     fontFamily: string,
@@ -277,6 +279,14 @@ function defaultTerminal(
     },
     getSelection: () => terminal.getSelection(),
     clearSelection: () => terminal.clearSelection(),
+    getScreenText: () => {
+      const buffer = terminal.buffer.active;
+      const lines: string[] = [];
+      for (let row = 0; row < terminal.rows; row++) {
+        lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? "");
+      }
+      return lines.join("\n");
+    },
     attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
     attachCustomWheelEventHandler: (handler) => terminal.attachCustomWheelEventHandler(handler),
     onSelectionChange: (callback) => {
@@ -329,6 +339,7 @@ interface TerminalViewHookProps {
   scrollSensitivity: number;
   optionAsAlt: boolean;
   locked: boolean;
+  onScreenSnapshot?: (getter: (() => string) | null) => void;
   onConnectionChange?: (sessionID: string, state: ConnectionState) => void;
   createTerminal: NonNullable<TerminalViewProps["createTerminal"]>;
   createSocket: NonNullable<TerminalViewProps["createSocket"]>;
@@ -370,6 +381,7 @@ function useTerminalView({
   scrollSensitivity,
   optionAsAlt,
   locked,
+  onScreenSnapshot,
   onConnectionChange,
   createTerminal,
   createSocket,
@@ -454,6 +466,7 @@ function useTerminalView({
     const partialWheelScroll = { value: 0 };
     terminalRef.current = terminal;
     terminal.open(host);
+    onScreenSnapshot?.(() => terminal.getScreenText?.() ?? "");
     if (activeRef.current) focusTerminal(terminal);
     setConnectionState("connecting");
 
@@ -766,6 +779,7 @@ function useTerminalView({
       socket?.close();
       socket = undefined;
       terminal.dispose();
+      onScreenSnapshot?.(null);
       if (terminalRef.current === terminal) terminalRef.current = null;
       if (capacityReporterRef.current === reportCapacity) {
         capacityReporterRef.current = () => undefined;
@@ -782,6 +796,7 @@ function useTerminalView({
     cursorBlink,
     scrollSensitivity,
     optionAsAlt,
+    onScreenSnapshot,
     reconnectSignal,
     session.id,
   ]);
@@ -840,6 +855,7 @@ export function TerminalView({
   scrollSensitivity = defaultTerminalScrollSensitivity,
   optionAsAlt = defaultTerminalOptionAsAlt,
   locked = false,
+  onScreenSnapshot,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -861,6 +877,7 @@ export function TerminalView({
       scrollSensitivity,
       optionAsAlt,
       locked,
+      onScreenSnapshot,
       onConnectionChange,
       createTerminal,
       createSocket,

@@ -300,7 +300,7 @@ test("renders a cwd-first tree and creates a terminal from its cwd", async ({
   }).toBe("/tmp");
 });
 
-test("opens the Agents dashboard and follows a summarized agent", async ({ page }) => {
+test("opens the Inbox and follows a summarized agent", async ({ page }) => {
   await clearSessions(page);
   const agent = await createSession(page, "Needs approval", "/tmp");
   await replaceSharedSelection(page, [agent.id], agent.id);
@@ -349,8 +349,8 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
   await page.goto("/?token=test-token");
 
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Agents" }).click();
-  await expect(page.getByRole("heading", { name: "Action required" })).toBeVisible();
+  await page.getByRole("button", { name: "Inbox" }).click();
+  await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
   await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
   await expect(page.getByTestId("agent-summary-priority")).toHaveAttribute("data-priority", "high");
@@ -359,10 +359,76 @@ test("opens the Agents dashboard and follows a summarized agent", async ({ page 
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("button", { name: "Inbox" }).click();
   await page.getByRole("button", { name: "Mark Needs approval as done" }).click();
   await expect(page.getByRole("tab", { name: "Done 1" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
+});
+
+test("locks the terminal while an Inbox choice is resolved", async ({ page }) => {
+  await clearSessions(page);
+  const agent = await createSession(page, "Needs approval", "/tmp");
+  await replaceSharedSelection(page, [agent.id], agent.id);
+  await reportAgent(page, agent.id, "claude", "Needs approval", "waiting");
+  await page.route("**/api/v1/events", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: "",
+    });
+  });
+  await page.route("**/api/agent-summaries", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        terminalId: agent.id,
+        provider: "claude",
+        status: "waiting",
+        summary: "The agent is waiting for approval.",
+        action: "Approve the requested change.",
+        priority: "high",
+        options: [{ id: "option-1", label: "Allow access" }],
+        generatedAt: "2026-08-05T00:00:00Z",
+        unread: true,
+        done: false,
+      }]),
+    });
+  });
+  let releaseExecute: (() => void) | undefined;
+  const executePending = new Promise<void>((resolve) => {
+    releaseExecute = resolve;
+  });
+  await page.route(`**/api/agent-summaries/${agent.id}/options/option-1/execute`, async (route) => {
+    await executePending;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        terminalId: agent.id,
+        provider: "claude",
+        status: "waiting",
+        summary: "The agent is waiting for approval.",
+        action: "Approve the requested change.",
+        priority: "high",
+        options: [{ id: "option-1", label: "Allow access" }],
+        generatedAt: "2026-08-05T00:00:00Z",
+        unread: false,
+        done: true,
+      }),
+    });
+  });
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Inbox" }).click();
+  await page.getByRole("button", { name: "Allow access" }).click();
+  await expect(page.locator('.terminal-view[data-locked="true"]')).toHaveCount(1);
+  await expect(page.locator('.terminal-view[data-locked="true"] .terminal-automation-lock')).toHaveCount(1);
+
+  releaseExecute?.();
+  await expect(page.getByRole("tab", { name: "Done 1" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('.terminal-view[data-locked="true"]')).toHaveCount(0);
 });
 
 test("treats dashboard panes like terminals and supports split checkboxes", async ({ page }) => {

@@ -15,7 +15,8 @@ and have Euphony safely deliver that response to the linked terminal.
 - Unread rows use bold subject, summary, and action text. Read rows remain in
   the same queue; there is no separate unread tab.
 - Action rows show the AI-generated action plus one to four labeled options.
-  Selecting an option sends its exact input sequence to the linked terminal.
+  Selecting an option asks the selected provider AI to inspect the linked
+  terminal screen and derive the exact input sequence for that choice.
 - A legacy action without options keeps its existing `Open terminal` behavior
   until the next structured summary refresh supplies options.
 - A successful option selection marks the summary read and done and moves it to
@@ -62,9 +63,13 @@ All three providers receive the same structured output contract:
 
 Running agents must return empty `action`, `priority`, and `options`. Waiting
 and blocked agents must return a concrete action, a valid priority, and at
-least one option. Inputs are bounded, contain no NUL byte, and are sent as raw
-PTY bytes only after the user selects the visible option label. The server
-normalizes option IDs as `option-1`, `option-2`, and so on before persistence.
+least one option. Inputs are bounded, contain no NUL byte, and the summary
+input is only a candidate hint for the action step. The action step receives
+the current terminal screen, the selected option label, and the candidate hint,
+then returns a strict `{ "input": "..." }` object. Only that validated action
+response is sent as raw PTY bytes after the user selects the visible option
+label. The server normalizes option IDs as `option-1`, `option-2`, and so on
+before persistence.
 
 ## Visual direction
 
@@ -104,15 +109,22 @@ schema to Claude. The OpenAI runner sends a Responses API request with
 existing prompt/parser remains the final validation boundary.
 
 The control service owns a per-terminal automation lock. A lock is acquired by
-the Inbox action endpoint, raw terminal bytes are written, and the service
-waits for a short output-quiet period with a bounded maximum before releasing
-the lock. Normal WebSocket and v1 input calls return `terminal_locked` while
-the lock is held; the browser additionally suppresses input locally.
+the Inbox action endpoint before reading the terminal state. The browser
+supplies the current rendered xterm screen snapshot when available; older
+clients fall back to a bounded terminal history tail. While the lock is held,
+the selected provider AI receives that screen and returns a strict
+terminal-action schema. The summary generation is revalidated immediately
+before the validated bytes are written, and the service waits for a short
+output-quiet period with a bounded maximum before releasing the lock. Normal
+WebSocket and v1 input calls return `terminal_locked` while the lock is held;
+the browser additionally suppresses input locally.
 
 `POST /api/agent-summaries/{id}/options/{optionID}/execute` validates the
-current option, executes it through the locked control service, marks the
-summary done/read, publishes the normalized summary event, and returns the
-summary. No terminal input string is accepted from the browser.
+current option, locks the terminal, asks the configured provider AI to derive
+input from the screen, executes the validated input through the locked control
+service, marks the summary done/read, publishes the normalized summary event,
+and returns the summary. No terminal input string is accepted from the browser
+or sent directly from the summary option.
 
 The React app adds `Inbox` labels, renders the message list and option buttons,
 tracks per-terminal automation state, and passes that state through
@@ -122,14 +134,15 @@ summary using the existing revision/snapshot guard.
 ## Failure handling
 
 - Missing/invalid provider output is rejected and retains the previous valid
-  options alongside the previous summary.
+  options alongside the previous summary. A malformed terminal-action response
+  never reaches the PTY.
 - Missing `OPENAI_API_KEY`, API timeout, non-2xx response, or malformed API
   output is shown as the existing summary error without exposing the key.
 - A missing summary, terminal, or option returns a specific protected API
   error; no bytes are sent for an invalid option.
 - A busy automation lock returns a conflict and leaves the Inbox item open.
-- A canceled or failed automated write always releases the lock through a
-  deferred cleanup path.
+- A canceled or failed AI call or automated write always releases the lock
+  through a deferred cleanup path.
 
 ## Verification
 

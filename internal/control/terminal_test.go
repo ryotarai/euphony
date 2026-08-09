@@ -174,3 +174,56 @@ func TestRunTerminalAutomationLocksOrdinaryInputUntilOutputSettles(t *testing.T)
 		t.Fatalf("ordinary input after automation release = %v", err)
 	}
 }
+
+func TestRunTerminalAutomationWithScreenLocksWhileResolvingAIAction(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	metadata, err := manager.Create(t.Context(), "Automation", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := service.RunTerminal(metadata.ID, "printf 'screen-ready\\n'"); err != nil {
+		t.Fatalf("RunTerminal() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := service.WaitOutput(ctx, metadata.ID, OutputMatch{Literal: "screen-ready"}); err != nil {
+		t.Fatalf("WaitOutput() error = %v", err)
+	}
+
+	resolverStarted := make(chan TerminalRead, 1)
+	releaseResolver := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		result <- service.RunTerminalAutomationWithScreen(
+			context.Background(), metadata.ID,
+			func(_ context.Context, screen TerminalRead) ([]byte, error) {
+				resolverStarted <- screen
+				<-releaseResolver
+				return []byte("printf 'ai-action\n'\r"), nil
+			},
+		)
+	}()
+
+	var screen TerminalRead
+	select {
+	case screen = <-resolverStarted:
+	case <-time.After(time.Second):
+		t.Fatal("AI action resolver did not receive the terminal screen")
+	}
+	if !strings.Contains(screen.Text, "screen-ready") {
+		t.Fatalf("AI action screen = %q, want screen-ready", screen.Text)
+	}
+	input := "user-input\r"
+	if err := service.SendTerminalInput(metadata.ID, TerminalInput{Text: &input}); !errors.Is(err, ErrTerminalLocked) {
+		t.Fatalf("ordinary input during AI action = %v, want ErrTerminalLocked", err)
+	}
+	close(releaseResolver)
+	if err := <-result; err != nil {
+		t.Fatalf("RunTerminalAutomationWithScreen() error = %v", err)
+	}
+}

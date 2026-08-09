@@ -307,6 +307,61 @@ test("activates an Inbox option with the keyboard and moves the row to Done", as
   expect(screen.getByText("The agent needs permission to edit the API.")).toBeInTheDocument();
 });
 
+test("keeps an Inbox row actionable when the option response is stale", async () => {
+  const user = userEvent.setup();
+  const onChooseOption = vi.fn().mockResolvedValue(false);
+  const structuredSummary = {
+    ...summaries.find((summary) => summary.terminalId === "high-terminal")!,
+    options: [{ id: "option-1", label: "Allow access" }],
+  };
+  renderAgents({ summaries: [structuredSummary], onChooseOption });
+
+  await user.click(screen.getByRole("button", { name: "Allow access" }));
+
+  expect(onChooseOption).toHaveBeenCalledWith("high-terminal", "option-1");
+  expect(screen.getByRole("tab", { name: /Inbox · Action required 1/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Allow access" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /Done 0/ })).toBeInTheDocument();
+});
+
+test("does not hide a newer action after an option response moves the old row to Done", async () => {
+  const user = userEvent.setup();
+  const onChooseOption = vi.fn().mockResolvedValue(true);
+  const structuredSummary = {
+    ...summaries.find((summary) => summary.terminalId === "high-terminal")!,
+    options: [{ id: "option-1", label: "Allow access" }],
+  };
+  const view = renderAgents({ summaries: [structuredSummary], onChooseOption });
+
+  await user.click(screen.getByRole("button", { name: "Allow access" }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  ));
+
+  view.rerender(
+    <AgentsView
+      summaries={[{
+        ...structuredSummary,
+        generatedAt: "2026-08-05T00:20:00Z",
+        summary: "The agent asked for approval again.",
+        action: "Review the new request.",
+        options: [{ id: "option-1", label: "Review again" }],
+      }]}
+      sessions={sessions}
+      onSelectSession={vi.fn()}
+      onChooseOption={onChooseOption}
+    />,
+  );
+  await user.click(screen.getByRole("tab", { name: /Inbox · Action required/ }));
+
+  expect(screen.getByText("The agent asked for approval again.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Review again" })).toBeInTheDocument();
+});
+
 test("keeps a structured Inbox row actionable and reports option failures", async () => {
   const user = userEvent.setup();
   const onChooseOption = vi.fn().mockRejectedValue(new Error("The terminal is busy."));

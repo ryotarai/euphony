@@ -188,6 +188,43 @@ test("uses terminal scroll sensitivity for alternate-buffer wheel input", async 
   expect(terminal.input).toHaveBeenCalledWith("\u001b[B".repeat(9), true);
 });
 
+test("registers the current rendered terminal screen for automation", async () => {
+  const socket = new FakeSocket();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    getScreenText: () => "rendered current screen",
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const onScreenSnapshot = vi.fn();
+
+  const view = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+      onScreenSnapshot={onScreenSnapshot}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+
+  const getter = onScreenSnapshot.mock.calls.at(-1)?.[0] as (() => string) | undefined;
+  expect(getter?.()).toBe("rendered current screen");
+  view.unmount();
+  expect(onScreenSnapshot).toHaveBeenLastCalledWith(null);
+});
+
 test("leaves alternate-buffer wheel input with mouse tracking to xterm", async () => {
   const socket = new FakeSocket();
   let wheelHandler: ((event: WheelEvent) => boolean) | undefined;

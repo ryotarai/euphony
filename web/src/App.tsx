@@ -100,6 +100,7 @@ const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 const filterDeselectDelayMs = 10_000;
 const maxCachedTerminalViews = 4;
+const maxTerminalScreenSnapshotBytes = 128 * 1024;
 const tasksPaneID = "tasks" as const;
 const agentsPaneID = "agents" as const;
 
@@ -151,6 +152,7 @@ interface AppProps {
     scrollSensitivity: number,
     optionAsAlt: boolean,
     automationLocked: boolean,
+    onScreenSnapshot?: (getter: (() => string) | null) => void,
   ) => ReactNode;
 }
 
@@ -434,6 +436,7 @@ export function App({
     scrollSensitivity,
     optionAsAlt,
     automationLocked,
+    onScreenSnapshot,
   ) => (
     <TerminalView
       key={session.id}
@@ -453,6 +456,7 @@ export function App({
       scrollSensitivity={scrollSensitivity}
       optionAsAlt={optionAsAlt}
       locked={automationLocked}
+      onScreenSnapshot={onScreenSnapshot}
     />
   ),
 }: AppProps) {
@@ -557,6 +561,14 @@ export function App({
   const [automationLockedIDs, setAutomationLockedIDs] = useState<Set<string>>(
     () => new Set(),
   );
+  const terminalScreenGettersRef = useRef<Map<string, () => string>>(new Map());
+  const registerTerminalScreen = useCallback((
+    id: string,
+    getter: (() => string) | null,
+  ) => {
+    if (getter) terminalScreenGettersRef.current.set(id, getter);
+    else terminalScreenGettersRef.current.delete(id);
+  }, []);
   const tasksOpen = selectedDashboardIDs.includes(tasksPaneID);
   const agentsOpen = selectedDashboardIDs.includes(agentsPaneID);
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -3000,19 +3012,28 @@ export function App({
     }
   }
 
-  async function chooseAgentSummaryOption(id: string, optionID: string): Promise<AgentSummary> {
+  async function chooseAgentSummaryOption(id: string, optionID: string): Promise<boolean> {
     if (!api) throw new Error("The Inbox is not connected.");
     const snapshot = agentSummaries.find((item) => item.terminalId === id);
+    if (!snapshot) return false;
+    const revisionAtStart = agentSummaryRevisionsRef.current.get(id) ?? 0;
     setAutomationLockedIDs((current) => new Set(current).add(id));
     try {
-      const summary = await api.executeAgentSummaryOption(id, optionID);
+      const screenText = terminalScreenGettersRef.current.get(id)?.() ?? "";
+      const boundedScreenText = screenText.length > maxTerminalScreenSnapshotBytes
+        ? screenText.slice(-maxTerminalScreenSnapshotBytes)
+        : screenText;
+      const summary = await api.executeAgentSummaryOption(id, optionID, boundedScreenText);
+      if ((agentSummaryRevisionsRef.current.get(id) ?? 0) !== revisionAtStart) {
+        return false;
+      }
       bumpAgentSummaryRevision(id);
       setAgentSummaries((current) => current.map((item) => {
         if (item.terminalId !== id) return item;
         if (snapshot && !agentSummaryMatchesSnapshot(item, snapshot)) return item;
         return summary;
       }));
-      return summary;
+      return true;
     } finally {
       setAutomationLockedIDs((current) => {
         if (!current.has(id)) return current;
@@ -3131,8 +3152,9 @@ export function App({
             syncSelection && syncEvents ? annotationRevision : null
           }
           automationLocked={automationLockedIDs.has(pane.id)}
+          onScreenSnapshot={registerTerminalScreen}
           onDeselect={() => selectSession(pane.id, true, true, false)}
-          renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
+          renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible, _locked, onScreenSnapshot) =>
             renderTerminal(
               pane,
               api!,
@@ -3150,6 +3172,7 @@ export function App({
               previewSettings.terminalScrollSensitivity,
               previewSettings.terminalOptionAsAlt,
               automationLockedIDs.has(pane.id),
+              onScreenSnapshot,
             )
           }
         />

@@ -52,6 +52,42 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 	}
 }
 
+func TestBuildTerminalActionPromptUsesTheLiveTerminalScreenAndSelectedIntent(t *testing.T) {
+	prompt := BuildTerminalActionPrompt(
+		session.AgentSummary{Action: "Approve the requested file access."},
+		session.AgentSummaryOption{Label: "Allow access", Input: "y\r"},
+		"\x1b[31mpermission prompt>\x1b[0m ",
+	)
+	for _, want := range []string{
+		"Approve the requested file access.",
+		"Allow access",
+		"permission prompt> ",
+		"Candidate input from the summary",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("terminal action prompt = %q, want %q", prompt, want)
+		}
+	}
+	if strings.Contains(prompt, "\x1b[") {
+		t.Fatalf("terminal action prompt retained ANSI escape sequence: %q", prompt)
+	}
+}
+
+func TestParseTerminalActionValidatesStructuredInput(t *testing.T) {
+	got, err := ParseTerminalAction(`{"input":"y\r"}`)
+	if err != nil || got.Input != "y\r" {
+		t.Fatalf("ParseTerminalAction() = %#v, %v", got, err)
+	}
+	for _, output := range []string{
+		`{"input":""}`,
+		`{"input":"\u0000"}`,
+	} {
+		if _, err := ParseTerminalAction(output); err == nil {
+			t.Fatalf("ParseTerminalAction(%q) error = nil", output)
+		}
+	}
+}
+
 func TestBuildPromptOmitsEmptyAdditionalInstructions(t *testing.T) {
 	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
 	prompt := BuildPrompt(metadata, nil, nil, "   \n\t")
@@ -226,7 +262,7 @@ func TestCommandRunnerOpenAIUsesResponsesStructuredOutputAndConfiguredEffort(t *
 		t.Fatalf("OpenAI generation = %#v", got)
 	}
 	request := <-requests
-	if request["model"] != "gpt-5.6-luna" || request["input"] != "summarize" {
+	if request["model"] != "gpt-5.6-luna" || request["input"] != "summarize" || request["store"] != false {
 		t.Fatalf("OpenAI request fields = %#v", request)
 	}
 	reasoning, ok := request["reasoning"].(map[string]any)
@@ -243,6 +279,46 @@ func TestCommandRunnerOpenAIUsesResponsesStructuredOutputAndConfiguredEffort(t *
 	}
 }
 
+func TestCommandRunnerOpenAITerminalActionUsesTheScreenAsPromptInput(t *testing.T) {
+	const key = "test-openai-key"
+	t.Setenv("OPENAI_API_KEY", key)
+	requests := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode terminal action request: %v", err)
+		}
+		requests <- request
+		_, _ = w.Write([]byte(`{"output_text":"{\"input\":\"y\\r\"}"}`))
+	}))
+	defer server.Close()
+
+	runner := &CommandRunner{httpClient: server.Client(), openAIEndpoint: server.URL + "/v1/responses"}
+	got, err := runner.GenerateTerminalAction(
+		context.Background(), "openai",
+		"Current terminal screen:\npermission prompt>\nSelected choice: Allow access",
+		"max",
+	)
+	if err != nil {
+		t.Fatalf("GenerateTerminalAction() error = %v", err)
+	}
+	if got.Input != "y\r" {
+		t.Fatalf("terminal action = %#v, want y\\r", got)
+	}
+	request := <-requests
+	if !strings.Contains(request["input"].(string), "permission prompt>") {
+		t.Fatalf("OpenAI action prompt = %#v, want live screen", request["input"])
+	}
+	textRequest, ok := request["text"].(map[string]any)
+	if !ok {
+		t.Fatalf("OpenAI action text format missing: %#v", request["text"])
+	}
+	format, ok := textRequest["format"].(map[string]any)
+	if !ok || format["name"] != "terminal_action" || format["type"] != "json_schema" || format["strict"] != true {
+		t.Fatalf("OpenAI action structured format = %#v", textRequest["format"])
+	}
+}
+
 func TestCommandRunnerOpenAIReportsMissingKeyWithoutMakingARequest(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	called := false
@@ -256,6 +332,29 @@ func TestCommandRunnerOpenAIReportsMissingKeyWithoutMakingARequest(t *testing.T)
 	}
 	if called {
 		t.Fatal("OpenAI request was made without an API key")
+	}
+}
+
+func TestCommandRunnerOpenAITimesOutStalledResponsesRequest(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	runner := &CommandRunner{
+		httpClient:     server.Client(),
+		openAIEndpoint: server.URL + "/v1/responses",
+		timeout:        20 * time.Millisecond,
+	}
+	started := time.Now()
+	_, err := runner.GenerateWithEffort(context.Background(), "openai", "summarize", "low")
+	if err == nil || !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("stalled OpenAI request error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled OpenAI request took %s, want it bounded by the runner timeout", elapsed)
 	}
 }
 
@@ -276,6 +375,17 @@ func TestCommandSpecUsesCurrentProviderArguments(t *testing.T) {
 	}
 	if _, _, err := commandSpec("other"); err == nil {
 		t.Fatal("commandSpec(other) error = nil")
+	}
+}
+
+func TestActionCommandSpecUsesEphemeralStructuredProviderArguments(t *testing.T) {
+	claudeName, claudeArgs, err := actionCommandSpec("claude")
+	if err != nil || claudeName != "claude" || !containsArgs(claudeArgs, "-p", "--bare", "--json-schema", "--model", "haiku", "--effort", "low") {
+		t.Fatalf("Claude action spec = %q %#v, %v", claudeName, claudeArgs, err)
+	}
+	codexName, codexArgs, err := actionCommandSpec("codex", "/tmp/action-schema.json")
+	if err != nil || codexName != "codex" || !containsArgs(codexArgs, "exec", "--ephemeral", "--output-schema", "/tmp/action-schema.json", "--model", "gpt-5.6-luna") {
+		t.Fatalf("Codex action spec = %q %#v, %v", codexName, codexArgs, err)
 	}
 }
 

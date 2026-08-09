@@ -133,6 +133,7 @@ func (s *Service) DeleteTerminal(id string) (selection.Snapshot, error) {
 		}
 		return selection.Snapshot{}, err
 	}
+	s.cleanupTerminalAutomationGate(id)
 	return s.Selection(), nil
 }
 
@@ -197,7 +198,10 @@ func (s *Service) SendTerminalBytes(id string, data []byte) error {
 	if !gate.TryRLock() {
 		return ErrTerminalLocked
 	}
-	defer gate.RUnlock()
+	defer func() {
+		gate.RUnlock()
+		s.cleanupTerminalAutomationGate(id)
+	}()
 	if s.IsTerminalLocked(id) {
 		return ErrTerminalLocked
 	}
@@ -227,8 +231,51 @@ func (s *Service) terminalAutomationGate(id string) *sync.RWMutex {
 	return gate
 }
 
+func (s *Service) cleanupTerminalAutomationGate(id string) {
+	if _, ok := s.sessions.Get(id); ok {
+		return
+	}
+	s.automationGatesMu.Lock()
+	defer s.automationGatesMu.Unlock()
+	gate := s.automationGates[id]
+	if gate == nil || !gate.TryLock() {
+		return
+	}
+	gate.Unlock()
+	delete(s.automationGates, id)
+}
+
 func (s *Service) RunTerminalAutomation(ctx context.Context, id string, data []byte) error {
-	if len(data) == 0 || len(data) > MaxTerminalInputBytes || bytes.IndexByte(data, 0) >= 0 {
+	if err := validateAutomationInput(data); err != nil {
+		return ErrInvalidInput
+	}
+	return s.RunTerminalAutomationWithScreen(ctx, id, func(context.Context, TerminalRead) ([]byte, error) {
+		return data, nil
+	})
+}
+
+type TerminalAutomationResolver func(context.Context, TerminalRead) ([]byte, error)
+
+func (s *Service) RunTerminalAutomationWithScreen(
+	ctx context.Context,
+	id string,
+	resolve TerminalAutomationResolver,
+) error {
+	return s.RunTerminalAutomationWithScreenAndWrite(ctx, id, resolve, nil)
+}
+
+// TerminalAutomationWriter lets a caller perform an atomic last-moment check
+// immediately before the bytes reach the PTY. The terminal automation lock is
+// held for the whole resolve/write/settle sequence.
+type TerminalAutomationWriter func(context.Context, []byte) (int, error)
+
+func (s *Service) RunTerminalAutomationWithScreenAndWrite(
+	ctx context.Context,
+	id string,
+	resolve TerminalAutomationResolver,
+	write TerminalAutomationWriter,
+) error {
+	if resolve == nil {
 		return ErrInvalidInput
 	}
 	terminal, ok := s.sessions.Get(id)
@@ -243,7 +290,20 @@ func (s *Service) RunTerminalAutomation(ctx context.Context, id string, data []b
 
 	_, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
 	defer unsubscribe()
-	written, err := s.sessions.WriteTerminal(id, data)
+	screenData, screenTruncated := terminal.HistorySnapshot(DefaultTerminalReadBytes)
+	data, err := resolve(ctx, terminalRead(id, screenData, screenTruncated))
+	if err != nil {
+		return err
+	}
+	if err := validateAutomationInput(data); err != nil {
+		return err
+	}
+	written := 0
+	if write != nil {
+		written, err = write(ctx, data)
+	} else {
+		written, err = s.sessions.WriteTerminal(id, data)
+	}
 	if errors.Is(err, session.ErrNotFound) {
 		return ErrTerminalNotFound
 	}
@@ -254,6 +314,13 @@ func (s *Service) RunTerminalAutomation(ctx context.Context, id string, data []b
 		return io.ErrShortWrite
 	}
 	return s.waitForAutomationSettle(ctx, output, lagged)
+}
+
+func validateAutomationInput(data []byte) error {
+	if len(data) == 0 || len(data) > MaxTerminalInputBytes || bytes.IndexByte(data, 0) >= 0 {
+		return ErrInvalidInput
+	}
+	return nil
 }
 
 func (s *Service) acquireTerminalAutomation(id string) (func(), error) {
@@ -277,6 +344,7 @@ func (s *Service) acquireTerminalAutomation(id string) (func(), error) {
 			s.automationMu.Lock()
 			delete(s.automationLocks, id)
 			s.automationMu.Unlock()
+			s.cleanupTerminalAutomationGate(id)
 		})
 	}, nil
 }
@@ -336,7 +404,10 @@ func (s *Service) RunTerminal(id, command string) error {
 	if !gate.TryRLock() {
 		return ErrTerminalLocked
 	}
-	defer gate.RUnlock()
+	defer func() {
+		gate.RUnlock()
+		s.cleanupTerminalAutomationGate(id)
+	}()
 	if s.IsTerminalLocked(id) {
 		return ErrTerminalLocked
 	}

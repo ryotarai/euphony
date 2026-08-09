@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ryotarai/euphony/internal/agentsummary"
+	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
 )
 
@@ -394,6 +396,7 @@ func TestAgentSummaryEventPublisherDropsDeletedSummary(t *testing.T) {
 func TestExecuteAgentSummaryOptionMarksDonePublishesAndRejectsInvalidOption(t *testing.T) {
 	srv, err := New(Config{
 		Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{},
+		ActionRunner: &recordingTerminalActionRunner{input: "printf 'option-executed\\n'\r"},
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -442,7 +445,8 @@ func TestExecuteAgentSummaryOptionMarksDonePublishesAndRejectsInvalidOption(t *t
 	events, unsubscribe := srv.control.SubscribeEvents([]string{"agent.summary.updated"})
 	defer unsubscribe()
 	response := performRequest(t, srv, http.MethodPost,
-		"/api/agent-summaries/"+terminal.ID+"/options/option-1/execute", "")
+		"/api/agent-summaries/"+terminal.ID+"/options/option-1/execute",
+		`{"screenText":"rendered-screen"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("execute option status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -481,8 +485,77 @@ func TestExecuteAgentSummaryOptionMarksDonePublishesAndRejectsInvalidOption(t *t
 	t.Fatal("option input was not written to terminal")
 }
 
+func TestExecuteAgentSummaryOptionUsesAIWithTheCurrentTerminalScreen(t *testing.T) {
+	actionRunner := &recordingTerminalActionRunner{
+		prompts: make(chan string, 1),
+		input:   "printf 'ai-action\\n'\r",
+	}
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{}, ActionRunner: actionRunner,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{Agent: "codex", Status: "waiting"}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if err := srv.control.RunTerminal(terminal.ID, "printf 'approval-screen\\n'"); err != nil {
+		t.Fatalf("RunTerminal() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := srv.control.WaitOutput(ctx, terminal.ID, control.OutputMatch{Literal: "approval-screen"}); err != nil {
+		t.Fatalf("WaitOutput() error = %v", err)
+	}
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "waiting", Summary: "Waiting for approval.",
+		Action: "Approve the request.", Priority: "high",
+		Options: []session.AgentSummaryOption{{ID: "option-1", Label: "Allow access", Input: "printf 'direct-input\\n'\r"}},
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/agent-summaries/"+terminal.ID+"/options/option-1/execute",
+		`{"screenText":"rendered-screen"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("execute option status = %d, body = %s", response.Code, response.Body.String())
+	}
+	select {
+	case prompt := <-actionRunner.prompts:
+		for _, want := range []string{"rendered-screen", "Approve the request.", "Allow access", "direct-input"} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("AI action prompt = %q, want %q", prompt, want)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for AI action prompt")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		read, readErr := srv.control.ReadTerminal(terminal.ID, 4096)
+		if readErr == nil && strings.Contains(read.Text, "ai-action") {
+			if strings.Contains(read.Text, "direct-input") {
+				t.Fatalf("terminal executed raw summary input: %q", read.Text)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("AI action input was not written to terminal")
+}
+
 func TestExecuteAgentSummaryOptionReturnsConflictWhenTerminalIsLocked(t *testing.T) {
-	srv, err := New(Config{Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{}})
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{},
+		ActionRunner: &recordingTerminalActionRunner{input: "y\r"},
+	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -533,7 +606,113 @@ func TestExecuteAgentSummaryOptionReturnsConflictWhenTerminalIsLocked(t *testing
 	}
 }
 
+func TestExecuteAgentSummaryOptionDoesNotCompleteANewerSummary(t *testing.T) {
+	actionRunner := &blockingTerminalActionRunner{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		input:   "printf 'stale-option-executed\\n'\r",
+	}
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh", SummaryRunner: blockingSummaryRunner{},
+		ActionRunner: actionRunner,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	terminal, err := srv.sessions.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{Agent: "codex", Status: "waiting"}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	firstGeneratedAt := time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC)
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "waiting", Summary: "Waiting for access.",
+		Action: "Allow the request.", Priority: "high", GeneratedAt: firstGeneratedAt,
+		Options: []session.AgentSummaryOption{{ID: "option-1", Label: "Allow", Input: "sleep 0.25; printf 'option-executed\\n'\r"}},
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(first) error = %v", err)
+	}
+
+	responseCh := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		responseCh <- performRequest(t, srv, http.MethodPost,
+			"/api/agent-summaries/"+terminal.ID+"/options/option-1/execute", "")
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !srv.control.IsTerminalLocked(terminal.ID) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !srv.control.IsTerminalLocked(terminal.ID) {
+		t.Fatal("option execution did not acquire terminal lock")
+	}
+	select {
+	case <-actionRunner.started:
+	case <-time.After(time.Second):
+		t.Fatal("AI action runner did not start")
+	}
+	if err := srv.sessions.SaveAgentSummary(context.Background(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "waiting", Summary: "The agent asked again.",
+		Action: "Allow the request.", Priority: "high", GeneratedAt: firstGeneratedAt.Add(time.Minute),
+		Options: []session.AgentSummaryOption{{ID: "option-1", Label: "Deny", Input: "n\r"}},
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(newer) error = %v", err)
+	}
+	close(actionRunner.release)
+
+	response := <-responseCh
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale option status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var failure errorResponse
+	decodeResponse(t, response, &failure)
+	if failure.Code != "agent_summary_changed" {
+		t.Fatalf("stale option error = %#v, want agent_summary_changed", failure)
+	}
+	got := srv.sessions.AgentSummaries()[0]
+	if got.Done || got.Options[0].Label != "Deny" {
+		t.Fatalf("stale option changed newer summary = %#v, want actionable newer summary", got)
+	}
+	read, readErr := srv.control.ReadTerminal(terminal.ID, 4096)
+	if readErr != nil {
+		t.Fatalf("ReadTerminal() error = %v", readErr)
+	}
+	if strings.Contains(read.Text, "stale-option-executed") {
+		t.Fatalf("stale action reached terminal: %q", read.Text)
+	}
+}
+
 type blockingSummaryRunner struct{}
+
+type recordingTerminalActionRunner struct {
+	prompts chan string
+	input   string
+}
+
+type blockingTerminalActionRunner struct {
+	started chan struct{}
+	release chan struct{}
+	input   string
+}
+
+func (r *blockingTerminalActionRunner) GenerateTerminalAction(ctx context.Context, _ string, _ string, _ string) (agentsummary.TerminalActionGeneration, error) {
+	close(r.started)
+	select {
+	case <-r.release:
+		return agentsummary.TerminalActionGeneration{Input: r.input}, nil
+	case <-ctx.Done():
+		return agentsummary.TerminalActionGeneration{}, ctx.Err()
+	}
+}
+
+func (r *recordingTerminalActionRunner) GenerateTerminalAction(_ context.Context, _ string, prompt string, _ string) (agentsummary.TerminalActionGeneration, error) {
+	if r.prompts != nil {
+		r.prompts <- prompt
+	}
+	return agentsummary.TerminalActionGeneration{Input: r.input}, nil
+}
 
 func (blockingSummaryRunner) Generate(ctx context.Context, _ string, _ string) (agentsummary.Generation, error) {
 	<-ctx.Done()

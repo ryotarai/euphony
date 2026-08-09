@@ -26,6 +26,7 @@ type Config struct {
 	CodexSessionsRoot  string
 	ClaudeProjectsRoot string
 	SummaryRunner      agentsummary.Runner
+	ActionRunner       agentsummary.ActionRunner
 	TaskRefiner        agentsummary.Refiner
 	Assets             fs.FS
 }
@@ -40,6 +41,7 @@ type Server struct {
 	agentLogs     *agentlog.Resolver
 	annotations   *annotation.Store
 	summaries     *agentsummary.Service
+	actionRunner  agentsummary.ActionRunner
 	tasks         *tasks.Service
 }
 
@@ -77,6 +79,14 @@ func New(config Config) (*Server, error) {
 		Resolver: transcriptResolver,
 		Runner:   config.SummaryRunner,
 	})
+	actionRunner := config.ActionRunner
+	if actionRunner == nil {
+		if runner, ok := config.SummaryRunner.(agentsummary.ActionRunner); ok {
+			actionRunner = runner
+		} else {
+			actionRunner = agentsummary.NewCommandRunner()
+		}
+	}
 	taskStore, err := tasks.OpenStore(config.DatabasePath)
 	if err != nil {
 		_ = sessionManager.Close(context.Background())
@@ -102,6 +112,7 @@ func New(config Config) (*Server, error) {
 		agentLogs:     transcriptResolver,
 		annotations:   annotation.NewStore(time.Now, uuid.NewString),
 		summaries:     summaryService,
+		actionRunner:  actionRunner,
 		tasks:         taskService,
 	}
 	summaryService.Start()

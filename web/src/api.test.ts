@@ -134,12 +134,13 @@ test("executes a structured agent summary option by its normalized ID", async ()
     .mockImplementationOnce(() => jsonResponse(summary));
   const api = new ApiClient("token");
 
-  expect(await api.executeAgentSummaryOption(summary.terminalId, "option-1")).toEqual(summary);
+  expect(await api.executeAgentSummaryOption(summary.terminalId, "option-1", "rendered-screen"))
+    .toEqual(summary);
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/agent-summaries/terminal%2Fone/options/option-1/execute",
     expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ screenText: "rendered-screen" }),
       headers: expect.objectContaining({ Authorization: "Bearer token" }),
     }),
   );

@@ -18,12 +18,13 @@ import (
 )
 
 const (
-	commandTimeout               = 90 * time.Second
-	maxCommandOutputBytes        = 64 << 10
-	maxGeneratedDescriptionRunes = 2400
-	openAIModel                  = "gpt-5.6-luna"
-	openAIEndpoint               = "https://api.openai.com/v1/responses"
-	openAISchemaName             = "agent_summary"
+	commandTimeout                 = 90 * time.Second
+	maxCommandOutputBytes          = 64 << 10
+	maxGeneratedDescriptionRunes   = 2400
+	openAIModel                    = "gpt-5.6-luna"
+	openAIEndpoint                 = "https://api.openai.com/v1/responses"
+	openAISchemaName               = "agent_summary"
+	openAITerminalActionSchemaName = "terminal_action"
 )
 
 type Generation struct {
@@ -31,6 +32,10 @@ type Generation struct {
 	Action   string                       `json:"action"`
 	Priority string                       `json:"priority"`
 	Options  []session.AgentSummaryOption `json:"options"`
+}
+
+type TerminalActionGeneration struct {
+	Input string `json:"input"`
 }
 
 type TaskRefinement struct {
@@ -47,6 +52,10 @@ type Runner interface {
 
 type EffortRunner interface {
 	GenerateWithEffort(context.Context, string, string, string) (Generation, error)
+}
+
+type ActionRunner interface {
+	GenerateTerminalAction(context.Context, string, string, string) (TerminalActionGeneration, error)
 }
 
 type Refiner interface {
@@ -92,6 +101,27 @@ func commandSpec(provider string, schemaPath ...string) (string, []string, error
 	}
 }
 
+func actionCommandSpec(provider string, schemaPath ...string) (string, []string, error) {
+	schemaPathValue := "<terminal-action-schema>"
+	if len(schemaPath) > 0 && schemaPath[0] != "" {
+		schemaPathValue = schemaPath[0]
+	}
+	switch provider {
+	case "claude":
+		return "claude", []string{
+			"-p", "--bare", "--json-schema", string(sharedTerminalActionSchemaJSON()),
+			"--model", "haiku", "--effort", "low",
+		}, nil
+	case "codex":
+		return "codex", []string{
+			"-c", "model_reasoning_effort=low", "-c", "service_tier=standard",
+			"exec", "--ephemeral", "--model", openAIModel, "--output-schema", schemaPathValue,
+		}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported action provider %q", provider)
+	}
+}
+
 func refinementCommandSpec(provider string) (string, []string, error) {
 	switch provider {
 	case "claude":
@@ -112,6 +142,43 @@ func (r *CommandRunner) GenerateWithEffort(ctx context.Context, provider, prompt
 		return r.generateOpenAI(ctx, prompt, effort)
 	}
 	return r.generateCommand(ctx, provider, prompt)
+}
+
+func (r *CommandRunner) GenerateTerminalAction(ctx context.Context, provider, prompt, effort string) (TerminalActionGeneration, error) {
+	if provider == "openai" {
+		output, err := r.generateOpenAIJSON(ctx, prompt, effort, openAITerminalActionSchemaName, sharedTerminalActionSchema())
+		if err != nil {
+			return TerminalActionGeneration{}, err
+		}
+		return ParseTerminalAction(output)
+	}
+
+	schema := sharedTerminalActionSchemaJSON()
+	schemaPath := ""
+	if provider == "codex" {
+		file, err := os.CreateTemp("", "euphony-terminal-action-*.json")
+		if err != nil {
+			return TerminalActionGeneration{}, fmt.Errorf("create terminal action schema: %w", err)
+		}
+		schemaPath = file.Name()
+		defer os.Remove(schemaPath)
+		if _, err := file.Write(schema); err != nil {
+			_ = file.Close()
+			return TerminalActionGeneration{}, fmt.Errorf("write terminal action schema: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return TerminalActionGeneration{}, fmt.Errorf("close terminal action schema: %w", err)
+		}
+	}
+	name, args, err := actionCommandSpec(provider, schemaPath)
+	if err != nil {
+		return TerminalActionGeneration{}, err
+	}
+	output, err := r.runCommandOutput(ctx, provider, prompt, name, args, "terminal action")
+	if err != nil {
+		return TerminalActionGeneration{}, err
+	}
+	return ParseTerminalAction(output)
 }
 
 func (r *CommandRunner) generateCommand(ctx context.Context, provider, prompt string) (Generation, error) {
@@ -139,6 +206,14 @@ func (r *CommandRunner) generateCommand(ctx context.Context, provider, prompt st
 }
 
 func (r *CommandRunner) runCommand(ctx context.Context, provider, prompt, name string, args []string) (Generation, error) {
+	output, err := r.runCommandOutput(ctx, provider, prompt, name, args, "summary")
+	if err != nil {
+		return Generation{}, err
+	}
+	return ParseGeneration(output, "")
+}
+
+func (r *CommandRunner) runCommandOutput(ctx context.Context, provider, prompt, name string, args []string, outputKind string) (string, error) {
 	timeout := r.timeout
 	if timeout <= 0 {
 		timeout = commandTimeout
@@ -156,12 +231,12 @@ func (r *CommandRunner) runCommand(ctx context.Context, provider, prompt, name s
 		if message == "" {
 			message = err.Error()
 		}
-		return Generation{}, fmt.Errorf("%s summary command failed: %s", provider, message)
+		return "", fmt.Errorf("%s %s command failed: %s", provider, outputKind, message)
 	}
 	if stdout.truncated {
-		return Generation{}, errors.New("summary command output exceeded the limit")
+		return "", fmt.Errorf("%s command output exceeded the limit", outputKind)
 	}
-	return ParseGeneration(stdout.String(), "")
+	return stdout.String(), nil
 }
 
 func (r *CommandRunner) Refine(ctx context.Context, provider, prompt string) (TaskRefinement, error) {
@@ -228,10 +303,40 @@ func sharedSummarySchemaJSON() []byte {
 	return encoded
 }
 
+func sharedTerminalActionSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string", "minLength": 1},
+		},
+		"required": []string{"input"},
+	}
+}
+
+func sharedTerminalActionSchemaJSON() []byte {
+	encoded, _ := json.Marshal(sharedTerminalActionSchema())
+	return encoded
+}
+
 func (r *CommandRunner) generateOpenAI(ctx context.Context, prompt, effort string) (Generation, error) {
+	output, err := r.generateOpenAIJSON(ctx, prompt, effort, openAISchemaName, sharedSummarySchema())
+	if err != nil {
+		return Generation{}, err
+	}
+	return ParseGeneration(output, "")
+}
+
+func (r *CommandRunner) generateOpenAIJSON(
+	ctx context.Context,
+	prompt string,
+	effort string,
+	schemaName string,
+	schema map[string]any,
+) (string, error) {
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
-		return Generation{}, errors.New("OPENAI_API_KEY is not configured")
+		return "", errors.New("OPENAI_API_KEY is not configured")
 	}
 	if effort == "" {
 		effort = session.DefaultAgentSummaryOpenAIEffort
@@ -239,6 +344,7 @@ func (r *CommandRunner) generateOpenAI(ctx context.Context, prompt, effort strin
 	requestBody := struct {
 		Model     string `json:"model"`
 		Input     string `json:"input"`
+		Store     bool   `json:"store"`
 		Reasoning struct {
 			Effort string `json:"effort"`
 		} `json:"reasoning"`
@@ -253,19 +359,26 @@ func (r *CommandRunner) generateOpenAI(ctx context.Context, prompt, effort strin
 	}{
 		Model: openAIModel,
 		Input: prompt,
+		Store: false,
 	}
 	requestBody.Reasoning.Effort = effort
 	requestBody.Text.Format.Type = "json_schema"
-	requestBody.Text.Format.Name = openAISchemaName
+	requestBody.Text.Format.Name = schemaName
 	requestBody.Text.Format.Strict = true
-	requestBody.Text.Format.Schema = sharedSummarySchema()
+	requestBody.Text.Format.Schema = schema
 	body, err := json.Marshal(requestBody)
 	if err != nil {
-		return Generation{}, fmt.Errorf("encode OpenAI request: %w", err)
+		return "", fmt.Errorf("encode OpenAI request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.openAIURL(), bytes.NewReader(body))
+	timeout := r.timeout
+	if timeout <= 0 {
+		timeout = commandTimeout
+	}
+	requestContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, r.openAIURL(), bytes.NewReader(body))
 	if err != nil {
-		return Generation{}, fmt.Errorf("create OpenAI request: %w", err)
+		return "", fmt.Errorf("create OpenAI request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -275,11 +388,11 @@ func (r *CommandRunner) generateOpenAI(ctx context.Context, prompt, effort strin
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return Generation{}, fmt.Errorf("OpenAI Responses request failed: %w", err)
+		return "", fmt.Errorf("OpenAI Responses request failed: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return Generation{}, fmt.Errorf("OpenAI Responses API returned status %d", response.StatusCode)
+		return "", fmt.Errorf("OpenAI Responses API returned status %d", response.StatusCode)
 	}
 	var decoded struct {
 		OutputText string `json:"output_text"`
@@ -293,7 +406,7 @@ func (r *CommandRunner) generateOpenAI(ctx context.Context, prompt, effort strin
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxCommandOutputBytes))
 	if err := decoder.Decode(&decoded); err != nil {
-		return Generation{}, fmt.Errorf("decode OpenAI response: %w", err)
+		return "", fmt.Errorf("decode OpenAI response: %w", err)
 	}
 	output := decoded.OutputText
 	if output == "" {
@@ -312,9 +425,9 @@ func (r *CommandRunner) generateOpenAI(ctx context.Context, prompt, effort strin
 		}
 	}
 	if strings.TrimSpace(output) == "" {
-		return Generation{}, errors.New("OpenAI Responses API returned no summary output")
+		return "", errors.New("OpenAI Responses API returned no structured output")
 	}
-	return ParseGeneration(output, "")
+	return output, nil
 }
 
 func (r *CommandRunner) openAIURL() string {
@@ -325,6 +438,39 @@ func (r *CommandRunner) openAIURL() string {
 }
 
 func ParseGeneration(output, status string) (Generation, error) {
+	cleaned, err := extractJSONObject(output, "summary command")
+	if err != nil {
+		return Generation{}, err
+	}
+	var generation Generation
+	if err := json.Unmarshal([]byte(cleaned), &generation); err != nil {
+		return Generation{}, fmt.Errorf("decode summary command output: %w", err)
+	}
+	return normalizeGeneration(generation, status)
+}
+
+func ParseTerminalAction(output string) (TerminalActionGeneration, error) {
+	cleaned, err := extractJSONObject(output, "terminal action")
+	if err != nil {
+		return TerminalActionGeneration{}, err
+	}
+	var generation TerminalActionGeneration
+	if err := json.Unmarshal([]byte(cleaned), &generation); err != nil {
+		return TerminalActionGeneration{}, fmt.Errorf("decode terminal action output: %w", err)
+	}
+	if strings.TrimSpace(generation.Input) == "" {
+		return TerminalActionGeneration{}, errors.New("terminal action returned empty input")
+	}
+	if strings.IndexByte(generation.Input, 0) >= 0 {
+		return TerminalActionGeneration{}, errors.New("terminal action returned input containing NUL")
+	}
+	if len(generation.Input) > control.MaxTerminalInputBytes {
+		return TerminalActionGeneration{}, errors.New("terminal action returned input exceeding the limit")
+	}
+	return generation, nil
+}
+
+func extractJSONObject(output, source string) (string, error) {
 	cleaned := strings.TrimSpace(output)
 	if strings.HasPrefix(cleaned, "```") {
 		lines := strings.Split(cleaned, "\n")
@@ -335,13 +481,9 @@ func ParseGeneration(output, status string) (Generation, error) {
 	start := strings.IndexByte(cleaned, '{')
 	end := strings.LastIndexByte(cleaned, '}')
 	if start < 0 || end <= start {
-		return Generation{}, errors.New("summary command did not return a JSON object")
+		return "", fmt.Errorf("%s did not return a JSON object", source)
 	}
-	var generation Generation
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &generation); err != nil {
-		return Generation{}, fmt.Errorf("decode summary command output: %w", err)
-	}
-	return normalizeGeneration(generation, status)
+	return cleaned[start : end+1], nil
 }
 
 func normalizeGeneration(generation Generation, status string) (Generation, error) {

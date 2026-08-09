@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 var (
 	ErrNotFound             = errors.New("session not found")
 	ErrAgentSummaryNotFound = errors.New("agent summary not found")
+	ErrAgentSummaryChanged  = errors.New("agent summary changed")
 	ErrManagerClosing       = errors.New("session manager is closing")
 )
 
@@ -83,6 +85,14 @@ type AgentSummaryOption struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Input string `json:"input"`
+}
+
+func (summary AgentSummary) MarshalJSON() ([]byte, error) {
+	type agentSummaryJSON AgentSummary
+	if summary.Options == nil {
+		summary.Options = []AgentSummaryOption{}
+	}
+	return json.Marshal(agentSummaryJSON(summary))
 }
 
 type HookConfig struct {
@@ -623,6 +633,28 @@ func (m *Manager) WriteTerminal(id string, data []byte) (int, error) {
 		m.watchAgentInterrupt(id, target)
 	}
 	return written, nil
+}
+
+// WriteTerminalIfAgentSummaryCurrent serializes the summary generation check
+// with the PTY write. This prevents an Inbox action for an older summary from
+// reaching a terminal after a newer summary has been saved.
+func (m *Manager) WriteTerminalIfAgentSummaryCurrent(
+	ctx context.Context,
+	expected AgentSummary,
+	data []byte,
+) (int, error) {
+	m.agentSummaryMutationMu.Lock()
+	defer m.agentSummaryMutationMu.Unlock()
+	m.mu.RLock()
+	current, ok := m.agentSummaries[expected.TerminalID]
+	m.mu.RUnlock()
+	if !ok {
+		return 0, ErrAgentSummaryNotFound
+	}
+	if !sameAgentSummaryGeneration(current, expected) {
+		return 0, ErrAgentSummaryChanged
+	}
+	return m.WriteTerminal(expected.TerminalID, data)
 }
 
 func (m *Manager) lockMetadataSaveEntry(id string) (*entry, func(), error) {
@@ -2035,6 +2067,17 @@ func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (
 }
 
 func (m *Manager) MarkAgentSummaryDone(ctx context.Context, terminalID string) (AgentSummary, error) {
+	return m.markAgentSummaryDone(ctx, terminalID, nil)
+}
+
+// MarkAgentSummaryDoneIfCurrent marks a summary done only when the summary
+// generation supplied by the caller is still current. This prevents a delayed
+// terminal action from completing a newer summary for the same terminal.
+func (m *Manager) MarkAgentSummaryDoneIfCurrent(ctx context.Context, expected AgentSummary) (AgentSummary, error) {
+	return m.markAgentSummaryDone(ctx, expected.TerminalID, &expected)
+}
+
+func (m *Manager) markAgentSummaryDone(ctx context.Context, terminalID string, expected *AgentSummary) (AgentSummary, error) {
 	m.agentSummaryMutationMu.Lock()
 	defer m.agentSummaryMutationMu.Unlock()
 	m.mu.Lock()
@@ -2046,6 +2089,10 @@ func (m *Manager) MarkAgentSummaryDone(ctx context.Context, terminalID string) (
 	if !ok {
 		m.mu.Unlock()
 		return AgentSummary{}, ErrAgentSummaryNotFound
+	}
+	if expected != nil && !sameAgentSummaryGeneration(previous, *expected) {
+		m.mu.Unlock()
+		return AgentSummary{}, ErrAgentSummaryChanged
 	}
 	if previous.Done && !previous.Unread {
 		m.mu.Unlock()
@@ -2076,6 +2123,18 @@ func (m *Manager) MarkAgentSummaryDone(ctx context.Context, terminalID string) (
 	m.agentSummaries[terminalID] = next
 	m.mu.Unlock()
 	return next, nil
+}
+
+func sameAgentSummaryGeneration(left, right AgentSummary) bool {
+	return left.TerminalID == right.TerminalID &&
+		left.Provider == right.Provider &&
+		left.Status == right.Status &&
+		left.Summary == right.Summary &&
+		strings.TrimSpace(left.Action) == strings.TrimSpace(right.Action) &&
+		left.Priority == right.Priority &&
+		sameAgentSummaryOptions(left.Options, right.Options) &&
+		left.GeneratedAt.Equal(right.GeneratedAt) &&
+		left.Error == right.Error
 }
 
 func (m *Manager) DeleteAgentSummary(ctx context.Context, terminalID string) error {

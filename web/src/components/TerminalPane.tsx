@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useCallback,
   useRef,
   useState,
   type CSSProperties,
@@ -34,12 +35,14 @@ interface TerminalPaneProps {
   agentLogFontSize?: number;
   annotationRevision?: number | null;
   automationLocked?: boolean;
+  onScreenSnapshot?: (terminalID: string, getter: (() => string) | null) => void;
   onDeselect: () => void;
   renderTerminal(
     layoutVersion: number,
     active: boolean,
     sourceVisible: boolean,
     automationLocked?: boolean,
+    onScreenSnapshot?: (getter: (() => string) | null) => void,
   ): ReactNode;
 }
 
@@ -61,6 +64,7 @@ export function TerminalPane({
   agentLogFontSize = 14,
   annotationRevision = null,
   automationLocked = false,
+  onScreenSnapshot,
   onDeselect,
   renderTerminal,
 }: TerminalPaneProps) {
@@ -77,6 +81,10 @@ export function TerminalPane({
   const resizingPointerRef = useRef<number | null>(null);
   const sourceStageRef = useRef<HTMLDivElement | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
+  const reportScreenSnapshot = useCallback(
+    (getter: (() => string) | null) => onScreenSnapshot?.(session.id, getter),
+    [onScreenSnapshot, session.id],
+  );
   const changeSource = (next: string | null) => {
     if (
       next !== "terminal" &&
@@ -401,6 +409,7 @@ export function TerminalPane({
               !suppressTerminalFocus,
             sourceIsVisible("terminal"),
             automationLocked,
+            reportScreenSnapshot,
           )}
         </TabsContent>
         <TabsContent

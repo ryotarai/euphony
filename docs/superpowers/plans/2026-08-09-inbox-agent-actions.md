@@ -16,8 +16,9 @@
 - OpenAI effort is exactly `none`, `low`, `medium`, `high`, `xhigh`, or `max`; default is `low` and CLI effort remains fixed at low.
 - Claude uses `-p --bare --json-schema`; Codex uses `exec --ephemeral --output-schema`.
 - Waiting/blocked structured summaries include one to four options; running summaries include none.
-- Browser action requests carry only terminal ID and option ID; option input is resolved server-side.
+- Browser action requests carry terminal ID, option ID, and the current rendered xterm screen snapshot; the selected provider AI resolves the final input from that screen, and the server sends only that validated response.
 - Terminal input is rejected while an Inbox automation lock is held, and every lock path releases it.
+- The Inbox action lock is acquired before the selected provider AI receives the terminal screen; raw summary option input is only a candidate hint and is never sent directly to the PTY. Older clients without a snapshot use the bounded server history tail as a fallback.
 - Existing unread/done revision guards and unrelated base-worktree changes remain intact.
 
 ---
@@ -64,6 +65,9 @@
 
 **Interfaces:**
 - Produce `control.RunTerminalAutomation(context.Context, string, []byte) error`.
+- Produce `control.RunTerminalAutomationWithScreenAndWrite(...)` so the server can keep
+  the lock while the configured provider derives input from the live screen and
+  revalidate the summary generation immediately before the PTY write.
 - Produce `POST /api/agent-summaries/{id}/options/{optionID}/execute` returning a normalized `AgentSummary`.
 - Return `control.ErrTerminalLocked` as a protected conflict and drop locked WebSocket input.
 

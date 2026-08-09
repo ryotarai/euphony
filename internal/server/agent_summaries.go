@@ -1,13 +1,37 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 
+	"github.com/ryotarai/euphony/internal/agentsummary"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
 )
+
+const maxAgentActionScreenBytes = 128 << 10
+
+type executeAgentSummaryOptionRequest struct {
+	ScreenText *string `json:"screenText"`
+}
+
+func decodeExecuteAgentSummaryOptionRequest(r *http.Request) (executeAgentSummaryOptionRequest, error) {
+	var request executeAgentSummaryOptionRequest
+	if r.Body == nil {
+		return request, nil
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxAgentActionScreenBytes))
+	if err := decoder.Decode(&request); errors.Is(err, io.EOF) {
+		return request, nil
+	} else if err != nil {
+		return request, err
+	}
+	return request, nil
+}
 
 // agentSummaryEventPublisher serializes summary event publication and reads
 // the manager's normalized value immediately before each event. Summary
@@ -82,6 +106,11 @@ func (s *Server) markAgentSummaryDone(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) executeAgentSummaryOption(w http.ResponseWriter, r *http.Request) {
+	request, err := decodeExecuteAgentSummaryOptionRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "agent_summary_action_invalid_request", "The terminal screen payload is invalid.")
+		return
+	}
 	terminalID := r.PathValue("id")
 	optionID := r.PathValue("optionID")
 	var current session.AgentSummary
@@ -113,25 +142,61 @@ func (s *Server) executeAgentSummaryOption(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "agent_summary_option_not_found", "The agent summary option does not exist.")
 		return
 	}
-	if err := s.control.RunTerminalAutomation(r.Context(), terminalID, []byte(option.Input)); err != nil {
+	err = s.control.RunTerminalAutomationWithScreenAndWrite(r.Context(), terminalID,
+		func(ctx context.Context, screen control.TerminalRead) ([]byte, error) {
+			settings := s.sessions.Settings()
+			provider := settings.AgentSummaryProvider
+			if !validAgentSummaryProvider(provider) {
+				provider = current.Provider
+			}
+			if !validAgentSummaryProvider(provider) {
+				provider = session.DefaultAgentSummaryProvider
+			}
+			effort := settings.AgentSummaryOpenAIEffort
+			if effort == "" {
+				effort = session.DefaultAgentSummaryOpenAIEffort
+			}
+			screenText := screen.Text
+			if request.ScreenText != nil {
+				screenText = *request.ScreenText
+			}
+			prompt := agentsummary.BuildTerminalActionPrompt(current, option, screenText)
+			generation, err := s.actionRunner.GenerateTerminalAction(ctx, provider, prompt, effort)
+			if err != nil {
+				return nil, err
+			}
+			return []byte(generation.Input), nil
+		},
+		func(ctx context.Context, data []byte) (int, error) {
+			return s.sessions.WriteTerminalIfAgentSummaryCurrent(ctx, current, data)
+		},
+	)
+	if err != nil {
 		switch {
+		case errors.Is(err, session.ErrAgentSummaryChanged):
+			writeError(w, http.StatusConflict, "agent_summary_changed", "The agent summary changed while the action was running.")
+		case errors.Is(err, session.ErrAgentSummaryNotFound):
+			writeError(w, http.StatusNotFound, "agent_summary_not_found", "The agent summary does not exist.")
 		case errors.Is(err, control.ErrTerminalLocked):
 			writeError(w, http.StatusConflict, "terminal_locked", "The terminal is being controlled by Inbox.")
 		case errors.Is(err, control.ErrTerminalNotFound):
 			writeError(w, http.StatusNotFound, "terminal_not_found", "The terminal does not exist.")
 		case errors.Is(err, control.ErrInvalidInput):
-			writeError(w, http.StatusBadRequest, "invalid_option_input", "The agent summary option input is invalid.")
+			writeError(w, http.StatusBadGateway, "agent_summary_action_invalid", "The AI returned invalid terminal input.")
 		default:
-			writeError(w, http.StatusInternalServerError, "agent_summary_option_failed", "The agent summary option could not be executed.")
+			writeError(w, http.StatusBadGateway, "agent_summary_action_failed", "The AI could not determine a terminal operation.")
 		}
 		return
 	}
-	summary, err := s.sessions.MarkAgentSummaryDone(r.Context(), terminalID)
-	if errors.Is(err, session.ErrAgentSummaryNotFound) {
+	summary, err := s.sessions.MarkAgentSummaryDoneIfCurrent(r.Context(), current)
+	switch {
+	case errors.Is(err, session.ErrAgentSummaryNotFound):
 		writeError(w, http.StatusNotFound, "agent_summary_not_found", "The agent summary does not exist.")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, session.ErrAgentSummaryChanged):
+		writeError(w, http.StatusConflict, "agent_summary_changed", "The agent summary changed while the action was running.")
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "agent_summary_done_failed", "The agent summary could not be marked as done.")
 		return
 	}

@@ -716,7 +716,11 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 }
 
 func (s *SQLiteStore) SaveAgentSummary(ctx context.Context, item AgentSummary) error {
-	optionsJSON, err := json.Marshal(item.Options)
+	options := item.Options
+	if options == nil {
+		options = []AgentSummaryOption{}
+	}
+	optionsJSON, err := json.Marshal(options)
 	if err != nil {
 		return fmt.Errorf("encode agent summary options: %w", err)
 	}

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,20 @@ import (
 
 	"github.com/ryotarai/euphony/internal/selection"
 )
+
+func TestAgentSummaryJSONUsesAnEmptyOptionsArray(t *testing.T) {
+	payload, err := json.Marshal(AgentSummary{TerminalID: "terminal-1", Summary: "Working."})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if string(decoded["options"]) != "[]" {
+		t.Fatalf("options JSON = %s, want []", decoded["options"])
+	}
+}
 
 func TestManagerAgentSummaryUnreadTransitions(t *testing.T) {
 	manager := NewManager("/bin/sh")
@@ -149,6 +164,38 @@ func TestManagerAgentSummaryDoneTransitions(t *testing.T) {
 	}
 	if !second.Done || second.Unread {
 		t.Fatalf("second done summary = %#v, want done=true unread=false", second)
+	}
+}
+
+func TestManagerMarkAgentSummaryDoneIfCurrentRejectsNewerSummary(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	first := AgentSummary{
+		TerminalID:  "terminal-1",
+		Status:      "waiting",
+		Action:      "Approve the change.",
+		Options:     []AgentSummaryOption{{Label: "Allow", Input: "y\r"}},
+		GeneratedAt: time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC),
+	}
+	if err := manager.SaveAgentSummary(context.Background(), first); err != nil {
+		t.Fatalf("SaveAgentSummary(first) error = %v", err)
+	}
+	current := manager.AgentSummaries()[0]
+
+	newer := first
+	newer.GeneratedAt = first.GeneratedAt.Add(time.Minute)
+	newer.Options = []AgentSummaryOption{{Label: "Deny", Input: "n\r"}}
+	if err := manager.SaveAgentSummary(context.Background(), newer); err != nil {
+		t.Fatalf("SaveAgentSummary(newer) error = %v", err)
+	}
+
+	if _, err := manager.MarkAgentSummaryDoneIfCurrent(context.Background(), current); !errors.Is(err, ErrAgentSummaryChanged) {
+		t.Fatalf("MarkAgentSummaryDoneIfCurrent() error = %v, want ErrAgentSummaryChanged", err)
+	}
+	got := manager.AgentSummaries()[0]
+	if got.Done || got.Options[0].Label != "Deny" {
+		t.Fatalf("newer summary after stale completion = %#v, want actionable newer summary", got)
 	}
 }
 

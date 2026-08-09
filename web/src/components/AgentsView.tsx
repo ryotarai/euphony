@@ -98,7 +98,7 @@ function SummaryCard({
   onSelectSession(id: string): void;
   onMarkDone?: (id: string) => Promise<boolean> | boolean | void;
   onChooseOption?: (id: string, optionID: string) => Promise<unknown> | unknown;
-  onDone(id?: string): void;
+  onDone(id?: string, generatedAt?: string): void;
 }) {
   const { summary, session } = item;
   const label = sessionLabel(session);
@@ -124,8 +124,8 @@ function SummaryCard({
     setChoiceError("");
     setPendingOptionID(id);
     try {
-      await onChooseOption(session.id, id);
-      onDone(session.id);
+      const applied = await onChooseOption(session.id, id);
+      if (applied !== false) onDone(session.id, summary.generatedAt);
     } catch (error) {
       setChoiceError(optionErrorMessage(error));
     } finally {
@@ -246,7 +246,7 @@ function SummarySection({
   onSelectSession(id: string): void;
   onMarkDone?: (id: string) => Promise<boolean> | boolean | void;
   onChooseOption?: (id: string, optionID: string) => Promise<unknown> | unknown;
-  onDone(id?: string): void;
+  onDone(id?: string, generatedAt?: string): void;
 }) {
   return (
     <section
@@ -294,8 +294,8 @@ export function AgentsView({
 }: AgentsViewProps) {
   const [selectedTab, setSelectedTab] = useState<AgentTab>("action");
   const [refreshPending, setRefreshPending] = useState(false);
-  const [optimisticDoneIDs, setOptimisticDoneIDs] = useState<Set<string>>(
-    () => new Set(),
+  const [optimisticDoneAt, setOptimisticDoneAt] = useState<Map<string, string>>(
+    () => new Map(),
   );
   const tabRefs = useRef<Record<AgentTab, HTMLButtonElement | null>>({
     action: null,
@@ -316,12 +316,15 @@ export function AgentsView({
     for (const summary of summaries) {
       if (summary.done === true) completedIDs.add(summary.terminalId);
     }
+    const summariesByID = new Map(summaries.map((summary) => [summary.terminalId, summary]));
     const visibleIDs = new Set<string>();
-    for (const id of optimisticDoneIDs) {
-      if (!completedIDs.has(id)) visibleIDs.add(id);
+    for (const [id, generatedAt] of optimisticDoneAt) {
+      if (!completedIDs.has(id) && summariesByID.get(id)?.generatedAt === generatedAt) {
+        visibleIDs.add(id);
+      }
     }
     return visibleIDs;
-  }, [optimisticDoneIDs, summaries]);
+  }, [optimisticDoneAt, summaries]);
 
   const actionItems = items.filter(({ summary }) => (
     summary.done !== true && !visibleOptimisticDoneIDs.has(summary.terminalId)
@@ -349,8 +352,14 @@ export function AgentsView({
       setRefreshPending(false);
     }
   };
-  const completeItem = (id?: string) => {
-    if (id) setOptimisticDoneIDs((current) => new Set(current).add(id));
+  const completeItem = (id?: string, generatedAt?: string) => {
+    if (id && generatedAt) {
+      setOptimisticDoneAt((current) => {
+        const next = new Map(current);
+        next.set(id, generatedAt);
+        return next;
+      });
+    }
     setSelectedTab("done");
   };
 
