@@ -464,14 +464,24 @@ func ParseTerminalAction(output string) (TerminalActionGeneration, error) {
 	if strings.IndexByte(generation.Input, 0) >= 0 {
 		return TerminalActionGeneration{}, errors.New("terminal action returned input containing NUL")
 	}
-	generation.Input = normalizeTerminalActionInput(generation.Input)
+	generation.Input = NormalizeTerminalActionInput(generation.Input)
 	if len(generation.Input) > control.MaxTerminalInputBytes {
 		return TerminalActionGeneration{}, errors.New("terminal action returned input exceeding the limit")
 	}
 	return generation, nil
 }
 
-func normalizeTerminalActionInput(input string) string {
+// NormalizeTerminalActionInput converts printable AI input into a submitted
+// terminal action while preserving control sequences such as arrows and
+// Ctrl-C. Callers should use this at the PTY execution boundary as well as
+// when parsing a provider response.
+func NormalizeTerminalActionInput(input string) string {
+	if input == "" {
+		return input
+	}
+	if strings.HasSuffix(input, "\r\n") {
+		return strings.TrimSuffix(input, "\r\n") + "\r"
+	}
 	if strings.HasSuffix(input, "\r") {
 		return input
 	}
