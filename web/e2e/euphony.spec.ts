@@ -367,6 +367,12 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
 
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Inbox" }).click();
+  await expect(page.locator(".agents-view")).toHaveCSS("padding-top", "0px");
+  await expect(page.locator(".agents-view")).toHaveCSS("padding-left", "0px");
+  await expect(page.locator(".agents-tab-panel")).toHaveCSS("max-width", "none");
+  await expect(page.locator(".agents-tab-panel")).toHaveCSS("margin-left", "0px");
+  await expect(page.locator(".agents-mailbox")).toHaveCSS("min-height", "0px");
+  await expect(page.locator(".agents-section-heading h2").first()).toHaveCSS("font-size", "8.8px");
   await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
   await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();

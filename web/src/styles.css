@@ -5391,3 +5391,133 @@ input {
     padding: 1.25rem 1rem 2rem;
   }
 }
+
+/* The Inbox is a workspace surface, not a centered document. Keep its rail
+   and mailbox flush with the pane so a neighboring terminal can occupy the
+   next PaneCarousel column without wasting the dashboard canvas. */
+.agents-view {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.agents-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  justify-content: space-between;
+  min-height: 3.75rem;
+  border-bottom: 1px solid var(--border);
+  background: #050505;
+}
+
+.agents-toolbar .agents-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  margin: 0;
+  border-bottom: 0;
+  padding: 0 0.6rem;
+}
+
+.agents-toolbar .agents-tab {
+  min-height: 3.75rem;
+}
+
+.agents-toolbar .agents-view-header-actions {
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0 0.7rem;
+}
+
+.agents-toolbar .agents-view-count {
+  gap: 0;
+}
+
+.agents-toolbar .agents-view-count strong {
+  font-size: 1.35rem;
+}
+
+.agents-toolbar .agents-view-count span {
+  font-size: 0.52rem;
+}
+
+.agents-toolbar .agents-refresh-button {
+  min-height: 2rem;
+  padding: 0.3rem 0.55rem;
+}
+
+.agents-view > .agents-loading,
+.agents-view > .agents-error {
+  position: absolute;
+  z-index: 2;
+  top: 4.15rem;
+  right: 0.75rem;
+  left: 0.75rem;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  background: #0a0a0a;
+}
+
+.agents-tab-panel {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
+.agents-mailbox {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border-width: 0;
+}
+
+.agents-detail {
+  overflow: auto;
+}
+
+.agents-section-heading {
+  min-height: 1.9rem;
+}
+
+.agents-section-heading h2 {
+  font-size: 0.55rem;
+  line-height: 1;
+  letter-spacing: 0.1em;
+}
+
+@media (max-width: 680px) {
+  .agents-toolbar {
+    min-height: 3.25rem;
+  }
+
+  .agents-toolbar .agents-tabs {
+    gap: 0.9rem;
+    padding: 0 0.5rem;
+  }
+
+  .agents-toolbar .agents-tab {
+    min-height: 3.25rem;
+  }
+
+  .agents-toolbar .agents-view-count span,
+  .agents-toolbar .agents-refresh-button span {
+    display: none;
+  }
+
+  .agents-mailbox {
+    min-height: 0;
+  }
+
+  .agents-list {
+    max-height: none;
+    min-height: 12rem;
+  }
+}
