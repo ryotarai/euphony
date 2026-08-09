@@ -26,6 +26,7 @@ const defaultSettings: Settings = {
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
   agentSummaryProvider: "codex",
+  agentSummaryOpenAIEffort: "low",
   agentSummaryPrompt: "Focus on risks and next steps.",
 };
 
@@ -543,7 +544,7 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
 
   expect(await screen.findByRole("heading", { name: "Action required" })).toBeVisible();
   expect(screen.getByText(summary.summary)).toBeVisible();
@@ -561,6 +562,84 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
   releaseRead?.();
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+});
+
+test("executes an Inbox option, locks only its terminal, and reconciles Done", async () => {
+  history.replaceState(null, "", "/?terminal=session-1&terminal=session-2");
+  const summary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "openai",
+    status: "waiting",
+    summary: "The agent is waiting for confirmation before editing the route.",
+    action: "Approve the requested file change.",
+    options: [{ id: "option-1", label: "Allow access" }],
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: true,
+  };
+  const doneSummary: AgentSummary = {
+    ...summary,
+    unread: false,
+    done: true,
+  };
+  let releaseExecute: (() => void) | undefined;
+  const executeGate = new Promise<void>((resolve) => {
+    releaseExecute = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession, secondRunningSession]);
+    if (input === "/api/agent-summaries") return jsonResponse([summary]);
+    if (input === "/api/agent-summaries/session-2/options/option-1/execute") {
+      expect(init?.method).toBe("POST");
+      await executeGate;
+      return jsonResponse(doneSummary);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session, _api, _active, _layout, _onConnection, _reconnect, _family, _size, _history, _visible, _line, _cursor, _blink, _sensitivity, _alt, locked) => (
+        <div
+          aria-label={`${session.name} terminal pane`}
+          data-automation-locked={locked ? "true" : "false"}
+        />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Claude terminal pane")).toHaveAttribute(
+    "data-automation-locked",
+    "false",
+  );
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
+  await user.click(await screen.findByRole("button", { name: "Allow access" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/session-2/options/option-1/execute",
+    expect.objectContaining({ method: "POST" }),
+  ));
+  expect(screen.getByLabelText("Claude terminal pane")).toHaveAttribute(
+    "data-automation-locked",
+    "true",
+  );
+  expect(screen.getByLabelText("Codex terminal pane")).toHaveAttribute(
+    "data-automation-locked",
+    "false",
+  );
+
+  releaseExecute?.();
+  await waitFor(() => expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  ));
+  expect(screen.getByLabelText("Claude terminal pane")).toHaveAttribute(
+    "data-automation-locked",
+    "false",
+  );
+  expect(screen.getByText(doneSummary.summary)).toBeInTheDocument();
 });
 
 test("queues a refresh for every identified agent from the Agents dashboard", async () => {
@@ -603,7 +682,7 @@ test("queues a refresh for every identified agent from the Agents dashboard", as
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   const refresh = await screen.findByRole("button", {
     name: "Refresh all agent summaries",
   });
@@ -657,7 +736,7 @@ test("marks an Agent action Done and shows it in the Done tab", async () => {
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   await user.click(await screen.findByRole("button", { name: "Mark Needs approval as done" }));
 
   await waitFor(() => {
@@ -740,7 +819,7 @@ test("moves a Done action back to Action required when the agent updates it", as
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(eventController).toBeDefined());
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   await user.click(await screen.findByRole("tab", { name: /Done 1/ }));
   expect(screen.getByText(doneSummary.summary)).toBeVisible();
 
@@ -807,9 +886,9 @@ test("keeps the Agents sidebar count lifecycle-based while the queue includes re
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   await waitFor(() => {
-    const count = screen.getByRole("button", { name: "Agents" })
+    const count = screen.getByRole("button", { name: "Inbox" })
       .querySelector(".sidebar-attention-count");
     expect(count).toHaveTextContent("2");
   });
@@ -892,7 +971,7 @@ test("does not let the startup summary snapshot overwrite an earlier SSE update"
     type: "agent.summary.updated",
     data: liveSummary,
   }) + "\n"));
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(await screen.findByText(liveSummary.summary)).toBeInTheDocument();
   releaseSummary?.();
   await waitFor(() => expect(screen.getByText(liveSummary.summary)).toBeInTheDocument());
@@ -934,7 +1013,7 @@ test("retries the startup summary load when opening Agents after a failure", asy
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(summaryRequestCount).toBe(1));
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   await waitFor(() => expect(summaryRequestCount).toBe(2));
   expect(await screen.findByText(summary.summary)).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -983,11 +1062,11 @@ test("keeps a failed agent read unread while still opening its terminal", async 
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   await user.click(await screen.findByRole("button", { name: "Open Needs approval" }));
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(await screen.findByText(summary.summary)).toBeInTheDocument();
   expect(await screen.findByRole("alert")).toHaveTextContent("The read failed.");
   expect(screen.getByTestId("agent-summary-card-session-2")).toHaveAttribute("data-unread", "true");
@@ -1059,7 +1138,7 @@ test("keeps an updated summary in Action required while changing its unread weig
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(eventController).toBeDefined());
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
 
   eventController?.enqueue(encoder.encode(JSON.stringify({
@@ -1141,7 +1220,7 @@ test("reloads agent summaries after an SSE reconnect", async () => {
     expect(summaryLoads).toBe(1);
     expect(eventControllers).toHaveLength(1);
   });
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
 
   eventControllers[0].close();
@@ -1211,7 +1290,7 @@ test("does not resurrect a deleted summary from a stale reconnect snapshot", asy
     expect(summaryLoads).toBe(1);
     expect(eventControllers).toHaveLength(1);
   });
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(screen.getByText(summary.summary)).toBeInTheDocument();
 
   eventControllers[0].enqueue(encoder.encode(JSON.stringify({
@@ -1265,7 +1344,7 @@ test("retries agent summaries after an initial load failure when Agents opens", 
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(summaryLoads).toBe(1));
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(await screen.findByText(summary.summary)).toBeInTheDocument();
   expect(summaryLoads).toBe(2);
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
@@ -1341,7 +1420,7 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(eventController).toBeDefined());
-  await user.click(screen.getByRole("button", { name: /Agents/ }));
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
   await user.click(screen.getByRole("button", { name: "Open Needs approval" }));
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
@@ -3651,6 +3730,54 @@ test("loads settings and saves changed workspace shortcuts", async () => {
     "Highlight risks and concrete next steps.",
   );
   await user.keyboard("{Escape}");
+});
+
+test("offers OpenAI GPT-5.6 reasoning effort and persists the selected value", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    if (input === "/api/settings") return jsonResponse(defaultSettings);
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+  await screen.findByLabelText("session-1 terminal pane");
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+
+  const dialog = screen.getByRole("dialog", { name: "Settings" });
+  const provider = within(dialog).getByLabelText("Summary provider");
+  await user.selectOptions(provider, "openai");
+  const effort = within(dialog).getByLabelText("OpenAI reasoning effort");
+  expect(within(effort).getAllByRole("option").map((option) => option.textContent)).toEqual([
+    "None",
+    "Low",
+    "Medium",
+    "High",
+    "Xhigh",
+    "Max",
+  ]);
+  await user.selectOptions(effort, "max");
+  await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/settings",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({
+        ...defaultSettings,
+        agentSummaryProvider: "openai",
+        agentSummaryOpenAIEffort: "max",
+      }),
+    }),
+  );
 });
 
 test("previews, cancels, and saves terminal appearance settings", async () => {

@@ -117,6 +117,34 @@ test("marks an agent summary as done and returns the normalized summary", async 
   );
 });
 
+test("executes a structured agent summary option by its normalized ID", async () => {
+  const summary: AgentSummary = {
+    terminalId: "terminal/one",
+    provider: "openai",
+    status: "waiting",
+    summary: "The agent is waiting for input.",
+    action: "Approve the requested access.",
+    priority: "high",
+    options: [{ id: "option-1", label: "Allow access" }],
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+    done: true,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(summary));
+  const api = new ApiClient("token");
+
+  expect(await api.executeAgentSummaryOption(summary.terminalId, "option-1")).toEqual(summary);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/agent-summaries/terminal%2Fone/options/option-1/execute",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("queues a refresh for all agent summaries", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() => jsonResponse({ queued: 3 }, 202));

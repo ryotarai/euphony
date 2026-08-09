@@ -11,6 +11,7 @@ interface AgentsViewProps {
   onSelectSession(id: string): void;
   onRefresh?(): Promise<void> | void;
   onMarkDone?(id: string): Promise<boolean> | boolean | void;
+  onChooseOption?(id: string, optionID: string): Promise<unknown> | unknown;
 }
 
 interface AgentSummaryItem {
@@ -32,7 +33,15 @@ function statusLabel(status: AgentSummary["status"]) {
 }
 
 function providerLabel(provider: AgentSummary["provider"]) {
-  return provider === "claude" ? "Claude · Haiku" : "Codex · GPT-5.6-luna";
+  switch (provider) {
+    case "openai":
+      return "OpenAI · GPT-5.6-luna";
+    case "claude":
+      return "Claude · Haiku";
+    case "codex":
+    default:
+      return "Codex · GPT-5.6-luna";
+  }
 }
 
 function sessionLabel(session: Session) {
@@ -54,6 +63,14 @@ function priorityLabel(priority: AgentSummaryPriority) {
   return priority.charAt(0).toUpperCase() + priority.slice(1);
 }
 
+function optionID(option: { id?: string }, index: number) {
+  return option.id?.trim() || `option-${index + 1}`;
+}
+
+function optionErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "The Inbox action could not be completed.";
+}
+
 function sortByPriority(items: AgentSummaryItem[]) {
   return [...items].sort((left, right) => {
     const priorityDifference = priorityRank[summaryPriority(left.summary)] -
@@ -70,20 +87,27 @@ function sortByPriority(items: AgentSummaryItem[]) {
 
 function SummaryCard({
   item,
+  displayDone,
   onSelectSession,
   onMarkDone,
+  onChooseOption,
   onDone,
 }: {
   item: AgentSummaryItem;
+  displayDone: boolean;
   onSelectSession(id: string): void;
   onMarkDone?: (id: string) => Promise<boolean> | boolean | void;
-  onDone(): void;
+  onChooseOption?: (id: string, optionID: string) => Promise<unknown> | unknown;
+  onDone(id?: string): void;
 }) {
   const { summary, session } = item;
   const label = sessionLabel(session);
-  const unread = summary.unread;
-  const isDone = summary.done === true;
+  const unread = displayDone ? false : summary.unread;
   const priority = summaryPriority(summary);
+  const options = summary.options?.slice(0, 4) ?? [];
+  const [pendingOptionID, setPendingOptionID] = useState<string | null>(null);
+  const [choiceError, setChoiceError] = useState("");
+
   const markDone = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (!onMarkDone) return;
@@ -91,12 +115,30 @@ function SummaryCard({
     if (result !== false) onDone();
   };
 
+  const chooseOption = async (
+    event: React.MouseEvent<HTMLButtonElement>,
+    id: string,
+  ) => {
+    event.stopPropagation();
+    if (!onChooseOption || pendingOptionID) return;
+    setChoiceError("");
+    setPendingOptionID(id);
+    try {
+      await onChooseOption(session.id, id);
+      onDone(session.id);
+    } catch (error) {
+      setChoiceError(optionErrorMessage(error));
+    } finally {
+      setPendingOptionID(null);
+    }
+  };
+
   return (
     <article
-      className="agent-summary-card"
+      className="agent-summary-card agent-inbox-row"
       data-status={summary.status}
       data-unread={unread}
-      data-done={isDone}
+      data-done={displayDone}
       data-testid={`agent-summary-card-${summary.terminalId}`}
     >
       <button
@@ -129,10 +171,47 @@ function SummaryCard({
           </span>
         )}
         {summary.error && (
-          <span className="agent-summary-error">Summary unavailable · {summary.error}</span>
+          <span className="agent-summary-error" role="alert">
+            Summary unavailable · {summary.error}
+          </span>
         )}
       </button>
-      {summary.action && !isDone && onMarkDone && (
+      {!displayDone && summary.action && options.length > 0 && (
+        <div className="agent-summary-options" aria-label="Suggested responses">
+          <span className="agent-summary-options-label">Choose a response</span>
+          <div className="agent-summary-option-list">
+            {options.map((option, index) => {
+              const id = optionID(option, index);
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className="agent-summary-option"
+                  data-testid={`agent-summary-option-${id}`}
+                  disabled={!onChooseOption || pendingOptionID !== null}
+                  aria-busy={pendingOptionID === id}
+                  onClick={(event) => void chooseOption(event, id)}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {choiceError && (
+            <span className="agent-summary-error" role="alert">{choiceError}</span>
+          )}
+        </div>
+      )}
+      {!displayDone && summary.action && options.length === 0 && (
+        <button
+          type="button"
+          className="agent-summary-legacy-action"
+          onClick={() => onSelectSession(session.id)}
+        >
+          Open terminal
+        </button>
+      )}
+      {!displayDone && summary.action && options.length === 0 && onMarkDone && (
         <button
           type="button"
           className="agent-summary-done"
@@ -149,24 +228,36 @@ function SummaryCard({
 function SummarySection({
   id,
   title,
+  legacyTitle,
   empty,
   items,
+  optimisticDoneIDs,
   onSelectSession,
   onMarkDone,
+  onChooseOption,
   onDone,
 }: {
   id: string;
   title: string;
+  legacyTitle?: string;
   empty: string;
   items: AgentSummaryItem[];
+  optimisticDoneIDs: Set<string>;
   onSelectSession(id: string): void;
   onMarkDone?: (id: string) => Promise<boolean> | boolean | void;
-  onDone(): void;
+  onChooseOption?: (id: string, optionID: string) => Promise<unknown> | unknown;
+  onDone(id?: string): void;
 }) {
   return (
-    <section className="agents-section" aria-labelledby={id}>
+    <section
+      className="agents-section"
+      aria-labelledby={legacyTitle ? `${id}-legacy` : id}
+    >
       <div className="agents-section-heading">
         <h2 id={id}>{title}</h2>
+        {legacyTitle && (
+          <h3 id={`${id}-legacy`} className="agents-legacy-heading">{legacyTitle}</h3>
+        )}
         <span>{items.length}</span>
       </div>
       {items.length > 0 ? (
@@ -175,8 +266,10 @@ function SummarySection({
             <SummaryCard
               key={item.summary.terminalId}
               item={item}
+              displayDone={item.summary.done === true || optimisticDoneIDs.has(item.summary.terminalId)}
               onSelectSession={onSelectSession}
               onMarkDone={onMarkDone}
+              onChooseOption={onChooseOption}
               onDone={onDone}
             />
           ))}
@@ -196,10 +289,14 @@ export function AgentsView({
   refreshing = false,
   onSelectSession,
   onMarkDone,
+  onChooseOption,
   onRefresh,
 }: AgentsViewProps) {
   const [selectedTab, setSelectedTab] = useState<AgentTab>("action");
   const [refreshPending, setRefreshPending] = useState(false);
+  const [optimisticDoneIDs, setOptimisticDoneIDs] = useState<Set<string>>(
+    () => new Set(),
+  );
   const tabRefs = useRef<Record<AgentTab, HTMLButtonElement | null>>({
     action: null,
     done: null,
@@ -213,14 +310,31 @@ export function AgentsView({
       })
       .filter((item): item is AgentSummaryItem => item !== null);
   }, [sessions, summaries]);
-  const actionItems = items.filter(({ summary }) => summary.done !== true);
+
+  const visibleOptimisticDoneIDs = useMemo(() => {
+    const completedIDs = new Set<string>();
+    for (const summary of summaries) {
+      if (summary.done === true) completedIDs.add(summary.terminalId);
+    }
+    const visibleIDs = new Set<string>();
+    for (const id of optimisticDoneIDs) {
+      if (!completedIDs.has(id)) visibleIDs.add(id);
+    }
+    return visibleIDs;
+  }, [optimisticDoneIDs, summaries]);
+
+  const actionItems = items.filter(({ summary }) => (
+    summary.done !== true && !visibleOptimisticDoneIDs.has(summary.terminalId)
+  ));
   const actionRequiredItems = sortByPriority(actionItems.filter(
     ({ summary }) => summary.status === "blocked" || summary.status === "waiting",
   ));
   const runningItems = sortByPriority(actionItems.filter(
     ({ summary }) => summary.status === "running",
   ));
-  const doneItems = sortByPriority(items.filter(({ summary }) => summary.done === true));
+  const doneItems = sortByPriority(items.filter(({ summary }) => (
+    summary.done === true || visibleOptimisticDoneIDs.has(summary.terminalId)
+  )));
   const emptyCopy = selectedTab === "action"
     ? { action: "No actions require attention.", running: "No agents are running." }
     : { action: "No completed actions yet.", running: "" };
@@ -235,19 +349,26 @@ export function AgentsView({
       setRefreshPending(false);
     }
   };
+  const completeItem = (id?: string) => {
+    if (id) setOptimisticDoneIDs((current) => new Set(current).add(id));
+    setSelectedTab("done");
+  };
 
   return (
     <main className="agents-view" aria-labelledby="agents-view-title">
       <header className="agents-view-header">
         <div>
-          <p className="agents-view-eyebrow">Workspace / Agents</p>
-          <h1 id="agents-view-title">Agents</h1>
-          <p>Read the latest signal from every identified agent.</p>
+          <p className="agents-view-eyebrow">Workspace / Inbox</p>
+          <h1 id="agents-view-title">Inbox</h1>
+          <p>Review agent messages and choose a response.</p>
         </div>
         <div className="agents-view-header-actions">
-          <div className="agents-view-count" aria-label={`${actionItems.length} open agent items`}>
-            <strong>{actionItems.length}</strong>
-            <span>open</span>
+          <div
+            className="agents-view-count"
+            aria-label={`${actionRequiredItems.length} need your attention`}
+          >
+            <strong>{actionRequiredItems.length}</strong>
+            <span>need your attention</span>
           </div>
           <button
             type="button"
@@ -269,10 +390,10 @@ export function AgentsView({
         </p>
       )}
       {error && <p className="agents-error" role="alert">{error}</p>}
-      <div className="agents-tabs" role="tablist" aria-label="Agent summaries">
+      <div className="agents-tabs" role="tablist" aria-label="Inbox views">
         {agentTabs.map((tab) => {
           const count = tab === "action" ? actionItems.length : doneItems.length;
-          const label = tab === "action" ? "Action required" : "Done";
+          const label = tab === "action" ? "Inbox" : "Done";
           const tabID = `agents-${tab}-tab`;
           return (
             <button
@@ -282,7 +403,7 @@ export function AgentsView({
               role="tab"
               className="agents-tab"
               data-tab={tab}
-              aria-label={`${label} ${count}`}
+              aria-label={tab === "action" ? `Inbox · Action required ${count}` : `${label} ${count}`}
               aria-controls={tabPanelID}
               aria-selected={tab === selectedTab}
               tabIndex={tab === selectedTab ? 0 : -1}
@@ -333,21 +454,27 @@ export function AgentsView({
           <div className="agents-sections">
             <SummarySection
               id="agents-action-required"
-              title="Action required"
+              title="Needs your action"
+              legacyTitle="Action required"
               empty={emptyCopy.action}
               items={actionRequiredItems}
+              optimisticDoneIDs={visibleOptimisticDoneIDs}
               onSelectSession={onSelectSession}
               onMarkDone={onMarkDone}
-              onDone={() => setSelectedTab("done")}
+              onChooseOption={onChooseOption}
+              onDone={completeItem}
             />
             <SummarySection
               id="agents-running"
-              title="Running"
+              title="Agent updates"
+              legacyTitle="Running"
               empty={emptyCopy.running}
               items={runningItems}
+              optimisticDoneIDs={visibleOptimisticDoneIDs}
               onSelectSession={onSelectSession}
               onMarkDone={onMarkDone}
-              onDone={() => setSelectedTab("done")}
+              onChooseOption={onChooseOption}
+              onDone={completeItem}
             />
           </div>
         ) : (
@@ -357,6 +484,7 @@ export function AgentsView({
               title="Done"
               empty={emptyCopy.action}
               items={doneItems}
+              optimisticDoneIDs={visibleOptimisticDoneIDs}
               onSelectSession={onSelectSession}
               onDone={() => undefined}
             />

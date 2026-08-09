@@ -106,12 +106,19 @@ const agentsPaneID = "agents" as const;
 type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
 
 function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSummary) {
+  const summaryOptions = summary.options ?? [];
+  const snapshotOptions = snapshot.options ?? [];
   return summary.terminalId === snapshot.terminalId
     && summary.provider === snapshot.provider
     && summary.status === snapshot.status
     && summary.summary === snapshot.summary
     && summary.action === snapshot.action
     && (summary.priority ?? "medium") === (snapshot.priority ?? "medium")
+    && summaryOptions.length === snapshotOptions.length
+    && summaryOptions.every((option, index) => {
+      const snapshotOption = snapshotOptions[index];
+      return option.id === snapshotOption?.id && option.label === snapshotOption?.label;
+    })
     && summary.generatedAt === snapshot.generatedAt
     && summary.unread === snapshot.unread
     && (summary.done === true) === (snapshot.done === true)
@@ -143,6 +150,7 @@ interface AppProps {
     cursorBlink: boolean,
     scrollSensitivity: number,
     optionAsAlt: boolean,
+    automationLocked: boolean,
   ) => ReactNode;
 }
 
@@ -162,6 +170,7 @@ const defaultSettings: Settings = {
   terminalScrollSensitivity: defaultTerminalScrollSensitivity,
   terminalOptionAsAlt: defaultTerminalOptionAsAlt,
   agentSummaryProvider: "codex",
+  agentSummaryOpenAIEffort: "low",
   agentSummaryPrompt: "",
 };
 
@@ -424,6 +433,7 @@ export function App({
     cursorBlink,
     scrollSensitivity,
     optionAsAlt,
+    automationLocked,
   ) => (
     <TerminalView
       key={session.id}
@@ -442,6 +452,7 @@ export function App({
       cursorBlink={cursorBlink}
       scrollSensitivity={scrollSensitivity}
       optionAsAlt={optionAsAlt}
+      locked={automationLocked}
     />
   ),
 }: AppProps) {
@@ -504,6 +515,9 @@ export function App({
   const [agentSummaryProviderDraft, setAgentSummaryProviderDraft] = useState(
     settings.agentSummaryProvider,
   );
+  const [agentSummaryOpenAIEffortDraft, setAgentSummaryOpenAIEffortDraft] = useState(
+    settings.agentSummaryOpenAIEffort ?? "low",
+  );
   const [agentSummaryPromptDraft, setAgentSummaryPromptDraft] = useState(
     settings.agentSummaryPrompt,
   );
@@ -540,6 +554,9 @@ export function App({
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
+  const [automationLockedIDs, setAutomationLockedIDs] = useState<Set<string>>(
+    () => new Set(),
+  );
   const tasksOpen = selectedDashboardIDs.includes(tasksPaneID);
   const agentsOpen = selectedDashboardIDs.includes(agentsPaneID);
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -1098,6 +1115,7 @@ export function App({
       setTerminalScrollSensitivityDraft(String(loaded.terminalScrollSensitivity));
       setTerminalOptionAsAltDraft(loaded.terminalOptionAsAlt);
       setAgentSummaryProviderDraft(loaded.agentSummaryProvider);
+      setAgentSummaryOpenAIEffortDraft(loaded.agentSummaryOpenAIEffort ?? "low");
       setAgentSummaryPromptDraft(loaded.agentSummaryPrompt);
     }).catch((error: unknown) => {
       if (active) {
@@ -2629,6 +2647,7 @@ export function App({
     setTerminalScrollSensitivityDraft(String(settings.terminalScrollSensitivity));
     setTerminalOptionAsAltDraft(settings.terminalOptionAsAlt);
     setAgentSummaryProviderDraft(settings.agentSummaryProvider);
+    setAgentSummaryOpenAIEffortDraft(settings.agentSummaryOpenAIEffort ?? "low");
     setAgentSummaryPromptDraft(settings.agentSummaryPrompt);
     setFontSizeDrafts({
       interfaceFontSize: String(settings.interfaceFontSize),
@@ -2744,6 +2763,7 @@ export function App({
       terminalScrollSensitivity,
       terminalOptionAsAlt: terminalOptionAsAltDraft,
       agentSummaryProvider: agentSummaryProviderDraft,
+      agentSummaryOpenAIEffort: agentSummaryOpenAIEffortDraft as Settings["agentSummaryOpenAIEffort"],
       agentSummaryPrompt: agentSummaryPromptDraft,
     });
     setSettingsOpen(false);
@@ -2980,6 +3000,29 @@ export function App({
     }
   }
 
+  async function chooseAgentSummaryOption(id: string, optionID: string): Promise<AgentSummary> {
+    if (!api) throw new Error("The Inbox is not connected.");
+    const snapshot = agentSummaries.find((item) => item.terminalId === id);
+    setAutomationLockedIDs((current) => new Set(current).add(id));
+    try {
+      const summary = await api.executeAgentSummaryOption(id, optionID);
+      bumpAgentSummaryRevision(id);
+      setAgentSummaries((current) => current.map((item) => {
+        if (item.terminalId !== id) return item;
+        if (snapshot && !agentSummaryMatchesSnapshot(item, snapshot)) return item;
+        return summary;
+      }));
+      return summary;
+    } finally {
+      setAutomationLockedIDs((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   if (!token) {
     return (
       <main className="auth-shell">
@@ -3055,7 +3098,7 @@ export function App({
   if (agentsOpen) {
     dashboardPanes.push({
       id: agentsPaneID,
-      label: "Agents pane",
+      label: "Inbox pane",
       content: (
         <AgentsView
           summaries={agentSummaries}
@@ -3066,6 +3109,7 @@ export function App({
           onSelectSession={openAgentTerminal}
           onRefresh={refreshAgentSummaries}
           onMarkDone={markAgentSummaryDone}
+          onChooseOption={chooseAgentSummaryOption}
         />
       ),
     });
@@ -3086,6 +3130,7 @@ export function App({
           annotationRevision={
             syncSelection && syncEvents ? annotationRevision : null
           }
+          automationLocked={automationLockedIDs.has(pane.id)}
           onDeselect={() => selectSession(pane.id, true, true, false)}
           renderTerminal={(paneLayoutVersion, terminalActive, sourceVisible) =>
             renderTerminal(
@@ -3104,6 +3149,7 @@ export function App({
               previewSettings.terminalCursorBlink,
               previewSettings.terminalScrollSensitivity,
               previewSettings.terminalOptionAsAlt,
+              automationLockedIDs.has(pane.id),
             )
           }
         />
@@ -3618,13 +3664,41 @@ export function App({
                     setAgentSummaryProviderDraft(event.target.value as Settings["agentSummaryProvider"])
                   }
                 >
+                  <option value="openai">OpenAI · GPT-5.6-luna</option>
                   <option value="claude">Claude · Haiku</option>
                   <option value="codex">Codex · GPT-5.6-luna</option>
                 </select>
                 <FieldDescription>
-                  Generate agent summaries with the selected command-line model.
+                  Generate agent summaries with OpenAI Responses or the selected CLI provider.
                 </FieldDescription>
               </Field>
+              {agentSummaryProviderDraft === "openai" && (
+                <Field>
+                  <FieldLabel htmlFor="agentSummaryOpenAIEffort">
+                    OpenAI reasoning effort
+                  </FieldLabel>
+                  <select
+                    id="agentSummaryOpenAIEffort"
+                    name="agentSummaryOpenAIEffort"
+                    aria-label="OpenAI reasoning effort"
+                    className="settings-select"
+                    value={agentSummaryOpenAIEffortDraft}
+                    onChange={(event) => setAgentSummaryOpenAIEffortDraft(
+                      event.target.value as NonNullable<Settings["agentSummaryOpenAIEffort"]>,
+                    )}
+                  >
+                    <option value="none">None</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">Xhigh</option>
+                    <option value="max">Max</option>
+                  </select>
+                  <FieldDescription>
+                    Set the GPT-5.6 reasoning effort used by OpenAI summaries.
+                  </FieldDescription>
+                </Field>
+              )}
               <Field>
                 <FieldLabel htmlFor="agentSummaryPrompt">
                   Additional summary instructions

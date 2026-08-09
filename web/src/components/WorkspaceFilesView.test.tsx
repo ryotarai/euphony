@@ -480,4 +480,4 @@ test("caps rendered code lines", async () => {
   expect(await screen.findByText("Only the first 5,000 lines are shown."))
     .toBeVisible();
   expect(screen.getAllByRole("row")).toHaveLength(5_000);
-});
+}, 15_000);

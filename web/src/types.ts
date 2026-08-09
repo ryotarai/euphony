@@ -18,8 +18,15 @@ export interface Session {
   message?: string;
 }
 
-export type AgentSummaryProvider = "claude" | "codex";
+export type AgentSummaryProvider = "openai" | "codex" | "claude";
+export type AgentSummaryOpenAIEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type AgentSummaryPriority = "high" | "medium" | "low";
+
+export interface AgentSummaryOption {
+  id?: string;
+  label: string;
+  input?: string;
+}
 
 export interface AgentSummary {
   terminalId: string;
@@ -28,6 +35,7 @@ export interface AgentSummary {
   summary: string;
   action?: string;
   priority?: AgentSummaryPriority;
+  options?: AgentSummaryOption[];
   generatedAt: string;
   unread: boolean;
   done?: boolean;
@@ -115,6 +123,7 @@ export interface Settings {
   terminalScrollSensitivity: number;
   terminalOptionAsAlt: boolean;
   agentSummaryProvider: AgentSummaryProvider;
+  agentSummaryOpenAIEffort?: AgentSummaryOpenAIEffort;
   agentSummaryPrompt: string;
 }
 

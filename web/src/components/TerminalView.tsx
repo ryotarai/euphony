@@ -80,6 +80,7 @@ interface TerminalViewProps {
   cursorBlink?: boolean;
   scrollSensitivity?: number;
   optionAsAlt?: boolean;
+  locked?: boolean;
   onConnectionChange?(sessionID: string, state: ConnectionState): void;
   createTerminal?: (
     fontFamily: string,
@@ -327,6 +328,7 @@ interface TerminalViewHookProps {
   cursorBlink: boolean;
   scrollSensitivity: number;
   optionAsAlt: boolean;
+  locked: boolean;
   onConnectionChange?: (sessionID: string, state: ConnectionState) => void;
   createTerminal: NonNullable<TerminalViewProps["createTerminal"]>;
   createSocket: NonNullable<TerminalViewProps["createSocket"]>;
@@ -367,6 +369,7 @@ function useTerminalView({
   cursorBlink,
   scrollSensitivity,
   optionAsAlt,
+  locked,
   onConnectionChange,
   createTerminal,
   createSocket,
@@ -375,6 +378,7 @@ function useTerminalView({
   const terminalRef = useRef<TerminalDriver | null>(null);
   const capacityReporterRef = useRef<() => void>(() => undefined);
   const activeRef = useRef(active);
+  const lockedRef = useRef(locked);
   const sourceVisibleRef = useRef(sourceVisible);
   const sessionCwdRef = useRef(session.cwd);
   const terminalHistoryLimitRef = useRef(terminalHistoryLimit);
@@ -392,10 +396,11 @@ function useTerminalView({
 
   useLayoutEffect(() => {
     activeRef.current = active;
+    lockedRef.current = locked;
     sourceVisibleRef.current = sourceVisible;
     sessionCwdRef.current = session.cwd;
     terminalHistoryLimitRef.current = terminalHistoryLimit;
-  }, [active, session.cwd, sourceVisible, terminalHistoryLimit]);
+  }, [active, locked, session.cwd, sourceVisible, terminalHistoryLimit]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -461,6 +466,11 @@ function useTerminalView({
       return false;
     };
     terminal.attachCustomWheelEventHandler?.((event) => {
+      if (lockedRef.current) {
+        event.preventDefault();
+        partialWheelScroll.value = 0;
+        return false;
+      }
       const data = alternateBufferWheelInput(
         event,
         terminal,
@@ -557,6 +567,10 @@ function useTerminalView({
       }
     };
     terminal.attachCustomKeyEventHandler?.((event) => {
+      if (lockedRef.current) {
+        event.preventDefault();
+        return false;
+      }
       if (event.type !== "keydown" || event.isComposing || event.keyCode === 229) return true;
       if (event.key !== "Enter" || !event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
         return true;
@@ -566,7 +580,7 @@ function useTerminalView({
       return false;
     });
     const removeData = terminal.onData((data) => {
-      if (replayingHistory) return;
+      if (replayingHistory || lockedRef.current) return;
       outputBatcher.noteInput();
       send({ type: "input", data });
     });
@@ -825,6 +839,7 @@ export function TerminalView({
   cursorBlink = defaultTerminalCursorBlink,
   scrollSensitivity = defaultTerminalScrollSensitivity,
   optionAsAlt = defaultTerminalOptionAsAlt,
+  locked = false,
   onConnectionChange,
   createTerminal = defaultTerminal,
   createSocket = defaultSocket,
@@ -845,6 +860,7 @@ export function TerminalView({
       cursorBlink,
       scrollSensitivity,
       optionAsAlt,
+      locked,
       onConnectionChange,
       createTerminal,
       createSocket,
@@ -871,7 +887,13 @@ export function TerminalView({
       data-local-rows={localSize?.rows}
       data-shared-cols={sharedSize?.cols}
       data-shared-rows={sharedSize?.rows}
+      data-locked={locked ? "true" : "false"}
     >
+      {locked && (
+        <div className="terminal-automation-lock" role="status">
+          Inbox is controlling this terminal
+        </div>
+      )}
       <div
         className="terminal-host"
         ref={hostRef}

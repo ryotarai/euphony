@@ -105,7 +105,7 @@ test("places Tasks above Agents and opens each workspace dashboard", async () =>
     .closest('[data-slot="sidebar-content"]') as HTMLElement | null;
   expect(terminalTree).not.toBeNull();
   const tasks = within(terminalTree!).getByRole("button", { name: /Tasks/ });
-  const agents = within(terminalTree!).getByRole("button", { name: /Agents/ });
+  const agents = within(terminalTree!).getByRole("button", { name: "Inbox" });
   expect(agents).toHaveTextContent("2");
   expect(tasks).toHaveTextContent("3");
   expect(within(terminalTree!).getAllByRole("button")[0]).toBe(tasks);
@@ -134,7 +134,7 @@ test("treats Tasks and Agents as selectable panes with checkboxes", async () => 
   );
 
   const tasksCheckbox = screen.getByRole("checkbox", { name: "Include Tasks in split" });
-  const agentsCheckbox = screen.getByRole("checkbox", { name: "Include Agents in split" });
+  const agentsCheckbox = screen.getByRole("checkbox", { name: "Include Inbox in split" });
   expect(tasksCheckbox).toHaveAttribute("aria-checked", "false");
   expect(agentsCheckbox).toHaveAttribute("aria-checked", "false");
 

@@ -65,6 +65,16 @@ export class ApiClient {
     });
   }
 
+  executeAgentSummaryOption(id: string, optionID: string): Promise<AgentSummary> {
+    return this.request(
+      `/api/agent-summaries/${encodeURIComponent(id)}/options/${encodeURIComponent(optionID)}/execute`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    );
+  }
+
   listTasks(): Promise<Task[]> {
     return this.request("/api/tasks");
   }

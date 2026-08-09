@@ -33,8 +33,14 @@ interface TerminalPaneProps {
   tabShortcut: string;
   agentLogFontSize?: number;
   annotationRevision?: number | null;
+  automationLocked?: boolean;
   onDeselect: () => void;
-  renderTerminal(layoutVersion: number, active: boolean, sourceVisible: boolean): ReactNode;
+  renderTerminal(
+    layoutVersion: number,
+    active: boolean,
+    sourceVisible: boolean,
+    automationLocked?: boolean,
+  ): ReactNode;
 }
 
 type PaneSource = "terminal" | "agent-log" | "changes" | "files" | "annotation";
@@ -54,6 +60,7 @@ export function TerminalPane({
   tabShortcut,
   agentLogFontSize = 14,
   annotationRevision = null,
+  automationLocked = false,
   onDeselect,
   renderTerminal,
 }: TerminalPaneProps) {
@@ -305,6 +312,7 @@ export function TerminalPane({
         changeSource(next);
       }}
       data-agent={session.agent || "none"}
+      data-automation-locked={automationLocked ? "true" : "false"}
     >
       <div className="terminal-tab-rail">
         <TabsList variant="line" aria-label={`${session.name} sources`}>
@@ -392,6 +400,7 @@ export function TerminalPane({
               secondarySource === null &&
               !suppressTerminalFocus,
             sourceIsVisible("terminal"),
+            automationLocked,
           )}
         </TabsContent>
         <TabsContent

@@ -1259,6 +1259,7 @@ test("does not commit a render when measured capacity is unchanged", async () =>
   );
   await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
   act(() => socket.dispatchEvent(new Event("open")));
+  act(() => socket.receive({ type: "resize", cols: 80, rows: 24 }));
   await waitFor(() =>
     expect(screen.getByLabelText("Codex terminal").parentElement)
       .toHaveAttribute("data-local-cols", "100")
@@ -1783,6 +1784,102 @@ test("sends LF for Shift+Enter without submitting the prompt", async () => {
   });
   expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
     { type: "input", data: "\n" },
+  ]);
+});
+
+test("suppresses locked keyboard, paste, and alternate-buffer wheel input while rendering output", async () => {
+  const socket = new FakeSocket();
+  const writes: Array<string | Uint8Array> = [];
+  let onData: ((data: string) => void) | undefined;
+  let keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
+  let wheelHandler: ((event: WheelEvent) => boolean) | undefined;
+  const terminal: TerminalDriver & {
+    activeBufferType: "alternate";
+    mouseTrackingMode: "none";
+    applicationCursorKeysMode: boolean;
+    cellHeight: number;
+    input: ReturnType<typeof vi.fn>;
+  } = {
+    open: () => undefined,
+    write: (data) => writes.push(data),
+    focus: () => undefined,
+    fit: () => undefined,
+    activeBufferType: "alternate",
+    mouseTrackingMode: "none",
+    applicationCursorKeysMode: false,
+    cellHeight: 16,
+    input: vi.fn((_: string) => undefined),
+    attachCustomKeyEventHandler: (handler) => {
+      keyHandler = handler;
+    },
+    attachCustomWheelEventHandler: (handler) => {
+      wheelHandler = handler;
+    },
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: (callback) => {
+      onData = callback;
+      return () => undefined;
+    },
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = { createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }) } as unknown as ApiClient;
+  const createTerminal = vi.fn(() => terminal);
+  const createSocket = vi.fn(() => socket);
+
+  const { rerender } = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      locked
+      createTerminal={createTerminal}
+      createSocket={createSocket}
+    />,
+  );
+  await waitFor(() => expect(api.createTicket).toHaveBeenCalled());
+  act(() => socket.dispatchEvent(new Event("open")));
+  act(() => socket.receive({ type: "resize", cols: 80, rows: 24 }));
+
+  const keyEvent = new KeyboardEvent("keydown", { key: "a" });
+  const preventKey = vi.spyOn(keyEvent, "preventDefault");
+  act(() => {
+    expect(keyHandler?.(keyEvent)).toBe(false);
+    onData?.("pasted input");
+  });
+  const preventWheel = vi.fn();
+  const wheelEvent = {
+    deltaY: 120,
+    deltaMode: WheelEvent.DOM_DELTA_LINE,
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    preventDefault: preventWheel,
+  } as unknown as WheelEvent;
+  act(() => expect(wheelHandler?.(wheelEvent)).toBe(false));
+  act(() => socket.receive({ type: "output", data: encodeTerminalData("agent output") }));
+  await waitFor(() => expect(writes.map(terminalText)).toContain("agent output"));
+
+  expect(preventKey).toHaveBeenCalledOnce();
+  expect(preventWheel).toHaveBeenCalledOnce();
+  expect(terminal.input).not.toHaveBeenCalled();
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([]);
+  expect(screen.getByText("Inbox is controlling this terminal")).toBeInTheDocument();
+
+  rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      locked={false}
+      createTerminal={createTerminal}
+      createSocket={createSocket}
+    />,
+  );
+  act(() => onData?.("normal input"));
+  expect(screen.queryByText("Inbox is controlling this terminal")).not.toBeInTheDocument();
+  expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+    { type: "input", data: "normal input" },
   ]);
 });
 

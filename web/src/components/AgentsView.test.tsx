@@ -256,3 +256,70 @@ test("renders loading, error, and empty section states", () => {
   expect(within(screen.getByRole("region", { name: "Action required" })).getByText("No actions require attention.")).toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Running" })).getByText("No agents are running.")).toBeInTheDocument();
 });
+
+test("renders Inbox sections with provider labels and structured action choices", () => {
+  const structuredSummaries = summaries.map((summary) => (
+    summary.terminalId === "high-terminal"
+      ? {
+        ...summary,
+        provider: "openai" as const,
+        options: [
+          { id: "option-1", label: "Allow access" },
+          { id: "option-2", label: "Keep waiting" },
+        ],
+      }
+      : summary
+  ));
+
+  renderAgents({ summaries: structuredSummaries });
+
+  expect(screen.getByRole("heading", { name: "Inbox" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Needs your action" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Agent updates" })).toBeInTheDocument();
+  expect(screen.getByText("OpenAI · GPT-5.6-luna")).toBeInTheDocument();
+  expect(screen.getByText("Codex · GPT-5.6-luna")).toBeInTheDocument();
+  expect(screen.getAllByText("Claude · Haiku").length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Allow access" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Keep waiting" })).toBeInTheDocument();
+  expect(screen.getByText("Approve the requested file access.")).toBeInTheDocument();
+});
+
+test("activates an Inbox option with the keyboard and moves the row to Done", async () => {
+  const user = userEvent.setup();
+  const onChooseOption = vi.fn().mockResolvedValue(undefined);
+  const structuredSummary = {
+    ...summaries.find((summary) => summary.terminalId === "high-terminal")!,
+    options: [{ id: "option-1", label: "Allow access" }],
+  };
+  renderAgents({ summaries: [structuredSummary], onChooseOption });
+
+  const option = screen.getByRole("button", { name: "Allow access" });
+  option.focus();
+  await user.keyboard("{Enter}");
+
+  expect(onChooseOption).toHaveBeenCalledWith("high-terminal", "option-1");
+  await waitFor(() => {
+    expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+  expect(screen.getByText("The agent needs permission to edit the API.")).toBeInTheDocument();
+});
+
+test("keeps a structured Inbox row actionable and reports option failures", async () => {
+  const user = userEvent.setup();
+  const onChooseOption = vi.fn().mockRejectedValue(new Error("The terminal is busy."));
+  const structuredSummary = {
+    ...summaries.find((summary) => summary.terminalId === "high-terminal")!,
+    options: [{ id: "option-1", label: "Allow access" }],
+  };
+  renderAgents({ summaries: [structuredSummary], onChooseOption });
+
+  const option = screen.getByRole("button", { name: "Allow access" });
+  await user.click(option);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("The terminal is busy.");
+  expect(option).not.toBeDisabled();
+  expect(screen.getByRole("heading", { name: "Needs your action" })).toBeInTheDocument();
+});

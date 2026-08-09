@@ -300,7 +300,7 @@ function SessionNavigationContent({
   const mobileTitle = props.focusedPaneID === "tasks"
     ? "Tasks"
     : props.focusedPaneID === "agents"
-      ? "Agents"
+      ? "Inbox"
       : selected
         ? sessionLabel(selected)
         : "Euphony";
@@ -472,7 +472,7 @@ function SessionNavigationContent({
             <SidebarMenuItem className="workspace-channel">
               <Checkbox
                 className="pane-checkbox workspace-pane-checkbox"
-                aria-label="Include Agents in split"
+                aria-label="Include Inbox in split"
                 checked={props.agentsOpen ?? false}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -482,16 +482,16 @@ function SessionNavigationContent({
               <SidebarMenuButton
                 className="workspace-select"
                 type="button"
-                tooltip="Agents"
+                tooltip="Inbox"
                 isActive={props.agentsOpen && props.focusedPaneID === "agents"}
                 aria-current={
                   props.agentsOpen && props.focusedPaneID === "agents" ? "page" : undefined
                 }
-                aria-label="Agents"
+                aria-label="Inbox"
                 onClick={openAgents}
               >
                 <BotIcon aria-hidden="true" />
-                <span>Agents</span>
+                <span>Inbox</span>
                 {(props.agentSummaryCount ?? 0) > 0 && (
                   <span className="sidebar-attention-count" aria-hidden="true">
                     {props.agentSummaryCount}
@@ -583,6 +583,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalScrollSensitivity: defaultTerminalScrollSensitivity,
     terminalOptionAsAlt: defaultTerminalOptionAsAlt,
     agentSummaryProvider: "codex",
+    agentSummaryOpenAIEffort: "low",
     agentSummaryPrompt: "",
   };
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebarWidth);
