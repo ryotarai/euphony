@@ -284,6 +284,24 @@ test("renders Inbox sections with provider labels and structured action choices"
   expect(screen.getByText("Approve the requested file access.")).toBeInTheDocument();
 });
 
+test("renders a Gmail-like list and detail split for Inbox selection", async () => {
+  const onSelectSummary = vi.fn();
+  const user = userEvent.setup();
+  renderAgents({
+    selectedSummaryID: "medium-terminal",
+    onSelectSummary,
+  });
+
+  const list = screen.getByRole("complementary", { name: "Inbox message list" });
+  const detail = screen.getByRole("region", { name: "Selected Inbox item" });
+  expect(within(list).getAllByRole("button", { name: /^Open / }).length).toBe(4);
+  expect(detail).toHaveTextContent("Summary · The agent is waiting for review.");
+  expect(list.querySelector(".agent-summary-copy")).toBeInTheDocument();
+
+  await user.click(within(list).getByRole("button", { name: "Open Permission request" }));
+  expect(onSelectSummary).toHaveBeenCalledWith("high-terminal", "push");
+});
+
 test("activates an Inbox option with the keyboard and moves the row to Done", async () => {
   const user = userEvent.setup();
   const onChooseOption = vi.fn().mockResolvedValue(undefined);

@@ -329,6 +329,23 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
       }]),
     });
   });
+  await page.route(`**/api/agent-summaries/${agent.id}/read`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        terminalId: agent.id,
+        provider: "claude",
+        status: "waiting",
+        summary: "The agent is waiting for approval.",
+        action: "Approve the requested change.",
+        priority: "high",
+        generatedAt: "2026-08-05T00:00:00Z",
+        unread: false,
+        done: false,
+      }),
+    });
+  });
   await page.route(`**/api/agent-summaries/${agent.id}/done`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -354,8 +371,11 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
   await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
   await expect(page.getByTestId("agent-summary-priority")).toHaveAttribute("data-priority", "high");
+  await expect(page).toHaveURL(/\/inbox\/[^/?#]+/);
 
   await page.getByRole("button", { name: "Open Needs approval" }).click();
+  await expect(page.getByRole("region", { name: "Selected Inbox item" })).toBeVisible();
+  await page.getByRole("button", { name: "Open terminal" }).click();
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
 
@@ -482,6 +502,7 @@ test("creates, refines, starts, and communicates through a task", async ({ page 
     updates: Array<unknown>;
   }>;
   expect(createdTask.title).toBe("Document the task workflow");
+  await expect(page).toHaveURL(new RegExp(`/tasks/${createdTask.id}`));
 
   await page.route("**/api/tasks/*/refine", async (route) => {
     await route.fulfill({

@@ -106,6 +106,11 @@ const agentsPaneID = "agents" as const;
 
 type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
 
+interface DashboardRoute {
+  pane: DashboardPaneID | null;
+  itemID: string | null;
+}
+
 function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSummary) {
   const summaryOptions = summary.options ?? [];
   const snapshotOptions = snapshot.options ?? [];
@@ -128,6 +133,46 @@ function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSumma
 
 function isDashboardPaneID(id: string | null): id is DashboardPaneID {
   return id === tasksPaneID || id === agentsPaneID;
+}
+
+function decodeDashboardItemID(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return decodeURIComponent(value) || null;
+  } catch {
+    return null;
+  }
+}
+
+function dashboardRouteFromURL(): DashboardRoute {
+  const segments = window.location.pathname.split("/").filter(Boolean);
+  const pane = segments[0] === "inbox"
+    ? agentsPaneID
+    : segments[0] === "tasks"
+      ? tasksPaneID
+      : null;
+  return {
+    pane,
+    itemID: pane ? decodeDashboardItemID(segments[1]) : null,
+  };
+}
+
+function dashboardPath(pane: DashboardPaneID, itemID: string | null = null): string {
+  const root = pane === agentsPaneID ? "/inbox" : "/tasks";
+  return itemID ? `${root}/${encodeURIComponent(itemID)}` : root;
+}
+
+function writeDashboardURL(
+  pane: DashboardPaneID,
+  itemID: string | null = null,
+  mode: "push" | "replace" = "push",
+) {
+  const url = `${dashboardPath(pane, itemID)}${window.location.search}${window.location.hash}`;
+  window.history[mode === "push" ? "pushState" : "replaceState"](
+    window.history.state,
+    "",
+    url,
+  );
 }
 
 interface AppProps {
@@ -391,6 +436,7 @@ function writeWorkspaceURL(
   mode: "push" | "replace" = "push",
   pinnedStatusFilters: string[] = [],
   pinnedCwdFilters: string[] = [],
+  pathname = window.location.pathname,
 ) {
   const parameters = new URLSearchParams(window.location.search);
   parameters.delete("session");
@@ -410,7 +456,7 @@ function writeWorkspaceURL(
   if (focusedID) parameters.set("focus", focusedID);
   else parameters.delete("focus");
   const query = parameters.toString();
-  const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  const url = `${pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history[mode === "push" ? "pushState" : "replaceState"](window.history.state, "", url);
 }
 
@@ -460,6 +506,7 @@ export function App({
     />
   ),
 }: AppProps) {
+  const initialDashboardRoute = dashboardRouteFromURL();
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
@@ -475,19 +522,29 @@ export function App({
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedDashboardIDs, setSelectedDashboardIDs] = useState<DashboardPaneID[]>([]);
-  const [focusedPaneID, setFocusedPaneID] = useState<string | null>(null);
+  const [selectedDashboardIDs, setSelectedDashboardIDs] = useState<DashboardPaneID[]>(
+    () => initialDashboardRoute.pane ? [initialDashboardRoute.pane] : [],
+  );
+  const [focusedPaneID, setFocusedPaneID] = useState<string | null>(
+    () => initialDashboardRoute.pane,
+  );
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState("");
-  const [selectedTaskID, setSelectedTaskID] = useState<string | null>(null);
+  const [selectedTaskID, setSelectedTaskID] = useState<string | null>(
+    () => initialDashboardRoute.pane === tasksPaneID ? initialDashboardRoute.itemID : null,
+  );
   const [taskRefinement, setTaskRefinement] = useState<TaskRefinement | null>(null);
   const [taskRefining, setTaskRefining] = useState(false);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
   const [agentSummariesError, setAgentSummariesError] = useState("");
   const [agentSummariesRefreshing, setAgentSummariesRefreshing] = useState(false);
+  const [selectedAgentSummaryID, setSelectedAgentSummaryID] = useState<string | null>(
+    () => initialDashboardRoute.pane === agentsPaneID ? initialDashboardRoute.itemID : null,
+  );
   const agentSummariesLoadedForApiRef = useRef<ApiClient | null>(null);
+  const agentSummaryReadInFlightRef = useRef(new Set<string>());
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
@@ -796,6 +853,7 @@ export function App({
       mode: "push" | "replace" = "push",
       nextPinnedStatusFilters: string[] = pinnedStatusFilters,
       nextPinnedCwdFilters: string[] = pinnedCwdFilters,
+      pathname = window.location.pathname,
     ) => {
       writeWorkspaceURL(
         nextSelectedIDs,
@@ -806,6 +864,7 @@ export function App({
         mode,
         nextPinnedStatusFilters,
         nextPinnedCwdFilters,
+        pathname,
       );
     },
     [pinnedCwdFilters, pinnedStatusFilters],
@@ -1150,9 +1209,42 @@ export function App({
   }, [agentsOpen, api, loadAgentSummaries]);
 
   useEffect(() => {
+    if (!agentsOpen || !sessions || agentSummaries.length === 0) return;
+    const route = dashboardRouteFromURL();
+    if (route.pane !== agentsPaneID) return;
+    const availableTerminalIDs = new Set(sessions.map((session) => session.id));
+    const availableSummaries = agentSummaries.filter((summary) =>
+      availableTerminalIDs.has(summary.terminalId),
+    );
+    const nextSummaryID = selectedAgentSummaryID && availableSummaries.some(
+      (summary) => summary.terminalId === selectedAgentSummaryID,
+    )
+      ? selectedAgentSummaryID
+      : availableSummaries[0]?.terminalId ?? null;
+    if (!nextSummaryID) return;
+    if (nextSummaryID !== selectedAgentSummaryID) setSelectedAgentSummaryID(nextSummaryID);
+    if (route.itemID !== nextSummaryID) {
+      writeDashboardURL(agentsPaneID, nextSummaryID, "replace");
+    }
+  }, [agentSummaries, agentsOpen, selectedAgentSummaryID, sessions]);
+
+  useEffect(() => {
     if (!tasksOpen || !api) return;
     void loadTasks();
   }, [tasksOpen, api, loadTasks]);
+
+  useEffect(() => {
+    if (!tasksOpen || tasks.length === 0) return;
+    const route = dashboardRouteFromURL();
+    if (route.pane !== tasksPaneID) return;
+    const nextTaskID = selectedTaskID && tasks.some((task) => task.id === selectedTaskID)
+      ? selectedTaskID
+      : tasks[0]?.id ?? null;
+    if (nextTaskID !== selectedTaskID) setSelectedTaskID(nextTaskID);
+    if (nextTaskID && route.itemID !== nextTaskID) {
+      writeDashboardURL(tasksPaneID, nextTaskID, "replace");
+    }
+  }, [selectedTaskID, tasks, tasksOpen]);
 
   useEffect(() => {
     if (!api) {
@@ -1831,6 +1923,12 @@ export function App({
   useEffect(() => {
     if (!sessions) return;
     const restore = () => {
+      const route = dashboardRouteFromURL();
+      setSelectedDashboardIDs(route.pane ? [route.pane] : []);
+      setFocusedPaneID(route.pane);
+      setSelectedTaskID(route.pane === tasksPaneID ? route.itemID : null);
+      setSelectedAgentSummaryID(route.pane === agentsPaneID ? route.itemID : null);
+      setTaskRefinement(null);
       if (syncSelection) {
         writeWorkspaceURL(
           selectedIDs,
@@ -2103,6 +2201,7 @@ export function App({
       "push",
       pinnedStatusFilters,
       pinnedCwdFilters,
+      multiple ? window.location.pathname : "/",
     );
   }
 
@@ -2384,12 +2483,26 @@ export function App({
     markLocalSelectionMutation();
     setFocusedID(id);
     setFocusedPaneID(null);
-    writeWorkspaceToURL(selectedIDs, pinnedIDs, id, statusFilters, cwdFilters);
+    writeWorkspaceToURL(
+      selectedIDs,
+      pinnedIDs,
+      id,
+      statusFilters,
+      cwdFilters,
+      "push",
+      pinnedStatusFilters,
+      pinnedCwdFilters,
+      "/",
+    );
   }
 
   function focusWorkspacePane(id: string) {
     if (isDashboardPaneID(id)) {
       setFocusedPaneID(id);
+      writeDashboardURL(
+        id,
+        id === tasksPaneID ? selectedTaskID : selectedAgentSummaryID,
+      );
       return;
     }
     focusPane(id);
@@ -2822,6 +2935,10 @@ export function App({
         "push",
         pinnedStatusFilters,
         pinnedCwdFilters,
+        dashboardPath(
+          id,
+          id === tasksPaneID ? selectedTaskID : selectedAgentSummaryID,
+        ),
       );
       return;
     }
@@ -2844,7 +2961,17 @@ export function App({
     const nextTerminalFocus = isDashboardPaneID(nextFocus)
       ? focusedID
       : nextFocus;
-    if (nextTerminalFocus !== focusedID) {
+    const nextPathname = isDashboardPaneID(nextFocus)
+      ? dashboardPath(
+        nextFocus,
+        nextFocus === tasksPaneID ? selectedTaskID : selectedAgentSummaryID,
+      )
+      : "/";
+    if (
+      nextTerminalFocus !== focusedID ||
+      isDashboardPaneID(nextFocus) ||
+      dashboardRouteFromURL().pane !== null
+    ) {
       markLocalSelectionMutation();
       setFocusedID(nextTerminalFocus);
       writeWorkspaceToURL(
@@ -2853,6 +2980,10 @@ export function App({
         nextTerminalFocus,
         statusFilters,
         cwdFilters,
+        "push",
+        pinnedStatusFilters,
+        pinnedCwdFilters,
+        nextPathname,
       );
     }
     setSelectedDashboardIDs(nextDashboardIDs);
@@ -2867,9 +2998,40 @@ export function App({
     selectDashboardPane(agentsPaneID, multiple);
   }
 
-  function selectTask(id: string) {
+  async function markAgentSummaryRead(id: string) {
+    const snapshot = agentSummaries.find((item) => item.terminalId === id);
+    if (!api || !snapshot?.unread || agentSummaryReadInFlightRef.current.has(id)) return;
+    agentSummaryReadInFlightRef.current.add(id);
+    try {
+      const summary = await api.markAgentSummaryRead(id);
+      bumpAgentSummaryRevision(id);
+      setAgentSummaries((current) => current.map((item) => {
+        if (item.terminalId !== id) return item;
+        if (!agentSummaryMatchesSnapshot(item, snapshot)) return item;
+        return summary;
+      }));
+      setAgentSummariesError("");
+    } catch (error) {
+      setAgentSummariesError(
+        error instanceof Error
+          ? error.message
+          : "The agent summary could not be marked as read.",
+      );
+    } finally {
+      agentSummaryReadInFlightRef.current.delete(id);
+    }
+  }
+
+  function selectAgentSummary(id: string, mode: "push" | "replace" = "push") {
+    setSelectedAgentSummaryID(id);
+    writeDashboardURL(agentsPaneID, id, mode);
+    void markAgentSummaryRead(id);
+  }
+
+  function selectTask(id: string, mode: "push" | "replace" = "push") {
     setSelectedTaskID(id);
     setTaskRefinement(null);
+    writeDashboardURL(tasksPaneID, id, mode);
   }
 
   async function createTask(input: TaskCreateInput) {
@@ -2877,7 +3039,7 @@ export function App({
     try {
       const created = await api.createTask(input);
       replaceTask(created);
-      setSelectedTaskID(created.id);
+      selectTask(created.id);
       setTasksError("");
     } catch (error) {
       setTasksError(error instanceof Error ? error.message : "Task could not be created.");
@@ -2899,7 +3061,13 @@ export function App({
     try {
       await api.deleteTask(id);
       setTasks((current) => current.filter((task) => task.id !== id));
-      setSelectedTaskID((current) => (current === id ? null : current));
+      if (selectedTaskID === id) {
+        const nextTaskID = tasks.find((task) => task.id !== id)?.id ?? null;
+        setSelectedTaskID(nextTaskID);
+        if (dashboardRouteFromURL().pane === tasksPaneID) {
+          writeDashboardURL(tasksPaneID, nextTaskID, "replace");
+        }
+      }
       setTaskRefinement(null);
       setTasksError("");
     } catch (error) {
@@ -2961,27 +3129,7 @@ export function App({
   }
 
   async function openAgentTerminal(id: string) {
-    const snapshot = agentSummaries.find((item) => item.terminalId === id);
-    if (api) {
-      try {
-        const summary = await api.markAgentSummaryRead(id);
-        bumpAgentSummaryRevision(id);
-        setAgentSummaries((current) =>
-          current.map((item) => {
-            if (item.terminalId !== id) return item;
-            if (snapshot && !agentSummaryMatchesSnapshot(item, snapshot)) return item;
-            return summary;
-          }),
-        );
-        setAgentSummariesError("");
-      } catch (error) {
-        setAgentSummariesError(
-          error instanceof Error
-            ? error.message
-            : "The agent summary could not be marked as read.",
-        );
-      }
-    }
+    await markAgentSummaryRead(id);
     selectSession(id, false);
   }
 
@@ -3124,9 +3272,11 @@ export function App({
         <AgentsView
           summaries={agentSummaries}
           sessions={sessions}
+          selectedSummaryID={selectedAgentSummaryID}
           loading={agentSummariesLoading}
           error={agentSummariesError}
           refreshing={agentSummariesRefreshing}
+          onSelectSummary={selectAgentSummary}
           onSelectSession={openAgentTerminal}
           onRefresh={refreshAgentSummaries}
           onMarkDone={markAgentSummaryDone}

@@ -17,8 +17,9 @@ and have Euphony safely deliver that response to the linked terminal.
 - Action rows show the AI-generated action plus one to four labeled options.
   Selecting an option asks the selected provider AI to inspect the linked
   terminal screen and derive the exact input sequence for that choice.
-- A legacy action without options keeps its existing `Open terminal` behavior
-  until the next structured summary refresh supplies options.
+- Selecting a message keeps the user in Inbox and opens its detail pane. The
+  detail pane always provides `Open terminal`; structured actions additionally
+  expose one to four response options and a `Mark done` control.
 - A successful option selection marks the summary read and done and moves it to
   the existing Done view. A failed selection leaves the item actionable and
   shows an error.
@@ -71,29 +72,40 @@ response is sent as raw PTY bytes after the user selects the visible option
 label. The server normalizes option IDs as `option-1`, `option-2`, and so on
 before persistence.
 
+Printable terminal actions are normalized at the parser boundary: a missing
+line terminator receives `\r`, and a trailing `\n` is converted to `\r` so the
+generated command is submitted as an Enter keystroke. Raw control sequences
+remain unchanged.
+
 ## Visual direction
 
 The terminal-first near-black workspace becomes a quiet message room: dense
 rows, hairline separators, compact sender metadata, and one amber unread/action
-signal. The memorable device is the inline option rail at the bottom of an
-action row; it makes a decision feel like a mail reply rather than a separate
-control panel. There are no floating card mosaics.
+signal. The mailbox uses a Gmail-like two-column composition: one-line summary
+rows on the left and the selected message's action detail on the right. This
+keeps scanning separate from committing an action and avoids floating card
+mosaics.
 
 ```text
-┌ sidebar ┐  ┌ Inbox ─────────────────────────────────────────────────┐
-│ Inbox 3 │  │ INBOX                         3 need your attention   ↻ │
-│         │  ├─────────────────────────────────────────────────────────┤
-│ cwd/... │  │ NEEDS YOUR ACTION                                        │
-│ terminal│  │ ● Codex · Permission request                 09:42        │
-└─────────┘  │   The agent is waiting for access to the API folder.     │
-             │   Approve the requested file access.                     │
-             │   [Allow access] [Keep waiting]                          │
-             │                                                         │
-             │ AGENT UPDATES                                           │
-             │   Claude · Dashboard tests                    09:38      │
-             │   Updating the dashboard tests.                         │
-             └─────────────────────────────────────────────────────────┘
+┌ sidebar ┐  ┌ Inbox ───────────────┬ Selected message ───────────────┐
+│ Inbox 3 │  │ ACTION QUEUE      3  │ Agent update · Codex             │
+│         │  ├──────────────────────┤ Waiting · high · 09:42           │
+│ cwd/... │  │ ● Permission request │ Summary · Waiting for access...   │
+│ terminal│  │   Waiting for access… │ Next action                       │
+└─────────┘  │   Dashboard tests    │ Approve the requested file access.│
+             │   Updating tests…    │ [Allow access] [Keep waiting]     │
+             └──────────────────────┴──────────────────────────────────┘
 ```
+
+## Mailbox navigation
+
+- `/inbox` opens the Inbox and selects the first available message after the
+  summaries load. `/inbox/:terminalID` restores a specific message.
+- `/tasks` opens Tasks and `/tasks/:taskID` restores a specific task. Creating,
+  selecting, deleting, and replacing a task keep the URL in sync.
+- Browser history restores the selected dashboard pane and item without
+  changing the terminal query selection. Opening a terminal returns to the
+  terminal workspace URL while preserving the selected session state.
 
 ## Architecture
 
@@ -126,8 +138,8 @@ service, marks the summary done/read, publishes the normalized summary event,
 and returns the summary. No terminal input string is accepted from the browser
 or sent directly from the summary option.
 
-The React app adds `Inbox` labels, renders the message list and option buttons,
-tracks per-terminal automation state, and passes that state through
+The React app adds `Inbox` labels, renders the two-column message list and
+detail view with option buttons, tracks per-terminal automation state, and passes that state through
 `TerminalPane` to `TerminalView`. The API response replaces the matching
 summary using the existing revision/snapshot guard.
 
@@ -149,8 +161,9 @@ summary using the existing revision/snapshot guard.
 - Go tests cover schema parsing, all provider command/API requests, settings
   validation, option persistence/migration, action transitions, lock behavior,
   the option endpoint, and WebSocket input rejection while locked.
-- React tests cover Inbox message grouping, unread typography, options,
-  keyboard activation, provider labels, and terminal lock propagation.
+- React tests cover Inbox message grouping, the list/detail split, unread
+  typography, options, keyboard activation, provider labels, URL restoration,
+  and terminal lock propagation.
 - Playwright covers selecting an option, the Done transition, and the locked
   terminal state with deterministic API responses.
 - Run the full Go suite, focused Web tests, Web typecheck/build, and the

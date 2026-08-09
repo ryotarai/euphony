@@ -88,6 +88,36 @@ func TestParseTerminalActionValidatesStructuredInput(t *testing.T) {
 	}
 }
 
+func TestParseTerminalActionSubmitsPrintableInput(t *testing.T) {
+	got, err := ParseTerminalAction(`{"input":"git show --stat --oneline HEAD"}`)
+	if err != nil {
+		t.Fatalf("ParseTerminalAction() error = %v", err)
+	}
+	if got.Input != "git show --stat --oneline HEAD\r" {
+		t.Fatalf("ParseTerminalAction() input = %q, want a submitted command", got.Input)
+	}
+}
+
+func TestParseTerminalActionUsesCarriageReturnForLineFeedSubmission(t *testing.T) {
+	got, err := ParseTerminalAction(`{"input":"git status\n"}`)
+	if err != nil {
+		t.Fatalf("ParseTerminalAction() error = %v", err)
+	}
+	if got.Input != "git status\r" {
+		t.Fatalf("ParseTerminalAction() input = %q, want carriage-return submission", got.Input)
+	}
+}
+
+func TestParseTerminalActionPreservesControlInputWithoutAppendingEnter(t *testing.T) {
+	got, err := ParseTerminalAction(`{"input":"\u001b[A"}`)
+	if err != nil {
+		t.Fatalf("ParseTerminalAction() error = %v", err)
+	}
+	if got.Input != "\x1b[A" {
+		t.Fatalf("ParseTerminalAction() input = %q, want the original control sequence", got.Input)
+	}
+}
+
 func TestBuildPromptOmitsEmptyAdditionalInstructions(t *testing.T) {
 	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
 	prompt := BuildPrompt(metadata, nil, nil, "   \n\t")
@@ -289,7 +319,7 @@ func TestCommandRunnerOpenAITerminalActionUsesTheScreenAsPromptInput(t *testing.
 			t.Fatalf("decode terminal action request: %v", err)
 		}
 		requests <- request
-		_, _ = w.Write([]byte(`{"output_text":"{\"input\":\"y\\r\"}"}`))
+		_, _ = w.Write([]byte(`{"output_text":"{\"input\":\"git show --stat --oneline HEAD\"}"}`))
 	}))
 	defer server.Close()
 
@@ -302,8 +332,8 @@ func TestCommandRunnerOpenAITerminalActionUsesTheScreenAsPromptInput(t *testing.
 	if err != nil {
 		t.Fatalf("GenerateTerminalAction() error = %v", err)
 	}
-	if got.Input != "y\r" {
-		t.Fatalf("terminal action = %#v, want y\\r", got)
+	if got.Input != "git show --stat --oneline HEAD\r" {
+		t.Fatalf("terminal action = %#v, want a submitted command", got)
 	}
 	request := <-requests
 	if !strings.Contains(request["input"].(string), "permission prompt>") {

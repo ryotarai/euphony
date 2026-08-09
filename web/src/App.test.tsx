@@ -503,7 +503,7 @@ test("detects only new transitions into attention", () => {
   expect(attentionTransitions([attention], [attention])).toEqual([]);
 });
 
-test("opens the Agents dashboard and returns to the selected terminal", async () => {
+test("opens the Inbox and selects an agent detail without leaving the dashboard", async () => {
   const summary: AgentSummary = {
     terminalId: secondRunningSession.id,
     provider: "claude",
@@ -561,7 +561,8 @@ test("opens the Agents dashboard and returns to the selected terminal", async ()
   expect(screen.getByRole("heading", { name: "Action required" })).toBeVisible();
   expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
   releaseRead?.();
-  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  expect(screen.getByRole("region", { name: "Selected Inbox item" })).toBeVisible();
+  expect(window.location.pathname).toBe("/inbox/session-2");
 });
 
 test("executes an Inbox option, locks only its terminal, and reconciles Done", async () => {
@@ -997,6 +998,9 @@ test("retries the startup summary load when opening Agents after a failure", asy
       if (summaryRequestCount === 1) throw new Error("summary request failed");
       return jsonResponse([summary]);
     }
+    if (input === "/api/agent-summaries/session-1/read") {
+      return jsonResponse({ ...summary, unread: false });
+    }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
   const user = userEvent.setup();
@@ -1064,6 +1068,7 @@ test("keeps a failed agent read unread while still opening its terminal", async 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Inbox" }));
   await user.click(await screen.findByRole("button", { name: "Open Needs approval" }));
+  await user.click(screen.getByRole("button", { name: "Open terminal" }));
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Inbox" }));
@@ -1357,7 +1362,7 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
     status: "running",
     summary: "The old read summary.",
     generatedAt: "2026-08-05T00:00:00Z",
-    unread: false,
+    unread: true,
   };
   const unreadSummary: AgentSummary = {
     ...readSummary,
@@ -1450,6 +1455,7 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
     expect(screen.getByText(unreadSummary.summary)).toBeInTheDocument();
     expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
   });
+  await user.click(screen.getByRole("button", { name: "Open terminal" }));
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
   eventController?.close();
 });
@@ -1493,6 +1499,97 @@ test("opens the Tasks workspace, loads a task, and opens its linked terminal", a
 
   await user.click(screen.getByRole("button", { name: "Open terminal" }));
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+});
+
+test("restores a selected Inbox item from its URL", async () => {
+  history.replaceState(null, "", "/inbox/session-2");
+  const firstSummary: AgentSummary = {
+    terminalId: runningSession.id,
+    provider: "codex",
+    status: "running",
+    summary: "The first agent is updating the API.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const secondSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "waiting",
+    summary: "The second agent is waiting for approval.",
+    action: "Review the proposed route change.",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: false,
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession, secondRunningSession]);
+    if (input === "/api/agent-summaries") return jsonResponse([firstSummary, secondSummary]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByRole("heading", { name: "Inbox" })).toBeVisible();
+  expect(screen.getByText(secondSummary.summary)).toBeVisible();
+  expect(window.location.pathname).toBe("/inbox/session-2");
+
+  await user.click(screen.getByRole("button", { name: "Open Implement v0.2" }));
+  expect(window.location.pathname).toBe("/inbox/session-1");
+  expect(screen.getByText(firstSummary.summary)).toBeVisible();
+});
+
+test("restores and updates a selected Tasks item from its URL", async () => {
+  history.replaceState(null, "", "/tasks/task-2");
+  const firstTask: Task = {
+    id: "task-1",
+    title: "First task",
+    description: "Prepare the first change.",
+    priority: "medium",
+    status: "todo",
+    createdAt: "2026-08-05T00:00:00Z",
+    updatedAt: "2026-08-05T00:00:00Z",
+    updates: [],
+  };
+  const secondTask: Task = {
+    id: "task-2",
+    title: "Second task",
+    description: "Prepare the second change.",
+    priority: "high",
+    status: "in_progress",
+    createdAt: "2026-08-05T00:01:00Z",
+    updatedAt: "2026-08-05T00:01:00Z",
+    updates: [],
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/tasks") return jsonResponse([firstTask, secondTask]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
+  expect(await screen.findByDisplayValue(secondTask.title)).toBeVisible();
+  expect(window.location.pathname).toBe("/tasks/task-2");
+
+  await user.click(screen.getByRole("button", { name: "Open task First task" }));
+  expect(window.location.pathname).toBe("/tasks/task-1");
+  expect(screen.getByDisplayValue(firstTask.title)).toBeVisible();
 });
 
 test("switches from a selected workspace pane back to a terminal", async () => {

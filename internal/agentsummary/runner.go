@@ -464,10 +464,24 @@ func ParseTerminalAction(output string) (TerminalActionGeneration, error) {
 	if strings.IndexByte(generation.Input, 0) >= 0 {
 		return TerminalActionGeneration{}, errors.New("terminal action returned input containing NUL")
 	}
+	generation.Input = normalizeTerminalActionInput(generation.Input)
 	if len(generation.Input) > control.MaxTerminalInputBytes {
 		return TerminalActionGeneration{}, errors.New("terminal action returned input exceeding the limit")
 	}
 	return generation, nil
+}
+
+func normalizeTerminalActionInput(input string) string {
+	if strings.HasSuffix(input, "\r") {
+		return input
+	}
+	if strings.HasSuffix(input, "\n") {
+		return strings.TrimSuffix(input, "\n") + "\r"
+	}
+	if len(input) > 0 && input[0] < 0x20 && input[0] != '\t' {
+		return input
+	}
+	return input + "\r"
 }
 
 func extractJSONObject(output, source string) (string, error) {
