@@ -243,6 +243,9 @@ func writeTerminalControlError(w http.ResponseWriter, err error) {
 	case errors.Is(err, control.ErrTerminalBusy):
 		writeV1Error(w, http.StatusConflict, "terminal_busy",
 			"The terminal foreground is not an available shell.", nil)
+	case errors.Is(err, control.ErrTerminalLocked):
+		writeV1Error(w, http.StatusConflict, "terminal_locked",
+			"The terminal is being controlled by Inbox.", nil)
 	case errors.Is(err, control.ErrInvalidKey):
 		writeV1Error(w, http.StatusBadRequest, "invalid_key", err.Error(), nil)
 	case errors.Is(err, control.ErrInvalidInput):

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/ryotarai/euphony/internal/control"
 )
 
 type clientMessage struct {
@@ -217,6 +218,9 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 				if err != nil || len(data) == 0 {
 					invalidMessages++
 				} else if err := s.control.SendTerminalBytes(id, data); err != nil {
+					if errors.Is(err, control.ErrTerminalLocked) {
+						continue
+					}
 					return
 				} else if strings.ContainsAny(string(data), "\r\n") {
 					if cancelCWDRefresh != nil {

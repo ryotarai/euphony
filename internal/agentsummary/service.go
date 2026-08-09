@@ -248,12 +248,21 @@ func (s *Service) schedule(ctx context.Context, metadata session.Metadata) {
 }
 
 func (s *Service) generate(ctx context.Context, metadata session.Metadata) {
-	provider := s.sessions.Settings().AgentSummaryProvider
-	if provider != "claude" && provider != "codex" {
+	settings := s.sessions.Settings()
+	provider := settings.AgentSummaryProvider
+	if provider != "openai" && provider != "claude" && provider != "codex" {
 		provider = session.DefaultAgentSummaryProvider
 	}
 	prompt := s.promptFor(metadata)
-	generation, err := s.runner.Generate(ctx, provider, prompt)
+	var generation Generation
+	var err error
+	if effortRunner, ok := s.runner.(EffortRunner); ok {
+		generation, err = effortRunner.GenerateWithEffort(
+			ctx, provider, prompt, settings.AgentSummaryOpenAIEffort,
+		)
+	} else {
+		generation, err = s.runner.Generate(ctx, provider, prompt)
+	}
 	if ctx.Err() != nil {
 		s.finishInflight(ctx, metadata.ID)
 		return
@@ -265,19 +274,18 @@ func (s *Service) generate(ctx context.Context, metadata session.Metadata) {
 		})
 		return
 	}
-	generation.Summary = normalizeGeneratedText(generation.Summary, maxGeneratedSummaryRunes)
-	generation.Action = normalizeGeneratedText(generation.Action, maxGeneratedActionRunes)
-	generation.Priority = strings.ToLower(strings.TrimSpace(generation.Priority))
-	if generation.Summary == "" || (metadata.AgentStatus != "running" && generation.Action == "") {
+	generation, err = normalizeGeneration(generation, metadata.AgentStatus)
+	if err != nil {
 		s.saveResult(ctx, metadata, session.AgentSummary{
 			TerminalID: metadata.ID, Provider: provider, Status: metadata.AgentStatus,
-			GeneratedAt: s.now().UTC(), Error: "summary command returned incomplete content",
+			GeneratedAt: s.now().UTC(), Error: err.Error(),
 		})
 		return
 	}
 	summary := session.AgentSummary{
 		TerminalID: metadata.ID, Provider: provider, Status: metadata.AgentStatus,
 		Summary: generation.Summary, Action: generation.Action, Priority: generation.Priority,
+		Options:     generation.Options,
 		GeneratedAt: s.now().UTC(),
 	}
 	s.saveResult(ctx, metadata, summary)
@@ -301,6 +309,7 @@ func (s *Service) saveResult(ctx context.Context, expected session.Metadata, sum
 				summary.Summary = previous.Summary
 				summary.Action = previous.Action
 				summary.Priority = previous.Priority
+				summary.Options = cloneSummaryOptions(previous.Options)
 				break
 			}
 		}
@@ -318,6 +327,13 @@ func (s *Service) saveResult(ctx context.Context, expected session.Metadata, sum
 	}
 	s.finishInflight(ctx, expected.ID)
 	s.events.Publish(terminalSummaryUpdatedEvent, persisted)
+}
+
+func cloneSummaryOptions(options []session.AgentSummaryOption) []session.AgentSummaryOption {
+	if options == nil {
+		return nil
+	}
+	return append([]session.AgentSummaryOption(nil), options...)
 }
 
 func (s *Service) finishInflight(ctx context.Context, id string) bool {

@@ -14,6 +14,11 @@ import (
 
 const defaultEventBufferSize = 128
 
+const (
+	defaultAutomationQuietPeriod = 120 * time.Millisecond
+	defaultAutomationMaxSettle   = 2 * time.Second
+)
+
 type Service struct {
 	sessions *session.Manager
 	events   *eventHub
@@ -28,6 +33,13 @@ type Service struct {
 	mu        sync.RWMutex
 	selection selection.State
 	snapshot  selection.Snapshot
+
+	automationMu          sync.RWMutex
+	automationLocks       map[string]struct{}
+	automationGatesMu     sync.Mutex
+	automationGates       map[string]*sync.RWMutex
+	automationQuietPeriod time.Duration
+	automationMaxSettle   time.Duration
 }
 
 func New(manager *session.Manager) (*Service, error) {
@@ -51,10 +63,14 @@ func New(manager *session.Manager) (*Service, error) {
 		}
 	}
 	service := &Service{
-		sessions:  manager,
-		events:    newEventHub(defaultEventBufferSize, time.Now),
-		selection: state,
-		snapshot:  selection.Resolve(state, terminals),
+		sessions:              manager,
+		events:                newEventHub(defaultEventBufferSize, time.Now),
+		selection:             state,
+		snapshot:              selection.Resolve(state, terminals),
+		automationLocks:       make(map[string]struct{}),
+		automationGates:       make(map[string]*sync.RWMutex),
+		automationQuietPeriod: defaultAutomationQuietPeriod,
+		automationMaxSettle:   defaultAutomationMaxSettle,
 	}
 	service.runCommand = service.RunTerminal
 	service.sendInput = service.SendTerminalInput

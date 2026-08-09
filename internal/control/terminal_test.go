@@ -122,3 +122,55 @@ func TestRunTerminalRejectsBusyForegroundProcess(t *testing.T) {
 		t.Fatalf("RunTerminal(busy) error = %v, want ErrTerminalBusy", err)
 	}
 }
+
+func TestRunTerminalAutomationLocksOrdinaryInputUntilOutputSettles(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	metadata, err := manager.Create(t.Context(), "Automation", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	service.automationQuietPeriod = 120 * time.Millisecond
+	service.automationMaxSettle = time.Second
+
+	started := time.Now()
+	result := make(chan error, 1)
+	go func() {
+		result <- service.RunTerminalAutomation(
+			context.Background(), metadata.ID, []byte("sleep 0.05; printf 'automation-ready\\n'\r"),
+		)
+	}()
+
+	locked := false
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		input := "ordinary-input\r"
+		err := service.SendTerminalInput(metadata.ID, TerminalInput{Text: &input})
+		if errors.Is(err, ErrTerminalLocked) {
+			locked = true
+			break
+		}
+		if err != nil {
+			t.Fatalf("ordinary input before lock = %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !locked {
+		t.Fatal("ordinary terminal input was not rejected while automation was active")
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("RunTerminalAutomation() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 100*time.Millisecond {
+		t.Fatalf("automation returned after %s, want output settling period", elapsed)
+	}
+
+	input := "after-release\r"
+	if err := service.SendTerminalInput(metadata.ID, TerminalInput{Text: &input}); err != nil {
+		t.Fatalf("ordinary input after automation release = %v", err)
+	}
+}

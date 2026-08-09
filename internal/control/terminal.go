@@ -6,8 +6,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ryotarai/euphony/internal/selection"
 	"github.com/ryotarai/euphony/internal/session"
@@ -21,6 +24,7 @@ const (
 
 var (
 	ErrTerminalNotFound       = errors.New("terminal not found")
+	ErrTerminalLocked         = errors.New("terminal is locked by automation")
 	ErrTerminalBusy           = errors.New("terminal foreground is busy")
 	ErrTerminalClosed         = errors.New("terminal output closed")
 	ErrInvalidInput           = errors.New("invalid terminal input")
@@ -186,12 +190,137 @@ func (s *Service) SendTerminalInput(id string, input TerminalInput) error {
 // reconcile a Codex interrupt from its transcript. The WebSocket terminal path
 // uses this too, so browser input and automation share the same lifecycle.
 func (s *Service) SendTerminalBytes(id string, data []byte) error {
+	if s.IsTerminalLocked(id) {
+		return ErrTerminalLocked
+	}
+	gate := s.terminalAutomationGate(id)
+	if !gate.TryRLock() {
+		return ErrTerminalLocked
+	}
+	defer gate.RUnlock()
+	if s.IsTerminalLocked(id) {
+		return ErrTerminalLocked
+	}
 	if _, err := s.sessions.WriteTerminal(id, data); errors.Is(err, session.ErrNotFound) {
 		return ErrTerminalNotFound
 	} else if err != nil {
 		return err
 	}
 	return nil
+}
+
+func (s *Service) IsTerminalLocked(id string) bool {
+	s.automationMu.RLock()
+	_, locked := s.automationLocks[id]
+	s.automationMu.RUnlock()
+	return locked
+}
+
+func (s *Service) terminalAutomationGate(id string) *sync.RWMutex {
+	s.automationGatesMu.Lock()
+	defer s.automationGatesMu.Unlock()
+	if gate := s.automationGates[id]; gate != nil {
+		return gate
+	}
+	gate := &sync.RWMutex{}
+	s.automationGates[id] = gate
+	return gate
+}
+
+func (s *Service) RunTerminalAutomation(ctx context.Context, id string, data []byte) error {
+	if len(data) == 0 || len(data) > MaxTerminalInputBytes || bytes.IndexByte(data, 0) >= 0 {
+		return ErrInvalidInput
+	}
+	terminal, ok := s.sessions.Get(id)
+	if !ok {
+		return ErrTerminalNotFound
+	}
+	release, err := s.acquireTerminalAutomation(id)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	_, output, lagged, unsubscribe := terminal.SubscribeWithStatus()
+	defer unsubscribe()
+	written, err := s.sessions.WriteTerminal(id, data)
+	if errors.Is(err, session.ErrNotFound) {
+		return ErrTerminalNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if written != len(data) {
+		return io.ErrShortWrite
+	}
+	return s.waitForAutomationSettle(ctx, output, lagged)
+}
+
+func (s *Service) acquireTerminalAutomation(id string) (func(), error) {
+	s.automationMu.Lock()
+	if _, locked := s.automationLocks[id]; locked {
+		s.automationMu.Unlock()
+		return nil, ErrTerminalLocked
+	}
+	if s.automationLocks == nil {
+		s.automationLocks = make(map[string]struct{})
+	}
+	s.automationLocks[id] = struct{}{}
+	s.automationMu.Unlock()
+	gate := s.terminalAutomationGate(id)
+	gate.Lock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			gate.Unlock()
+			s.automationMu.Lock()
+			delete(s.automationLocks, id)
+			s.automationMu.Unlock()
+		})
+	}, nil
+}
+
+func (s *Service) waitForAutomationSettle(
+	ctx context.Context,
+	output <-chan []byte,
+	lagged <-chan struct{},
+) error {
+	quietPeriod := s.automationQuietPeriod
+	if quietPeriod <= 0 {
+		quietPeriod = defaultAutomationQuietPeriod
+	}
+	maxSettle := s.automationMaxSettle
+	if maxSettle <= 0 {
+		maxSettle = defaultAutomationMaxSettle
+	}
+	quietTimer := time.NewTimer(quietPeriod)
+	defer quietTimer.Stop()
+	maxTimer := time.NewTimer(maxSettle)
+	defer maxTimer.Stop()
+	for {
+		select {
+		case _, open := <-output:
+			if !open {
+				return nil
+			}
+			if !quietTimer.Stop() {
+				select {
+				case <-quietTimer.C:
+				default:
+				}
+			}
+			quietTimer.Reset(quietPeriod)
+		case <-lagged:
+			return ErrOutputSubscriberLagged
+		case <-quietTimer.C:
+			return nil
+		case <-maxTimer.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func (s *Service) RunTerminal(id, command string) error {
@@ -202,6 +331,14 @@ func (s *Service) RunTerminal(id, command string) error {
 	terminal, ok := s.sessions.Get(id)
 	if !ok {
 		return ErrTerminalNotFound
+	}
+	gate := s.terminalAutomationGate(id)
+	if !gate.TryRLock() {
+		return ErrTerminalLocked
+	}
+	defer gate.RUnlock()
+	if s.IsTerminalLocked(id) {
+		return ErrTerminalLocked
 	}
 	available, err := terminal.ForegroundIsShell()
 	if err != nil {

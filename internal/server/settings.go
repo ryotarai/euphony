@@ -34,23 +34,32 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorBlink       *bool    `json:"terminalCursorBlink"`
 		TerminalScrollSensitivity float64  `json:"terminalScrollSensitivity"`
 		TerminalOptionAsAlt       *bool    `json:"terminalOptionAsAlt"`
-		AgentSummaryProvider      string   `json:"agentSummaryProvider"`
+		AgentSummaryProvider      *string  `json:"agentSummaryProvider"`
 		AgentSummaryPrompt        *string  `json:"agentSummaryPrompt"`
+		AgentSummaryOpenAIEffort  *string  `json:"agentSummaryOpenAIEffort"`
 	}
 	currentSettings := s.sessions.Settings()
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	decodeErr := decoder.Decode(&input)
 	terminalFontFamily := strings.TrimSpace(input.TerminalFontFamily)
-	if input.AgentSummaryProvider == "" {
-		input.AgentSummaryProvider = currentSettings.AgentSummaryProvider
-		if input.AgentSummaryProvider == "" {
-			input.AgentSummaryProvider = session.DefaultAgentSummaryProvider
-		}
+	provider := currentSettings.AgentSummaryProvider
+	if provider == "" {
+		provider = session.DefaultAgentSummaryProvider
+	}
+	if input.AgentSummaryProvider != nil {
+		provider = *input.AgentSummaryProvider
 	}
 	agentSummaryPrompt := currentSettings.AgentSummaryPrompt
 	if input.AgentSummaryPrompt != nil {
 		agentSummaryPrompt = *input.AgentSummaryPrompt
+	}
+	effort := currentSettings.AgentSummaryOpenAIEffort
+	if effort == "" {
+		effort = session.DefaultAgentSummaryOpenAIEffort
+	}
+	if input.AgentSummaryOpenAIEffort != nil {
+		effort = *input.AgentSummaryOpenAIEffort
 	}
 	if decodeErr != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
@@ -68,7 +77,8 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		input.TerminalCursorBlink == nil ||
 		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) ||
 		input.TerminalOptionAsAlt == nil ||
-		!validAgentSummaryProvider(input.AgentSummaryProvider) ||
+		!validAgentSummaryProvider(provider) ||
+		!validAgentSummaryOpenAIEffort(effort) ||
 		(input.AgentSummaryPrompt != nil && utf8.RuneCountInString(*input.AgentSummaryPrompt) > 8000) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
 		return
@@ -88,8 +98,9 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorBlink:       *input.TerminalCursorBlink,
 		TerminalScrollSensitivity: int(input.TerminalScrollSensitivity),
 		TerminalOptionAsAlt:       *input.TerminalOptionAsAlt,
-		AgentSummaryProvider:      input.AgentSummaryProvider,
+		AgentSummaryProvider:      provider,
 		AgentSummaryPrompt:        agentSummaryPrompt,
+		AgentSummaryOpenAIEffort:  effort,
 	}
 	if err := s.sessions.UpdateSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "The settings could not be saved.")
@@ -131,7 +142,16 @@ func validTerminalScrollSensitivity(value float64) bool {
 }
 
 func validAgentSummaryProvider(value string) bool {
-	return value == "claude" || value == "codex"
+	return value == "openai" || value == "claude" || value == "codex"
+}
+
+func validAgentSummaryOpenAIEffort(value string) bool {
+	switch value {
+	case "none", "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
 }
 
 func shortcutsEqual(left, right string) bool {

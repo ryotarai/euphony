@@ -64,6 +64,45 @@ func TestManagerAgentSummaryUnreadPreservesUnchangedAction(t *testing.T) {
 	}
 }
 
+func TestManagerAgentSummaryOptionsResetAndPreserveActionState(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	first := AgentSummary{
+		TerminalID: "terminal-1", Action: "Approve the change.",
+		Options: []AgentSummaryOption{{ID: "legacy", Label: "Allow", Input: "y\r"}},
+	}
+	if err := manager.SaveAgentSummary(context.Background(), first); err != nil {
+		t.Fatalf("SaveAgentSummary(first) error = %v", err)
+	}
+	if got := manager.AgentSummaries()[0]; len(got.Options) != 1 || got.Options[0].ID != "option-1" {
+		t.Fatalf("normalized options = %#v, want option-1", got.Options)
+	}
+	if _, err := manager.MarkAgentSummaryDone(context.Background(), first.TerminalID); err != nil {
+		t.Fatalf("MarkAgentSummaryDone() error = %v", err)
+	}
+
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: first.TerminalID, Action: "Approve the change.",
+		Options: []AgentSummaryOption{{ID: "another-id", Label: "Allow", Input: "y\r"}},
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(same options) error = %v", err)
+	}
+	if got := manager.AgentSummaries()[0]; !got.Done || got.Unread {
+		t.Fatalf("same action/options summary = %#v, want done=true unread=false", got)
+	}
+
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID: first.TerminalID, Action: "Approve the change.",
+		Options: []AgentSummaryOption{{Label: "Deny", Input: "n\r"}},
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(changed option) error = %v", err)
+	}
+	if got := manager.AgentSummaries()[0]; got.Done || !got.Unread || got.Options[0].ID != "option-1" {
+		t.Fatalf("changed option summary = %#v, want done=false unread=true normalized option", got)
+	}
+}
+
 func TestManagerAgentSummaryDoneTransitions(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -160,7 +199,7 @@ func TestManagerMarkAgentSummaryReadIsIdempotent(t *testing.T) {
 	if first.Unread || second.Unread {
 		t.Fatalf("read summaries = %#v, %#v; want unread false", first, second)
 	}
-	if first != second {
+	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("second MarkAgentSummaryRead() = %#v, want %#v", second, first)
 	}
 }
@@ -322,8 +361,8 @@ func TestSQLiteStoreMigratesAgentSummaryPriorityAndDoneColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAgentSummaries() error = %v", err)
 	}
-	if len(got) != 1 || got[0].Priority != "" || got[0].Done {
-		t.Fatalf("migrated summaries = %#v, want empty priority and done=false", got)
+	if len(got) != 1 || got[0].Priority != "" || got[0].Done || len(got[0].Options) != 0 {
+		t.Fatalf("migrated summaries = %#v, want empty priority/done/options", got)
 	}
 }
 
@@ -339,6 +378,7 @@ func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 		Status:      "blocked",
 		Summary:     "The agent is waiting for permission to edit the API.",
 		Action:      "Approve the requested file access.",
+		Options:     []AgentSummaryOption{{ID: "option-1", Label: "Allow", Input: "y\r"}},
 		Unread:      true,
 		GeneratedAt: time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC),
 		Error:       "",
@@ -528,6 +568,30 @@ func TestSQLiteStoreDefaultsAndPreservesAgentSummaryProvider(t *testing.T) {
 	}
 	if settings.AgentSummaryProvider != "claude" {
 		t.Fatalf("saved AgentSummaryProvider = %q, want claude", settings.AgentSummaryProvider)
+	}
+}
+
+func TestSQLiteStorePersistsAgentSummaryOpenAIEffort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "effort.sqlite3")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	settings := DefaultSettings()
+	if settings.AgentSummaryOpenAIEffort != "low" {
+		t.Fatalf("default OpenAI effort = %q, want low", settings.AgentSummaryOpenAIEffort)
+	}
+	settings.AgentSummaryOpenAIEffort = "max"
+	if err := store.SaveSettings(context.Background(), settings); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	got, err := store.LoadSettings(context.Background())
+	if err != nil {
+		t.Fatalf("LoadSettings() error = %v", err)
+	}
+	if got.AgentSummaryOpenAIEffort != "max" {
+		t.Fatalf("persisted OpenAI effort = %q, want max", got.AgentSummaryOpenAIEffort)
 	}
 }
 

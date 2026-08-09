@@ -41,7 +41,7 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		defaults.TerminalHistoryLimit != 1048576 ||
 		defaults.TerminalLineHeight != 1.25 || defaults.TerminalCursorStyle != "bar" ||
 		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 ||
-		!defaults.TerminalOptionAsAlt {
+		!defaults.TerminalOptionAsAlt || defaults.AgentSummaryOpenAIEffort != "low" {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 
@@ -60,9 +60,60 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		TerminalHistoryLimit: 0,
 		TerminalLineHeight:   1.5, TerminalCursorStyle: "underline",
 		TerminalCursorBlink: true, TerminalScrollSensitivity: 5, TerminalOptionAsAlt: false,
-		AgentSummaryProvider: "codex", AgentSummaryPrompt: "",
+		AgentSummaryProvider: "codex", AgentSummaryPrompt: "", AgentSummaryOpenAIEffort: "low",
 	}) {
 		t.Fatalf("updated settings = %#v", updated)
+	}
+}
+
+func TestSettingsAPIValidatesAndPersistsOpenAIProviderAndEffort(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		DatabasePath: filepath.Join(t.TempDir(), "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	body := `{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3,"terminalOptionAsAlt":true,"agentSummaryProvider":"openai","agentSummaryOpenAIEffort":"max"}`
+	response := performRequest(t, srv, http.MethodPatch, "/api/settings", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH OpenAI settings status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var saved session.Settings
+	decodeResponse(t, response, &saved)
+	if saved.AgentSummaryProvider != "openai" || saved.AgentSummaryOpenAIEffort != "max" {
+		t.Fatalf("saved OpenAI settings = %#v", saved)
+	}
+	response = performRequest(t, srv, http.MethodGet, "/api/settings", "")
+	var reloaded session.Settings
+	decodeResponse(t, response, &reloaded)
+	if reloaded.AgentSummaryProvider != "openai" || reloaded.AgentSummaryOpenAIEffort != "max" {
+		t.Fatalf("reloaded OpenAI settings = %#v", reloaded)
+	}
+
+	for _, effort := range []string{"", "minimal", "ultra"} {
+		invalid := strings.Replace(body, `"agentSummaryOpenAIEffort":"max"`, `"agentSummaryOpenAIEffort":"`+effort+`"`, 1)
+		response = performRequest(t, srv, http.MethodPatch, "/api/settings", invalid)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("effort %q status = %d, want 400", effort, response.Code)
+		}
+	}
+	invalid := strings.Replace(body, `"agentSummaryProvider":"openai"`, `"agentSummaryProvider":"ollama"`, 1)
+	response = performRequest(t, srv, http.MethodPatch, "/api/settings", invalid)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid provider status = %d, want 400", response.Code)
+	}
+	invalid = strings.Replace(body, `"agentSummaryProvider":"openai"`, `"agentSummaryProvider":""`, 1)
+	response = performRequest(t, srv, http.MethodPatch, "/api/settings", invalid)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("explicit empty provider status = %d, want 400", response.Code)
+	}
+	omittedProvider := strings.Replace(body, `,"agentSummaryProvider":"openai"`, "", 1)
+	response = performRequest(t, srv, http.MethodPatch, "/api/settings", omittedProvider)
+	if response.Code != http.StatusOK {
+		t.Fatalf("omitted provider status = %d, want 200", response.Code)
 	}
 }
 

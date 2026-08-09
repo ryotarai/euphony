@@ -66,16 +66,23 @@ type Metadata struct {
 }
 
 type AgentSummary struct {
-	TerminalID  string    `json:"terminalId"`
-	Provider    string    `json:"provider"`
-	Status      string    `json:"status"`
-	Summary     string    `json:"summary"`
-	Action      string    `json:"action,omitempty"`
-	Priority    string    `json:"priority,omitempty"`
-	Unread      bool      `json:"unread"`
-	Done        bool      `json:"done"`
-	GeneratedAt time.Time `json:"generatedAt"`
-	Error       string    `json:"error,omitempty"`
+	TerminalID  string               `json:"terminalId"`
+	Provider    string               `json:"provider"`
+	Status      string               `json:"status"`
+	Summary     string               `json:"summary"`
+	Action      string               `json:"action,omitempty"`
+	Priority    string               `json:"priority,omitempty"`
+	Options     []AgentSummaryOption `json:"options"`
+	Unread      bool                 `json:"unread"`
+	Done        bool                 `json:"done"`
+	GeneratedAt time.Time            `json:"generatedAt"`
+	Error       string               `json:"error,omitempty"`
+}
+
+type AgentSummaryOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Input string `json:"input"`
 }
 
 type HookConfig struct {
@@ -111,6 +118,7 @@ type Settings struct {
 	TerminalOptionAsAlt       bool    `json:"terminalOptionAsAlt"`
 	AgentSummaryProvider      string  `json:"agentSummaryProvider"`
 	AgentSummaryPrompt        string  `json:"agentSummaryPrompt"`
+	AgentSummaryOpenAIEffort  string  `json:"agentSummaryOpenAIEffort"`
 }
 
 const (
@@ -125,6 +133,7 @@ const (
 	DefaultTerminalOptionAsAlt       = true
 	DefaultAgentSummaryProvider      = "codex"
 	DefaultAgentSummaryPrompt        = ""
+	DefaultAgentSummaryOpenAIEffort  = "low"
 )
 
 func DefaultSettings() Settings {
@@ -144,6 +153,7 @@ func DefaultSettings() Settings {
 		TerminalOptionAsAlt:       DefaultTerminalOptionAsAlt,
 		AgentSummaryProvider:      DefaultAgentSummaryProvider,
 		AgentSummaryPrompt:        DefaultAgentSummaryPrompt,
+		AgentSummaryOpenAIEffort:  DefaultAgentSummaryOpenAIEffort,
 	}
 }
 
@@ -1916,6 +1926,7 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	if strings.TrimSpace(summary.TerminalID) == "" {
 		return errors.New("agent summary terminal ID is required")
 	}
+	summary.Options = normalizeAgentSummaryOptions(summary.Options)
 	m.agentSummaryMutationMu.Lock()
 	defer m.agentSummaryMutationMu.Unlock()
 	m.mu.Lock()
@@ -1924,7 +1935,8 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 		return ErrManagerClosing
 	}
 	previous, hadPrevious := m.agentSummaries[summary.TerminalID]
-	if !hadPrevious || strings.TrimSpace(previous.Action) != strings.TrimSpace(summary.Action) {
+	if !hadPrevious || strings.TrimSpace(previous.Action) != strings.TrimSpace(summary.Action) ||
+		!sameAgentSummaryOptions(previous.Options, summary.Options) {
 		summary.Unread = true
 		summary.Done = false
 	} else {
@@ -1953,6 +1965,30 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	m.agentSummaries[summary.TerminalID] = summary
 	m.mu.Unlock()
 	return nil
+}
+
+func normalizeAgentSummaryOptions(options []AgentSummaryOption) []AgentSummaryOption {
+	if options == nil {
+		return nil
+	}
+	result := make([]AgentSummaryOption, len(options))
+	copy(result, options)
+	for index := range result {
+		result[index].ID = fmt.Sprintf("option-%d", index+1)
+	}
+	return result
+}
+
+func sameAgentSummaryOptions(left, right []AgentSummaryOption) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Label != right[index].Label || left[index].Input != right[index].Input {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) MarkAgentSummaryRead(ctx context.Context, terminalID string) (AgentSummary, error) {

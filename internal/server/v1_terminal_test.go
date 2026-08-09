@@ -84,6 +84,54 @@ func TestV1TerminalCreateListGetAndDelete(t *testing.T) {
 	}
 }
 
+func TestV1TerminalInputReturnsConflictWhileInboxAutomationOwnsTerminal(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"Locked","cwd":`+strconv.Quote(t.TempDir())+`,"selectionMode":"none"}`)
+	var createEnvelope struct {
+		Result struct {
+			Terminal session.Metadata `json:"terminal"`
+		} `json:"result"`
+	}
+	decodeResponse(t, created, &createEnvelope)
+	id := createEnvelope.Result.Terminal.ID
+	automationDone := make(chan error, 1)
+	go func() {
+		automationDone <- srv.control.RunTerminalAutomation(
+			context.Background(), id, []byte("sleep 0.25; printf 'v1-busy\\n'\r"),
+		)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !srv.control.IsTerminalLocked(id) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !srv.control.IsTerminalLocked(id) {
+		t.Fatal("automation did not acquire terminal lock")
+	}
+	response := performRequest(t, srv, http.MethodPost, "/api/v1/terminals/"+id+"/input",
+		`{"text":"ordinary\\r"}`)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("locked v1 input status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeResponse(t, response, &envelope)
+	if envelope.OK || envelope.Error.Code != "terminal_locked" {
+		t.Fatalf("locked v1 input envelope = %#v, want terminal_locked", envelope)
+	}
+	if err := <-automationDone; err != nil {
+		t.Fatalf("background automation error = %v", err)
+	}
+}
+
 func TestV1TerminalRename(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

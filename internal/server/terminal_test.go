@@ -363,6 +363,55 @@ func TestTerminalWebSocketStreamsPTY(t *testing.T) {
 	}
 }
 
+func TestTerminalWebSocketDropsInputWhileInboxAutomationOwnsTerminal(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Locked socket"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	automationDone := make(chan error, 1)
+	go func() {
+		automationDone <- srv.control.RunTerminalAutomation(
+			context.Background(), metadata.ID, []byte("sleep 0.25; printf 'socket-busy\\n'\r"),
+		)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !srv.control.IsTerminalLocked(metadata.ID) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !srv.control.IsTerminalLocked(metadata.ID) {
+		t.Fatal("automation did not acquire terminal lock")
+	}
+	connection := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer connection.CloseNow()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	input, _ := json.Marshal(clientMessage{Type: "input", Data: "printf 'socket-must-be-dropped\\n'\r"})
+	if err := connection.Write(ctx, websocket.MessageText, input); err != nil {
+		t.Fatalf("Write(locked input) error = %v", err)
+	}
+	if err := <-automationDone; err != nil {
+		t.Fatalf("background automation error = %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		read, readErr := srv.control.ReadTerminal(metadata.ID, 4096)
+		if readErr == nil && strings.Contains(read.Text, "socket-busy") {
+			if strings.Contains(read.Text, "socket-must-be-dropped") {
+				t.Fatalf("locked WebSocket input reached terminal: %q", read.Text)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("automation output was not observed")
+}
+
 func TestTerminalWebSocketsShareSmallestSize(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

@@ -102,7 +102,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3,
 			terminal_option_as_alt INTEGER NOT NULL DEFAULT 1,
 			agent_summary_provider TEXT NOT NULL DEFAULT 'codex',
-			agent_summary_prompt TEXT NOT NULL DEFAULT ''
+			agent_summary_prompt TEXT NOT NULL DEFAULT '',
+			agent_summary_openai_effort TEXT NOT NULL DEFAULT 'low'
 		)`,
 		`INSERT OR IGNORE INTO settings (id, prefix, sidebar_width, sidebar_collapsed)
 			VALUES (1, 'Ctrl+B', 304, 0)`,
@@ -124,6 +125,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			summary TEXT NOT NULL,
 			action TEXT NOT NULL DEFAULT '',
 			priority TEXT NOT NULL DEFAULT '',
+			options TEXT NOT NULL DEFAULT '[]',
 			unread INTEGER NOT NULL DEFAULT 0,
 			done INTEGER NOT NULL DEFAULT 0,
 			generated_at TEXT NOT NULL,
@@ -285,6 +287,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add agent summary prompt setting: %w", err)
 		}
 	}
+	hasAgentSummaryOpenAIEffort, err := s.hasColumn(ctx, "settings", "agent_summary_openai_effort")
+	if err != nil {
+		return err
+	}
+	if !hasAgentSummaryOpenAIEffort {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN agent_summary_openai_effort TEXT NOT NULL DEFAULT 'low'",
+		); err != nil {
+			return fmt.Errorf("add agent summary OpenAI effort setting: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name         string
 		defaultValue int
@@ -361,12 +374,23 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("add agent summary done flag: %w", err)
 		}
 	}
+	hasAgentSummaryOptions, err := s.hasColumn(ctx, "agent_summaries", "options")
+	if err != nil {
+		return err
+	}
+	if !hasAgentSummaryOptions {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE agent_summaries ADD COLUMN options TEXT NOT NULL DEFAULT '[]'",
+		); err != nil {
+			return fmt.Errorf("add agent summary options: %w", err)
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE terminals
 		SET agent_status = 'waiting', needs_attention = 1
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 12"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 13"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -405,7 +429,8 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
 			terminal_history_limit, terminal_line_height,
 			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity,
-			terminal_option_as_alt, agent_summary_provider, agent_summary_prompt
+			terminal_option_as_alt, agent_summary_provider, agent_summary_prompt,
+			agent_summary_openai_effort
 		FROM settings WHERE id = 1`,
 	).Scan(
 		&result.Prefix,
@@ -424,6 +449,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&terminalOptionAsAlt,
 		&result.AgentSummaryProvider,
 		&result.AgentSummaryPrompt,
+		&result.AgentSummaryOpenAIEffort,
 	)
 	if err != nil {
 		return Settings{}, fmt.Errorf("load settings: %w", err)
@@ -453,13 +479,15 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 			terminal_history_limit = ?, terminal_line_height = ?,
 			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?,
 			terminal_option_as_alt = ?, agent_summary_provider = ?, agent_summary_prompt = ?
+			, agent_summary_openai_effort = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
 		settings.TerminalHistoryLimit, settings.TerminalLineHeight,
 		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity,
-		terminalOptionAsAlt, settings.AgentSummaryProvider, settings.AgentSummaryPrompt)
+		terminalOptionAsAlt, settings.AgentSummaryProvider, settings.AgentSummaryPrompt,
+		settings.AgentSummaryOpenAIEffort)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
@@ -649,7 +677,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT terminal_id, provider, status,
-		summary, action, priority, unread, done, generated_at, error
+		summary, action, priority, options, unread, done, generated_at, error
 		FROM agent_summaries ORDER BY generated_at, terminal_id`)
 	if err != nil {
 		return nil, fmt.Errorf("load agent summaries: %w", err)
@@ -659,12 +687,19 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 	for rows.Next() {
 		var item AgentSummary
 		var unread, done int
+		var optionsJSON string
 		var generatedAt string
 		if err := rows.Scan(
 			&item.TerminalID, &item.Provider, &item.Status, &item.Summary,
-			&item.Action, &item.Priority, &unread, &done, &generatedAt, &item.Error,
+			&item.Action, &item.Priority, &optionsJSON, &unread, &done, &generatedAt, &item.Error,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent summary: %w", err)
+		}
+		if err := json.Unmarshal([]byte(optionsJSON), &item.Options); err != nil {
+			return nil, fmt.Errorf("decode agent summary options: %w", err)
+		}
+		if len(item.Options) == 0 {
+			item.Options = nil
 		}
 		item.Unread = unread != 0
 		item.Done = done != 0
@@ -681,16 +716,20 @@ func (s *SQLiteStore) LoadAgentSummaries(ctx context.Context) ([]AgentSummary, e
 }
 
 func (s *SQLiteStore) SaveAgentSummary(ctx context.Context, item AgentSummary) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_summaries (
-		terminal_id, provider, status, summary, action, priority, unread, done, generated_at, error
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	optionsJSON, err := json.Marshal(item.Options)
+	if err != nil {
+		return fmt.Errorf("encode agent summary options: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO agent_summaries (
+		terminal_id, provider, status, summary, action, priority, options, unread, done, generated_at, error
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(terminal_id) DO UPDATE SET
 		provider=excluded.provider, status=excluded.status, summary=excluded.summary,
-		action=excluded.action, priority=excluded.priority, unread=excluded.unread,
+		action=excluded.action, priority=excluded.priority, options=excluded.options, unread=excluded.unread,
 		done=excluded.done,
 		generated_at=excluded.generated_at, error=excluded.error`,
 		item.TerminalID, item.Provider, item.Status, item.Summary, item.Action,
-		item.Priority, item.Unread, item.Done, item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
+		item.Priority, optionsJSON, item.Unread, item.Done, item.GeneratedAt.Format(time.RFC3339Nano), item.Error)
 	if err != nil {
 		return fmt.Errorf("save agent summary: %w", err)
 	}
