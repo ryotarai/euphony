@@ -11,3 +11,11 @@ test("does not animate running status icons forever", () => {
   expect(runningRule).toContain("animation: none;");
   expect(stylesheet).not.toContain("@keyframes session-status-spin");
 });
+
+test("does not animate xterm scrollbar opacity in terminal views", () => {
+  const scrollbarRule = stylesheet.match(
+    /\.terminal-host \.xterm \.xterm-scrollable-element > \.visible,\s*\.terminal-host \.xterm \.xterm-scrollable-element > \.invisible\.fade\s*\{([\s\S]*?)\}/,
+  )?.[1] ?? "";
+
+  expect(scrollbarRule).toContain("transition: none;");
+});

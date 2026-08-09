@@ -248,6 +248,42 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
   await expect(cursor).not.toHaveClass(/xterm-cursor-blink/);
 });
 
+test("does not animate xterm scrollbar opacity", async ({ page }) => {
+  await clearSessions(page);
+  await createSession(page, "Static scrollbar");
+  await disableWebgl(page);
+  await page.goto("/?token=test-token");
+
+  const terminal = page.getByLabel("Static scrollbar terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  const scrollbars = terminal.locator(".xterm-scrollable-element > .scrollbar");
+  await expect
+    .poll(() => scrollbars.count(), {
+      message: "The xterm scrollbar should be mounted",
+    })
+    .toBeGreaterThan(0);
+
+  const transitionProperties = await scrollbars.evaluateAll((elements) =>
+    elements.map((element) => {
+      const originalClassName = element.className;
+      element.classList.remove("invisible", "fade");
+      element.classList.add("visible");
+      const visibleTransition = getComputedStyle(element).transitionProperty;
+      element.classList.remove("visible");
+      element.classList.add("invisible", "fade");
+      const fadingTransition = getComputedStyle(element).transitionProperty;
+      element.className = originalClassName;
+      return { visibleTransition, fadingTransition };
+    }),
+  );
+  expect(transitionProperties).toEqual(
+    transitionProperties.map(() => ({
+      visibleTransition: "none",
+      fadingTransition: "none",
+    })),
+  );
+});
+
 test("opens OSC 8 terminal links without a confirmation dialog", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Link terminal");

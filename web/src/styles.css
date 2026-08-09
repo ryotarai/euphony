@@ -558,6 +558,11 @@ input {
   text-spacing-trim: space-all;
 }
 
+.terminal-host .xterm .xterm-scrollable-element > .visible,
+.terminal-host .xterm .xterm-scrollable-element > .invisible.fade {
+  transition: none;
+}
+
 .terminal-host .xterm-viewport {
   scrollbar-color: #394149 transparent;
   scrollbar-width: thin;
