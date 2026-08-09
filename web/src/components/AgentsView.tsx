@@ -436,42 +436,16 @@ export function AgentsView({
 
   return (
     <main className="agents-view" aria-labelledby="agents-view-title">
-      <header className="agents-view-header">
-        <div>
-          <p className="agents-view-eyebrow">Workspace / Inbox</p>
-          <h1 id="agents-view-title">Inbox</h1>
-          <p>Review agent messages and choose a response.</p>
-        </div>
-        <div className="agents-view-header-actions">
-          <div
-            className="agents-view-count"
-            aria-label={`${actionRequiredItems.length} need your attention`}
-          >
-            <strong>{actionRequiredItems.length}</strong>
-            <span>need your attention</span>
-          </div>
-          <button
-            type="button"
-            className="agents-refresh-button"
-            aria-label="Refresh all agent summaries"
-            aria-busy={isRefreshing}
-            data-refreshing={isRefreshing}
-            disabled={!onRefresh || isRefreshing}
-            onClick={() => void handleRefresh()}
-          >
-            <RefreshCwIcon aria-hidden="true" />
-            <span>{isRefreshing ? "Refreshing…" : "Refresh"}</span>
-          </button>
-        </div>
-      </header>
+      <h1 id="agents-view-title" className="sr-only">Inbox</h1>
       {loading && (
         <p className="agents-loading" role="status" aria-label="Loading agent summaries">
           Reading agent signals…
         </p>
       )}
       {error && <p className="agents-error" role="alert">{error}</p>}
-      <div className="agents-tabs" role="tablist" aria-label="Inbox views">
-        {agentTabs.map((tab) => {
+      <div className="agents-toolbar">
+        <div className="agents-tabs" role="tablist" aria-label="Inbox views">
+          {agentTabs.map((tab) => {
           const count = tab === "action" ? actionItems.length : doneItems.length;
           const label = tab === "action" ? "Inbox" : "Done";
           const tabID = `agents-${tab}-tab`;
@@ -522,7 +496,29 @@ export function AgentsView({
               <span className="agents-tab-count">{count}</span>
             </button>
           );
-        })}
+          })}
+        </div>
+        <div className="agents-view-header-actions">
+          <div
+            className="agents-view-count"
+            aria-label={`${actionRequiredItems.length} need your attention`}
+          >
+            <strong>{actionRequiredItems.length}</strong>
+            <span>need your attention</span>
+          </div>
+          <button
+            type="button"
+            className="agents-refresh-button"
+            aria-label="Refresh all agent summaries"
+            aria-busy={isRefreshing}
+            data-refreshing={isRefreshing}
+            disabled={!onRefresh || isRefreshing}
+            onClick={() => void handleRefresh()}
+          >
+            <RefreshCwIcon aria-hidden="true" />
+            <span>{isRefreshing ? "Refreshing…" : "Refresh"}</span>
+          </button>
+        </div>
       </div>
       <div
         id={tabPanelID}
