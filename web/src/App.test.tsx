@@ -1536,7 +1536,7 @@ test("restores a selected Inbox item from its URL", async () => {
     />,
   );
 
-  expect(await screen.findByRole("heading", { name: "Inbox" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
   expect(screen.getByText(secondSummary.summary)).toBeVisible();
   expect(window.location.pathname).toBe("/inbox/session-2");
 

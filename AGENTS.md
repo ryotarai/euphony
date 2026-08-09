@@ -78,6 +78,8 @@
 
 ## Pane layout and source behavior
 
+- When a dashboard pane is explicitly requested to fill its viewport, remove page-level whitespace and let a compact toolbar plus flexible content surface own the available pane dimensions.
+
 - Keep terminal panes flush by default: use only separators between panes, and
   aggregate connection status at workspace level instead of repeating it per
   pane.

@@ -118,6 +118,27 @@ func TestParseTerminalActionPreservesControlInputWithoutAppendingEnter(t *testin
 	}
 }
 
+func TestNormalizeTerminalActionInputAtExecutionBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "printable input", input: "exit", want: "exit\r"},
+		{name: "line feed submission", input: "exit\n", want: "exit\r"},
+		{name: "carriage return submission", input: "exit\r", want: "exit\r"},
+		{name: "escape sequence", input: "\x1b[A", want: "\x1b[A"},
+		{name: "control character", input: "\x03", want: "\x03"},
+		{name: "empty input", input: "", want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := NormalizeTerminalActionInput(test.input); got != test.want {
+				t.Fatalf("NormalizeTerminalActionInput(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildPromptOmitsEmptyAdditionalInstructions(t *testing.T) {
 	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
 	prompt := BuildPrompt(metadata, nil, nil, "   \n\t")

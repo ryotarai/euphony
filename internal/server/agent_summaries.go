@@ -165,7 +165,7 @@ func (s *Server) executeAgentSummaryOption(w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return nil, err
 			}
-			return []byte(generation.Input), nil
+			return []byte(agentsummary.NormalizeTerminalActionInput(generation.Input)), nil
 		},
 		func(ctx context.Context, data []byte) (int, error) {
 			return s.sessions.WriteTerminalIfAgentSummaryCurrent(ctx, current, data)

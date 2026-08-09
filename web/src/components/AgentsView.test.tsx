@@ -192,6 +192,18 @@ test("refreshes every agent summary from the header", async () => {
   expect(refresh).toHaveTextContent("Refresh");
 });
 
+test("keeps Inbox controls in the compact toolbar", () => {
+  renderAgents({ onRefresh: vi.fn() });
+
+  const toolbar = document.querySelector(".agents-toolbar");
+  expect(toolbar).toBeInTheDocument();
+  expect(within(toolbar as HTMLElement).getByRole("tablist", { name: "Inbox views" }))
+    .toBeInTheDocument();
+  expect(within(toolbar as HTMLElement).getByRole("button", {
+    name: "Refresh all agent summaries",
+  })).toBeInTheDocument();
+});
+
 test("moves Done summaries to the Done tab while keeping the two status sections there", async () => {
   const user = userEvent.setup();
   renderAgents();
