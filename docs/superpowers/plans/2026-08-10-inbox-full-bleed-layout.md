@@ -8,6 +8,8 @@
 
 **Tech Stack:** React 19, TypeScript, CSS, Testing Library, Playwright.
 
+Terminal behavior: keep terminal rendering in the existing PaneCarousel. Selecting Inbox and a terminal together must produce the horizontal A | B | C arrangement without duplicate PTY mounts or a second split divider.
+
 ## Global Constraints
 
 - Communicate with users in Japanese, but write materials such as code and documents in English.
