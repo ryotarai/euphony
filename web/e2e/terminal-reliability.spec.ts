@@ -142,26 +142,13 @@ async function terminalGrid(page: Page) {
   }));
 }
 
-async function disableWebgl(page: Page) {
-  await page.addInitScript(() => {
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
-    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-      configurable: true,
-      value: function (this: HTMLCanvasElement, contextID: string, ...args: unknown[]) {
-        if (contextID === "webgl2") return null;
-        return Reflect.apply(originalGetContext, this, [contextID, ...args]);
-      },
-    });
-  });
-}
-
-test("recovers the DOM terminal after WebGL context loss", async ({ page }) => {
+test("renders terminal output with the DOM renderer", async ({ page }) => {
   await clearSessions(page);
-  const session = await createSession(page, "WebGL recovery");
+  const session = await createSession(page, "DOM renderer");
   await replaceSharedSelection(page, session.id);
   await page.goto("/?token=test-token");
 
-  const terminal = page.getByLabel("WebGL recovery terminal", { exact: true });
+  const terminal = page.getByLabel("DOM renderer terminal", { exact: true });
   await expect(terminal).toBeVisible();
   await expect(page.locator(".terminal-view")).toHaveAttribute(
     "data-connection",
@@ -170,69 +157,22 @@ test("recovers the DOM terminal after WebGL context loss", async ({ page }) => {
   await terminal.click();
   await terminal.locator(".xterm-helper-textarea").focus();
 
-  const marker = "webgl-recovery-marker";
+  const marker = "dom-renderer-marker";
   await page.keyboard.type(`printf ${marker}`);
   await page.keyboard.press("Enter");
-
-  const canvases = terminal.locator("canvas");
-  const webglCanvasCount = () => canvases.evaluateAll((elements) =>
-    elements.filter((element) => {
-      try {
-        return (element as HTMLCanvasElement).getContext("webgl2") !== null;
-      } catch {
-        return false;
-      }
-    }).length,
-  );
-
-  const browserSupportsWebgl2 = await page.evaluate(() => {
-    const canvas = document.createElement("canvas");
-    try {
-      return canvas.getContext("webgl2") !== null;
-    } catch {
-      return false;
-    }
-  });
-  if (!browserSupportsWebgl2) {
-    test.skip(true, "This browser does not support WebGL2");
-    return;
-  }
-  await expect
-    .poll(webglCanvasCount, {
-      timeout: 5_000,
-      message: "The terminal WebGL2 canvas should initialize before context loss",
-    })
-    .toBeGreaterThan(0);
-
-  const dispatchedCancelableEvent = await canvases.evaluateAll((elements) => {
-    const canvas = elements.find((element) => {
-      try {
-        return (element as HTMLCanvasElement).getContext("webgl2") !== null;
-      } catch {
-        return false;
-      }
-    }) as HTMLCanvasElement | undefined;
-    if (!canvas) return false;
-
-    const event = new Event("webglcontextlost", { cancelable: true });
-    canvas.dispatchEvent(event);
-    return event.cancelable;
-  });
-  expect(dispatchedCancelableEvent).toBe(true);
 
   const rows = terminal.locator(".xterm-rows");
   const oneSecond = { timeout: 1_000 };
   await Promise.all([
     expect(rows).toBeVisible(oneSecond),
     expect(rows).toContainText(marker, oneSecond),
-    expect(canvases).toHaveCount(0, oneSecond),
+    expect(terminal.locator("canvas")).toHaveCount(0, oneSecond),
   ]);
 });
 
 test("renders a visible terminal cursor without an idle animation", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Static cursor");
-  await disableWebgl(page);
   await page.goto("/?token=test-token");
 
   const pane = page.getByLabel("Static cursor pane", { exact: true });
@@ -251,7 +191,6 @@ test("renders a visible terminal cursor without an idle animation", async ({ pag
 test("does not animate xterm scrollbar opacity", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Static scrollbar");
-  await disableWebgl(page);
   await page.goto("/?token=test-token");
 
   const terminal = page.getByLabel("Static scrollbar terminal", { exact: true });
@@ -287,7 +226,6 @@ test("does not animate xterm scrollbar opacity", async ({ page }) => {
 test("opens OSC 8 terminal links without a confirmation dialog", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Link terminal");
-  await disableWebgl(page);
   await page.goto("/?token=test-token");
 
   const terminal = page.getByLabel("Link terminal terminal", { exact: true });
@@ -667,7 +605,6 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
 test("keeps table columns aligned for full-width Japanese punctuation", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Table");
-  await disableWebgl(page);
   await page.goto("/?token=test-token");
   await page.getByRole("button", { name: "Select Table" }).click();
 

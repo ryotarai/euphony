@@ -37,6 +37,9 @@
 
 - Preserve arbitrary terminal byte streams across JSON boundaries with a
   lossless encoding such as base64; never stringify independent PTY chunks.
+- Keep opt-in terminal performance diagnostics available when supplied traces
+  lack compositor detail; default them off and aggregate console output instead
+  of logging every terminal write.
 - Preserve configured wheel movement in alternate-buffer fullscreen TUIs:
   expand wheel deltas into repeated cursor input only when application mouse
   tracking is disabled, and leave mouse-tracked applications to xterm.js.

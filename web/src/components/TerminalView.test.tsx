@@ -8,12 +8,10 @@ import {
 } from "./TerminalView";
 import {
   fitTerminalIfVisible as fitTerminalIfVisibleUtil,
-  loadWebglRenderer as loadWebglRendererUtil,
   openTerminalLink as openTerminalLinkUtil,
   terminalOptions as terminalOptionsUtil,
   terminalScrollback as terminalScrollbackUtil,
 } from "./terminalUtils";
-import type { ITerminalAddon } from "@xterm/xterm";
 import type { ApiClient } from "../api";
 import type { Session } from "../types";
 
@@ -277,81 +275,6 @@ test("leaves alternate-buffer wheel input with mouse tracking to xterm", async (
   expect(wheelHandler?.(event)).toBe(true);
   expect(preventDefault).not.toHaveBeenCalled();
   expect(socket.sent).toEqual([]);
-});
-
-test("loads the WebGL addon into an xterm terminal", () => {
-  const addon: ITerminalAddon = {
-    activate: () => undefined,
-    dispose: () => undefined,
-  };
-  const loadAddon = vi.fn();
-
-  expect(loadWebglRendererUtil({ loadAddon }, () => addon)).toBe(true);
-  expect(loadAddon).toHaveBeenCalledOnce();
-  expect(loadAddon).toHaveBeenCalledWith(addon);
-});
-
-test("disposes the WebGL addon after a context loss", () => {
-  let onContextLoss: (() => void) | undefined;
-  const dispose = vi.fn();
-  const addon = {
-    activate: () => undefined,
-    dispose,
-    onContextLoss: (listener: () => void) => {
-      onContextLoss = listener;
-      return { dispose: () => undefined };
-    },
-  };
-  const loadAddon = vi.fn();
-
-  expect(loadWebglRendererUtil({ loadAddon }, () => addon)).toBe(true);
-  expect(onContextLoss).toBeDefined();
-
-  onContextLoss?.();
-
-  expect(dispose).toHaveBeenCalledOnce();
-});
-
-test("disposes the WebGL addon immediately when its canvas loses context", () => {
-  const host = document.createElement("div");
-  const canvas = document.createElement("canvas");
-  vi.spyOn(canvas, "getContext").mockImplementation((kind) =>
-    kind === "webgl2" ? {} as WebGL2RenderingContext : null,
-  );
-  host.append(canvas);
-  const dispose = vi.fn();
-  const addon = {
-    activate: () => undefined,
-    dispose,
-    onContextLoss: () => ({ dispose: () => undefined }),
-  };
-
-  expect(loadWebglRendererUtil({ element: host, loadAddon: vi.fn() }, () => addon)).toBe(true);
-
-  canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
-
-  expect(dispose).toHaveBeenCalledOnce();
-});
-
-test("keeps the DOM renderer when WebGL addon loading fails", () => {
-  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-  const loadAddon = vi.fn(() => {
-    throw new Error("WebGL is unavailable");
-  });
-
-  expect(
-    loadWebglRendererUtil(
-      { loadAddon },
-      () => ({
-        activate: () => undefined,
-        dispose: () => undefined,
-      }),
-    ),
-  ).toBe(false);
-  expect(warning).toHaveBeenCalledWith(
-    "WebGL terminal renderer unavailable; using DOM renderer",
-    expect.any(Error),
-  );
 });
 
 test("opens an HTTP terminal link with one popup navigation", () => {

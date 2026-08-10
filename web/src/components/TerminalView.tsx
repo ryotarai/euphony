@@ -21,8 +21,11 @@ import {
 } from "../settings";
 import type { Session, TerminalCursorStyle } from "../types";
 import {
+  createTerminalDiagnostics,
+  type TerminalDiagnostics,
+} from "./terminalDiagnostics";
+import {
   fitTerminalIfVisible,
-  loadWebglRenderer,
   openTerminalLink,
   refreshTerminalIfVisible,
   terminalElementIsVisible,
@@ -266,7 +269,6 @@ function defaultTerminal(
     input: (data, wasUserInput = true) => terminal.input(data, wasUserInput),
     open: (element) => {
       terminal.open(element);
-      loadWebglRenderer({ element, loadAddon: terminal.loadAddon.bind(terminal) });
     },
     write: (data, callback) => terminal.write(data, callback),
     focus: () => terminal.focus(),
@@ -440,6 +442,7 @@ function useTerminalView({
     let lastSize = "";
     let claimActive = false;
     let lastReportedCWD = sessionCwdRef.current;
+    let diagnostics: TerminalDiagnostics | undefined;
     const closeSocket = () => {
       removeSocketListeners?.();
       removeSocketListeners = undefined;
@@ -451,6 +454,7 @@ function useTerminalView({
       connectionStateRef.current = next;
       setConnection(next);
       notifyConnectionChange(next);
+      diagnostics?.noteConnection(next);
     };
     const terminal = createTerminal(
       fontFamily,
@@ -462,10 +466,23 @@ function useTerminalView({
       scrollSensitivity,
       optionAsAlt,
     );
-    const outputBatcher = createTerminalOutputBatcher((data) => terminal.write(data));
     const partialWheelScroll = { value: 0 };
     terminalRef.current = terminal;
     terminal.open(host);
+    diagnostics = createTerminalDiagnostics({ sessionID: session.id, host });
+    const noteTerminalWrite = (
+      data: string | Uint8Array,
+      kind: "batch" | "history" | "direct",
+    ) => {
+      const bytes = typeof data === "string"
+        ? new TextEncoder().encode(data).byteLength
+        : data.byteLength;
+      diagnostics?.noteWrite(bytes, kind);
+    };
+    const outputBatcher = createTerminalOutputBatcher((data) => {
+      noteTerminalWrite(data, "batch");
+      terminal.write(data);
+    });
     onScreenSnapshot?.(() => terminal.getScreenText?.() ?? "");
     if (activeRef.current) focusTerminal(terminal);
     setConnectionState("connecting");
@@ -556,6 +573,7 @@ function useTerminalView({
       replayingHistory = true;
       pendingHistoryWrites++;
       try {
+        noteTerminalWrite(data, "history");
         terminal.write(data, () => {
           pendingHistoryWrites--;
           if (
@@ -661,6 +679,7 @@ function useTerminalView({
           if (message.type === "history" && message.data) {
             try {
               const data = decodeTerminalData(message.data);
+              diagnostics?.noteOutput(data.byteLength, true);
               replayingHistory = true;
               if (acceptedSizeReceived) {
                 writeHistory(data);
@@ -682,6 +701,7 @@ function useTerminalView({
           } else if (message.type === "output" && message.data) {
             try {
               const data = decodeTerminalData(message.data);
+              diagnostics?.noteOutput(data.byteLength, false);
               if (acceptedSizeReceived) {
                 outputBatcher.write(data);
               } else {
@@ -740,10 +760,14 @@ function useTerminalView({
           } else if (message.type === "exit") {
             outputBatcher.flush();
             setConnectionState("exited");
-            terminal.write(`\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`);
+            const data = `\r\n\x1b[90m[process exited with code ${message.exitCode ?? "unknown"}]\x1b[0m\r\n`;
+            noteTerminalWrite(data, "direct");
+            terminal.write(data);
           } else if (message.type === "error" && message.message) {
             outputBatcher.flush();
-            terminal.write(`\r\n\x1b[31m[${message.message}]\x1b[0m\r\n`);
+            const data = `\r\n\x1b[31m[${message.message}]\x1b[0m\r\n`;
+            noteTerminalWrite(data, "direct");
+            terminal.write(data);
           }
         };
         const handleClose = () => {
@@ -774,6 +798,7 @@ function useTerminalView({
         window.cancelAnimationFrame(gridMeasurementFrame);
       }
       outputBatcher.dispose();
+      diagnostics?.dispose();
       removeSocketListeners?.();
       removeSocketListeners = undefined;
       socket?.close();
