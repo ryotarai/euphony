@@ -13,6 +13,7 @@ export interface Session {
   processName?: string;
   customName?: boolean;
   createdAt: string;
+  updatedAt?: string;
   exitedAt?: string;
   exitCode?: number;
   message?: string;
