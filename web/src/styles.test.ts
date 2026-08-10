@@ -19,3 +19,11 @@ test("does not animate xterm scrollbar opacity in terminal views", () => {
 
   expect(scrollbarRule).toContain("transition: none;");
 });
+
+test("keeps the Inbox detail title compact", () => {
+  const titleRule = stylesheet.match(
+    /\.agents-detail-title\s*\{([\s\S]*?)\}/,
+  )?.[1] ?? "";
+
+  expect(titleRule).toContain("font-size: 1rem;");
+});

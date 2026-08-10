@@ -227,7 +227,11 @@ test("marks an action Done with the separate checkmark button", async () => {
 
   expect(onMarkDone).toHaveBeenCalledWith("high-terminal");
   expect(onSelectSession).not.toHaveBeenCalled();
-  expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: /Inbox · Action required/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: /Done 1/ })).toBeInTheDocument();
 });
 
 test("activates the Done checkmark with the keyboard", async () => {
@@ -329,11 +333,12 @@ test("activates an Inbox option with the keyboard and moves the row to Done", as
 
   expect(onChooseOption).toHaveBeenCalledWith("high-terminal", "option-1");
   await waitFor(() => {
-    expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
   });
+  await user.click(screen.getByRole("tab", { name: /Done 1/ }));
   expect(screen.getByText("The agent needs permission to edit the API.")).toBeInTheDocument();
 });
 
@@ -367,7 +372,7 @@ test("does not hide a newer action after an option response moves the old row to
   const view = renderAgents({ summaries: [structuredSummary], onChooseOption });
 
   await user.click(screen.getByRole("button", { name: "Allow access" }));
-  await waitFor(() => expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+  await waitFor(() => expect(screen.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute(
     "aria-selected",
     "true",
   ));

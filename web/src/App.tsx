@@ -3023,6 +3023,7 @@ export function App({
   }
 
   function selectAgentSummary(id: string, mode: "push" | "replace" = "push") {
+    selectSession(id, true);
     setSelectedAgentSummaryID(id);
     writeDashboardURL(agentsPaneID, id, mode);
     void markAgentSummaryRead(id);
