@@ -2026,9 +2026,10 @@ export function App({
     multiple: boolean,
     allowEmpty = false,
     checkboxPin?: boolean,
+    preserveDashboard = false,
   ) {
     markLocalSelectionMutation();
-    if (!multiple) setSelectedDashboardIDs([]);
+    if (!multiple && !preserveDashboard) setSelectedDashboardIDs([]);
     let nextPinnedIDs = pinnedIDs;
     const pinned = pinnedIDs.includes(id);
     if (checkboxPin !== undefined && pinned) {
@@ -2201,7 +2202,7 @@ export function App({
       "push",
       pinnedStatusFilters,
       pinnedCwdFilters,
-      multiple ? window.location.pathname : "/",
+      multiple || preserveDashboard ? window.location.pathname : "/",
     );
   }
 
@@ -3023,7 +3024,7 @@ export function App({
   }
 
   function selectAgentSummary(id: string, mode: "push" | "replace" = "push") {
-    selectSession(id, true);
+    selectSession(id, false, false, undefined, true);
     setSelectedAgentSummaryID(id);
     writeDashboardURL(agentsPaneID, id, mode);
     void markAgentSummaryRead(id);

@@ -566,6 +566,61 @@ test("opens the Inbox item together with its terminal pane", async () => {
   expect(window.location.pathname).toBe("/inbox/session-2");
 });
 
+test("replaces the previous terminal when switching Inbox items", async () => {
+  const firstSummary: AgentSummary = {
+    terminalId: runningSession.id,
+    provider: "codex",
+    status: "running",
+    summary: "The agent is still working on the first request.",
+    generatedAt: "2026-08-05T00:00:00Z",
+    unread: false,
+  };
+  const secondSummary: AgentSummary = {
+    terminalId: secondRunningSession.id,
+    provider: "claude",
+    status: "waiting",
+    summary: "The agent is waiting for confirmation before editing the route.",
+    action: "Approve the requested file change.",
+    generatedAt: "2026-08-05T00:01:00Z",
+    unread: false,
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/sessions") {
+      return jsonResponse([runningSession, secondRunningSession]);
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([firstSummary, secondSummary]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Inbox" }));
+  expect(await screen.findByRole("heading", { name: "Action required" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Open Implement v0.2" }));
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Inbox pane")).toHaveAttribute("data-visible", "true");
+
+  await user.click(screen.getByRole("button", { name: "Open Needs approval" }));
+
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  expectTerminalPaneHidden("Codex terminal pane");
+  expect(screen.getByLabelText("Inbox pane")).toHaveAttribute("data-visible", "true");
+  expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
+});
+
 test("executes an Inbox option, locks only its terminal, and reconciles Done", async () => {
   history.replaceState(null, "", "/?terminal=session-1&terminal=session-2");
   const summary: AgentSummary = {
