@@ -102,7 +102,7 @@ test("uses an opaque terminal surface", () => {
     .toMatchObject({ allowTransparency: false });
 });
 
-test("uses WebGL for a visible terminal surface and releases hidden sources", async () => {
+test("keeps the WebGL renderer alive while a mounted terminal is hidden", async () => {
   const socket = new FakeSocket();
   const setRenderer = vi.fn();
   const terminal: TerminalDriver = {
@@ -133,12 +133,28 @@ test("uses WebGL for a visible terminal surface and releases hidden sources", as
   );
 
   await waitFor(() => expect(setRenderer).toHaveBeenLastCalledWith("webgl"));
+  const terminalView = view.container.querySelector(".terminal-view");
+  expect(terminalView).not.toBeNull();
+  terminalView?.setAttribute("aria-hidden", "true");
 
   view.rerender(
     <TerminalView
       session={runningSession}
       api={api}
       active={false}
+      sourceVisible
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(setRenderer).toHaveBeenCalledTimes(1));
+
+  terminalView?.setAttribute("aria-hidden", "false");
+  view.rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active
       sourceVisible
       createTerminal={() => terminal}
       createSocket={() => socket}
@@ -156,7 +172,10 @@ test("uses WebGL for a visible terminal surface and releases hidden sources", as
       createSocket={() => socket}
     />,
   );
-  await waitFor(() => expect(setRenderer).toHaveBeenLastCalledWith("dom"));
+  await waitFor(() => expect(setRenderer).toHaveBeenLastCalledWith("webgl"));
+  expect(setRenderer).not.toHaveBeenCalledWith("dom");
+  view.unmount();
+  expect(setRenderer).not.toHaveBeenCalledWith("dom");
 });
 
 test("uses terminal scroll sensitivity for alternate-buffer wheel input", async () => {

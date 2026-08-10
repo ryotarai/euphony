@@ -840,7 +840,6 @@ function useTerminalView({
       removeSocketListeners = undefined;
       socket?.close();
       socket = undefined;
-      terminal.setRenderer?.("dom");
       terminal.dispose();
       onScreenSnapshot?.(null);
       if (terminalRef.current === terminal) terminalRef.current = null;
@@ -871,10 +870,12 @@ function useTerminalView({
   useEffect(() => {
     const terminal = terminalRef.current;
     const host = hostRef.current;
-    terminal?.setRenderer?.(
-      sourceVisible && host && terminalElementIsVisible(host) ? "webgl" : "dom",
-    );
-    if (sourceVisible && host && terminal) {
+    const visible = sourceVisible && host && terminalElementIsVisible(host);
+    if (visible && terminal) {
+      // Keep the WebGL addon attached while a mounted terminal is hidden. Tearing
+      // it down on every pane/source switch makes xterm synchronously rebuild its
+      // DOM renderer and stalls the main thread for seconds on large screens.
+      terminal.setRenderer?.("webgl");
       fitTerminalIfVisible(host, terminal);
     }
     if (active && terminal) focusTerminal(terminal);

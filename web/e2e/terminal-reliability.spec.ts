@@ -142,7 +142,7 @@ async function terminalGrid(page: Page) {
   }));
 }
 
-test("renders terminal output with WebGL and releases it for hidden sources", async ({ page }) => {
+test("keeps the WebGL renderer attached across source switches", async ({ page }) => {
   await clearSessions(page);
   const session = await createSession(page, "WebGL renderer");
   await replaceSharedSelection(page, session.id);
@@ -177,7 +177,8 @@ test("renders terminal output with WebGL and releases it for hidden sources", as
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute(
     "data-active",
   );
-  await expect(terminal.locator("canvas")).toHaveCount(0, oneSecond);
+  await expect.poll(() => terminal.locator("canvas").count(), oneSecond)
+    .toBeGreaterThan(0);
 
   await page.getByRole("tab", { name: "Terminal" }).click();
   await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute(
@@ -325,6 +326,15 @@ test("keeps an opened terminal connection alive while switching sessions", async
     "connected",
   );
   await expect.poll(() => firstSocketCount).toBe(1);
+  const supportsWebGL = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    return canvas.getContext("webgl2") !== null;
+  });
+  const oneSecond = { timeout: 1_000 };
+  if (supportsWebGL) {
+    await expect.poll(() => firstTerminal.locator("canvas").count(), oneSecond)
+      .toBeGreaterThan(0);
+  }
 
   await page.getByRole("button", { name: "Select Second" }).click();
   await expect(page.getByLabel("Second terminal", { exact: true })).toBeVisible();
@@ -337,10 +347,18 @@ test("keeps an opened terminal connection alive while switching sessions", async
   await expect(firstPane).toHaveCSS("visibility", "hidden");
   expect(await firstTerminal.evaluate((host) => host.getBoundingClientRect().width))
     .toBeGreaterThan(0);
+  if (supportsWebGL) {
+    await expect.poll(() => firstTerminal.locator("canvas").count(), oneSecond)
+      .toBeGreaterThan(0);
+  }
 
   await page.getByRole("button", { name: "Select First" }).click();
   await expect(firstTerminal).toBeVisible();
   expect(firstSocketCount).toBe(1);
+  if (supportsWebGL) {
+    await expect.poll(() => firstTerminal.locator("canvas").count(), oneSecond)
+      .toBeGreaterThan(0);
+  }
 
   for (const session of laterSessions) {
     await page.getByRole("button", { name: `Select ${session.name}` }).click();
