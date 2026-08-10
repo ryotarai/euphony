@@ -62,6 +62,7 @@ type Metadata struct {
 	AgentTranscriptPath string     `json:"-"`
 	ResumeAgent         string     `json:"-"`
 	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 	ExitedAt            *time.Time `json:"exitedAt,omitempty"`
 	ExitCode            *int       `json:"exitCode,omitempty"`
 	Message             string     `json:"message,omitempty"`
@@ -396,13 +397,15 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	if err != nil || !info.IsDir() {
 		return Metadata{}, errors.New("working directory must be an existing directory")
 	}
+	createdAt := time.Now().UTC()
 	metadata := Metadata{
 		ID:        id,
 		Name:      name,
 		State:     StateRunning,
 		CWD:       cwd,
 		RepoRoot:  repositoryRoot(cwd),
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
 	}
 	item, err := m.start(metadata, exec.Command(m.shell))
 	if err != nil {
@@ -881,6 +884,7 @@ func (m *Manager) Rename(id, name string) (Metadata, error) {
 				current.metadata.CustomName == after.CustomName {
 				item.metadata.Name = before.Name
 				item.metadata.CustomName = before.CustomName
+				item.metadata.UpdatedAt = before.UpdatedAt
 			}
 			m.mu.Unlock()
 			releaseMetadataSave()
@@ -1383,6 +1387,7 @@ func (m *Manager) updateCWDNotReportedSinceDeferred(
 					(reportedAt.IsZero() || current.cwdReportedAt == reportedAt) {
 					item.metadata.CWD = before.CWD
 					item.metadata.RepoRoot = before.RepoRoot
+					item.metadata.UpdatedAt = before.UpdatedAt
 					if !reportedAt.IsZero() {
 						item.cwdReportedAt = beforeReportedAt
 					}
@@ -2305,6 +2310,13 @@ func (m *Manager) nextChangeLocked(
 	kind ChangeKind,
 	before, after *Metadata,
 ) Change {
+	if kind == ChangeUpdated && after != nil {
+		updatedAt := time.Now().UTC()
+		after.UpdatedAt = updatedAt
+		if item, ok := m.sessions[after.ID]; ok {
+			item.metadata.UpdatedAt = updatedAt
+		}
+	}
 	m.changeSequence++
 	return Change{
 		Sequence: m.changeSequence,

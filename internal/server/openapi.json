@@ -1519,7 +1519,7 @@
       },
       "Terminal": {
         "type": "object",
-        "required": ["id", "name", "state", "cwd", "createdAt"],
+        "required": ["id", "name", "state", "cwd", "createdAt", "updatedAt"],
         "properties": {
           "id": {
             "type": "string"
@@ -1553,6 +1553,10 @@
             "type": "string"
           },
           "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
             "type": "string",
             "format": "date-time"
           }

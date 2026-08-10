@@ -28,11 +28,12 @@ func TestSQLiteStoreMigratesLegacyAttentionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create legacy schema: %v", err)
 	}
+	createdAt := time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
 	_, err = db.Exec(`INSERT INTO terminals (
 		id, name, state, cwd, agent, agent_status, created_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"legacy", "Terminal", "running", "/repo", "codex", "attention",
-		time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		createdAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		t.Fatalf("insert legacy terminal: %v", err)
@@ -50,7 +51,8 @@ func TestSQLiteStoreMigratesLegacyAttentionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if len(items) != 1 || items[0].AgentStatus != "waiting" || !items[0].NeedsAttention {
+	if len(items) != 1 || items[0].AgentStatus != "waiting" || !items[0].NeedsAttention ||
+		!items[0].UpdatedAt.Equal(createdAt) {
 		t.Fatalf("migrated metadata = %#v, want waiting with attention", items)
 	}
 }
@@ -117,6 +119,7 @@ func TestSQLiteStorePersistsTerminalMetadata(t *testing.T) {
 		AgentSessionID:      "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
 		AgentTranscriptPath: "/home/me/.codex/sessions/2026/07/30/rollout-session.jsonl",
 		CreatedAt:           time.Date(2026, 7, 28, 1, 2, 3, 4, time.UTC),
+		UpdatedAt:           time.Date(2026, 7, 28, 2, 3, 4, 5, time.UTC),
 		ExitedAt:            &exitedAt, ExitCode: &exitCode, Message: "done",
 	}
 	if err := store.Save(context.Background(), want); err != nil {
@@ -430,6 +433,7 @@ func metadataEqual(left, right Metadata) bool {
 		left.AgentSessionID == right.AgentSessionID &&
 		left.AgentTranscriptPath == right.AgentTranscriptPath &&
 		left.CreatedAt.Equal(right.CreatedAt) &&
+		left.UpdatedAt.Equal(right.UpdatedAt) &&
 		timesEqual(left.ExitedAt, right.ExitedAt) &&
 		intsEqual(left.ExitCode, right.ExitCode) && left.Message == right.Message
 }

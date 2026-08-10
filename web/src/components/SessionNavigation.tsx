@@ -92,6 +92,17 @@ function terminalPriority(session: Session) {
   return terminalRowPriority.get(activity(session)) ?? 100;
 }
 
+function terminalUpdatedAt(session: Session) {
+  const timestamp = Date.parse(session.updatedAt ?? session.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareTerminalRows(left: Session, right: Session) {
+  const priority = terminalPriority(left) - terminalPriority(right);
+  if (priority !== 0) return priority;
+  return terminalUpdatedAt(right) - terminalUpdatedAt(left);
+}
+
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
@@ -126,7 +137,7 @@ function groupSessionsByCwd(sessions: Session[]) {
   return [...groups].map(([cwd, groupedSessions]) => ({
     cwd,
     sessions: [...groupedSessions].sort(
-      (left, right) => terminalPriority(left) - terminalPriority(right),
+      compareTerminalRows,
     ),
   }));
 }

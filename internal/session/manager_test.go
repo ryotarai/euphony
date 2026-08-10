@@ -70,6 +70,25 @@ func TestManagerRenameTrimsNameAndPreservesDynamicMetadata(t *testing.T) {
 	}
 }
 
+func TestManagerUpdatesMetadataUpdatedAt(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	updated, err := manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "claude", Status: "waiting",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if updated.UpdatedAt.IsZero() || !updated.UpdatedAt.After(created.UpdatedAt) {
+		t.Fatalf("UpdatedAt = %v, want after %v", updated.UpdatedAt, created.UpdatedAt)
+	}
+}
+
 func TestManagerRenameValidatesNameWithoutMutatingMetadata(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
