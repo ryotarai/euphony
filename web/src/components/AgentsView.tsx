@@ -382,17 +382,7 @@ export function AgentsView({
   const doneItems = sortByPriority(items.filter(({ summary }) => (
     summary.done === true || visibleOptimisticDoneIDs.has(summary.terminalId)
   )));
-  const requestedVisibleItems = requestedTab === "action"
-    ? [...actionRequiredItems, ...runningItems]
-    : doneItems;
-  const requestedSelectedItem = requestedVisibleItems.find(
-    (item) => item.summary.terminalId === activeSelectedID,
-  ) ??
-    (requestedTab === "action"
-      ? items.find((item) => item.summary.terminalId === activeSelectedID && item.summary.done === true)
-      : null) ??
-    requestedVisibleItems[0] ?? null;
-  const selectedTab = requestedSelectedItem?.summary.done === true ? "done" : requestedTab;
+  const selectedTab = requestedTab;
   const visibleItems = selectedTab === "action"
     ? [...actionRequiredItems, ...runningItems]
     : doneItems;
@@ -431,7 +421,6 @@ export function AgentsView({
         return next;
       });
     }
-    setRequestedTab("done");
   };
 
   return (

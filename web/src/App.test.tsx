@@ -503,7 +503,7 @@ test("detects only new transitions into attention", () => {
   expect(attentionTransitions([attention], [attention])).toEqual([]);
 });
 
-test("opens the Inbox and selects an agent detail without leaving the dashboard", async () => {
+test("opens the Inbox item together with its terminal pane", async () => {
   const summary: AgentSummary = {
     terminalId: secondRunningSession.id,
     provider: "claude",
@@ -559,7 +559,8 @@ test("opens the Inbox and selects an agent detail without leaving the dashboard"
     );
   });
   expect(screen.getByRole("heading", { name: "Action required" })).toBeVisible();
-  expect(screen.queryByLabelText("Claude terminal pane")).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
+  expect(screen.getByLabelText("Inbox pane")).toHaveAttribute("data-visible", "true");
   releaseRead?.();
   expect(screen.getByRole("region", { name: "Selected Inbox item" })).toBeVisible();
   expect(window.location.pathname).toBe("/inbox/session-2");
@@ -632,7 +633,7 @@ test("executes an Inbox option, locks only its terminal, and reconciles Done", a
   );
 
   releaseExecute?.();
-  await waitFor(() => expect(screen.getByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+  await waitFor(() => expect(screen.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute(
     "aria-selected",
     "true",
   ));
@@ -640,6 +641,8 @@ test("executes an Inbox option, locks only its terminal, and reconciles Done", a
     "data-automation-locked",
     "false",
   );
+  expect(screen.getByRole("tab", { name: /Done 1/ })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: /Done 1/ }));
   expect(screen.getByText(doneSummary.summary)).toBeInTheDocument();
 });
 
@@ -746,10 +749,11 @@ test("marks an Agent action Done and shows it in the Done tab", async () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
-  expect(await screen.findByRole("tab", { name: /Done 1/ })).toHaveAttribute(
+  expect(await screen.findByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  await user.click(screen.getByRole("tab", { name: /Done 1/ }));
   expect(screen.getByText(doneSummary.summary)).toBeVisible();
 });
 

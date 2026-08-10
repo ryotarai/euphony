@@ -305,6 +305,7 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
   const agent = await createSession(page, "Needs approval", "/tmp");
   await replaceSharedSelection(page, [agent.id], agent.id);
   await reportAgent(page, agent.id, "claude", "Needs approval", "waiting");
+  let summaryDone = false;
   await page.route("**/api/v1/events", async (route) => {
     await route.fulfill({
       status: 200,
@@ -325,7 +326,7 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
         priority: "high",
         generatedAt: "2026-08-05T00:00:00Z",
         unread: true,
-        done: false,
+        done: summaryDone,
       }]),
     });
   });
@@ -342,11 +343,12 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
         priority: "high",
         generatedAt: "2026-08-05T00:00:00Z",
         unread: false,
-        done: false,
+        done: summaryDone,
       }),
     });
   });
   await page.route(`**/api/agent-summaries/${agent.id}/done`, async (route) => {
+    summaryDone = true;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -376,18 +378,21 @@ test("opens the Inbox and follows a summarized agent", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
   await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
+  await expect(page.locator(".agents-detail-title")).toHaveCSS("font-size", "16px");
   await expect(page.getByTestId("agent-summary-priority")).toHaveAttribute("data-priority", "high");
   await expect(page).toHaveURL(/\/inbox\/[^/?#]+/);
 
   await page.getByRole("button", { name: "Open Needs approval" }).click();
   await expect(page.getByRole("region", { name: "Selected Inbox item" })).toBeVisible();
+  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open terminal" }).click();
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Inbox" }).click();
   await page.getByRole("button", { name: "Mark Needs approval as done" }).click();
-  await expect(page.getByRole("tab", { name: "Done 1" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Done 1" }).click();
   await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
 });
 
@@ -453,7 +458,8 @@ test("locks the terminal while an Inbox choice is resolved", async ({ page }) =>
   await expect(page.locator('.terminal-view[data-locked="true"] .terminal-automation-lock')).toHaveCount(1);
 
   releaseExecute?.();
-  await expect(page.getByRole("tab", { name: "Done 1" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Done 1" })).toBeVisible();
   await expect(page.locator('.terminal-view[data-locked="true"]')).toHaveCount(0);
 });
 
