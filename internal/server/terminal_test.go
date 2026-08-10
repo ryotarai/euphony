@@ -729,6 +729,87 @@ func TestTerminalWebSocketDoesNotReportExitForLaggingClient(t *testing.T) {
 	}
 }
 
+func TestTerminalWebSocketPausesOutputUntilResume(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Flow control"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	connection := dialTerminal(t, srv, httpServer.URL, metadata.ID)
+	defer connection.CloseNow()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	readTerminalMessage(t, ctx, connection, "history_end")
+
+	pause, _ := json.Marshal(clientMessage{Type: "pause"})
+	if err := connection.Write(ctx, websocket.MessageText, pause); err != nil {
+		t.Fatalf("Write(pause) error = %v", err)
+	}
+	input, _ := json.Marshal(clientMessage{
+		Type: "input",
+		Data: "printf 'paused-output-marker\\n'\n",
+	})
+	if err := connection.Write(ctx, websocket.MessageText, input); err != nil {
+		t.Fatalf("Write(input) error = %v", err)
+	}
+
+	type readResult struct {
+		message serverMessage
+		err     error
+	}
+	readResults := make(chan readResult, 1)
+	go func() {
+		_, payload, readErr := connection.Read(ctx)
+		if readErr != nil {
+			readResults <- readResult{err: readErr}
+			return
+		}
+		var message serverMessage
+		if decodeErr := json.Unmarshal(payload, &message); decodeErr != nil {
+			readResults <- readResult{err: decodeErr}
+			return
+		}
+		readResults <- readResult{message: message}
+	}()
+	select {
+	case result := <-readResults:
+		t.Fatalf("received output while paused: message=%#v err=%v", result.message, result.err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	resume, _ := json.Marshal(clientMessage{Type: "resume"})
+	if err := connection.Write(ctx, websocket.MessageText, resume); err != nil {
+		t.Fatalf("Write(resume) error = %v", err)
+	}
+	var output strings.Builder
+	result := <-readResults
+	if result.err != nil {
+		t.Fatalf("read resumed message error = %v", result.err)
+	}
+	if result.message.Type == "output" || result.message.Type == "history" {
+		output.Write(result.message.Data)
+	}
+	for !strings.Contains(output.String(), "paused-output-marker") {
+		_, payload, readErr := connection.Read(ctx)
+		if readErr != nil {
+			t.Fatalf("Read(resumed) error = %v; output = %q", readErr, output.String())
+		}
+		var message serverMessage
+		if decodeErr := json.Unmarshal(payload, &message); decodeErr != nil {
+			t.Fatalf("decode resumed message: %v", decodeErr)
+		}
+		if message.Type == "output" || message.Type == "history" {
+			output.Write(message.Data)
+		}
+	}
+}
+
 func tail(text string, limit int) string {
 	if len(text) <= limit {
 		return text

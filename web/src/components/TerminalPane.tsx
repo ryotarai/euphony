@@ -78,6 +78,7 @@ export function TerminalPane({
   const [annotationSyncFailed, setAnnotationSyncFailed] = useState(false);
   const annotationIDRef = useRef<string | null>(null);
   const commandClickSourceRef = useRef<PaneSource | null>(null);
+  const previousSecondarySourceRef = useRef<PaneSource | null>(null);
   const resizingPointerRef = useRef<number | null>(null);
   const sourceStageRef = useRef<HTMLDivElement | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
@@ -193,9 +194,12 @@ export function TerminalPane({
   }, [resizingSplit]);
 
   useEffect(() => {
+    const wasSplit = previousSecondarySourceRef.current !== null;
+    previousSecondarySourceRef.current = secondarySource;
     if (secondarySource !== null) return;
     resizingPointerRef.current = null;
     setResizingSplit(false);
+    if (wasSplit) setFitVersion((current) => current + 1);
   }, [secondarySource]);
 
   useEffect(() => {

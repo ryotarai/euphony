@@ -166,6 +166,32 @@ test("opens a secondary source with Command-click without changing the primary s
   expect(screen.queryByText("Terminal + Workspace files")).not.toBeInTheDocument();
 });
 
+test("bumps the terminal layout after closing a source split", async () => {
+  const layoutVersions: number[] = [];
+  render(
+    <TerminalPane
+      session={session}
+      api={paneAPI()}
+      active
+      layoutVersion={1}
+      tabShortcut="Meta+L"
+      onDeselect={() => undefined}
+      renderTerminal={(layoutVersion) => {
+        layoutVersions.push(layoutVersion);
+        return <div aria-label="live terminal">terminal</div>;
+      }}
+    />,
+  );
+
+  const filesTab = screen.getByRole("tab", { name: "Files" });
+  fireEvent.click(filesTab, { metaKey: true });
+  expect(filesTab).toHaveAttribute("data-split-active", "true");
+  expect(layoutVersions.at(-1)).toBe(1);
+
+  fireEvent.click(filesTab, { metaKey: true });
+  await waitFor(() => expect(layoutVersions.at(-1)).toBe(2));
+});
+
 test("reports Terminal as visible without activating it on the secondary side", async () => {
   const user = userEvent.setup();
   const activeStates: boolean[] = [];

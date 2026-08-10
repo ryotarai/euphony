@@ -102,6 +102,63 @@ test("uses an opaque terminal surface", () => {
     .toMatchObject({ allowTransparency: false });
 });
 
+test("uses WebGL for a visible terminal surface and releases hidden sources", async () => {
+  const socket = new FakeSocket();
+  const setRenderer = vi.fn();
+  const terminal: TerminalDriver = {
+    open: () => undefined,
+    write: () => undefined,
+    focus: () => undefined,
+    fit: () => undefined,
+    setRenderer,
+    getSelection: () => "",
+    clearSelection: () => undefined,
+    onSelectionChange: () => () => undefined,
+    onData: () => () => undefined,
+    onResize: () => () => undefined,
+    dispose: () => undefined,
+  };
+  const api = {
+    createTicket: vi.fn().mockResolvedValue({ ticket: "ticket" }),
+  } as unknown as ApiClient;
+  const view = render(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active
+      sourceVisible
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+
+  await waitFor(() => expect(setRenderer).toHaveBeenLastCalledWith("webgl"));
+
+  view.rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active={false}
+      sourceVisible
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(setRenderer).toHaveBeenLastCalledWith("webgl"));
+
+  view.rerender(
+    <TerminalView
+      session={runningSession}
+      api={api}
+      active
+      sourceVisible={false}
+      createTerminal={() => terminal}
+      createSocket={() => socket}
+    />,
+  );
+  await waitFor(() => expect(setRenderer).toHaveBeenLastCalledWith("dom"));
+});
+
 test("uses terminal scroll sensitivity for alternate-buffer wheel input", async () => {
   const socket = new FakeSocket();
   let onData: ((data: string) => void) | undefined;

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { CheckIcon } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import type { ApiClient } from "../api";
@@ -24,6 +25,7 @@ import {
   createTerminalDiagnostics,
   type TerminalDiagnostics,
 } from "./terminalDiagnostics";
+import { createTerminalOutputFlowControl } from "./terminalFlowControl";
 import {
   fitTerminalIfVisible,
   openTerminalLink,
@@ -49,6 +51,7 @@ export interface TerminalDriver {
   refresh?(): void;
   proposeDimensions?(): { cols: number; rows: number } | undefined;
   resize?(cols: number, rows: number): void;
+  setRenderer?(renderer: "dom" | "webgl"): void;
   setScrollback?(scrollback: number): void;
   getSelection(): string;
   clearSelection(): void;
@@ -243,6 +246,33 @@ function defaultTerminal(
     optionAsAlt,
   ));
   terminal.loadAddon(fitAddon);
+  let webglAddon: WebglAddon | undefined;
+  let webglContextLossListener: { dispose(): void } | undefined;
+  const setRenderer = (renderer: "dom" | "webgl") => {
+    if (renderer === "webgl") {
+      if (webglAddon) return;
+      const addon = new WebglAddon();
+      try {
+        const contextLossListener = addon.onContextLoss(() => {
+          if (webglAddon !== addon) return;
+          webglAddon = undefined;
+          webglContextLossListener = undefined;
+          addon.dispose();
+        });
+        terminal.loadAddon(addon);
+        webglAddon = addon;
+        webglContextLossListener = contextLossListener;
+      } catch (error) {
+        addon.dispose();
+        console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
+      }
+      return;
+    }
+    webglContextLossListener?.dispose();
+    webglContextLossListener = undefined;
+    webglAddon?.dispose();
+    webglAddon = undefined;
+  };
   return {
     get cols() {
       return terminal.cols;
@@ -276,6 +306,7 @@ function defaultTerminal(
     refresh: () => terminal.refresh(0, terminal.rows - 1),
     proposeDimensions: () => fitAddon.proposeDimensions(),
     resize: (cols, rows) => terminal.resize(cols, rows),
+    setRenderer,
     setScrollback: (next) => {
       terminal.options.scrollback = next;
     },
@@ -470,6 +501,19 @@ function useTerminalView({
     terminalRef.current = terminal;
     terminal.open(host);
     diagnostics = createTerminalDiagnostics({ sessionID: session.id, host });
+    const send = (message: unknown): boolean => {
+      const currentSocket = socket;
+      if (currentSocket && currentSocket.readyState === currentSocket.OPEN) {
+        currentSocket.send(JSON.stringify(message));
+        return true;
+      }
+      return false;
+    };
+    const outputFlow = createTerminalOutputFlowControl({
+      write: (data, callback) => terminal.write(data, callback),
+      send,
+      onStateChange: (pending, paused) => diagnostics?.noteFlow(pending, paused),
+    });
     const noteTerminalWrite = (
       data: string | Uint8Array,
       kind: "batch" | "history" | "direct",
@@ -481,20 +525,11 @@ function useTerminalView({
     };
     const outputBatcher = createTerminalOutputBatcher((data) => {
       noteTerminalWrite(data, "batch");
-      terminal.write(data);
+      outputFlow.write(data);
     });
     onScreenSnapshot?.(() => terminal.getScreenText?.() ?? "");
     if (activeRef.current) focusTerminal(terminal);
     setConnectionState("connecting");
-
-    const send = (message: unknown): boolean => {
-      const currentSocket = socket;
-      if (currentSocket && currentSocket.readyState === currentSocket.OPEN) {
-        currentSocket.send(JSON.stringify(message));
-        return true;
-      }
-      return false;
-    };
     terminal.attachCustomWheelEventHandler?.((event) => {
       if (lockedRef.current) {
         event.preventDefault();
@@ -574,7 +609,7 @@ function useTerminalView({
       pendingHistoryWrites++;
       try {
         noteTerminalWrite(data, "history");
-        terminal.write(data, () => {
+        outputFlow.write(data, () => {
           pendingHistoryWrites--;
           if (
             acceptedSizeReceived &&
@@ -663,6 +698,7 @@ function useTerminalView({
         const handleOpen = () => {
           if (!active) return;
           setConnectionState("connected");
+          outputFlow.connectionReady();
           reportCapacity();
           if (activeRef.current) focusTerminal(terminal);
         };
@@ -798,11 +834,13 @@ function useTerminalView({
         window.cancelAnimationFrame(gridMeasurementFrame);
       }
       outputBatcher.dispose();
+      outputFlow.dispose();
       diagnostics?.dispose();
       removeSocketListeners?.();
       removeSocketListeners = undefined;
       socket?.close();
       socket = undefined;
+      terminal.setRenderer?.("dom");
       terminal.dispose();
       onScreenSnapshot?.(null);
       if (terminalRef.current === terminal) terminalRef.current = null;
@@ -833,6 +871,12 @@ function useTerminalView({
   useEffect(() => {
     const terminal = terminalRef.current;
     const host = hostRef.current;
+    terminal?.setRenderer?.(
+      sourceVisible && host && terminalElementIsVisible(host) ? "webgl" : "dom",
+    );
+    if (sourceVisible && host && terminal) {
+      fitTerminalIfVisible(host, terminal);
+    }
     if (active && terminal) focusTerminal(terminal);
     const sourceVisibilityChanged =
       previousSourceVisibleRef.current !== sourceVisible;
