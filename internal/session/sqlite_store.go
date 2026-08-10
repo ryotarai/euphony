@@ -81,6 +81,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			agent_session_id TEXT NOT NULL DEFAULT '',
 			agent_transcript_path TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT '',
 			exited_at TEXT,
 			exit_code INTEGER,
 			message TEXT NOT NULL DEFAULT ''
@@ -157,6 +158,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE terminals ADD COLUMN needs_attention INTEGER NOT NULL DEFAULT 0",
 		); err != nil {
 			return fmt.Errorf("add terminal attention flag: %w", err)
+		}
+	}
+	hasUpdatedAt, err := s.hasColumn(ctx, "terminals", "updated_at")
+	if err != nil {
+		return err
+	}
+	if !hasUpdatedAt {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE terminals ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("add terminal update time: %w", err)
 		}
 	}
 	hasAgentTranscriptPath, err := s.hasColumn(ctx, "terminals", "agent_transcript_path")
@@ -590,7 +602,7 @@ func (s *SQLiteStore) SaveSelection(ctx context.Context, state selection.State) 
 func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, custom_name, state, cwd, agent, resume_agent,
 		agent_status, needs_attention, agent_title, agent_session_id, agent_transcript_path,
-		created_at, exited_at, exit_code, message
+		created_at, updated_at, exited_at, exit_code, message
 		FROM terminals ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("load terminals: %w", err)
@@ -600,6 +612,7 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 	for rows.Next() {
 		var item Metadata
 		var createdAt string
+		var updatedAt string
 		var exitedAt sql.NullString
 		var exitCode sql.NullInt64
 		var customName int
@@ -607,7 +620,7 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 		if err := rows.Scan(&item.ID, &item.Name, &customName, &item.State, &item.CWD, &item.Agent,
 			&item.ResumeAgent, &item.AgentStatus, &needsAttention,
 			&item.AgentTitle, &item.AgentSessionID, &item.AgentTranscriptPath,
-			&createdAt, &exitedAt, &exitCode, &item.Message); err != nil {
+			&createdAt, &updatedAt, &exitedAt, &exitCode, &item.Message); err != nil {
 			return nil, fmt.Errorf("scan terminal: %w", err)
 		}
 		item.CustomName = customName != 0
@@ -615,6 +628,14 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 		item.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse terminal creation time: %w", err)
+		}
+		if updatedAt == "" {
+			item.UpdatedAt = item.CreatedAt
+		} else {
+			item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+			if err != nil {
+				return nil, fmt.Errorf("parse terminal update time: %w", err)
+			}
 		}
 		if exitedAt.Valid {
 			value, parseErr := time.Parse(time.RFC3339Nano, exitedAt.String)
@@ -636,6 +657,10 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 }
 
 func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
+	updatedAt := item.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = item.CreatedAt
+	}
 	var exitedAt any
 	if item.ExitedAt != nil {
 		exitedAt = item.ExitedAt.Format(time.RFC3339Nano)
@@ -647,8 +672,8 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO terminals (
 		id, name, custom_name, state, cwd, agent, resume_agent, agent_status, needs_attention,
 		agent_title, agent_session_id, agent_transcript_path,
-		created_at, exited_at, exit_code, message
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		created_at, updated_at, exited_at, exit_code, message
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name, custom_name=excluded.custom_name, state=excluded.state,
 		cwd=excluded.cwd, agent=excluded.agent,
@@ -656,12 +681,14 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 		needs_attention=excluded.needs_attention,
 		agent_title=excluded.agent_title, agent_session_id=excluded.agent_session_id,
 		agent_transcript_path=excluded.agent_transcript_path,
-		created_at=excluded.created_at, exited_at=excluded.exited_at,
+		created_at=excluded.created_at, updated_at=excluded.updated_at,
+		exited_at=excluded.exited_at,
 		exit_code=excluded.exit_code, message=excluded.message`,
 		item.ID, item.Name, item.CustomName, item.State, item.CWD, item.Agent, item.ResumeAgent,
 		item.AgentStatus, item.NeedsAttention, item.AgentTitle, item.AgentSessionID,
 		item.AgentTranscriptPath,
-		item.CreatedAt.Format(time.RFC3339Nano), exitedAt, exitCode, item.Message)
+		item.CreatedAt.Format(time.RFC3339Nano), updatedAt.Format(time.RFC3339Nano),
+		exitedAt, exitCode, item.Message)
 	if err != nil {
 		return fmt.Errorf("save terminal: %w", err)
 	}
