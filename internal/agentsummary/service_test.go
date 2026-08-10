@@ -139,6 +139,51 @@ func TestNormalizeTerminalActionInputAtExecutionBoundary(t *testing.T) {
 	}
 }
 
+func TestEncodeTerminalActionInputUsesBracketedPasteForPrintableInput(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "printable input",
+			input: "git show --stat --oneline HEAD",
+			want:  "\x1b[200~git show --stat --oneline HEAD\x1b[201~\r",
+		},
+		{
+			name:  "line feed submission",
+			input: "git status\n",
+			want:  "\x1b[200~git status\x1b[201~\r",
+		},
+		{
+			name:  "carriage return submission",
+			input: "git status\r",
+			want:  "\x1b[200~git status\x1b[201~\r",
+		},
+		{
+			name:  "escape sequence",
+			input: "\x1b[A",
+			want:  "\x1b[A",
+		},
+		{
+			name:  "control character",
+			input: "\x03",
+			want:  "\x03",
+		},
+		{
+			name:  "empty input",
+			input: "",
+			want:  "",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := EncodeTerminalActionInput(test.input); got != test.want {
+				t.Fatalf("EncodeTerminalActionInput(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildPromptOmitsEmptyAdditionalInstructions(t *testing.T) {
 	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
 	prompt := BuildPrompt(metadata, nil, nil, "   \n\t")

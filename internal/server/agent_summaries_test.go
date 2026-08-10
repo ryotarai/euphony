@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -549,6 +551,80 @@ func TestExecuteAgentSummaryOptionUsesAIWithTheCurrentTerminalScreen(t *testing.
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("AI action input was not written to terminal")
+}
+
+func TestExecuteAgentSummaryOptionSubmitsPrintableActionToPTY(t *testing.T) {
+	temporary := t.TempDir()
+	capturedPath := filepath.Join(temporary, "captured-input")
+	readyPath := filepath.Join(temporary, "capture-pty-ready")
+	shellPath := filepath.Join(temporary, "capture-pty-input")
+	want := []byte("\x1b[200~git show --stat --oneline HEAD\x1b[201~\r")
+	script := "#!/bin/bash\n" +
+		"stty raw -echo -icrnl -inlcr -igncr\n" +
+		": > \"" + readyPath + "\"\n" +
+		"dd bs=1 count=" + strconv.Itoa(len(want)) + " of=\"" + capturedPath + "\" 2>/dev/null\n" +
+		"printf 'captured\\n'\n"
+	if err := os.WriteFile(shellPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	srv, err := New(Config{
+		Token: "token", Shell: shellPath, SummaryRunner: blockingSummaryRunner{},
+		ActionRunner: &recordingTerminalActionRunner{input: "git show --stat --oneline HEAD"},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	terminal, err := srv.sessions.Create(t.Context(), "Codex", temporary)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(terminal.ID, session.AgentUpdate{
+		Agent: "codex", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if err := srv.sessions.SaveAgentSummary(t.Context(), session.AgentSummary{
+		TerminalID: terminal.ID, Provider: "codex", Status: "waiting",
+		Summary: "Waiting for a command.", Action: "Inspect the change.",
+		Options: []session.AgentSummaryOption{{ID: "option-1", Label: "変更を確認", Input: "git show --stat --oneline HEAD"}},
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+	readyDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(readyDeadline) {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(readyPath); err != nil {
+		t.Fatalf("PTY consumer did not become ready: %v", err)
+	}
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/agent-summaries/"+terminal.ID+"/options/option-1/execute", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("execute option status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var captured []byte
+	for time.Now().Before(deadline) {
+		captured, err = os.ReadFile(capturedPath)
+		if err == nil && len(captured) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(captured) != string(want) {
+		t.Fatalf("PTY input = %q, want bracketed paste followed by Enter %q", captured, want)
+	}
 }
 
 func TestExecuteAgentSummaryOptionReturnsConflictWhenTerminalIsLocked(t *testing.T) {

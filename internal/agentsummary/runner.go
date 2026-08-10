@@ -494,6 +494,21 @@ func NormalizeTerminalActionInput(input string) string {
 	return input + "\r"
 }
 
+// EncodeTerminalActionInput prepares a normalized AI action for the PTY.
+// Printable actions use bracketed paste so TUIs with paste-burst detection do
+// not reinterpret the trailing Enter as a newline. Control sequences remain
+// untouched because they represent individual terminal keys.
+func EncodeTerminalActionInput(input string) string {
+	normalized := NormalizeTerminalActionInput(input)
+	if normalized == "" || (normalized[0] < 0x20 && normalized[0] != '\t') {
+		return normalized
+	}
+	payload := strings.TrimSuffix(normalized, "\r")
+	encoded := control.EncodeBracketedPaste([]byte(payload))
+	encoded = append(encoded, '\r')
+	return string(encoded)
+}
+
 func extractJSONObject(output, source string) (string, error) {
 	cleaned := strings.TrimSpace(output)
 	if strings.HasPrefix(cleaned, "```") {

@@ -34,6 +34,9 @@
 - Normalize AI-generated printable terminal actions at the execution boundary
   with a carriage return when no line terminator is present, and test that the
   action is submitted to the PTY rather than only rendered on screen.
+- Send printable AI terminal actions as bracketed paste followed by a separate
+  carriage return so paste-burst TUIs do not reinterpret submission as a
+  newline; preserve control sequences as raw input.
 
 - Preserve arbitrary terminal byte streams across JSON boundaries with a
   lossless encoding such as base64; never stringify independent PTY chunks.

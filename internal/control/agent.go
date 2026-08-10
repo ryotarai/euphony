@@ -12,6 +12,16 @@ import (
 
 const MaxAgentInputBytes = 1024 * 1024
 
+// EncodeBracketedPaste wraps text in the terminal protocol used to distinguish
+// pasted content from a burst of individually typed key events.
+func EncodeBracketedPaste(data []byte) []byte {
+	encoded := make([]byte, 0, len(data)+len("\x1b[200~")+len("\x1b[201~"))
+	encoded = append(encoded, "\x1b[200~"...)
+	encoded = append(encoded, data...)
+	encoded = append(encoded, "\x1b[201~"...)
+	return encoded
+}
+
 var (
 	ErrUnsupportedAgent    = errors.New("unsupported agent")
 	ErrAgentNotRunning     = errors.New("agent not running")
@@ -92,8 +102,8 @@ func (s *Service) PromptAgent(
 	}
 	events, unsubscribe := s.SubscribeEvents([]string{"agent.updated", "terminal.deleted"})
 	defer unsubscribe()
-	data := append([]byte("\x1b[200~"), []byte(prompt)...)
-	data = append(data, []byte("\x1b[201~\r")...)
+	data := EncodeBracketedPaste([]byte(prompt))
+	data = append(data, '\r')
 	if err := s.sendInput(terminalID, TerminalInput{
 		DataBase64: base64.RawStdEncoding.EncodeToString(data),
 	}); err != nil {
