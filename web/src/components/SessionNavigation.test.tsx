@@ -303,44 +303,44 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
     .not.toHaveAccessibleDescription("Needs attention");
 });
 
-test("orders terminal rows by attention and lifecycle priority", () => {
+test("orders terminal rows by attention, lifecycle priority, and last update", () => {
+  const makeSession = (
+    id: string,
+    name: string,
+    agentStatus: string | undefined,
+    updatedAt: string,
+    needsAttention = false,
+  ): Session => ({
+    ...sessions[0],
+    id,
+    name,
+    agentStatus,
+    agentTitle: "",
+    updatedAt,
+    needsAttention: needsAttention || undefined,
+  });
   const ordered = [
-    {
-      ...sessions[0],
-      id: "terminal",
-      name: "Terminal",
-      agentStatus: undefined,
-      agentTitle: "",
-    },
-    {
-      ...sessions[0],
-      id: "running",
-      name: "Running",
-      agentStatus: "running",
-      agentTitle: "",
-    },
-    {
-      ...sessions[0],
-      id: "waiting",
-      name: "Waiting",
-      agentStatus: "waiting",
-      agentTitle: "",
-    },
-    {
-      ...sessions[0],
-      id: "blocked",
-      name: "Blocked",
-      agentStatus: "blocked",
-      agentTitle: "",
-    },
-    {
-      ...sessions[0],
-      id: "attention",
-      name: "Needs review",
-      agentStatus: "waiting",
-      agentTitle: "",
-      needsAttention: true,
-    },
+    makeSession("old-terminal", "Terminal", undefined, "2026-08-10T00:00:00Z"),
+    makeSession("old-waiting", "Old waiting", "waiting", "2026-08-10T00:01:00Z"),
+    makeSession("new-waiting", "New waiting", "waiting", "2026-08-10T00:09:00Z"),
+    makeSession("old-running", "Old running", "running", "2026-08-10T00:02:00Z"),
+    makeSession("new-running", "New running", "running", "2026-08-10T00:08:00Z"),
+    makeSession("old-blocked", "Old blocked", "blocked", "2026-08-10T00:03:00Z"),
+    makeSession("new-blocked", "New blocked", "blocked", "2026-08-10T00:07:00Z"),
+    makeSession(
+      "old-attention",
+      "Old attention",
+      "waiting",
+      "2026-08-10T00:04:00Z",
+      true,
+    ),
+    makeSession(
+      "new-attention",
+      "New attention",
+      "waiting",
+      "2026-08-10T00:06:00Z",
+      true,
+    ),
   ];
   render(
     <SessionNavigation
@@ -356,10 +356,14 @@ test("orders terminal rows by attention and lifecycle priority", () => {
     .getByLabelText("Terminal sessions")
     .querySelectorAll<HTMLButtonElement>(".session-select");
   expect([...labels].map((button) => button.getAttribute("aria-label"))).toEqual([
-    "Select Needs review",
-    "Select Blocked",
-    "Select Running",
-    "Select Waiting",
+    "Select New attention",
+    "Select Old attention",
+    "Select New blocked",
+    "Select Old blocked",
+    "Select New running",
+    "Select Old running",
+    "Select New waiting",
+    "Select Old waiting",
     "Select Terminal",
   ]);
 });
