@@ -1,11 +1,6 @@
-import { Terminal, type ITerminalAddon } from "@xterm/xterm";
-import { WebglAddon } from "@xterm/addon-webgl";
+import { Terminal } from "@xterm/xterm";
 import { defaultTerminalOptionAsAlt } from "../settings";
 import type { TerminalCursorStyle } from "../types";
-
-type WebglRendererAddon = ITerminalAddon & {
-  onContextLoss?: (listener: () => void) => unknown;
-};
 
 const maxTerminalScrollback = 4294967295;
 const maxFiniteTerminalScrollback = 100000;
@@ -40,42 +35,6 @@ export function openTerminalLink(uri: string): void {
     newWindow.opener = null;
   } catch {
     // Some browser shells may reject changing opener.
-  }
-}
-
-function webglCanvases(element: HTMLElement | undefined): HTMLCanvasElement[] {
-  if (!element) return [];
-  return Array.from(element.querySelectorAll("canvas")).filter((canvas) => {
-    try {
-      return canvas.getContext("webgl2") !== null;
-    } catch {
-      return false;
-    }
-  });
-}
-
-export function loadWebglRenderer(
-  terminal: Pick<Terminal, "loadAddon"> & { readonly element?: HTMLElement },
-  createAddon: () => WebglRendererAddon = () => new WebglAddon(),
-): boolean {
-  try {
-    const addon = createAddon();
-    let disposed = false;
-    const disposeAddon = () => {
-      if (disposed) return;
-      disposed = true;
-      addon.dispose();
-    };
-
-    addon.onContextLoss?.(disposeAddon);
-    terminal.loadAddon(addon);
-    for (const canvas of webglCanvases(terminal.element)) {
-      canvas.addEventListener("webglcontextlost", disposeAddon, { once: true });
-    }
-    return true;
-  } catch (error) {
-    console.warn("WebGL terminal renderer unavailable; using DOM renderer", error);
-    return false;
   }
 }
 
