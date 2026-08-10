@@ -37,6 +37,10 @@
 
 - Preserve arbitrary terminal byte streams across JSON boundaries with a
   lossless encoding such as base64; never stringify independent PTY chunks.
+- For terminal performance work, trace PTY output through the session queue,
+  WebSocket, and renderer as one flow: apply pause/resume backpressure per
+  subscriber and coalesce adjacent output frames without crossing resize
+  boundaries; never globally pause a shared PTY for one slow browser.
 - Keep opt-in terminal performance diagnostics available when supplied traces
   lack compositor detail; default them off and aggregate console output instead
   of logging every terminal write.

@@ -42,6 +42,7 @@ test("reports renderer and terminal output counters when enabled", () => {
   diagnostics.noteOutput(12, false);
   diagnostics.noteOutput(5, true);
   diagnostics.noteWrite(17, "batch");
+  diagnostics.noteFlow(3, true);
   vi.advanceTimersByTime(1_000);
 
   expect(log).toHaveBeenCalledWith(
@@ -60,6 +61,8 @@ test("reports renderer and terminal output counters when enabled", () => {
       historyBytes: 5,
       writeCalls: 1,
       writeBytes: 17,
+      flowPendingWrites: 3,
+      flowPaused: true,
     }),
   );
 

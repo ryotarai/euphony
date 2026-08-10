@@ -15,6 +15,7 @@ export interface TerminalDiagnostics {
   noteConnection(state: TerminalDiagnosticsConnection): void;
   noteOutput(bytes: number, history: boolean): void;
   noteWrite(bytes: number, kind: TerminalWriteKind): void;
+  noteFlow(pending: number, paused: boolean): void;
   dispose(): void;
 }
 
@@ -47,12 +48,15 @@ interface TerminalDiagnosticsSnapshot {
   batchWriteCalls: number;
   historyWriteCalls: number;
   directWriteCalls: number;
+  flowPendingWrites: number;
+  flowPaused: boolean;
 }
 
 const noopDiagnostics: TerminalDiagnostics = {
   noteConnection: () => undefined,
   noteOutput: () => undefined,
   noteWrite: () => undefined,
+  noteFlow: () => undefined,
   dispose: () => undefined,
 };
 
@@ -112,6 +116,8 @@ export function createTerminalDiagnostics(
   let batchWriteCalls = 0;
   let historyWriteCalls = 0;
   let directWriteCalls = 0;
+  let flowPendingWrites = 0;
+  let flowPaused = false;
   let disposed = false;
 
   const snapshot = (): TerminalDiagnosticsSnapshot => ({
@@ -128,6 +134,8 @@ export function createTerminalDiagnostics(
     batchWriteCalls,
     historyWriteCalls,
     directWriteCalls,
+    flowPendingWrites,
+    flowPaused,
   });
   const emit = (event: "open" | "state" | "sample" | "final") => {
     log(`[euphony:terminal] ${event}`, snapshot());
@@ -162,6 +170,11 @@ export function createTerminalDiagnostics(
       if (kind === "batch") batchWriteCalls++;
       if (kind === "history") historyWriteCalls++;
       if (kind === "direct") directWriteCalls++;
+    },
+    noteFlow(pending, paused) {
+      if (disposed) return;
+      flowPendingWrites = Math.max(0, pending);
+      flowPaused = paused;
     },
     dispose() {
       if (disposed) return;

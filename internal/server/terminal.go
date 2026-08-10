@@ -121,6 +121,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 		initialSize = &terminalDimensions{Cols: cols, Rows: rows}
 		defer unsubscribeSize()
 	}
+	outputGate := newTerminalOutputGate()
 	outputDone := make(chan struct{})
 	go func() {
 		defer close(outputDone)
@@ -136,55 +137,62 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 			},
 		)
 		defer cancelWrites()
+		outputBatcher := newTerminalEventBatcher(terminalOutputFrameBytes)
+		writeFrame := func(payload []byte) error {
+			if err := outputGate.wait(writeContext); err != nil {
+				return err
+			}
+			return connection.Write(writeContext, websocket.MessageText, payload)
+		}
 		if initialSize != nil {
 			payload := marshalTerminalFrame(serverMessage{
 				Type: "resize",
 				Cols: initialSize.Cols,
 				Rows: initialSize.Rows,
 			}, v1)
-			if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+			if err := writeFrame(payload); err != nil {
 				return
 			}
 		}
-		for _, chunk := range history {
+		for _, chunk := range batchTerminalHistory(history, terminalOutputFrameBytes) {
 			payload := marshalTerminalFrame(serverMessage{Type: "history", Data: chunk}, v1)
-			if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+			if err := writeFrame(payload); err != nil {
 				return
 			}
 		}
 		payload := marshalTerminalFrame(serverMessage{Type: "history_end"}, v1)
-		if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
+		if err := writeFrame(payload); err != nil {
 			return
 		}
 		for {
-			select {
-			case event, ok := <-events:
-				if !ok {
-					select {
-					case <-lagged:
-						return
-					default:
-					}
-					exitCode := s.sessionExitCode(id)
-					payload := marshalTerminalFrame(serverMessage{Type: "exit", ExitCode: exitCode}, v1)
-					_ = connection.Write(writeContext, websocket.MessageText, payload)
-					return
-				}
-				message := serverMessage{Type: "output", Data: event.Data}
-				if event.Cols > 0 && event.Rows > 0 {
-					message = serverMessage{
-						Type: "resize",
-						Cols: event.Cols,
-						Rows: event.Rows,
-					}
-				}
-				payload := marshalTerminalFrame(message, v1)
-				if err := connection.Write(writeContext, websocket.MessageText, payload); err != nil {
-					return
-				}
-			case <-lagged:
+			if err := outputGate.wait(writeContext); err != nil {
 				return
-			case <-ctx.Done():
+			}
+			event, ok, err := outputBatcher.next(writeContext, events)
+			if err != nil {
+				return
+			}
+			if !ok {
+				select {
+				case <-lagged:
+					return
+				default:
+				}
+				exitCode := s.sessionExitCode(id)
+				payload := marshalTerminalFrame(serverMessage{Type: "exit", ExitCode: exitCode}, v1)
+				_ = writeFrame(payload)
+				return
+			}
+			message := serverMessage{Type: "output", Data: event.Data}
+			if event.Cols > 0 && event.Rows > 0 {
+				message = serverMessage{
+					Type: "resize",
+					Cols: event.Cols,
+					Rows: event.Rows,
+				}
+			}
+			payload := marshalTerminalFrame(message, v1)
+			if err := writeFrame(payload); err != nil {
 				return
 			}
 		}
@@ -243,6 +251,10 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 					cancelCWDRefresh()
 					cancelCWDRefresh = nil
 				}
+			case "pause":
+				outputGate.pause()
+			case "resume":
+				outputGate.resume()
 			default:
 				invalidMessages++
 			}
