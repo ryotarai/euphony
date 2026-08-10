@@ -117,6 +117,7 @@ function SummaryRow({
         className="agent-summary-open"
         aria-label={`Open ${label}`}
         aria-current={selected ? "true" : undefined}
+        onMouseDown={(event) => event.stopPropagation()}
         onClick={() => onSelect(item)}
       >
         <span className="agent-summary-row-indicator" aria-hidden="true" />

@@ -584,6 +584,8 @@ test("replaces the previous terminal when switching Inbox items", async () => {
     generatedAt: "2026-08-05T00:01:00Z",
     unread: false,
   };
+  const pushState = vi.spyOn(window.history, "pushState");
+  const replaceState = vi.spyOn(window.history, "replaceState");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
@@ -608,17 +610,30 @@ test("replaces the previous terminal when switching Inbox items", async () => {
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Inbox" }));
   expect(await screen.findByRole("heading", { name: "Action required" })).toBeVisible();
+  await waitFor(() => expect(window.location.pathname).toBe("/inbox/session-1"));
 
   await user.click(screen.getByRole("button", { name: "Open Implement v0.2" }));
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   expect(screen.getByLabelText("Inbox pane")).toHaveAttribute("data-visible", "true");
+  await waitFor(() => {
+    const lastURL = pushState.mock.calls[pushState.mock.calls.length - 1]?.[2];
+    expect(lastURL).toBe("/inbox/session-1?terminal=session-1&focus=session-1");
+  });
 
+  pushState.mockClear();
+  replaceState.mockClear();
+  expect(pushState).not.toHaveBeenCalled();
+  expect(replaceState).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Open Needs approval" }));
 
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
   expectTerminalPaneHidden("Codex terminal pane");
   expect(screen.getByLabelText("Inbox pane")).toHaveAttribute("data-visible", "true");
   expect(screen.getByLabelText("Claude pane")).toHaveAttribute("data-active", "true");
+  expect(pushState.mock.calls.map((call) => call[2])).toEqual([
+    "/inbox/session-2?focus=session-2&terminal=session-2",
+  ]);
+  expect(replaceState).toHaveBeenCalledTimes(1);
 });
 
 test("executes an Inbox option, locks only its terminal, and reconciles Done", async () => {

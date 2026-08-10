@@ -2027,6 +2027,7 @@ export function App({
     allowEmpty = false,
     checkboxPin?: boolean,
     preserveDashboard = false,
+    workspaceMode: "push" | "replace" = "push",
   ) {
     markLocalSelectionMutation();
     if (!multiple && !preserveDashboard) setSelectedDashboardIDs([]);
@@ -2172,7 +2173,7 @@ export function App({
           nextFocus,
           nextStatusFilters,
           nextCwdFilters,
-          "push",
+          workspaceMode,
           nextPinnedStatusFilters,
           nextPinnedCwdFilters,
         );
@@ -2199,7 +2200,7 @@ export function App({
       nextFocus,
       multiple ? statusFilters : pinnedStatusFilters,
       multiple ? cwdFilters : pinnedCwdFilters,
-      "push",
+      workspaceMode,
       pinnedStatusFilters,
       pinnedCwdFilters,
       multiple || preserveDashboard ? window.location.pathname : "/",
@@ -3024,7 +3025,7 @@ export function App({
   }
 
   function selectAgentSummary(id: string, mode: "push" | "replace" = "push") {
-    selectSession(id, false, false, undefined, true);
+    selectSession(id, false, false, undefined, true, "replace");
     setSelectedAgentSummaryID(id);
     writeDashboardURL(agentsPaneID, id, mode);
     void markAgentSummaryRead(id);
