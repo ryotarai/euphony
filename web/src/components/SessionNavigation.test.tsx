@@ -106,6 +106,21 @@ test("composes terminal navigation from the shadcn sidebar without a monogram", 
   expect(screen.queryByText("EU")).not.toBeInTheDocument();
 });
 
+test("keeps the legacy mobile title based on session order, not selected ID order", () => {
+  useMobileViewport();
+  render(
+    <SessionNavigation
+      sessions={[sessions[1], sessions[0]]}
+      selectedIDs={["one", "two"]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+
+  expect(document.querySelector(".mobile-header")).toHaveTextContent("Claude");
+});
+
 test("places Tasks above Agents and opens each workspace dashboard", async () => {
   const onOpenTasks = vi.fn();
   const onOpenAgents = vi.fn();

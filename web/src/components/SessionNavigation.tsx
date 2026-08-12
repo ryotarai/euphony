@@ -318,10 +318,12 @@ function SessionNavigationContent({
 }) {
   const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
-  const selected = props.sessions.find((session) =>
-    (props.selectedID ?? props.selectedIDs[0]) === session.id,
-  );
   const projectSidebarEnabled = props.projects !== undefined;
+  const selected = projectSidebarEnabled
+    ? props.sessions.find((session) =>
+        (props.selectedID ?? props.selectedIDs[0]) === session.id,
+      )
+    : props.sessions.find((session) => props.selectedIDs.includes(session.id));
   const mobileTitle = props.focusedPaneID === "tasks"
     ? "Tasks"
     : props.focusedPaneID === "agents"
@@ -542,9 +544,9 @@ function SessionNavigationContent({
               agentSummaries={props.agentSummaries ?? []}
               selectedID={props.selectedID ?? props.selectedIDs[0] ?? null}
               onSelectSession={selectProjectSession}
-              onCreateTerminal={props.onCreateTerminal ?? (() => undefined)}
-              onCreateAgent={props.onCreateAgent ?? (() => undefined)}
-              onAddProject={props.onAddProject ?? (() => undefined)}
+              onCreateTerminal={props.onCreateTerminal}
+              onCreateAgent={props.onCreateAgent}
+              onAddProject={props.onAddProject}
               onDelete={props.onDelete}
             />
           ) : (

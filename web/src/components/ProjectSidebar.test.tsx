@@ -90,6 +90,18 @@ test("renders legacy sessions in a bounded Unassigned group", () => {
     .toBeInTheDocument();
 });
 
+test("routes sessions with an unknown project ID to Unassigned", () => {
+  renderSidebar({
+    sessions: [{ ...legacySession, projectId: "missing-project" }],
+  });
+
+  const group = screen.getByRole("heading", { name: "Unassigned" }).closest("section");
+  expect(group).not.toBeNull();
+  expect(within(group as HTMLElement).getByRole("button", { name: "Select Legacy terminal" }))
+    .toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "missing-project" })).not.toBeInTheDocument();
+});
+
 test("renders unread purpose, latest status, and required action", () => {
   renderSidebar();
 
@@ -101,6 +113,18 @@ test("renders unread purpose, latest status, and required action", () => {
   expect(row).toHaveTextContent("Implement the API");
   expect(row).toHaveTextContent("Updating the API");
   expect(row).toHaveTextContent("Approve the pending change");
+});
+
+test("announces row status, summary, action, and unread state", () => {
+  renderSidebar();
+
+  const row = screen.getByRole("button", {
+    name: /Select Codex.*Approve the pending change/i,
+  });
+  expect(row).toHaveAttribute("aria-describedby");
+  expect(row).toHaveAccessibleDescription(
+    "Status: Waiting. Latest summary: Updating the API. Required action: Approve the pending change. Unread.",
+  );
 });
 
 test("starts terminal or agent work only through project callbacks", async () => {
@@ -118,6 +142,22 @@ test("starts terminal or agent work only through project callbacks", async () =>
   expect(props.onCreateTerminal).toHaveBeenCalledWith(project.id);
   expect(props.onCreateAgent).toHaveBeenCalledWith(project.id);
   expect(props.onAddProject).toHaveBeenCalledOnce();
+});
+
+test("does not render project controls when their callbacks are missing", () => {
+  renderSidebar({
+    onCreateTerminal: undefined,
+    onCreateAgent: undefined,
+    onAddProject: undefined,
+  });
+
+  expect(screen.queryByRole("button", { name: "Add project" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: `Create terminal in ${project.path}` }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: `Start agent in ${project.path}` }),
+  ).not.toBeInTheDocument();
 });
 
 test("keeps selection and deletion as separate row actions", async () => {

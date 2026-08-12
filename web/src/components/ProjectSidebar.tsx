@@ -19,9 +19,9 @@ export interface ProjectSidebarProps {
   agentSummaries: AgentSummary[];
   selectedID?: string | null;
   onSelectSession(sessionID: string): void;
-  onCreateTerminal(projectID: string): void;
-  onCreateAgent(projectID: string): void;
-  onAddProject(): void;
+  onCreateTerminal?(projectID: string): void;
+  onCreateAgent?(projectID: string): void;
+  onAddProject?(): void;
   onDelete?(session: Session): void;
 }
 
@@ -166,37 +166,43 @@ function ProjectActions({
   onCreateAgent,
 }: {
   project: Project;
-  onCreateTerminal(projectID: string): void;
-  onCreateAgent(projectID: string): void;
+  onCreateTerminal?(projectID: string): void;
+  onCreateAgent?(projectID: string): void;
 }) {
+  if (!onCreateTerminal && !onCreateAgent) return null;
+
   return (
     <div className="project-sidebar-actions">
-      <button
-        type="button"
-        className="project-create-terminal"
-        aria-label={`Create terminal in ${project.path}`}
-        title={`Create terminal in ${project.path}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onCreateTerminal(project.id);
-        }}
-      >
-        <PlusIcon aria-hidden="true" />
-        <span className="sr-only">Create terminal in {project.path}</span>
-      </button>
-      <button
-        type="button"
-        className="project-create-agent"
-        aria-label={`Start agent in ${project.path}`}
-        title={`Start agent in ${project.path}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onCreateAgent(project.id);
-        }}
-      >
-        <BotIcon aria-hidden="true" />
-        <span className="sr-only">Start agent in {project.path}</span>
-      </button>
+      {onCreateTerminal && (
+        <button
+          type="button"
+          className="project-create-terminal"
+          aria-label={`Create terminal in ${project.path}`}
+          title={`Create terminal in ${project.path}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCreateTerminal(project.id);
+          }}
+        >
+          <PlusIcon aria-hidden="true" />
+          <span className="sr-only">Create terminal in {project.path}</span>
+        </button>
+      )}
+      {onCreateAgent && (
+        <button
+          type="button"
+          className="project-create-agent"
+          aria-label={`Start agent in ${project.path}`}
+          title={`Start agent in ${project.path}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCreateAgent(project.id);
+          }}
+        >
+          <BotIcon aria-hidden="true" />
+          <span className="sr-only">Start agent in {project.path}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -219,8 +225,17 @@ function ProjectSessionRow({
   const purpose = sessionPurpose(session, summary);
   const action = summary?.action?.trim() || "";
   const unread = summary?.unread === true;
-  const accessibleDetails = [purpose, action].filter(Boolean).join(" — ");
-  const selectionLabel = `Select ${identity}${accessibleDetails ? ` — ${accessibleDetails}` : ""}`;
+  const latestSummary = summary?.summary?.trim() || "None";
+  const requiredAction = action || "None";
+  const accessibleDescriptionID = `project-session-details-${session.id}`;
+  const accessibleDescription = [
+    `Status: ${statusLabel(status)}.`,
+    `Latest summary: ${latestSummary}.`,
+    `Required action: ${requiredAction}.`,
+    unread ? "Unread." : "Read.",
+  ].join(" ");
+  const selectionDetails = [purpose, action].filter(Boolean).join(" — ");
+  const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
 
   return (
     <li
@@ -233,6 +248,7 @@ function ProjectSessionRow({
         type="button"
         className="project-session-select"
         aria-label={selectionLabel}
+        aria-describedby={accessibleDescriptionID}
         aria-pressed={selected}
         aria-current={selected ? "true" : undefined}
         data-unread={unread ? "true" : "false"}
@@ -261,6 +277,9 @@ function ProjectSessionRow({
           </span>
         )}
       </button>
+      <span id={accessibleDescriptionID} className="sr-only">
+        {accessibleDescription}
+      </span>
       {onDelete && (
         <button
           type="button"
@@ -296,8 +315,8 @@ function ProjectGroup({
   summaries: Map<string, AgentSummary>;
   selectedID?: string | null;
   onSelectSession(sessionID: string): void;
-  onCreateTerminal(projectID: string): void;
-  onCreateAgent(projectID: string): void;
+  onCreateTerminal?(projectID: string): void;
+  onCreateAgent?(projectID: string): void;
   onDelete?: (session: Session) => void;
 }) {
   const groupID = project?.id ?? "unassigned";
@@ -313,7 +332,7 @@ function ProjectGroup({
     >
       <header className="project-sidebar-header">
         <h2 id={headingID} title={label}>{label}</h2>
-        {project && (
+        {project && (onCreateTerminal || onCreateAgent) && (
           <ProjectActions
             project={project}
             onCreateTerminal={onCreateTerminal}
@@ -359,19 +378,21 @@ export function ProjectSidebar({
     <nav className="project-sidebar" aria-label="Projects and sessions">
       <header className="project-sidebar-toolbar">
         <h1 className="sr-only">Projects</h1>
-        <button
-          type="button"
-          className="project-add-project"
-          aria-label="Add project"
-          title="Add project"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAddProject();
-          }}
-        >
-          <FolderPlusIcon aria-hidden="true" />
-          <span>Add project</span>
-        </button>
+        {onAddProject && (
+          <button
+            type="button"
+            className="project-add-project"
+            aria-label="Add project"
+            title="Add project"
+            onClick={(event) => {
+              event.stopPropagation();
+              onAddProject();
+            }}
+          >
+            <FolderPlusIcon aria-hidden="true" />
+            <span>Add project</span>
+          </button>
+        )}
       </header>
       <div className="project-sidebar-groups">
         {projects.map((project) => (
