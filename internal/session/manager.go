@@ -201,6 +201,13 @@ type entry struct {
 	codexTitleHeaderScanned bool
 }
 
+type pendingAgentStart struct {
+	mu        sync.Mutex
+	metadata  Metadata
+	updates   []AgentUpdate
+	accepting bool
+}
+
 type agentInterruptTarget struct {
 	sessionID      string
 	transcriptPath string
@@ -264,6 +271,7 @@ type Manager struct {
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
+	pendingAgentStarts              map[string]*pendingAgentStart
 	store                           metadataStore
 	agentSummaries                  map[string]AgentSummary
 	closing                         bool
@@ -354,8 +362,9 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 	return &Manager{
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
-		agentSummaries: make(map[string]AgentSummary),
-		settings:       DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
+		pendingAgentStarts: make(map[string]*pendingAgentStart),
+		agentSummaries:     make(map[string]AgentSummary),
+		settings:           DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
 		foregroundProcessSampleInterval: defaultForegroundProcessSampleInterval,
 		claudeTitleSampleInterval:       defaultClaudeTitleSampleInterval,
 		blockedStatusGracePeriod:        defaultBlockedStatusGracePeriod,
@@ -448,18 +457,24 @@ func (m *Manager) create(
 		CreatedAt: createdAt,
 		UpdatedAt: createdAt,
 	}
+	if !m.beginPendingAgentStart(metadata) {
+		return Metadata{}, ErrManagerClosing
+	}
 	item, err := m.start(metadata, exec.Command(command))
 	if err != nil {
+		m.discardPendingAgentStart(id)
 		return Metadata{}, err
 	}
 	go item.session.pump()
 	if m.store != nil {
 		if err := m.saveMetadata(m.store, metadata); err != nil {
+			m.discardPendingAgentStart(id)
 			discardStartedSession(item.session)
 			return Metadata{}, err
 		}
 	}
 	if !m.registerSession(id, item) {
+		m.discardPendingAgentStart(id)
 		if m.store != nil {
 			operation := m.reserveStoreOperation()
 			cleanupErr := m.runStoreOperation(operation, func() error {
@@ -477,6 +492,7 @@ func (m *Manager) create(
 		discardStartedSession(item.session)
 		return Metadata{}, ErrManagerClosing
 	}
+	m.applyPendingAgentUpdates(id)
 	created := item.metadata
 	m.mu.Lock()
 	change := m.nextChangeLocked(ChangeCreated, nil, &created)
@@ -586,19 +602,26 @@ func (m *Manager) restore(metadata Metadata) error {
 		metadata.RepoRoot = repositoryRoot(metadata.CWD)
 	}
 	command := restoredCommand(m.shell, metadata)
+	if !m.beginPendingAgentStart(metadata) {
+		return ErrManagerClosing
+	}
 	item, err := m.start(metadata, command)
 	if err != nil {
+		m.discardPendingAgentStart(metadata.ID)
 		return err
 	}
 	go item.session.pump()
 	if err := m.saveMetadata(m.store, metadata); err != nil {
+		m.discardPendingAgentStart(metadata.ID)
 		discardStartedSession(item.session)
 		return err
 	}
 	if !m.registerSession(metadata.ID, item) {
+		m.discardPendingAgentStart(metadata.ID)
 		discardStartedSession(item.session)
 		return ErrManagerClosing
 	}
+	m.applyPendingAgentUpdates(metadata.ID)
 	go m.watch(item)
 	return nil
 }
@@ -684,6 +707,77 @@ func (m *Manager) registerSession(id string, item *entry) bool {
 	item.session.setHistoryLimit(m.settings.TerminalHistoryLimit)
 	m.sessions[id] = item
 	return true
+}
+
+func (m *Manager) beginPendingAgentStart(metadata Metadata) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		return false
+	}
+	m.pendingAgentStarts[metadata.ID] = &pendingAgentStart{
+		metadata:  metadata,
+		accepting: true,
+	}
+	return true
+}
+
+func (m *Manager) discardPendingAgentStart(id string) {
+	m.mu.RLock()
+	pending := m.pendingAgentStarts[id]
+	m.mu.RUnlock()
+	if pending == nil {
+		return
+	}
+	pending.mu.Lock()
+	pending.accepting = false
+	pending.updates = nil
+	pending.mu.Unlock()
+	m.mu.Lock()
+	if current := m.pendingAgentStarts[id]; current == pending {
+		delete(m.pendingAgentStarts, id)
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) applyPendingAgentUpdates(id string) {
+	m.mu.RLock()
+	pending := m.pendingAgentStarts[id]
+	m.mu.RUnlock()
+	if pending == nil {
+		return
+	}
+
+	pending.mu.Lock()
+	for pending.accepting {
+		if len(pending.updates) == 0 {
+			pending.accepting = false
+			pending.mu.Unlock()
+			m.mu.Lock()
+			if current := m.pendingAgentStarts[id]; current == pending {
+				delete(m.pendingAgentStarts, id)
+			}
+			m.mu.Unlock()
+			return
+		}
+		update := pending.updates[0]
+		pending.updates = pending.updates[1:]
+		m.applyPendingAgentUpdate(id, update)
+	}
+	pending.mu.Unlock()
+}
+
+func (m *Manager) applyPendingAgentUpdate(id string, update AgentUpdate) {
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return
+	}
+	if strings.TrimSpace(update.Agent) == "codex" &&
+		strings.TrimSpace(update.Status) == "blocked" {
+		_, _ = m.deferBlockedStatus(id, item, update, releaseMetadataSave)
+		return
+	}
+	_, _ = m.applyAgentUpdate(id, item, update, releaseMetadataSave)
 }
 
 // WriteTerminal writes input to the PTY. A Ctrl-C only starts watching the
@@ -782,6 +876,9 @@ func (m *Manager) lockMetadataSaveEntry(id string) (*entry, func(), error) {
 }
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
+	if metadata, queued := m.queuePendingAgentUpdate(id, update); queued {
+		return metadata, nil
+	}
 	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
 	if err != nil {
 		return Metadata{}, err
@@ -791,6 +888,22 @@ func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
 		return m.deferBlockedStatus(id, item, update, releaseMetadataSave)
 	}
 	return m.applyAgentUpdate(id, item, update, releaseMetadataSave)
+}
+
+func (m *Manager) queuePendingAgentUpdate(id string, update AgentUpdate) (Metadata, bool) {
+	m.mu.RLock()
+	pending := m.pendingAgentStarts[id]
+	m.mu.RUnlock()
+	if pending == nil {
+		return Metadata{}, false
+	}
+	pending.mu.Lock()
+	defer pending.mu.Unlock()
+	if !pending.accepting {
+		return Metadata{}, false
+	}
+	pending.updates = append(pending.updates, update)
+	return pending.metadata, true
 }
 
 func (m *Manager) deferBlockedStatus(

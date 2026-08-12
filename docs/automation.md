@@ -89,7 +89,9 @@ editor, agent, or another foreground process is active.
 
 Use `terminal create --command codex` or `--command claude` to launch an agent
 directly as the terminal's initial process. This avoids sending an agent
-launcher through an already-running shell.
+launcher through an already-running shell. The create call returns once the
+PTY process is started; agent status and session metadata arrive asynchronously
+from the installed hooks.
 
 `terminal observe` emits WebSocket frames as NDJSON and cannot write to the
 PTY. `terminal attach` is the interactive exception to JSON output: it writes

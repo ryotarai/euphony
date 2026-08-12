@@ -83,6 +83,43 @@ func TestCreateWithCommandStartsRequestedExecutable(t *testing.T) {
 	}
 }
 
+func TestCreateWithCommandQueuesAgentHookBeforeRegistration(t *testing.T) {
+	store := &recordingMetadataStore{}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	manager.beforeStoreOperation = func(sequence uint64) {
+		if sequence != 1 {
+			return
+		}
+		manager.mu.RLock()
+		var id string
+		for pendingID := range manager.pendingAgentStarts {
+			id = pendingID
+			break
+		}
+		manager.mu.RUnlock()
+		if id == "" {
+			t.Fatal("initial terminal was not pending during its first save")
+		}
+		if _, err := manager.UpdateAgent(id, AgentUpdate{
+			Agent: "codex", Status: "waiting",
+		}); err != nil {
+			t.Fatalf("UpdateAgent() error = %v", err)
+		}
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	metadata, err := manager.CreateWithCommand(
+		context.Background(), "Agent", t.TempDir(), "/bin/sh",
+	)
+	if err != nil {
+		t.Fatalf("CreateWithCommand() error = %v", err)
+	}
+	if metadata.Agent != "codex" || metadata.AgentStatus != "waiting" {
+		t.Fatalf("created metadata = %#v, want queued hook applied", metadata)
+	}
+}
+
 func TestCreateRejectsBlankName(t *testing.T) {
 	t.Parallel()
 
