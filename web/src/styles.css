@@ -1428,6 +1428,22 @@ input:focus-visible,
 .desktop-sidebar {
   background: var(--sidebar);
   border-color: var(--sidebar-border);
+  border-right: 0;
+}
+
+.session-info-pane {
+  border-left: 0;
+  border-right: 0;
+}
+
+.session-info-resizer::after {
+  background: var(--border);
+}
+
+.session-info-resizer:hover::after,
+.session-info-resizer:focus-visible::after,
+.session-info-resizer[data-resizing="true"]::after {
+  background: #737373;
 }
 
 .sidebar-provider {

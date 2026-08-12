@@ -93,6 +93,9 @@
 - Keep terminal panes flush by default: use only separators between panes, and
   aggregate connection status at workspace level instead of repeating it per
   pane.
+- When styling a pane boundary, inspect both adjacent borders and the owning
+  resizer pseudo-element; verify sidebar, session-information, and terminal
+  boundaries independently so adjacent 1px rules do not become a double line.
 - Do not let agent lifecycle transitions reset a pane's user-selected Terminal
   or Agent log source.
 - Read agent metadata that hooks do not carry from the artifacts they point at

@@ -373,6 +373,47 @@ test("matches the session information background to the terminal sidebar", async
   expect(colors.infoPane).toBe(colors.sidebar);
 });
 
+test("uses one gray line at the sidebar and session information boundaries", async ({ page }) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Boundary details", "/tmp");
+  await replaceSharedSelection(page, [terminal.id], terminal.id);
+  await page.goto("/?token=test-token");
+
+  const boundaries = await page.evaluate(() => {
+    const sidebar = document.querySelector<HTMLElement>(".desktop-sidebar");
+    const infoPane = document.querySelector<HTMLElement>(".session-info-pane");
+    const sidebarResizer = document.querySelector<HTMLElement>(".sidebar-resizer");
+    const infoResizer = document.querySelector<HTMLElement>(".session-info-resizer");
+    if (!sidebar || !infoPane || !sidebarResizer || !infoResizer) {
+      throw new Error("Expected workspace boundary elements.");
+    }
+    return {
+      sidebarBorderRight: getComputedStyle(sidebar).borderRightWidth,
+      infoBorderLeft: getComputedStyle(infoPane).borderLeftWidth,
+      infoBorderRight: getComputedStyle(infoPane).borderRightWidth,
+      sidebarDivider: getComputedStyle(sidebarResizer, "::after").backgroundColor,
+      infoDivider: getComputedStyle(infoResizer, "::after").backgroundColor,
+    };
+  });
+
+  expect(boundaries).toEqual({
+    sidebarBorderRight: "0px",
+    infoBorderLeft: "0px",
+    infoBorderRight: "0px",
+    sidebarDivider: "rgb(38, 38, 38)",
+    infoDivider: "rgb(38, 38, 38)",
+  });
+
+  await page.locator(".sidebar-resizer").hover();
+  await expect.poll(() => page.evaluate(() =>
+    getComputedStyle(document.querySelector<HTMLElement>(".sidebar-resizer")!, "::after").backgroundColor,
+  )).toBe("rgb(115, 115, 115)");
+  await page.locator(".session-info-resizer").hover();
+  await expect.poll(() => page.evaluate(() =>
+    getComputedStyle(document.querySelector<HTMLElement>(".session-info-resizer")!, "::after").backgroundColor,
+  )).toBe("rgb(115, 115, 115)");
+});
+
 test("makes project terminal rows fully clickable", async ({ page }) => {
   await clearSessions(page);
   const terminal = await createSession(page, "Full-width terminal", "/tmp");
