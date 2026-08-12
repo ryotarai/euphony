@@ -37,8 +37,8 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import type { Session, Settings } from "../types";
-import { cwdFilterKey } from "../sessionUtils";
+import { ProjectSidebar } from "./ProjectSidebar";
+import type { AgentSummary, Project, Session, Settings } from "../types";
 import {
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
@@ -59,9 +59,16 @@ function normalizeSidebarWidth(width: number): number {
 interface SessionNavigationProps {
   sessions: Session[];
   selectedIDs: string[];
+  projects?: Project[];
+  agentSummaries?: AgentSummary[];
+  selectedID?: string | null;
   pinnedIDs?: string[];
   onSelect(id: string, multiple: boolean, pin?: boolean): void;
+  onSelectSession?(sessionID: string): void;
   onCreate(cwd?: string): void;
+  onCreateTerminal?(projectID: string): void;
+  onCreateAgent?(projectID: string): void;
+  onAddProject?(): void;
   onDelete(session: Session): void;
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
@@ -275,7 +282,11 @@ function SessionList(props: SessionNavigationProps) {
                       showOnHover
                       aria-label={`Delete ${session.name}`}
                       title={`Delete ${session.name}`}
-                      onClick={() => props.onDelete(session)}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        props.onDelete(session);
+                      }}
                     >
                       <Trash2Icon aria-hidden="true" />
                       <span className="sr-only">Delete {session.name}</span>
@@ -307,7 +318,12 @@ function SessionNavigationContent({
 }) {
   const { isMobile, setOpenMobile, state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
-  const selected = props.sessions.find((session) => props.selectedIDs.includes(session.id));
+  const projectSidebarEnabled = props.projects !== undefined;
+  const selected = projectSidebarEnabled
+    ? props.sessions.find((session) =>
+        (props.selectedID ?? props.selectedIDs[0]) === session.id,
+      )
+    : props.sessions.find((session) => props.selectedIDs.includes(session.id));
   const mobileTitle = props.focusedPaneID === "tasks"
     ? "Tasks"
     : props.focusedPaneID === "agents"
@@ -425,6 +441,12 @@ function SessionNavigationContent({
     props.onOpenTasks?.(multiple);
   };
 
+  const selectProjectSession = (sessionID: string) => {
+    if (props.onSelectSession) props.onSelectSession(sessionID);
+    else props.onSelect(sessionID, false);
+    if (isMobile) setOpenMobile(false);
+  };
+
   return (
     <>
       <Sidebar
@@ -451,15 +473,17 @@ function SessionNavigationContent({
         >
           <SidebarMenu className="sidebar-primary-navigation">
             <SidebarMenuItem className="workspace-channel">
-              <Checkbox
-                className="pane-checkbox workspace-pane-checkbox"
-                aria-label="Include Tasks in split"
-                checked={props.tasksOpen ?? false}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onOpenTasks?.(true);
-                }}
-              />
+              {!projectSidebarEnabled && (
+                <Checkbox
+                  className="pane-checkbox workspace-pane-checkbox"
+                  aria-label="Include Tasks in split"
+                  checked={props.tasksOpen ?? false}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.onOpenTasks?.(true);
+                  }}
+                />
+              )}
               <SidebarMenuButton
                 className="workspace-select"
                 type="button"
@@ -480,50 +504,68 @@ function SessionNavigationContent({
                 )}
               </SidebarMenuButton>
             </SidebarMenuItem>
-            <SidebarMenuItem className="workspace-channel">
-              <Checkbox
-                className="pane-checkbox workspace-pane-checkbox"
-                aria-label="Include Inbox in split"
-                checked={props.agentsOpen ?? false}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onOpenAgents?.(true);
-                }}
-              />
-              <SidebarMenuButton
-                className="workspace-select"
-                type="button"
-                tooltip="Inbox"
-                isActive={props.agentsOpen && props.focusedPaneID === "agents"}
-                aria-current={
-                  props.agentsOpen && props.focusedPaneID === "agents" ? "page" : undefined
-                }
-                aria-label="Inbox"
-                onClick={openAgents}
-              >
-                <BotIcon aria-hidden="true" />
-                <span>Inbox</span>
-                {(props.agentSummaryCount ?? 0) > 0 && (
-                  <span className="sidebar-attention-count" aria-hidden="true">
-                    {props.agentSummaryCount}
-                  </span>
-                )}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {!projectSidebarEnabled && (
+              <SidebarMenuItem className="workspace-channel">
+                <Checkbox
+                  className="pane-checkbox workspace-pane-checkbox"
+                  aria-label="Include Inbox in split"
+                  checked={props.agentsOpen ?? false}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.onOpenAgents?.(true);
+                  }}
+                />
+                <SidebarMenuButton
+                  className="workspace-select"
+                  type="button"
+                  tooltip="Inbox"
+                  isActive={props.agentsOpen && props.focusedPaneID === "agents"}
+                  aria-current={
+                    props.agentsOpen && props.focusedPaneID === "agents" ? "page" : undefined
+                  }
+                  aria-label="Inbox"
+                  onClick={openAgents}
+                >
+                  <BotIcon aria-hidden="true" />
+                  <span>Inbox</span>
+                  {(props.agentSummaryCount ?? 0) > 0 && (
+                    <span className="sidebar-attention-count" aria-hidden="true">
+                      {props.agentSummaryCount}
+                    </span>
+                  )}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
-          <SessionList {...props} settings={settings} />
+          {projectSidebarEnabled ? (
+            <ProjectSidebar
+              projects={props.projects ?? []}
+              sessions={props.sessions}
+              agentSummaries={props.agentSummaries ?? []}
+              selectedID={props.selectedID ?? props.selectedIDs[0] ?? null}
+              onSelectSession={selectProjectSession}
+              onCreateTerminal={props.onCreateTerminal}
+              onCreateAgent={props.onCreateAgent}
+              onAddProject={props.onAddProject}
+              onDelete={props.onDelete}
+            />
+          ) : (
+            <SessionList {...props} settings={settings} />
+          )}
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="New terminal"
-                onClick={() => props.onCreate()}
-              >
-                <PlusIcon aria-hidden="true" />
-                <span>New terminal</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {!projectSidebarEnabled && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="New terminal"
+                  onClick={() => props.onCreate()}
+                >
+                  <PlusIcon aria-hidden="true" />
+                  <span>New terminal</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Settings"
