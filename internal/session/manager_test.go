@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,39 @@ import (
 	"github.com/ryotarai/euphony/internal/selection"
 	"golang.org/x/sys/unix"
 )
+
+func TestMetadataJSONIncludesProjectIDWhenPresent(t *testing.T) {
+	encoded, err := json.Marshal(Metadata{ProjectID: "project-1"})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(encoded), `"projectId":"project-1"`) {
+		t.Fatalf("metadata JSON = %s, want projectId", encoded)
+	}
+}
+
+func TestCreateInProjectRoundTripsProjectID(t *testing.T) {
+	store, err := OpenSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	directory := t.TempDir()
+	created, err := manager.CreateInProject(
+		t.Context(), "Terminal", "project-1", directory,
+	)
+	if err != nil {
+		t.Fatalf("CreateInProject() error = %v", err)
+	}
+	listed := manager.ListCurrent()
+	if len(listed) != 1 || listed[0].ID != created.ID ||
+		listed[0].ProjectID != "project-1" {
+		t.Fatalf("metadata = %#v, want project-1", listed)
+	}
+}
 
 func TestCreateRejectsBlankName(t *testing.T) {
 	t.Parallel()
@@ -133,6 +167,50 @@ func TestManagerRenameRollsBackWhenPersistenceFails(t *testing.T) {
 	}
 	if current != created {
 		t.Fatalf("metadata after failed Rename() = %#v, want %#v", current, created)
+	}
+}
+
+func TestAssignProjectRollsBackCompleteMetadataAfterPersistenceFailure(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "assign-project.sqlite3")
+	store, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	beforeMemory, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("created terminal is missing before AssignProject()")
+	}
+	beforeStored, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() before AssignProject() error = %v", err)
+	}
+	persistenceErr := errors.New("assign project save failed")
+	manager.store = &failSaveMetadataStore{metadataStore: store, err: persistenceErr}
+
+	if _, err := manager.AssignProject(created.ID, "project-1"); !errors.Is(err, persistenceErr) {
+		t.Fatalf("AssignProject() error = %v, want %v", err, persistenceErr)
+	}
+	current, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("terminal disappeared after failed AssignProject()")
+	}
+	if current != beforeMemory {
+		t.Fatalf("memory metadata after failed AssignProject() = %#v, want %#v", current, beforeMemory)
+	}
+	persisted, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() after failed AssignProject() error = %v", err)
+	}
+	if len(persisted) != len(beforeStored) || len(persisted) != 1 || persisted[0] != beforeStored[0] {
+		t.Fatalf("stored metadata after failed AssignProject() = %#v, want %#v", persisted, beforeStored)
 	}
 }
 
@@ -4016,6 +4094,15 @@ type failFirstSaveMetadataStore struct {
 	recordingMetadataStore
 	err   error
 	calls int
+}
+
+type failSaveMetadataStore struct {
+	metadataStore
+	err error
+}
+
+func (s *failSaveMetadataStore) Save(context.Context, Metadata) error {
+	return s.err
 }
 
 type gatedResultMetadataStore struct {

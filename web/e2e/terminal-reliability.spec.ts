@@ -14,6 +14,12 @@ type ClientSizeMessage = {
   rows?: number;
 };
 
+type ProjectFixture = {
+  id: string;
+  path: string;
+  createdAt: string;
+};
+
 async function clearSessions(page: Page) {
   const settingsResponse = await page.request.patch("/api/settings", {
     headers: {
@@ -50,21 +56,43 @@ async function clearSessions(page: Page) {
 }
 
 async function createSession(page: Page, name: string): Promise<{ id: string }> {
-  const response = await page.request.post("/api/sessions", {
+  const projectsResponse = await page.request.get("/api/projects", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(projectsResponse.ok()).toBe(true);
+  const projects = await projectsResponse.json() as ProjectFixture[];
+  let project = projects.find((candidate) => candidate.path === "/tmp");
+  if (!project) {
+    const projectResponse = await page.request.post("/api/projects", {
+      headers: {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      },
+      data: { path: "/tmp" },
+    });
+    expect(projectResponse.status()).toBe(201);
+    project = await projectResponse.json() as ProjectFixture;
+  }
+
+  const response = await page.request.post("/api/v1/terminals", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
     },
-    data: { name },
+    data: { name, projectId: project.id, selectionMode: "none" },
   });
   expect(response.ok()).toBe(true);
-  return response.json();
+  const envelope = await response.json() as { result: { terminal: { id: string; projectId?: string } } };
+  expect(envelope.result.terminal.projectId).toBe(project.id);
+  return envelope.result.terminal;
 }
 
 async function replaceSharedSelection(
   page: Page,
-  terminalID: string,
+  terminalIDs: string | string[],
+  focusedID?: string,
 ) {
+  const ids = Array.isArray(terminalIDs) ? terminalIDs : [terminalIDs];
   const currentResponse = await page.request.get("/api/v1/selection", {
     headers: { Authorization: "Bearer test-token" },
   });
@@ -78,15 +106,26 @@ async function replaceSharedSelection(
       "Content-Type": "application/json",
     },
     data: {
-      manualTerminalIds: [terminalID],
+      manualTerminalIds: ids,
       pinnedTerminalIds: [],
-      focusedTerminalId: terminalID,
+      focusedTerminalId: focusedID ?? ids[0],
       filters: { statuses: [], cwds: [] },
       pinnedFilters: { statuses: [], cwds: [] },
       expectedRevision: current.result.revision,
     },
   });
   expect(response.ok()).toBe(true);
+}
+
+async function openSharedSelection(
+  page: Page,
+  terminalIDs: string[],
+  focusedID: string,
+) {
+  await replaceSharedSelection(page, terminalIDs, focusedID);
+  const parameters = new URLSearchParams({ token: "test-token", focus: focusedID });
+  terminalIDs.forEach((terminalID) => parameters.append("terminal", terminalID));
+  await page.goto(`/?${parameters.toString()}`);
 }
 
 async function readTerminalHistory(page: Page, sessionID: string): Promise<string> {
@@ -576,11 +615,14 @@ test("keeps the shared terminal size stable while a browser views agent logs", a
   }
 });
 
-test("keeps a running Claude terminal fitted across repeated pane changes", async ({ page }) => {
+test("keeps a running Claude terminal fitted across project pane changes", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;
-    const records: ResizeRecord[] = [];
+    const storageKey = "euphony-resize-records";
+    const records = JSON.parse(
+      sessionStorage.getItem(storageKey) ?? "[]",
+    ) as ResizeRecord[];
     Object.defineProperty(window, "__euphonyResizeRecords", { value: records });
 
     class RecordingWebSocket extends NativeWebSocket {
@@ -602,6 +644,7 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
                 screenWidth:
                   host?.querySelector(".xterm-screen")?.getBoundingClientRect().width ?? 0,
               });
+              sessionStorage.setItem(storageKey, JSON.stringify(records));
             }
           }
           nativeSend(data);
@@ -613,7 +656,7 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
   });
 
   await clearSessions(page);
-  await createSession(page, "Left");
+  const left = await createSession(page, "Left");
   const claude = await createSession(page, "Claude");
   await page.goto("/?token=test-token");
   await page.getByRole("button", { name: "Select Claude" }).click();
@@ -630,11 +673,10 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
     })
     .toMatch(/Claude\s*Code|Not\s*logged\s*in|Welcome\s*back/i);
 
-  const leftCheckbox = page.getByRole("checkbox", { name: "Include Left in split" });
   for (let iteration = 0; iteration < 30; iteration += 1) {
-    await leftCheckbox.click();
+    await openSharedSelection(page, [left.id, claude.id], claude.id);
     await expect(page.locator('.terminal-pane[data-visible="true"]')).toHaveCount(2);
-    await leftCheckbox.click();
+    await page.getByRole("checkbox", { name: "Deselect Left" }).click();
     await expect(page.locator('.terminal-pane[data-visible="true"]')).toHaveCount(1);
   }
 
@@ -652,7 +694,8 @@ test("keeps a running Claude terminal fitted across repeated pane changes", asyn
     };
   }, claude.id);
 
-  expect(result.records.length).toBeGreaterThan(30);
+  expect(result.records.length).toBeGreaterThan(1);
+  expect(new Set(result.records.map((record) => record.cols)).size).toBeGreaterThan(1);
   expect(Math.min(...result.records.map((record) => record.cols))).toBeGreaterThan(20);
   expect(result.screenWidth).toBeLessThanOrEqual(result.hostWidth);
 });

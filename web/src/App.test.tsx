@@ -3,7 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { useEffect, type ComponentProps } from "react";
 import { App } from "./App";
 import { attentionTransitions } from "./sessionUtils";
-import type { AgentSummary, SelectionSnapshot, Session, Settings, Task } from "./types";
+import type {
+  AgentSummary,
+  Project,
+  SelectionSnapshot,
+  Session,
+  Settings,
+  Task,
+} from "./types";
 
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100_000);
@@ -1736,6 +1743,7 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession, attention]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       jsonResponse({ ...attention, needsAttention: false }),
@@ -1755,7 +1763,7 @@ test("acknowledges a need-attention terminal when it receives focus", async () =
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      4,
       "/api/sessions/session-2/acknowledge-attention",
       expect.objectContaining({ method: "POST" }),
     );
@@ -1811,11 +1819,15 @@ function jsonResponse(body: unknown, status = 200) {
   );
 }
 
-test("stores a valid token and starts one terminal when the session list is empty", async () => {
+function legacyProjectsResponse() {
+  return jsonResponse({ code: "not_found", message: "Projects are unavailable." }, 404);
+}
+
+test("stores a valid token and shows project setup when the session list is empty", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([]))
-    .mockImplementationOnce(() => jsonResponse(runningSession, 201))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse([]));
   const user = userEvent.setup();
   render(
@@ -1828,20 +1840,13 @@ test("stores a valid token and starts one terminal when the session list is empt
   await user.type(screen.getByLabelText("Access token"), "valid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
 
-  expect(await screen.findByRole("button", { name: "Select Codex" })).toHaveAttribute(
-    "aria-current",
-    "true",
-  );
+  expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Select Terminal/ })).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(3);
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
-    "/api/sessions",
-    expect.objectContaining({
-      method: "POST",
-      body: JSON.stringify({ name: "Terminal" }),
-    }),
-  );
   expect(fetchMock).toHaveBeenLastCalledWith("/api/agent-summaries", expect.anything());
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/sessions" && init?.method === "POST",
+  )).toBe(false);
   expect(sessionStorage.getItem("euphony.token")).toBe("valid-token");
 });
 
@@ -1850,7 +1855,7 @@ test("consumes a token from the URL without leaving it in browser history", asyn
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([]))
-    .mockImplementationOnce(() => jsonResponse(runningSession, 201))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse([]));
 
   render(
@@ -1860,7 +1865,7 @@ test("consumes a token from the URL without leaving it in browser history", asyn
     />,
   );
 
-  expect(await screen.findByRole("button", { name: "Select Codex" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
   expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
   expect(new URLSearchParams(window.location.search).has("token")).toBe(false);
   expect(fetchMock).toHaveBeenCalledWith(
@@ -1885,6 +1890,410 @@ test("returns to token entry after an invalid token", async () => {
   expect(sessionStorage.getItem("euphony.token")).toBeNull();
 });
 
+test("shows the project setup action without creating an implicit terminal", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/sessions" && init?.method === "POST") {
+      return jsonResponse(runningSession, 201);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Select Terminal/ })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/sessions" && init?.method === "POST",
+  )).toBe(false);
+
+  await user.click(screen.getByRole("button", { name: "Add project" }));
+  expect(screen.getByRole("dialog", { name: "Add project" })).toBeVisible();
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/sessions" && init?.method === "POST",
+  )).toBe(false);
+});
+
+test("keeps legacy terminal creation when the project API is unavailable", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/sessions" && init?.method === "POST") {
+      return jsonResponse(runningSession, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "New terminal" }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
+test("does not create work while the initial project capability is loading", async () => {
+  let releaseSessions!: (response: Response) => void;
+  const sessionsGate = new Promise<Response>((resolve) => {
+    releaseSessions = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return sessionsGate;
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/sessions" && init?.method === "POST") {
+      return jsonResponse(runningSession, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+    />,
+  );
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "c" });
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/sessions" && init?.method === "POST",
+  )).toBe(false);
+
+  releaseSessions(await jsonResponse([]));
+  expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
+});
+
+test("does not let Tasks start an unassigned agent in project mode", async () => {
+  const task: Task = {
+    id: "task-project-boundary",
+    title: "Start only from a project",
+    description: "The task has no project-linked terminal yet.",
+    priority: "medium",
+    status: "todo",
+    createdAt: "2026-08-12T00:00:00Z",
+    updatedAt: "2026-08-12T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([{
+        id: "project-1",
+        path: "/workspace/project",
+        createdAt: "2026-08-12T00:00:00Z",
+      } satisfies Project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/tasks" && (!init || init.method === undefined)) {
+      return jsonResponse([task]);
+    }
+    if (input === "/api/tasks/task-project-boundary/start") {
+      throw new Error("Tasks must not start an unassigned agent in project mode.");
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: `Open task ${task.title}` }));
+  await user.click(screen.getByRole("button", { name: "Start agent" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Start new agents from a project in the sidebar.",
+  );
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/tasks/task-project-boundary/start" && init?.method === "POST",
+  )).toBe(false);
+});
+
+test("creates a project and renders its empty project section", async () => {
+  const createdProject: Project = {
+    id: "project-new",
+    path: "/workspace/new-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({ path: createdProject.path });
+      return jsonResponse(createdProject, 201);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Add project" }));
+  await user.type(screen.getByLabelText("Project directory"), createdProject.path);
+  await user.click(screen.getByRole("button", { name: "Add project" }));
+
+  expect(await screen.findByRole("heading", { name: createdProject.path })).toBeVisible();
+  expect(screen.getByRole("navigation", { name: "Projects and sessions" })).toHaveTextContent(
+    createdProject.path,
+  );
+  expect(screen.queryByRole("dialog", { name: "Add project" })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/sessions" && init?.method === "POST",
+  )).toBe(false);
+});
+
+test("keeps the project dialog open when creation fails", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && init?.method === "POST") {
+      return jsonResponse(
+        { code: "project_path_invalid", message: "Choose an existing project directory." },
+        400,
+      );
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Add project" }));
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  const directory = within(dialog).getByLabelText("Project directory");
+  await user.type(directory, "/workspace/missing");
+  await user.click(within(dialog).getByRole("button", { name: "Add project" }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Choose an existing project directory.",
+  );
+  expect(screen.getByRole("dialog", { name: "Add project" })).toBeVisible();
+  expect(directory).toHaveValue("/workspace/missing");
+  expect(fetchMock.mock.calls.filter(
+    ([input, init]) => input === "/api/projects" && init?.method === "POST",
+  )).toHaveLength(1);
+});
+
+test("creates a terminal with the selected project's id", async () => {
+  const project: Project = {
+    id: "project-1",
+    path: "/workspace/project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created = {
+    ...plainTerminalSession,
+    id: "project-terminal",
+    cwd: project.path,
+    projectId: project.id,
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 4,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/v1/terminals" && init?.method === "POST") {
+      return jsonResponse({ ok: true, result: { terminal: created, selection } }, 201);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Create terminal in ${project.path}`,
+  }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/terminals",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          name: "Terminal",
+          selectionMode: "replace",
+          projectId: project.id,
+        }),
+      }),
+    );
+  });
+  expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
+});
+
+test("starts an agent from a project section", async () => {
+  const project: Project = {
+    id: "project-agent",
+    path: "/workspace/agent-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created: Session = {
+    ...plainTerminalSession,
+    id: "project-agent-terminal",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "starting",
+  };
+  const started: Session = {
+    ...created,
+    agentStatus: "running",
+    agentTitle: "Implement the project",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 8,
+  };
+  let listedSessions: Session[] = [];
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse(listedSessions);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/v1/terminals" && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({
+        name: "Terminal",
+        selectionMode: "replace",
+        projectId: project.id,
+      });
+      listedSessions = [created];
+      return jsonResponse({ ok: true, result: { terminal: created, selection } }, 201);
+    }
+    if (input === `/api/v1/agents/${created.id}/start` && init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual({
+        kind: "codex",
+        args: [],
+        timeoutMs: 30_000,
+      });
+      listedSessions = [started];
+      return jsonResponse({ ok: true, result: { agent: started } });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+  expect(screen.getByRole("dialog", { name: "Start an agent" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Start Codex agent" }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/agents/${created.id}/start`,
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+  expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: "Start an agent" })).not.toBeInTheDocument();
+});
+
 test("creates a terminal in the cwd chosen from the sidebar", async () => {
   const created = {
     ...plainTerminalSession,
@@ -1897,6 +2306,7 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
     .mockImplementationOnce(() =>
       jsonResponse([runningSession, secondRunningSession]),
     )
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(created, 201));
 
@@ -1917,7 +2327,7 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
   );
 
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
@@ -1935,6 +2345,7 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(secondRunningSession, 201))
     .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })));
@@ -1952,7 +2363,7 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
 
   expect(screen.queryByLabelText("Terminal name")).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
@@ -1968,13 +2379,13 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   expect(screen.getByRole("dialog", { name: "Delete terminal?" })).toBeVisible();
   expect(screen.getByText(/“Claude” will be stopped/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenCalledTimes(4);
 
   await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   expect(screen.queryByRole("dialog", { name: "Delete terminal?" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Delete Claude" })).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenCalledTimes(4);
 
   await user.click(screen.getByRole("button", { name: "Delete Claude" }));
   await user.click(screen.getByRole("button", { name: "Delete terminal" }));
@@ -1982,9 +2393,9 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Delete Claude" })).not.toBeInTheDocument();
   });
-  expect(fetchMock).toHaveBeenCalledTimes(4);
+  expect(fetchMock).toHaveBeenCalledTimes(5);
   expect(fetchMock).toHaveBeenNthCalledWith(
-    4,
+    5,
     "/api/sessions/session-2",
     expect.objectContaining({ method: "DELETE" }),
   );
@@ -1995,6 +2406,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       jsonResponse(
@@ -2015,7 +2427,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
   await user.click(await screen.findByRole("button", { name: "New terminal" }));
 
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({
@@ -2025,7 +2437,7 @@ test("falls back to home when the focused terminal cwd cannot be inherited", asy
     }),
   );
   expect(fetchMock).toHaveBeenNthCalledWith(
-    4,
+    5,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({ name: "Terminal" }),
@@ -2038,6 +2450,7 @@ test("does not fall back when an explicit terminal cwd is invalid", async () => 
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       jsonResponse(
@@ -2067,9 +2480,9 @@ test("does not fall back when an explicit terminal cwd is invalid", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Choose an existing working directory.",
   );
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenCalledTimes(4);
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({
@@ -2085,6 +2498,7 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const user = userEvent.setup();
@@ -2108,7 +2522,7 @@ test("opens Command-K and creates a terminal in the chosen directory", async () 
   await user.click(screen.getByRole("button", { name: "Create terminal" }));
 
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       method: "POST",
@@ -2328,6 +2742,7 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
       jsonResponse([runningSession, secondRunningSession]),
     )
     .mockImplementationOnce(() => jsonResponse([]))
+    .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() =>
       Promise.resolve(new Response(null, { status: 204 })),
     )
@@ -2361,13 +2776,13 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
   expect(
     screen.getByText(/2 selected terminals will be stopped/),
   ).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(
     screen.queryByRole("dialog", { name: "Delete selected terminals?" }),
   ).not.toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 
   fireEvent.keyDown(window, { key: "k", metaKey: true });
   await user.click(
@@ -2382,12 +2797,12 @@ test("deletes selected terminals from Quick Actions after confirmation", async (
     expect(screen.queryByRole("button", { name: "Select Claude" })).not.toBeInTheDocument();
   });
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions/session-1",
     expect.objectContaining({ method: "DELETE" }),
   );
   expect(fetchMock).toHaveBeenNthCalledWith(
-    4,
+    5,
     "/api/sessions/session-2",
     expect.objectContaining({ method: "DELETE" }),
   );
@@ -3680,6 +4095,7 @@ test("tmux split keys are not delivered to the focused terminal", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(created, 201));
   const terminalKeyDown = vi.fn();
@@ -3713,6 +4129,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
+    .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(createdByC, 201))
     .mockImplementationOnce(() => jsonResponse(createdByV, 201));
@@ -3730,7 +4147,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   expect(await screen.findByLabelText("created-c terminal pane")).toBeVisible();
   expectTerminalPaneHidden("session-1 terminal pane");
   expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
+    4,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({
@@ -3745,7 +4162,7 @@ test("tmux create and vertical split keys create the expected selection", async 
   expect(await screen.findByLabelText("created-v terminal pane")).toBeVisible();
   expect(screen.getByLabelText("created-c terminal pane")).toBeVisible();
   expect(fetchMock).toHaveBeenNthCalledWith(
-    4,
+    5,
     "/api/sessions",
     expect.objectContaining({
       body: JSON.stringify({

@@ -12,6 +12,7 @@ import (
 	"github.com/ryotarai/euphony/internal/agentsummary"
 	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
+	"github.com/ryotarai/euphony/internal/project"
 	"github.com/ryotarai/euphony/internal/session"
 	"github.com/ryotarai/euphony/internal/tasks"
 	webassets "github.com/ryotarai/euphony/web"
@@ -43,6 +44,8 @@ type Server struct {
 	summaries     *agentsummary.Service
 	actionRunner  agentsummary.ActionRunner
 	tasks         *tasks.Service
+	projects      *project.Service
+	projectRepo   project.Repository
 }
 
 func New(config Config) (*Server, error) {
@@ -65,9 +68,26 @@ func New(config Config) (*Server, error) {
 			return nil, err
 		}
 	}
+	var projectRepo project.Repository
+	if config.DatabasePath == "" {
+		projectRepo = project.NewMemoryRepository()
+	} else {
+		projectRepo, err = project.OpenSQLiteRepository(config.DatabasePath)
+		if err != nil {
+			_ = sessionManager.Close(context.Background())
+			return nil, err
+		}
+	}
+	projectService := project.NewService(projectRepo, time.Now, uuid.NewString)
+	if err := migrateLegacyProjects(context.Background(), sessionManager, projectService); err != nil {
+		_ = projectRepo.Close()
+		_ = sessionManager.Close(context.Background())
+		return nil, err
+	}
 	tickets := newTicketStore(time.Now)
 	controlService, err := control.New(sessionManager)
 	if err != nil {
+		_ = projectRepo.Close()
 		_ = sessionManager.Close(context.Background())
 		return nil, err
 	}
@@ -89,6 +109,7 @@ func New(config Config) (*Server, error) {
 	}
 	taskStore, err := tasks.OpenStore(config.DatabasePath)
 	if err != nil {
+		_ = projectRepo.Close()
 		_ = sessionManager.Close(context.Background())
 		return nil, err
 	}
@@ -100,6 +121,7 @@ func New(config Config) (*Server, error) {
 	})
 	if err != nil {
 		_ = taskStore.Close()
+		_ = projectRepo.Close()
 		_ = sessionManager.Close(context.Background())
 		return nil, err
 	}
@@ -114,6 +136,8 @@ func New(config Config) (*Server, error) {
 		summaries:     summaryService,
 		actionRunner:  actionRunner,
 		tasks:         taskService,
+		projects:      projectService,
+		projectRepo:   projectRepo,
 	}
 	summaryService.Start()
 	taskService.Start()
@@ -164,6 +188,8 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/agent-summaries/{id}/read", server.markAgentSummaryRead)
 	protected.HandleFunc("POST /api/agent-summaries/{id}/done", server.markAgentSummaryDone)
 	protected.HandleFunc("POST /api/agent-summaries/{id}/options/{optionID}/execute", server.executeAgentSummaryOption)
+	protected.HandleFunc("GET /api/projects", server.listProjects)
+	protected.HandleFunc("POST /api/projects", server.createProject)
 	protected.HandleFunc("GET /api/tasks", server.listTasks)
 	protected.HandleFunc("POST /api/tasks", server.createTask)
 	protected.HandleFunc("GET /api/tasks/{id}", server.getTask)
@@ -216,15 +242,28 @@ func (s *Server) LocalHandler() http.Handler {
 }
 
 func (s *Server) Close(ctx context.Context) error {
+	var firstErr error
 	if s.tasks != nil {
 		if err := s.tasks.Close(ctx); err != nil {
-			return err
+			firstErr = err
 		}
 	}
 	if s.summaries != nil {
 		if err := s.summaries.Close(ctx); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return s.sessions.Close(ctx)
+	if s.sessions != nil {
+		if err := s.sessions.Close(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.projectRepo != nil {
+		if err := s.projectRepo.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

@@ -53,6 +53,7 @@ type Metadata struct {
 	State               State      `json:"state"`
 	CWD                 string     `json:"cwd"`
 	RepoRoot            string     `json:"repoRoot"`
+	ProjectID           string     `json:"projectId,omitempty"`
 	ProcessName         string     `json:"processName,omitempty"`
 	Agent               string     `json:"agent,omitempty"`
 	AgentStatus         string     `json:"agentStatus,omitempty"`
@@ -357,7 +358,19 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 }
 
-func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string) (Metadata, error) {
+func (m *Manager) Create(ctx context.Context, name string, requestedCWD ...string) (Metadata, error) {
+	return m.create(ctx, name, "", requestedCWD...)
+}
+
+func (m *Manager) CreateInProject(
+	ctx context.Context, name, projectID, cwd string,
+) (Metadata, error) {
+	return m.create(ctx, name, projectID, cwd)
+}
+
+func (m *Manager) create(
+	_ context.Context, name, projectID string, requestedCWD ...string,
+) (Metadata, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Metadata{}, errors.New("session name is required")
@@ -404,6 +417,7 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 		State:     StateRunning,
 		CWD:       cwd,
 		RepoRoot:  repositoryRoot(cwd),
+		ProjectID: strings.TrimSpace(projectID),
 		CreatedAt: createdAt,
 		UpdatedAt: createdAt,
 	}
@@ -446,6 +460,64 @@ func (m *Manager) Create(_ context.Context, name string, requestedCWD ...string)
 	createLifecycleFinished = true
 	m.emitChange(change)
 	return item.metadata, nil
+}
+
+func (m *Manager) AssignProject(id, projectID string) (Metadata, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return Metadata{}, errors.New("project ID is required")
+	}
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer releaseMetadataSave()
+
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return Metadata{}, ErrManagerClosing
+	}
+	current, ok := m.sessions[id]
+	if !ok || current != item {
+		m.mu.Unlock()
+		return Metadata{}, ErrNotFound
+	}
+	if item.metadata.ProjectID == projectID {
+		metadata := item.metadata
+		m.mu.Unlock()
+		return metadata, nil
+	}
+	before := item.metadata
+	after := before
+	after.ProjectID = projectID
+	item.metadata = after
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
+			m.mu.Lock()
+			if current, exists := m.sessions[id]; exists && current == item &&
+				current.metadata.ProjectID == after.ProjectID {
+				item.metadata = before
+			}
+			m.mu.Unlock()
+			releaseMetadataSave()
+			m.skipChange(change)
+			return Metadata{}, err
+		}
+	}
+	releaseMetadataSave()
+	m.emitChange(change)
+	return after, nil
 }
 
 func (m *Manager) beginCreate() bool {

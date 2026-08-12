@@ -5526,3 +5526,275 @@ input {
     min-height: 12rem;
   }
 }
+
+/* Project sidebar ledger */
+.project-sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 0.35rem;
+}
+
+.project-sidebar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 2.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.project-add-project,
+.project-create-terminal,
+.project-create-agent,
+.project-session-delete {
+  color: var(--muted-foreground);
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.project-add-project {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  padding: 0.25rem 0.45rem;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.project-add-project svg,
+.project-create-terminal svg,
+.project-create-agent svg,
+.project-session-delete svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.project-add-project:hover,
+.project-create-terminal:hover,
+.project-create-agent:hover,
+.project-session-delete:hover,
+.project-add-project:focus-visible,
+.project-create-terminal:focus-visible,
+.project-create-agent:focus-visible,
+.project-session-delete:focus-visible {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.project-sidebar-groups {
+  display: grid;
+  min-width: 0;
+}
+
+.project-sidebar-group {
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0 0.55rem;
+}
+
+.project-sidebar-group:last-child {
+  border-bottom: 0;
+}
+
+.project-sidebar-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem 0.35rem;
+}
+
+.project-sidebar-header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.project-sidebar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0.15rem;
+}
+
+.project-create-terminal,
+.project-create-agent,
+.project-session-delete {
+  display: inline-grid;
+  min-width: 2rem;
+  min-height: 2rem;
+  place-items: center;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  padding: 0.35rem;
+}
+
+.project-sidebar-empty {
+  margin: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-style: italic;
+}
+
+.project-sidebar-session-list {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-session-row {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 0.15rem;
+  margin-left: 0.65rem;
+}
+
+.project-session-select {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 0.45rem;
+  align-items: center;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0.15rem;
+  background: transparent;
+  padding: 0.38rem 0.35rem;
+  position: relative;
+  text-align: left;
+}
+
+.project-session-select:hover,
+.project-session-select:focus-visible,
+.project-session-select[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+
+.project-session-select[aria-pressed="true"] {
+  border-left-color: var(--foreground);
+}
+
+.project-session-row[data-attention="true"] .project-session-select {
+  padding-right: 1.4rem;
+}
+
+.project-session-status-icon {
+  grid-row: 1 / span 2;
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--muted-foreground);
+}
+
+.project-session-status-running,
+.project-session-status-waiting {
+  color: var(--foreground);
+}
+
+.project-session-identity {
+  display: grid;
+  min-width: 0;
+  gap: 0.08rem;
+}
+
+.project-session-name,
+.project-session-purpose,
+.project-session-status,
+.project-session-summary,
+.project-session-action {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-session-name {
+  color: var(--foreground);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.69rem;
+}
+
+.project-session-purpose,
+.project-session-status,
+.project-session-summary,
+.project-session-action {
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+}
+
+.project-session-status {
+  grid-column: 2;
+}
+
+.project-session-summary {
+  grid-column: 2;
+  color: var(--foreground);
+}
+
+.project-session-action {
+  grid-column: 2;
+  border-left: 2px solid hsl(40 90% 58% / 0.75);
+  padding-left: 0.4rem;
+  color: hsl(40 90% 68%);
+}
+
+.project-session-row[data-unread="true"] .project-session-name,
+.project-session-row[data-unread="true"] .project-session-purpose,
+.project-session-row[data-unread="true"] .project-session-status,
+.project-session-row[data-unread="true"] .project-session-summary,
+.project-session-row[data-unread="true"] .project-session-action {
+  font-weight: 700;
+}
+
+.project-session-delete {
+  flex: 0 0 auto;
+  align-self: center;
+  opacity: 0;
+}
+
+.project-session-row:hover .project-session-delete,
+.project-session-delete:focus-visible {
+  opacity: 1;
+}
+
+@media (max-width: 680px) {
+  .project-sidebar {
+    padding: 0 0.2rem;
+  }
+
+  .project-create-terminal,
+  .project-create-agent,
+  .project-session-delete {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .project-session-select {
+    min-height: 2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-add-project,
+  .project-create-terminal,
+  .project-create-agent,
+  .project-session-delete {
+    transition: none;
+  }
+}

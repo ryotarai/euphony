@@ -1,5 +1,10 @@
 import { ApiClient } from "./api";
-import type { AgentSummary, AnnotationSession, SelectionSnapshot } from "./types";
+import type {
+  AgentSummary,
+  AnnotationSession,
+  Project,
+  SelectionSnapshot,
+} from "./types";
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
@@ -162,6 +167,68 @@ test("queues a refresh for all agent summaries", async () => {
   );
 });
 
+test("lists persisted projects", async () => {
+  const projects: Project[] = [
+    {
+      id: "project-1",
+      path: "/repo",
+      createdAt: "2026-08-12T00:00:00Z",
+    },
+  ];
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(projects));
+  const api = new ApiClient("token");
+
+  expect(await api.listProjects()).toEqual(projects);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
+test("creates a project from its directory path", async () => {
+  const project: Project = {
+    id: "project-1",
+    path: "/repo",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(project, 201));
+  const api = new ApiClient("token");
+
+  expect(await api.createProject("/repo")).toEqual(project);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ path: "/repo" }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
+test("starts an agent through the v1 endpoint", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse({
+      ok: true,
+      result: { agent: { id: "terminal-1", kind: "codex" } },
+    }));
+  const api = new ApiClient("token");
+
+  await api.startAgent("terminal-1", "codex");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/agents/terminal-1/start",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ kind: "codex", args: [], timeoutMs: 30000 }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("creates and deletes terminals through v1 with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],
@@ -178,7 +245,7 @@ test("creates and deletes terminals through v1 with returned selection", async (
     cwd: "/repo",
     createdAt: "2026-07-30T00:00:00Z",
   };
-  vi.spyOn(globalThis, "fetch")
+  const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() =>
       jsonResponse({ ok: true, result: { terminal, selection } }, 201),
     )
@@ -195,6 +262,54 @@ test("creates and deletes terminals through v1 with returned selection", async (
     id: terminal.id,
     selection,
   });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/v1/terminals",
+    expect.objectContaining({
+      body: JSON.stringify({
+        name: "Terminal",
+        cwd: "/repo",
+        selectionMode: "replace",
+      }),
+    }),
+  );
+});
+
+test("includes a project ID when creating a project terminal", async () => {
+  const selection: SelectionSnapshot = {
+    terminalIds: ["terminal-1"],
+    manualTerminalIds: ["terminal-1"],
+    pinnedTerminalIds: [],
+    focusedTerminalId: "terminal-1",
+    filters: { statuses: [], cwds: [] },
+    revision: 2,
+  };
+  const terminal = {
+    id: "terminal-1",
+    name: "Terminal",
+    state: "running" as const,
+    cwd: "/repo",
+    createdAt: "2026-07-30T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() =>
+      jsonResponse({ ok: true, result: { terminal, selection } }, 201),
+    );
+  const api = new ApiClient("token");
+
+  await api.createTerminal("Terminal", undefined, "replace", "project-1");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/terminals",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        name: "Terminal",
+        selectionMode: "replace",
+        projectId: "project-1",
+      }),
+    }),
+  );
 });
 
 test("renames a terminal through v1 and unwraps the returned terminal", async () => {

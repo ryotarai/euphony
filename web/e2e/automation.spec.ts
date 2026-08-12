@@ -108,6 +108,43 @@ function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
+test("requires Add project before creating terminal work", async ({ page }) => {
+  await clearTerminals(page);
+  const initialProjects = await page.request.get("/api/projects", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(initialProjects.ok()).toBe(true);
+  expect(await initialProjects.json()).toEqual([]);
+
+  await page.goto("/?token=test-token");
+  await expect(page.getByRole("button", { name: "Add project" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Select / })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Create terminal in / })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add project" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add project" });
+  await dialog.getByLabel("Project directory").fill("/tmp");
+  await dialog.getByRole("button", { name: "Add project" }).click();
+
+  await expect(page.getByRole("heading", { name: "/tmp" })).toBeVisible();
+  await page.getByRole("button", { name: "Create terminal in /tmp" }).click();
+  await expect(page.getByRole("button", { name: "Select Terminal" })).toBeVisible();
+
+  const projectsResponse = await page.request.get("/api/projects", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const [project] = await projectsResponse.json() as Array<{ id: string; path: string }>;
+  expect(project.path).toBe("/tmp");
+  const terminalsResponse = await page.request.get("/api/v1/terminals", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const terminals = await terminalsResponse.json() as {
+    result: { terminals: Array<{ name: string; projectId?: string; cwd: string }> };
+  };
+  const terminal = terminals.result.terminals.find((item) => item.name === "Terminal");
+  expect(terminal).toEqual(expect.objectContaining({ projectId: project.id, cwd: "/tmp" }));
+});
+
 test("automates terminals over Unix and TCP and shares selection with the browser", async ({
   page,
 }) => {

@@ -8,6 +8,7 @@ import type {
   AnnotationSession,
   APIEvent,
   ApiErrorBody,
+  Project,
   ReplaceSelectionRequest,
   SelectionSnapshot,
   Session,
@@ -38,6 +39,17 @@ export class ApiClient {
 
   listSessions(): Promise<Session[]> {
     return this.request("/api/sessions");
+  }
+
+  listProjects(): Promise<Project[]> {
+    return this.request("/api/projects");
+  }
+
+  createProject(path: string): Promise<Project> {
+    return this.request("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
   }
 
   listAgentSummaries(): Promise<AgentSummary[]> {
@@ -133,6 +145,7 @@ export class ApiClient {
     name: string,
     cwd: string | undefined,
     selectionMode: "none" | "add" | "replace",
+    projectId?: string,
   ): Promise<{ terminal: Session; selection: SelectionSnapshot }> {
     return this.v1Request("/api/v1/terminals", {
       method: "POST",
@@ -140,7 +153,20 @@ export class ApiClient {
         name,
         ...(cwd ? { cwd } : {}),
         selectionMode,
+        ...(projectId ? { projectId } : {}),
       }),
+    });
+  }
+
+  startAgent(
+    terminalID: string,
+    kind: "codex" | "claude",
+    args: string[] = [],
+    timeoutMs = 30_000,
+  ): Promise<unknown> {
+    return this.v1Request(`/api/v1/agents/${encodeURIComponent(terminalID)}/start`, {
+      method: "POST",
+      body: JSON.stringify({ kind, args, timeoutMs }),
     });
   }
 

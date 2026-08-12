@@ -1,10 +1,17 @@
 export type SessionState = "starting" | "running" | "exited" | "failed";
 
+export interface Project {
+  id: string;
+  path: string;
+  createdAt: string;
+}
+
 export interface Session {
   id: string;
   name: string;
   state: SessionState;
   cwd: string;
+  projectId?: string;
   repoRoot?: string;
   agent?: string;
   agentStatus?: string;
