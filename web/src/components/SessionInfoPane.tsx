@@ -69,15 +69,11 @@ export function SessionInfoPane({ session, summary }: SessionInfoPaneProps) {
         <span className="session-info-kicker">Session information</span>
         <div className="session-info-identity">
           {statusIcon(session)}
-          <h2>Purpose</h2>
+          <h2>{purpose}</h2>
         </div>
         <p className="session-info-cwd" title={session.cwd}>{session.cwd}</p>
       </header>
       <dl className="session-info-fields">
-        <div>
-          <dt>Purpose</dt>
-          <dd>{purpose}</dd>
-        </div>
         <div>
           <dt>Summary</dt>
           <dd>{latestSummary}</dd>

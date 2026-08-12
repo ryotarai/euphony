@@ -22,9 +22,12 @@ const summary: AgentSummary = {
   unread: false,
 };
 
-test("labels the session detail heading as Purpose instead of the provider name", () => {
+test("renders the purpose text in the session detail heading", () => {
   render(<SessionInfoPane session={session} summary={summary} />);
 
-  expect(screen.getByRole("heading", { name: "Purpose", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Review the sidebar", level: 2 })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Codex", level: 2 })).not.toBeInTheDocument();
+  expect(screen.queryByText("Purpose", { selector: "dt" })).not.toBeInTheDocument();
+  expect(screen.getByText("Summary", { selector: "dt" })).toBeVisible();
+  expect(screen.getByText("Action", { selector: "dt" })).toBeVisible();
 });
