@@ -2631,10 +2631,6 @@ export function App({
       else setRequestError("Choose a project from the sidebar before starting work.");
       return null;
     }
-    if (projectId === undefined && sessions?.length === 0 && projects?.length === 0) {
-      openProjectDialog();
-      return null;
-    }
     try {
       const inheritedCWD =
         projectId === undefined && cwd === undefined

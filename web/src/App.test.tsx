@@ -1929,6 +1929,42 @@ test("shows the project setup action without creating an implicit terminal", asy
   )).toBe(false);
 });
 
+test("keeps legacy terminal creation when the project API is unavailable", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/sessions" && init?.method === "POST") {
+      return jsonResponse(runningSession, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "New terminal" }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
 test("creates a project and renders its empty project section", async () => {
   const createdProject: Project = {
     id: "project-new",
