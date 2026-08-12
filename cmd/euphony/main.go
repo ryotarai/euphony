@@ -224,14 +224,14 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 			serveErr = err
 		}
 	case <-signals:
-		log.Print("Shutting down Euphony")
+		log.Printf("Shutting down Euphony (timeout: %s)", shutdownTimeout)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	shutdownErr := httpServer.Shutdown(ctx)
-	unixShutdownErr := unixServer.Shutdown(ctx)
-	sessionErr := srv.Close(ctx)
+	shutdownErr := shutdownStep(ctx, "HTTP server", httpServer.Shutdown, log.Printf)
+	unixShutdownErr := shutdownStep(ctx, "Unix HTTP server", unixServer.Shutdown, log.Printf)
+	sessionErr := shutdownStep(ctx, "session manager", srv.Close, log.Printf)
 	if serveErr != nil {
 		return serveErr
 	}
@@ -242,6 +242,32 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 		return unixShutdownErr
 	}
 	return sessionErr
+}
+
+const shutdownTimeout = 5 * time.Second
+
+func shutdownStep(
+	ctx context.Context,
+	name string,
+	shutdown func(context.Context) error,
+	logf func(string, ...any),
+) error {
+	started := time.Now()
+	err := shutdown(ctx)
+	elapsed := time.Since(started).Round(time.Millisecond)
+	if err == nil {
+		logf("Euphony shutdown: %s completed in %s", name, elapsed)
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		logf(
+			"Euphony shutdown: %s timed out after %s; long-lived connections or processes may still be active",
+			name, elapsed,
+		)
+	} else {
+		logf("Euphony shutdown: %s failed after %s: %v", name, elapsed, err)
+	}
+	return fmt.Errorf("shutdown %s: %w", name, err)
 }
 
 func listenTCP(address string) (net.Listener, string, error) {

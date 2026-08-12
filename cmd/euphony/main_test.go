@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +13,32 @@ import (
 
 	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
+
+func TestShutdownStepReportsTimeoutStage(t *testing.T) {
+	var messages strings.Builder
+	logf := func(format string, args ...any) {
+		_, _ = fmt.Fprintf(&messages, format+"\n", args...)
+	}
+
+	err := shutdownStep(
+		context.Background(),
+		"HTTP server",
+		func(context.Context) error { return context.DeadlineExceeded },
+		logf,
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdownStep() error = %v, want context deadline exceeded", err)
+	}
+	if !strings.Contains(err.Error(), "shutdown HTTP server") {
+		t.Fatalf("shutdownStep() error = %v, want stage name", err)
+	}
+	message := messages.String()
+	if !strings.Contains(message, "HTTP server") ||
+		!strings.Contains(message, "timed out") ||
+		!strings.Contains(message, "long-lived connections") {
+		t.Fatalf("shutdownStep() log = %q, want timeout guidance", message)
+	}
+}
 
 func TestMaybeOfferAgentSetupDeclinePersistsAndSuppressesLaterOffers(t *testing.T) {
 	config := startupSetupTestConfig(t)
