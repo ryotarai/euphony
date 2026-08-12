@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/ryotarai/euphony/internal/control"
+	"github.com/ryotarai/euphony/internal/project"
+	"github.com/ryotarai/euphony/internal/selection"
 	"github.com/ryotarai/euphony/internal/session"
 )
 
@@ -22,6 +24,7 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name          string                `json:"name"`
 		CWD           string                `json:"cwd"`
+		ProjectID     *string               `json:"projectId"`
 		SelectionMode control.SelectionMode `json:"selectionMode"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
@@ -31,17 +34,54 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(request.Name) == "" {
 		request.Name = "Terminal"
 	}
-	metadata, selected, err := s.control.CreateTerminal(
-		r.Context(),
-		request.Name,
-		request.CWD,
-		request.SelectionMode,
-	)
+	if request.SelectionMode == "" {
+		request.SelectionMode = control.SelectionNone
+	}
+	if request.SelectionMode != control.SelectionNone &&
+		request.SelectionMode != control.SelectionAdd &&
+		request.SelectionMode != control.SelectionReplace {
+		writeV1Error(w, http.StatusBadRequest, "invalid_selection_mode",
+			"selectionMode must be none, add, or replace.", nil)
+		return
+	}
+
+	var metadata session.Metadata
+	var selected selection.Snapshot
+	var err error
+	if request.ProjectID == nil {
+		metadata, selected, err = s.control.CreateTerminal(
+			r.Context(),
+			request.Name,
+			request.CWD,
+			request.SelectionMode,
+		)
+	} else {
+		projectID := strings.TrimSpace(*request.ProjectID)
+		item, projectErr := s.projects.Get(r.Context(), projectID)
+		if projectErr != nil {
+			if errors.Is(projectErr, project.ErrNotFound) {
+				writeV1Error(w, http.StatusNotFound, "project_not_found",
+					"The project does not exist.", nil)
+			} else {
+				writeV1Error(w, http.StatusInternalServerError, "project_lookup_failed",
+					"The project could not be loaded.", nil)
+			}
+			return
+		}
+		metadata, err = s.sessions.CreateInProject(
+			r.Context(), request.Name, projectID, item.Path,
+		)
+		if err == nil {
+			selected, err = s.applyCreatedTerminalSelection(
+				r.Context(), metadata.ID, request.SelectionMode,
+			)
+			if err != nil {
+				_ = s.sessions.Delete(metadata.ID)
+			}
+		}
+	}
 	if err != nil {
 		switch {
-		case errors.Is(err, control.ErrInvalidInput):
-			writeV1Error(w, http.StatusBadRequest, "invalid_selection_mode",
-				"selectionMode must be none, add, or replace.", nil)
 		case strings.Contains(err.Error(), "working directory"):
 			writeV1Error(w, http.StatusBadRequest, "invalid_cwd",
 				"Choose an existing working directory.", nil)
@@ -57,6 +97,23 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	writeV1Result(w, http.StatusCreated, map[string]any{
 		"terminal":  metadata,
 		"selection": selected,
+	})
+}
+
+func (s *Server) applyCreatedTerminalSelection(
+	ctx context.Context, terminalID string, mode control.SelectionMode,
+) (selection.Snapshot, error) {
+	if mode == control.SelectionNone {
+		return s.control.Selection(), nil
+	}
+	actionType := selection.ActionAdd
+	if mode == control.SelectionReplace {
+		actionType = selection.ActionReplace
+	}
+	return s.control.ApplySelection(ctx, selection.Action{
+		Type:              actionType,
+		TerminalIDs:       []string{terminalID},
+		FocusedTerminalID: terminalID,
 	})
 }
 

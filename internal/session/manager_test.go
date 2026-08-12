@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,39 @@ import (
 	"github.com/ryotarai/euphony/internal/selection"
 	"golang.org/x/sys/unix"
 )
+
+func TestMetadataJSONIncludesProjectIDWhenPresent(t *testing.T) {
+	encoded, err := json.Marshal(Metadata{ProjectID: "project-1"})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(encoded), `"projectId":"project-1"`) {
+		t.Fatalf("metadata JSON = %s, want projectId", encoded)
+	}
+}
+
+func TestCreateInProjectRoundTripsProjectID(t *testing.T) {
+	store, err := OpenSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	directory := t.TempDir()
+	created, err := manager.CreateInProject(
+		t.Context(), "Terminal", "project-1", directory,
+	)
+	if err != nil {
+		t.Fatalf("CreateInProject() error = %v", err)
+	}
+	listed := manager.ListCurrent()
+	if len(listed) != 1 || listed[0].ID != created.ID ||
+		listed[0].ProjectID != "project-1" {
+		t.Fatalf("metadata = %#v, want project-1", listed)
+	}
+}
 
 func TestCreateRejectsBlankName(t *testing.T) {
 	t.Parallel()

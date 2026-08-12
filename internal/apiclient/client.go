@@ -19,6 +19,7 @@ import (
 	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/localapi"
+	"github.com/ryotarai/euphony/internal/project"
 	"github.com/ryotarai/euphony/internal/selection"
 	"github.com/ryotarai/euphony/internal/session"
 )
@@ -58,6 +59,7 @@ type Status struct {
 type CreateTerminalRequest struct {
 	Name          string                `json:"name,omitempty"`
 	CWD           string                `json:"cwd,omitempty"`
+	ProjectID     string                `json:"projectId,omitempty"`
 	SelectionMode control.SelectionMode `json:"selectionMode,omitempty"`
 }
 
@@ -170,6 +172,18 @@ func (c *Client) Schema(ctx context.Context) ([]byte, error) {
 	}
 	defer response.Close()
 	return io.ReadAll(response)
+}
+
+func (c *Client) ListProjects(ctx context.Context) ([]project.Project, error) {
+	var result []project.Project
+	return result, c.requestJSON(ctx, http.MethodGet, "/api/projects", nil, &result)
+}
+
+func (c *Client) CreateProject(ctx context.Context, path string) (project.Project, error) {
+	var result project.Project
+	err := c.requestJSON(ctx, http.MethodPost, "/api/projects",
+		map[string]string{"path": path}, &result)
+	return result, err
 }
 
 func (c *Client) ListTerminals(ctx context.Context) ([]session.Metadata, error) {
@@ -466,6 +480,35 @@ func (c *Client) request(
 	if result != nil && len(envelope.Result) > 0 {
 		if err := json.Unmarshal(envelope.Result, result); err != nil {
 			return fmt.Errorf("decode Euphony result: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) requestJSON(
+	ctx context.Context, method, path string, body, result any,
+) error {
+	response, err := c.do(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 32<<20))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		var apiError APIError
+		if err := decoder.Decode(&apiError); err != nil || apiError.Code == "" {
+			return &APIError{
+				StatusCode: response.StatusCode,
+				Code:       "invalid_response",
+				Message:    response.Status,
+			}
+		}
+		apiError.StatusCode = response.StatusCode
+		return &apiError
+	}
+	if result != nil {
+		if err := decoder.Decode(result); err != nil {
+			return fmt.Errorf("decode Euphony response: %w", err)
 		}
 	}
 	return nil
