@@ -209,6 +209,26 @@ test("creates a project from its directory path", async () => {
   );
 });
 
+test("starts an agent through the v1 endpoint", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse({
+      ok: true,
+      result: { agent: { id: "terminal-1", kind: "codex" } },
+    }));
+  const api = new ApiClient("token");
+
+  await api.startAgent("terminal-1", "codex");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/agents/terminal-1/start",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ kind: "codex", args: [], timeoutMs: 30000 }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("creates and deletes terminals through v1 with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],

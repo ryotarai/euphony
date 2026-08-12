@@ -158,6 +158,18 @@ export class ApiClient {
     });
   }
 
+  startAgent(
+    terminalID: string,
+    kind: "codex" | "claude",
+    args: string[] = [],
+    timeoutMs = 30_000,
+  ): Promise<unknown> {
+    return this.v1Request(`/api/v1/agents/${encodeURIComponent(terminalID)}/start`, {
+      method: "POST",
+      body: JSON.stringify({ kind, args, timeoutMs }),
+    });
+  }
+
   async deleteSession(id: string): Promise<void> {
     await this.request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   }

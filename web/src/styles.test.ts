@@ -27,3 +27,10 @@ test("keeps the Inbox detail title compact", () => {
 
   expect(titleRule).toContain("font-size: 1rem;");
 });
+
+test("defines project sidebar unread and action selectors", () => {
+  expect(stylesheet).toContain(".project-sidebar");
+  expect(stylesheet).toContain(".project-session-row[data-unread=\"true\"]");
+  expect(stylesheet).toContain(".project-create-agent");
+  expect(stylesheet).toContain("prefers-reduced-motion: reduce");
+});
