@@ -241,6 +241,39 @@ test("selecting a project session closes the mobile drawer", async () => {
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 
+test("project actions close the mobile drawer", async () => {
+  useMobileViewport();
+  const onCreateTerminal = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      projects={[project]}
+      sessions={[projectAgent]}
+      agentSummaries={[projectSummary]}
+      selectedIDs={[projectAgent.id]}
+      selectedID={projectAgent.id}
+      onSelect={() => undefined}
+      onSelectSession={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onCreateTerminal={onCreateTerminal}
+      onCreateAgent={() => undefined}
+      onAddProject={() => undefined}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Open terminal menu" }));
+  const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
+  await user.click(
+    within(drawer).getByRole("button", {
+      name: `Create terminal in ${project.path}`,
+    }),
+  );
+
+  expect(onCreateTerminal).toHaveBeenCalledWith(project.id);
+  expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
+});
+
 test("reports whether more terminal tree content remains below", () => {
   render(
     <SessionNavigation
