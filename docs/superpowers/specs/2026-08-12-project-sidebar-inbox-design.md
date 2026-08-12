@@ -3,16 +3,23 @@
 ## Goal
 
 Make the left sidebar the primary Inbox surface by grouping terminals and
-agents under their project directory. Remove the standalone Inbox/Done page
-and the sidebar multi-selection controls while retaining the existing
-terminal, agent-summary, selection, and Tasks APIs for compatibility.
+agents under explicitly created projects. A project is a persisted workspace
+record with a user-selected directory; users create a project before they can
+start terminal or agent work in it. Remove the standalone Inbox/Done page and
+the sidebar multi-selection controls while retaining the existing terminal,
+agent-summary, selection, and Tasks APIs for compatibility.
 
 ## Scope
 
-- A project is derived from `Session.repoRoot`, falling back to `Session.cwd`.
-- Each project section lists bare terminals and agent terminals together.
+- A project is a persisted record with an ID, directory path, and creation
+  timestamp. The directory must exist when the project is created.
+- Each project section lists the sessions whose persisted `ProjectID` matches
+  the project. Legacy sessions without a project remain visible in a bounded
+  `Unassigned` section until the user creates or reassigns them.
 - Each project header exposes actions to create a terminal or start an agent in
   that directory.
+- An empty project still renders its header and actions, so project creation
+  is a useful first step rather than an implicit terminal launch.
 - Agent rows show a compact purpose, latest summary, and required action. An
   unread row is bold and remains independently identifiable from lifecycle
   status.
@@ -26,10 +33,20 @@ terminal, agent-summary, selection, and Tasks APIs for compatibility.
 
 ## Architecture
 
-`SessionNavigation` receives `agentSummaries` and derives a summary lookup by
-terminal ID. It keeps project grouping and row presentation in the navigation
-component, with small pure helpers for project keys, labels, and status copy.
-The existing `Session` model is sufficient; no Project table or API is added.
+The new `internal/project` package owns the Project model, validation,
+in-memory repository, SQLite repository, and service. The server exposes
+`GET /api/projects` and `POST /api/projects`. A project path is canonicalized
+and unique within the database. The existing SQLite database receives a
+`projects` table, and `terminals` receives a nullable-compatible `project_id`
+column through a guarded migration.
+
+`session.Metadata` gains `ProjectID`, and `SessionNavigation` receives the
+explicit `Project[]` list plus `agentSummaries`. It derives only a legacy
+fallback group for sessions with no ProjectID; normal grouping is by the
+persisted project ID, not by inferred repository roots. A one-time startup
+migration creates projects for existing sessions without a ProjectID and
+assigns those sessions to the created project, preserving old workspaces while
+making all newly created work explicit.
 
 The application keeps its current server-selection machinery internally so
 terminal panes and existing deep links do not regress. Sidebar terminal clicks
@@ -37,12 +54,13 @@ call the single-selection path. The dashboard selection state no longer
 includes the Agents pane, and `/inbox` is treated as a legacy path that falls
 back to the normal workspace rather than rendering a mailbox page.
 
-Project terminal creation reuses `ApiClient.createTerminal` (or the legacy
-session endpoint in tests without shared selection). Agent creation first
-creates a terminal in the project directory, then calls a new
-`ApiClient.startAgent` wrapper for the existing v1 agent endpoint. The returned
-metadata replaces the temporary terminal row. A failed agent start leaves the
-created terminal visible and reports the error; it does not delete user data.
+Project terminal creation reuses `ApiClient.createTerminal` with a required
+`projectId`; the server resolves the project directory and ignores arbitrary
+working-directory overrides for project-scoped requests. Agent creation first
+creates a project-linked terminal, then calls a new `ApiClient.startAgent`
+wrapper for the existing v1 agent endpoint. The returned metadata replaces the
+temporary terminal row. A failed agent start leaves the created terminal
+visible and reports the error; it does not delete user data.
 
 Agent summaries continue loading and receiving events at the App level. Done
 summaries remain persisted and supported by the backend, but are omitted from
@@ -66,6 +84,10 @@ PROJECT /workspace/euphony                 [terminal] [agent]
 │    Terminal · running
 ```
 
+The initial empty state asks for a project path and does not silently create a
+terminal. The global New terminal action opens the same project chooser when
+there is no selected project.
+
 The status icon carries lifecycle color, the summary carries semantic weight,
 and amber is reserved for attention/action state. No extra cards, gradients,
 or new dependency are introduced. Rows have visible keyboard focus, compact
@@ -75,6 +97,9 @@ mobile layout, and `prefers-reduced-motion` support.
 
 - Project headings expose the full displayed path through `title` and a
   semantic heading.
+- The project creation form has one required directory field, validates an
+  existing directory through the API, and reports duplicate/invalid paths in
+  the dialog without closing it.
 - Header controls use labels such as `Create terminal in /repo` and `Start
   agent in /repo`.
 - Each row is one keyboard-focusable button with an accessible label including
@@ -94,9 +119,11 @@ mobile layout, and `prefers-reduced-motion` support.
   actions, single row selection, agent summary copy, unread emphasis, and
   required-action accessibility text.
 - API tests cover the `startAgent` request path and body.
-- App tests cover loading summaries into the sidebar, opening an agent row,
-  marking it read, creating a terminal in a project, and creating/starting an
-  agent in a project.
+- Go tests cover project validation, persistence/migration, project endpoints,
+  terminal ProjectID round trips, and project-scoped terminal creation.
+- App tests cover loading projects and summaries into the sidebar, the empty
+  project-first state, opening an agent row, marking it read, creating a
+  terminal in a project, and creating/starting an agent in a project.
 - Existing terminal, Tasks, API, and backend suites must remain green except
   for tests whose assertions specifically describe the removed Inbox page or
   sidebar multi-selection UI; those tests are updated to the new contract.
