@@ -106,6 +106,7 @@ const tasksPaneID = "tasks" as const;
 const agentsPaneID = "agents" as const;
 
 type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
+type AgentKind = "codex" | "claude";
 
 interface DashboardRoute {
   pane: DashboardPaneID | null;
@@ -654,6 +655,10 @@ export function App({
   const [projectPathDraft, setProjectPathDraft] = useState("");
   const [projectCreateError, setProjectCreateError] = useState("");
   const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
+  const [agentProjectID, setAgentProjectID] = useState<string | null>(null);
+  const [agentKind, setAgentKind] = useState<AgentKind>("codex");
+  const [agentStartError, setAgentStartError] = useState("");
+  const [agentStartSubmitting, setAgentStartSubmitting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [pendingRename, setPendingRename] = useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -1255,13 +1260,20 @@ export function App({
     void loadAgentSummaries();
   }, [api, loadAgentSummaries, sessions]);
 
+  // Keep the legacy Inbox surface available only for servers that predate
+  // persisted projects. Persisted-project workspaces use the project sidebar.
   useEffect(() => {
-    if (!agentsOpen || !api || agentSummariesLoadedForApiRef.current === api) return;
+    if (
+      projectEndpointAvailableRef.current ||
+      !agentsOpen ||
+      !api ||
+      agentSummariesLoadedForApiRef.current === api
+    ) return;
     void loadAgentSummaries();
   }, [agentsOpen, api, loadAgentSummaries]);
 
   useEffect(() => {
-    if (!agentsOpen || !sessions || agentSummaries.length === 0) return;
+    if (projectEndpointAvailableRef.current || !agentsOpen || !sessions || agentSummaries.length === 0) return;
     const route = dashboardRouteFromURL();
     if (route.pane !== agentsPaneID) return;
     const availableTerminalIDs = new Set(sessions.map((session) => session.id));
@@ -1275,9 +1287,7 @@ export function App({
       : availableSummaries[0]?.terminalId ?? null;
     if (!nextSummaryID) return;
     if (nextSummaryID !== selectedAgentSummaryID) setSelectedAgentSummaryID(nextSummaryID);
-    if (route.itemID !== nextSummaryID) {
-      writeDashboardURL(agentsPaneID, nextSummaryID, "replace");
-    }
+    if (route.itemID !== nextSummaryID) writeDashboardURL(agentsPaneID, nextSummaryID, "replace");
   }, [agentSummaries, agentsOpen, selectedAgentSummaryID, sessions]);
 
   useEffect(() => {
@@ -2610,11 +2620,20 @@ export function App({
     setToken(value);
   }
 
-  async function createSession(split = false, cwd?: string, projectId?: string) {
-    if (!api) return;
+  async function createSession(
+    split = false,
+    cwd?: string,
+    projectId?: string,
+  ): Promise<Session | null> {
+    if (!api) return null;
+    if (projectEndpointAvailableRef.current && projectId === undefined) {
+      if (projects?.length === 0) openProjectDialog();
+      else setRequestError("Choose a project from the sidebar before starting work.");
+      return null;
+    }
     if (projectId === undefined && sessions?.length === 0 && projects?.length === 0) {
       openProjectDialog();
-      return;
+      return null;
     }
     try {
       const inheritedCWD =
@@ -2663,7 +2682,7 @@ export function App({
         applyServerSelection(serverSelection, "push");
         setFocusedPaneID(null);
         setRequestError("");
-        return;
+        return created;
       }
       const nextIDs = split
         ? [...selectedIDs, created.id]
@@ -2697,12 +2716,18 @@ export function App({
         split ? cwdFilters : pinnedCwdFilters,
       );
       setRequestError("");
+      return created;
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : "The terminal could not start.");
+      return null;
     }
   }
 
   function openCreateDialog() {
+    if (projectEndpointAvailableRef.current) {
+      openProjectDialog();
+      return;
+    }
     const focused = sessions?.find((session) => session.id === focusedID);
     setCWDDraft(focused?.cwd ?? "");
     setCommandOpen(false);
@@ -2745,6 +2770,42 @@ export function App({
       );
     } finally {
       setProjectCreateSubmitting(false);
+    }
+  }
+
+  function openAgentDialog(projectID: string) {
+    setCommandOpen(false);
+    setAgentProjectID(projectID);
+    setAgentKind(settings.agentSummaryProvider === "claude" ? "claude" : "codex");
+    setAgentStartError("");
+  }
+
+  async function startAgentInProject(projectID: string, kind: AgentKind) {
+    if (!api || agentStartSubmitting) return;
+    setAgentStartSubmitting(true);
+    setAgentStartError("");
+    try {
+      const created = await createSession(false, undefined, projectID);
+      if (!created) {
+        setAgentStartError("The project terminal could not be created.");
+        return;
+      }
+      await api.startAgent(created.id, kind);
+      try {
+        applySessionSnapshot(await api.listSessions());
+      } catch {
+        // The terminal remains usable even if the post-start refresh is delayed.
+      }
+      setAgentProjectID(null);
+      setRequestError("");
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The agent could not be started.";
+      setAgentStartError(message);
+      setRequestError(message);
+    } finally {
+      setAgentStartSubmitting(false);
     }
   }
 
@@ -3403,7 +3464,7 @@ export function App({
       ),
     });
   }
-  if (agentsOpen) {
+  if (!projectEndpointAvailableRef.current && agentsOpen) {
     dashboardPanes.push({
       id: agentsPaneID,
       label: "Inbox pane",
@@ -3417,7 +3478,7 @@ export function App({
           refreshing={agentSummariesRefreshing}
           onSelectSummary={selectAgentSummary}
           onSelectSession={openAgentTerminal}
-          onRefresh={refreshAgentSummaries}
+          onRefresh={() => void refreshAgentSummaries()}
           onMarkDone={markAgentSummaryDone}
           onChooseOption={chooseAgentSummaryOption}
         />
@@ -3471,13 +3532,19 @@ export function App({
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
   const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
   const projectList = projects ?? [];
-  const projectNavigationProps = {
-    projects: projectList,
-    onAddProject: openProjectDialog,
-    onCreateTerminal: (projectID: string) => {
-      void createSession(false, undefined, projectID);
-    },
-  };
+  const projectNavigationProps = projectEndpointAvailableRef.current
+    ? {
+        projects: projectList,
+        agentSummaries,
+        selectedID: selectedIDs[0] ?? null,
+        onSelectSession: openAgentTerminal,
+        onAddProject: openProjectDialog,
+        onCreateTerminal: (projectID: string) => {
+          void createSession(false, undefined, projectID);
+        },
+        onCreateAgent: openAgentDialog,
+      }
+    : {};
   const summaryByTerminalID = new Map(
     agentSummaries.map((summary) => [summary.terminalId, summary]),
   );
@@ -3522,14 +3589,16 @@ export function App({
         group: "Actions",
       }]
       : []),
-    {
-      value: "new-terminal",
-      label: "New terminal in directory…",
-      detail: "Choose a working directory",
-      search: "new terminal create directory cwd",
-      run: openCreateDialog,
-      group: "Actions",
-    },
+    ...(!projectEndpointAvailableRef.current
+      ? [{
+        value: "new-terminal",
+        label: "New terminal in directory…",
+        detail: "Choose a working directory",
+        search: "new terminal create directory cwd",
+        run: openCreateDialog,
+        group: "Actions",
+      }]
+      : []),
     {
       value: "attention-alerts",
       label: "Enable attention alerts",
@@ -3661,37 +3730,6 @@ export function App({
     });
   };
 
-  const projectState = (
-    <section className="project-state" aria-label="Projects">
-      {projectList.map((project) => {
-        const projectSessions = sessions.filter(
-          (session) => session.projectId === project.id,
-        );
-        return (
-          <section
-            className="project-empty-section"
-            data-project-id={project.id}
-            key={project.id}
-          >
-            <h2>{project.path}</h2>
-            {projectSessions.length === 0 && (
-              <p>No terminals in this project yet.</p>
-            )}
-            <Button
-              type="button"
-              onClick={() => void createSession(false, undefined, project.id)}
-            >
-              Create terminal in {project.path}
-            </Button>
-          </section>
-        );
-      })}
-      <Button type="button" onClick={openProjectDialog}>
-        Add project
-      </Button>
-    </section>
-  );
-
   const emptyState = (
     <div className="empty-state">
       <div className="empty-state-card">
@@ -3704,7 +3742,7 @@ export function App({
               : "Choose a project to begin a session."
             : "Start a terminal to begin a session."}
         </p>
-        {sessions.length > 0 && (
+        {sessions.length > 0 && !projectEndpointAvailableRef.current && (
           <Button
             type="button"
             className="empty-state-action"
@@ -3749,7 +3787,6 @@ export function App({
         className="terminal-stage"
         data-multiple={workspacePanes.length > 1}
       >
-        {projectState}
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
           <div
@@ -3933,6 +3970,59 @@ export function App({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={agentProjectID !== null}
+        onOpenChange={(open) => {
+          if (agentStartSubmitting) return;
+          if (!open) {
+            setAgentProjectID(null);
+            setAgentStartError("");
+          }
+        }}
+      >
+        <DialogContent className="agent-start-dialog sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Start an agent</DialogTitle>
+            <DialogDescription>
+              Create a terminal in this project and launch the selected agent there.
+            </DialogDescription>
+          </DialogHeader>
+          <Field data-invalid={Boolean(agentStartError)}>
+            <FieldLabel htmlFor="project-agent-kind">Agent</FieldLabel>
+            <select
+              id="project-agent-kind"
+              className="settings-select"
+              aria-label="Agent"
+              value={agentKind}
+              onChange={(event) => setAgentKind(event.target.value as AgentKind)}
+              disabled={agentStartSubmitting}
+            >
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+            </select>
+            {agentStartError && <FieldError>{agentStartError}</FieldError>}
+          </Field>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAgentProjectID(null)}
+              disabled={agentStartSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (agentProjectID) void startAgentInProject(agentProjectID, agentKind);
+              }}
+              disabled={agentStartSubmitting || agentProjectID === null}
+            >
+              {agentStartSubmitting ? "Starting…" : `Start ${agentKind === "codex" ? "Codex" : "Claude"} agent`}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog
