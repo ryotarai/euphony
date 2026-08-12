@@ -12,6 +12,7 @@ import {
 import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
 import { SessionNavigation } from "./components/SessionNavigation";
+import { SessionInfoPane } from "./components/SessionInfoPane";
 import { AgentsView } from "./components/AgentsView";
 import { TasksView } from "./components/TasksView";
 import {
@@ -103,11 +104,19 @@ const maxHistoryMiB = 4095;
 const filterDeselectDelayMs = 10_000;
 const maxCachedTerminalViews = 4;
 const maxTerminalScreenSnapshotBytes = 128 * 1024;
+const minimumSessionInfoWidth = 220;
+const maximumSessionInfoWidth = 520;
 const tasksPaneID = "tasks" as const;
 const agentsPaneID = "agents" as const;
 
 type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
 type AgentKind = "codex" | "claude";
+
+function normalizeSessionInfoWidth(width: number): number {
+  return Math.round(
+    Math.min(maximumSessionInfoWidth, Math.max(minimumSessionInfoWidth, width)),
+  );
+}
 
 interface DashboardRoute {
   pane: DashboardPaneID | null;
@@ -220,6 +229,7 @@ const defaultSettings: Settings = {
   terminalCursorBlink: defaultTerminalCursorBlink,
   terminalScrollSensitivity: defaultTerminalScrollSensitivity,
   terminalOptionAsAlt: defaultTerminalOptionAsAlt,
+  codingAgent: "codex",
   agentSummaryProvider: "codex",
   agentSummaryOpenAIEffort: "low",
   agentSummaryPrompt: "",
@@ -618,6 +628,7 @@ export function App({
   const [terminalOptionAsAltDraft, setTerminalOptionAsAltDraft] = useState(
     settings.terminalOptionAsAlt,
   );
+  const [codingAgentDraft, setCodingAgentDraft] = useState(settings.codingAgent);
   const [agentSummaryProviderDraft, setAgentSummaryProviderDraft] = useState(
     settings.agentSummaryProvider,
   );
@@ -658,10 +669,10 @@ export function App({
   const [projectCreateError, setProjectCreateError] = useState("");
   const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
   const [projectDirectoryPicking, setProjectDirectoryPicking] = useState(false);
-  const [agentProjectID, setAgentProjectID] = useState<string | null>(null);
-  const [agentKind, setAgentKind] = useState<AgentKind>("codex");
-  const [agentStartError, setAgentStartError] = useState("");
-  const [agentStartSubmitting, setAgentStartSubmitting] = useState(false);
+  const agentStartSubmittingRef = useRef(false);
+  const [sessionInfoWidth, setSessionInfoWidth] = useState(320);
+  const [resizingSessionInfo, setResizingSessionInfo] = useState(false);
+  const sessionInfoDragRef = useRef({ startX: 0, startWidth: 320 });
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [pendingRename, setPendingRename] = useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -1245,6 +1256,7 @@ export function App({
       setTerminalCursorBlinkDraft(loaded.terminalCursorBlink);
       setTerminalScrollSensitivityDraft(String(loaded.terminalScrollSensitivity));
       setTerminalOptionAsAltDraft(loaded.terminalOptionAsAlt);
+      setCodingAgentDraft(loaded.codingAgent);
       setAgentSummaryProviderDraft(loaded.agentSummaryProvider);
       setAgentSummaryOpenAIEffortDraft(loaded.agentSummaryOpenAIEffort ?? "low");
       setAgentSummaryPromptDraft(loaded.agentSummaryPrompt);
@@ -1257,6 +1269,25 @@ export function App({
       active = false;
     };
   }, [api, initialSettings]);
+
+  useEffect(() => {
+    if (!resizingSessionInfo) return;
+    const resize = (event: PointerEvent) => {
+      const { startX, startWidth } = sessionInfoDragRef.current;
+      setSessionInfoWidth(normalizeSessionInfoWidth(startWidth + event.clientX - startX));
+    };
+    const finish = (event: PointerEvent) => {
+      const { startX, startWidth } = sessionInfoDragRef.current;
+      setSessionInfoWidth(normalizeSessionInfoWidth(startWidth + event.clientX - startX));
+      setResizingSessionInfo(false);
+    };
+    document.addEventListener("pointermove", resize);
+    document.addEventListener("pointerup", finish);
+    return () => {
+      document.removeEventListener("pointermove", resize);
+      document.removeEventListener("pointerup", finish);
+    };
+  }, [resizingSessionInfo]);
 
   useEffect(() => {
     if (!api || !sessions || agentSummariesLoadedForApiRef.current === api) return;
@@ -2792,21 +2823,18 @@ export function App({
     }
   }
 
-  function openAgentDialog(projectID: string) {
+  function startConfiguredAgent(projectID: string) {
     setCommandOpen(false);
-    setAgentProjectID(projectID);
-    setAgentKind(settings.agentSummaryProvider === "claude" ? "claude" : "codex");
-    setAgentStartError("");
+    void startAgentInProject(projectID, settings.codingAgent);
   }
 
   async function startAgentInProject(projectID: string, kind: AgentKind) {
-    if (!api || agentStartSubmitting) return;
-    setAgentStartSubmitting(true);
-    setAgentStartError("");
+    if (!api || agentStartSubmittingRef.current) return;
+    agentStartSubmittingRef.current = true;
     try {
       const created = await createSession(false, undefined, projectID);
       if (!created) {
-        setAgentStartError("The project terminal could not be created.");
+        setRequestError("The project terminal could not be created.");
         return;
       }
       await api.startAgent(created.id, kind);
@@ -2815,16 +2843,14 @@ export function App({
       } catch {
         // The terminal remains usable even if the post-start refresh is delayed.
       }
-      setAgentProjectID(null);
       setRequestError("");
     } catch (error) {
       const message = error instanceof Error
         ? error.message
         : "The agent could not be started.";
-      setAgentStartError(message);
       setRequestError(message);
     } finally {
-      setAgentStartSubmitting(false);
+      agentStartSubmittingRef.current = false;
     }
   }
 
@@ -2989,6 +3015,7 @@ export function App({
     setTerminalCursorBlinkDraft(settings.terminalCursorBlink);
     setTerminalScrollSensitivityDraft(String(settings.terminalScrollSensitivity));
     setTerminalOptionAsAltDraft(settings.terminalOptionAsAlt);
+    setCodingAgentDraft(settings.codingAgent);
     setAgentSummaryProviderDraft(settings.agentSummaryProvider);
     setAgentSummaryOpenAIEffortDraft(settings.agentSummaryOpenAIEffort ?? "low");
     setAgentSummaryPromptDraft(settings.agentSummaryPrompt);
@@ -3105,6 +3132,7 @@ export function App({
       terminalCursorBlink: terminalCursorBlinkDraft,
       terminalScrollSensitivity,
       terminalOptionAsAlt: terminalOptionAsAltDraft,
+      codingAgent: codingAgentDraft,
       agentSummaryProvider: agentSummaryProviderDraft,
       agentSummaryOpenAIEffort: agentSummaryOpenAIEffortDraft as Settings["agentSummaryOpenAIEffort"],
       agentSummaryPrompt: agentSummaryPromptDraft,
@@ -3574,7 +3602,7 @@ export function App({
         onCreateTerminal: (projectID: string) => {
           void createSession(false, undefined, projectID);
         },
-        onCreateAgent: openAgentDialog,
+        onCreateAgent: startConfiguredAgent,
       }
     : {};
   const summaryByTerminalID = new Map(
@@ -3762,6 +3790,30 @@ export function App({
     });
   };
 
+  const beginSessionInfoResize = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    sessionInfoDragRef.current = {
+      startX: event.clientX,
+      startWidth: sessionInfoWidth,
+    };
+    setResizingSessionInfo(true);
+  };
+
+  const resizeSessionInfoWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const delta = event.key === "ArrowRight"
+      ? 16
+      : event.key === "ArrowLeft"
+        ? -16
+        : event.key === "Home"
+          ? minimumSessionInfoWidth - sessionInfoWidth
+          : event.key === "End"
+            ? maximumSessionInfoWidth - sessionInfoWidth
+            : 0;
+    if (delta === 0) return;
+    event.preventDefault();
+    setSessionInfoWidth(normalizeSessionInfoWidth(sessionInfoWidth + delta));
+  };
+
   const emptyState = (
     <div className="empty-state">
       <div className="empty-state-card">
@@ -3792,6 +3844,7 @@ export function App({
       className="workspace"
       style={{
         "--interface-font-size": `${previewSettings.interfaceFontSize}px`,
+        "--session-info-width": `${sessionInfoWidth}px`,
       } as CSSProperties}
     >
       <SessionNavigation
@@ -3815,6 +3868,25 @@ export function App({
         agentSummaryCount={agentSummaryCount}
         onOpenAgents={openAgentsWorkspace}
       />
+      <SessionInfoPane
+        session={selected}
+        summary={selected ? summaryByTerminalID.get(selected.id) : undefined}
+      />
+      <button
+        type="button"
+        className="session-info-resizer"
+        role="separator"
+        aria-label="Resize session information"
+        aria-orientation="vertical"
+        aria-valuemin={minimumSessionInfoWidth}
+        aria-valuemax={maximumSessionInfoWidth}
+        aria-valuenow={sessionInfoWidth}
+        data-resizing={resizingSessionInfo || undefined}
+        onPointerDown={beginSessionInfoResize}
+        onKeyDown={resizeSessionInfoWithKeyboard}
+      >
+        <span aria-hidden="true" />
+      </button>
       <section
         className="terminal-stage"
         data-multiple={workspacePanes.length > 1}
@@ -4016,59 +4088,6 @@ export function App({
         </DialogContent>
       </Dialog>
       <Dialog
-        open={agentProjectID !== null}
-        onOpenChange={(open) => {
-          if (agentStartSubmitting) return;
-          if (!open) {
-            setAgentProjectID(null);
-            setAgentStartError("");
-          }
-        }}
-      >
-        <DialogContent className="agent-start-dialog sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Start an agent</DialogTitle>
-            <DialogDescription>
-              Create a terminal in this project and launch the selected agent there.
-            </DialogDescription>
-          </DialogHeader>
-          <Field data-invalid={Boolean(agentStartError)}>
-            <FieldLabel htmlFor="project-agent-kind">Agent</FieldLabel>
-            <select
-              id="project-agent-kind"
-              className="settings-select"
-              aria-label="Agent"
-              value={agentKind}
-              onChange={(event) => setAgentKind(event.target.value as AgentKind)}
-              disabled={agentStartSubmitting}
-            >
-              <option value="codex">Codex</option>
-              <option value="claude">Claude</option>
-            </select>
-            {agentStartError && <FieldError>{agentStartError}</FieldError>}
-          </Field>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setAgentProjectID(null)}
-              disabled={agentStartSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                if (agentProjectID) void startAgentInProject(agentProjectID, agentKind);
-              }}
-              disabled={agentStartSubmitting || agentProjectID === null}
-            >
-              {agentStartSubmitting ? "Starting…" : `Start ${agentKind === "codex" ? "Codex" : "Claude"} agent`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog
         open={pendingRename !== null}
         onOpenChange={(open) => {
           if (!open) {
@@ -4195,6 +4214,25 @@ export function App({
                 {settingsError?.field === "paneTabShortcut" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="codingAgent">Coding agent</FieldLabel>
+                <select
+                  id="codingAgent"
+                  name="codingAgent"
+                  aria-label="Coding agent"
+                  className="settings-select"
+                  value={codingAgentDraft}
+                  onChange={(event) =>
+                    setCodingAgentDraft(event.target.value as Settings["codingAgent"])
+                  }
+                >
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                </select>
+                <FieldDescription>
+                  Start project agents with this coding agent.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="agentSummaryProvider">Summary provider</FieldLabel>

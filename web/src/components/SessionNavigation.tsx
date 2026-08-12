@@ -17,7 +17,6 @@ import {
   PlusIcon,
   Settings2Icon,
   SquareTerminalIcon,
-  Trash2Icon,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,7 +28,6 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -38,6 +36,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { useSessionContextMenu } from "./SessionContextMenu";
 import type { AgentSummary, Project, Session, Settings } from "../types";
 import {
   defaultTerminalCursorBlink,
@@ -182,6 +181,73 @@ function sessionStatusIcon(status: string) {
   }
 }
 
+function SessionListItem({
+  session,
+  selected,
+  pinned,
+  selectSession,
+  onDelete,
+}: {
+  session: Session;
+  selected: boolean;
+  pinned: boolean;
+  selectSession(id: string, multiple: boolean, pin?: boolean): void;
+  onDelete(session: Session): void;
+}) {
+  const { onContextMenu, menu } = useSessionContextMenu(
+    session.name,
+    () => onDelete(session),
+  );
+  const attentionDescriptionID = session.needsAttention
+    ? `attention-${session.id}`
+    : undefined;
+
+  return (
+    <SidebarMenuItem
+      className="session-channel"
+      data-state={activity(session)}
+      data-attention={session.needsAttention || undefined}
+      onContextMenu={onContextMenu}
+    >
+      <Checkbox
+        className="pane-checkbox"
+        aria-label={`Include ${session.name} in split`}
+        checked={selected}
+        data-pinned={pinned || undefined}
+        title={pinned ? "Pinned — click to remove" : "Option-click to pin"}
+        onClick={(event) => selectSession(session.id, true, event.altKey)}
+      />
+      <SidebarMenuButton
+        className="session-select"
+        size="lg"
+        isActive={selected}
+        aria-label={`Select ${session.name}`}
+        aria-pressed={selected}
+        aria-current={selected ? "true" : undefined}
+        aria-describedby={attentionDescriptionID}
+        title={displayPath(session.cwd)}
+        onClick={(event) =>
+          selectSession(session.id, event.metaKey || event.ctrlKey)
+        }
+      >
+        {sessionStatusIcon(activity(session))}
+        <span className="terminal-identity">
+          <span className="agent-title">{sessionLabel(session)}</span>
+        </span>
+        {session.needsAttention && (
+          <>
+            <span className="attention-dot" aria-hidden="true" />
+            <span className="sr-only" id={attentionDescriptionID}>
+              Needs attention
+            </span>
+          </>
+        )}
+      </SidebarMenuButton>
+      {menu}
+    </SidebarMenuItem>
+  );
+}
+
 function SessionList(props: SessionNavigationProps) {
   const { isMobile, setOpenMobile } = useSidebar();
 
@@ -190,6 +256,8 @@ function SessionList(props: SessionNavigationProps) {
     else props.onSelect(id, multiple, pin);
     if (isMobile && !multiple) setOpenMobile(false);
   };
+  const selectedIDSet = new Set(props.selectedIDs);
+  const pinnedIDSet = new Set(props.pinnedIDs ?? []);
 
   return (
     <nav className="session-list" aria-label="Terminal sessions">
@@ -213,87 +281,16 @@ function SessionList(props: SessionNavigationProps) {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="cwd-terminal-list">
-              {cwdSessions.map((session) => {
-                const selected = props.selectedIDs.includes(session.id);
-                const pinned = props.pinnedIDs?.includes(session.id) ?? false;
-                const attentionDescriptionID = session.needsAttention
-                  ? `attention-${session.id}`
-                  : undefined;
-                return (
-                  <SidebarMenuItem
-                    className="session-channel"
-                    key={session.id}
-                    data-state={activity(session)}
-                    data-attention={session.needsAttention || undefined}
-                  >
-                    <Checkbox
-                      className="pane-checkbox"
-                      aria-label={`Include ${session.name} in split`}
-                      checked={selected}
-                      data-pinned={pinned || undefined}
-                      title={
-                        pinned
-                          ? "Pinned — click to remove"
-                          : "Option-click to pin"
-                      }
-                      onClick={(event) =>
-                        selectSession(session.id, true, event.altKey)
-                      }
-                    />
-                    <SidebarMenuButton
-                      className="session-select"
-                      size="lg"
-                      isActive={selected}
-                      aria-label={`Select ${session.name}`}
-                      aria-pressed={selected}
-                      aria-current={selected ? "true" : undefined}
-                      aria-describedby={attentionDescriptionID}
-                      title={displayPath(session.cwd)}
-                      onClick={(event) =>
-                        selectSession(
-                          session.id,
-                          event.metaKey || event.ctrlKey,
-                        )
-                      }
-                    >
-                      {sessionStatusIcon(activity(session))}
-                      <span className="terminal-identity">
-                        <span className="agent-title">
-                          {sessionLabel(session)}
-                        </span>
-                      </span>
-                      {session.needsAttention && (
-                        <>
-                          <span
-                            className="attention-dot"
-                            aria-hidden="true"
-                          />
-                          <span
-                            className="sr-only"
-                            id={attentionDescriptionID}
-                          >
-                            Needs attention
-                          </span>
-                        </>
-                      )}
-                    </SidebarMenuButton>
-                    <SidebarMenuAction
-                      className="session-delete"
-                      showOnHover
-                      aria-label={`Delete ${session.name}`}
-                      title={`Delete ${session.name}`}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        props.onDelete(session);
-                      }}
-                    >
-                      <Trash2Icon aria-hidden="true" />
-                      <span className="sr-only">Delete {session.name}</span>
-                    </SidebarMenuAction>
-                  </SidebarMenuItem>
-                );
-              })}
+              {cwdSessions.map((session) => (
+                <SessionListItem
+                  key={session.id}
+                  session={session}
+                  selected={selectedIDSet.has(session.id)}
+                  pinned={pinnedIDSet.has(session.id)}
+                  selectSession={selectSession}
+                  onDelete={props.onDelete}
+                />
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -653,6 +650,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
     terminalCursorBlink: defaultTerminalCursorBlink,
     terminalScrollSensitivity: defaultTerminalScrollSensitivity,
     terminalOptionAsAlt: defaultTerminalOptionAsAlt,
+    codingAgent: "codex",
     agentSummaryProvider: "codex",
     agentSummaryOpenAIEffort: "low",
     agentSummaryPrompt: "",

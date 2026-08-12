@@ -7,11 +7,10 @@ import {
   CircleXIcon,
   Clock3Icon,
   FolderPlusIcon,
-  PlusIcon,
   SquareTerminalIcon,
-  Trash2Icon,
 } from "lucide-react";
 import type { AgentSummary, Project, Session } from "../types";
+import { useSessionContextMenu } from "./SessionContextMenu";
 
 export interface ProjectSidebarProps {
   projects: Project[];
@@ -191,7 +190,7 @@ function ProjectActions({
             onCreateTerminal(project.id);
           }}
         >
-          <PlusIcon aria-hidden="true" />
+          <SquareTerminalIcon aria-hidden="true" />
           <span className="sr-only">Create terminal in {project.path}</span>
         </button>
       )}
@@ -246,6 +245,10 @@ function ProjectSessionRow({
   ].join(" ");
   const selectionDetails = [purpose, action].filter(Boolean).join(" — ");
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
+  const { onContextMenu, menu } = useSessionContextMenu(
+    identity,
+    onDelete ? () => onDelete(session) : undefined,
+  );
 
   return (
     <li
@@ -254,6 +257,7 @@ function ProjectSessionRow({
       data-attention={session.needsAttention ? "true" : undefined}
       data-state={status}
       data-unread={unread ? "true" : "false"}
+      onContextMenu={onContextMenu}
     >
       <button
         type="button"
@@ -292,22 +296,7 @@ function ProjectSessionRow({
       <span id={accessibleDescriptionID} className="sr-only">
         {accessibleDescription}
       </span>
-      {onDelete && (
-        <button
-          type="button"
-          className="project-session-delete"
-          aria-label={`Delete ${identity}`}
-          title={`Delete ${identity}`}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onDelete(session);
-          }}
-        >
-          <Trash2Icon aria-hidden="true" />
-          <span className="sr-only">Delete {identity}</span>
-        </button>
-      )}
+      {menu}
     </li>
   );
 }
@@ -343,7 +332,7 @@ function ProjectGroup({
       aria-labelledby={headingID}
     >
       <header className="project-sidebar-header">
-        <h2 id={headingID} title={label}>{label}</h2>
+        <h2 className="project-sidebar-path" id={headingID} title={label}>{label}</h2>
         {project && (onCreateTerminal || onCreateAgent) && (
           <ProjectActions
             project={project}

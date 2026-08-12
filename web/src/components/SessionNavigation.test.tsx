@@ -33,6 +33,7 @@ const settings: Settings = {
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
+  codingAgent: "codex",
   agentSummaryProvider: "codex",
   agentSummaryPrompt: "",
 };

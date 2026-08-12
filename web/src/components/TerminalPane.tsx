@@ -23,7 +23,6 @@ import { AnnotationView } from "./AnnotationView";
 import { GitChangesView } from "./GitChangesView";
 import { WorkspaceFilesView } from "./WorkspaceFilesView";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface TerminalPaneProps {
@@ -381,15 +380,6 @@ export function TerminalPane({
               <span className="attention-dot" aria-hidden="true" />
             </span>
           )}
-          <Checkbox
-            className="terminal-tab-selection"
-            aria-label={`Deselect ${session.name}`}
-            checked
-            onMouseDown={(event) => event.stopPropagation()}
-            onCheckedChange={(checked) => {
-              if (!checked) onDeselect();
-            }}
-          />
         </div>
       </div>
       <div

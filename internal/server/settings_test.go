@@ -34,6 +34,9 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 	if _, ok := defaultJSON["autoDeselectRunning"]; ok {
 		t.Fatal("GET /api/settings includes removed autoDeselectRunning setting")
 	}
+	if _, ok := defaultJSON["codingAgent"]; !ok {
+		t.Fatal("GET /api/settings omits codingAgent setting")
+	}
 	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
 		defaults.SidebarWidth != 304 || defaults.InterfaceFontSize != 16 ||
 		defaults.TerminalFontSize != 14 || defaults.AgentLogFontSize != 14 ||
@@ -41,7 +44,8 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		defaults.TerminalHistoryLimit != 1048576 ||
 		defaults.TerminalLineHeight != 1.25 || defaults.TerminalCursorStyle != "bar" ||
 		defaults.TerminalCursorBlink || defaults.TerminalScrollSensitivity != 3 ||
-		!defaults.TerminalOptionAsAlt || defaults.AgentSummaryOpenAIEffort != "low" {
+		!defaults.TerminalOptionAsAlt || defaults.CodingAgent != session.DefaultCodingAgent ||
+		defaults.AgentSummaryOpenAIEffort != "low" {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 
@@ -60,9 +64,39 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 		TerminalHistoryLimit: 0,
 		TerminalLineHeight:   1.5, TerminalCursorStyle: "underline",
 		TerminalCursorBlink: true, TerminalScrollSensitivity: 5, TerminalOptionAsAlt: false,
-		AgentSummaryProvider: "codex", AgentSummaryPrompt: "", AgentSummaryOpenAIEffort: "low",
+		CodingAgent: "codex", AgentSummaryProvider: "codex", AgentSummaryPrompt: "",
+		AgentSummaryOpenAIEffort: "low",
 	}) {
 		t.Fatalf("updated settings = %#v", updated)
+	}
+}
+
+func TestSettingsAPIConfiguresCodingAgent(t *testing.T) {
+	srv, err := New(Config{
+		Token: "token", Shell: "/bin/sh",
+		DatabasePath: filepath.Join(t.TempDir(), "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodPatch, "/api/settings",
+		`{"prefix":"Ctrl+B","paneTabShortcut":"Meta+L","sidebarWidth":304,"sidebarCollapsed":false,"interfaceFontSize":16,"terminalFontSize":14,"terminalFontFamily":"Menlo, monospace","agentLogFontSize":14,"terminalHistoryLimit":1048576,"terminalLineHeight":1.25,"terminalCursorStyle":"bar","terminalCursorBlink":false,"terminalScrollSensitivity":3,"terminalOptionAsAlt":true,"codingAgent":"claude"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var updated map[string]any
+	decodeResponse(t, response, &updated)
+	if updated["codingAgent"] != "claude" {
+		t.Fatalf("codingAgent = %#v, want claude", updated["codingAgent"])
+	}
+
+	response = performRequest(t, srv, http.MethodGet, "/api/settings", "")
+	var reloaded map[string]any
+	decodeResponse(t, response, &reloaded)
+	if reloaded["codingAgent"] != "claude" {
+		t.Fatalf("reloaded codingAgent = %#v, want claude", reloaded["codingAgent"])
 	}
 }
 

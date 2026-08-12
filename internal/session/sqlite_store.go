@@ -103,6 +103,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			terminal_cursor_blink INTEGER NOT NULL DEFAULT 0,
 			terminal_scroll_sensitivity INTEGER NOT NULL DEFAULT 3,
 			terminal_option_as_alt INTEGER NOT NULL DEFAULT 1,
+			coding_agent TEXT NOT NULL DEFAULT 'codex',
 			agent_summary_provider TEXT NOT NULL DEFAULT 'codex',
 			agent_summary_prompt TEXT NOT NULL DEFAULT '',
 			agent_summary_openai_effort TEXT NOT NULL DEFAULT 'low'
@@ -287,6 +288,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	hasCodingAgent, err := s.hasColumn(ctx, "settings", "coding_agent")
+	if err != nil {
+		return err
+	}
+	if !hasCodingAgent {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN coding_agent TEXT NOT NULL DEFAULT 'codex'",
+		); err != nil {
+			return fmt.Errorf("add coding agent setting: %w", err)
+		}
+	}
 	if !hasAgentSummaryProvider {
 		if _, err := s.db.ExecContext(ctx,
 			"ALTER TABLE settings ADD COLUMN agent_summary_provider TEXT NOT NULL DEFAULT 'codex'",
@@ -426,7 +438,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 15"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 16"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -465,7 +477,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
 			terminal_history_limit, terminal_line_height,
 			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity,
-			terminal_option_as_alt, agent_summary_provider, agent_summary_prompt,
+			terminal_option_as_alt, coding_agent, agent_summary_provider, agent_summary_prompt,
 			agent_summary_openai_effort
 		FROM settings WHERE id = 1`,
 	).Scan(
@@ -483,6 +495,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 		&terminalCursorBlink,
 		&result.TerminalScrollSensitivity,
 		&terminalOptionAsAlt,
+		&result.CodingAgent,
 		&result.AgentSummaryProvider,
 		&result.AgentSummaryPrompt,
 		&result.AgentSummaryOpenAIEffort,
@@ -514,7 +527,7 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
 			terminal_history_limit = ?, terminal_line_height = ?,
 			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?,
-			terminal_option_as_alt = ?, agent_summary_provider = ?, agent_summary_prompt = ?
+			terminal_option_as_alt = ?, coding_agent = ?, agent_summary_provider = ?, agent_summary_prompt = ?
 			, agent_summary_openai_effort = ?
 		WHERE id = 1`,
 		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
@@ -522,7 +535,7 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 		settings.AgentLogFontSize,
 		settings.TerminalHistoryLimit, settings.TerminalLineHeight,
 		settings.TerminalCursorStyle, terminalCursorBlink, settings.TerminalScrollSensitivity,
-		terminalOptionAsAlt, settings.AgentSummaryProvider, settings.AgentSummaryPrompt,
+		terminalOptionAsAlt, settings.CodingAgent, settings.AgentSummaryProvider, settings.AgentSummaryPrompt,
 		settings.AgentSummaryOpenAIEffort)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)

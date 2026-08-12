@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { AgentSummary, Project, Session } from "../types";
@@ -144,9 +144,11 @@ test("starts terminal or agent work only through project callbacks", async () =>
   const user = userEvent.setup();
   const { props } = renderSidebar();
 
-  await user.click(
-    screen.getByRole("button", { name: `Create terminal in ${project.path}` }),
-  );
+  const terminalButton = screen.getByRole("button", {
+    name: `Create terminal in ${project.path}`,
+  });
+  expect(terminalButton.querySelector("svg")).toHaveClass("lucide-square-terminal");
+  await user.click(terminalButton);
   await user.click(
     screen.getByRole("button", { name: `Start agent in ${project.path}` }),
   );
@@ -155,6 +157,17 @@ test("starts terminal or agent work only through project callbacks", async () =>
   expect(props.onCreateTerminal).toHaveBeenCalledWith(project.id);
   expect(props.onCreateAgent).toHaveBeenCalledWith(project.id);
   expect(props.onAddProject).toHaveBeenCalledOnce();
+});
+
+test("right-aligns project paths and truncates their left side", () => {
+  const { container } = renderSidebar({
+    projects: [{ ...project, path: "/Users/ryotarai/work/euphony/very-long-project" }],
+  });
+
+  const heading = within(container).getByRole("heading", {
+    name: "/Users/ryotarai/work/euphony/very-long-project",
+  });
+  expect(heading).toHaveClass("project-sidebar-path");
 });
 
 test("does not render project controls when their callbacks are missing", () => {
@@ -173,14 +186,17 @@ test("does not render project controls when their callbacks are missing", () => 
   ).not.toBeInTheDocument();
 });
 
-test("keeps selection and deletion as separate row actions", async () => {
+test("opens deletion from a session context menu", async () => {
   const user = userEvent.setup();
   const onSelectSession = vi.fn();
   const onDelete = vi.fn();
   renderSidebar({ onSelectSession, onDelete });
 
   const row = screen.getByRole("button", { name: /Select Codex/ });
-  await user.click(screen.getByRole("button", { name: "Delete Codex" }));
+  expect(screen.queryByRole("button", { name: "Delete Codex" })).not.toBeInTheDocument();
+  fireEvent.contextMenu(row);
+  const menu = screen.getByRole("menu", { name: "Actions for Codex" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
 
   expect(onDelete).toHaveBeenCalledWith(agentSession);
   expect(onSelectSession).not.toHaveBeenCalled();

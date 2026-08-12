@@ -509,9 +509,7 @@ test("does not toggle while a regular input is being edited", () => {
   expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
 });
 
-test("deselects the terminal from the pane rail", async () => {
-  const user = userEvent.setup();
-  const onDeselect = vi.fn();
+test("does not render a selection checkbox in the pane rail", () => {
   render(
     <TerminalPane
       session={session}
@@ -519,19 +517,14 @@ test("deselects the terminal from the pane rail", async () => {
       active
       layoutVersion={1}
       tabShortcut="Meta+L"
-      onDeselect={onDeselect}
+      onDeselect={() => undefined}
       renderTerminal={() => <div>terminal</div>}
     />,
   );
 
-  const checkbox = screen.getByRole("checkbox", {
-    name: "Deselect Terminal one",
-  });
-  expect(checkbox).toBeChecked();
-
-  await user.click(checkbox);
-
-  expect(onDeselect).toHaveBeenCalledOnce();
+  expect(
+    screen.queryByRole("checkbox", { name: "Deselect Terminal one" }),
+  ).not.toBeInTheDocument();
 });
 
 test("discovers a new annotation as a third tab and selects it", async () => {
