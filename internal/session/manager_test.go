@@ -170,6 +170,50 @@ func TestManagerRenameRollsBackWhenPersistenceFails(t *testing.T) {
 	}
 }
 
+func TestAssignProjectRollsBackCompleteMetadataAfterPersistenceFailure(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "assign-project.sqlite3")
+	store, err := OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	manager := NewManager("/bin/sh")
+	manager.store = store
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	created, err := manager.Create(context.Background(), "Terminal", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	beforeMemory, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("created terminal is missing before AssignProject()")
+	}
+	beforeStored, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() before AssignProject() error = %v", err)
+	}
+	persistenceErr := errors.New("assign project save failed")
+	manager.store = &failSaveMetadataStore{metadataStore: store, err: persistenceErr}
+
+	if _, err := manager.AssignProject(created.ID, "project-1"); !errors.Is(err, persistenceErr) {
+		t.Fatalf("AssignProject() error = %v, want %v", err, persistenceErr)
+	}
+	current, ok := manager.Metadata(created.ID)
+	if !ok {
+		t.Fatal("terminal disappeared after failed AssignProject()")
+	}
+	if current != beforeMemory {
+		t.Fatalf("memory metadata after failed AssignProject() = %#v, want %#v", current, beforeMemory)
+	}
+	persisted, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() after failed AssignProject() error = %v", err)
+	}
+	if len(persisted) != len(beforeStored) || len(persisted) != 1 || persisted[0] != beforeStored[0] {
+		t.Fatalf("stored metadata after failed AssignProject() = %#v, want %#v", persisted, beforeStored)
+	}
+}
+
 func TestManagerRenameRollsBackOwnedFieldsAfterConcurrentProcessRefresh(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -4050,6 +4094,15 @@ type failFirstSaveMetadataStore struct {
 	recordingMetadataStore
 	err   error
 	calls int
+}
+
+type failSaveMetadataStore struct {
+	metadataStore
+	err error
+}
+
+func (s *failSaveMetadataStore) Save(context.Context, Metadata) error {
+	return s.err
 }
 
 type gatedResultMetadataStore struct {

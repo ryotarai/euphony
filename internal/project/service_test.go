@@ -47,6 +47,15 @@ func TestCreateRejectsMissingAndDuplicateDirectories(t *testing.T) {
 	}
 }
 
+func TestCreateInvalidPathReturnsTypedError(t *testing.T) {
+	service := NewService(NewMemoryRepository(), time.Now, func() string { return "project-1" })
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	if _, err := service.Create(context.Background(), missing); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("Create() error = %v, want ErrInvalidPath", err)
+	}
+}
+
 func TestGetReturnsCreatedProject(t *testing.T) {
 	repo := NewMemoryRepository()
 	createdAt := time.Date(2026, 8, 12, 1, 2, 3, 4, time.UTC)

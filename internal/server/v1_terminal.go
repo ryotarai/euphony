@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -24,7 +26,7 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name          string                `json:"name"`
 		CWD           string                `json:"cwd"`
-		ProjectID     *string               `json:"projectId"`
+		ProjectID     optionalProjectID     `json:"projectId"`
 		SelectionMode control.SelectionMode `json:"selectionMode"`
 	}
 	if err := decodeV1JSON(r, &request); err != nil {
@@ -44,11 +46,16 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 			"selectionMode must be none, add, or replace.", nil)
 		return
 	}
+	if request.ProjectID.present && request.ProjectID.null {
+		writeV1Error(w, http.StatusBadRequest, "invalid_request",
+			"projectId must be a string when provided.", nil)
+		return
+	}
 
 	var metadata session.Metadata
 	var selected selection.Snapshot
 	var err error
-	if request.ProjectID == nil {
+	if !request.ProjectID.present {
 		metadata, selected, err = s.control.CreateTerminal(
 			r.Context(),
 			request.Name,
@@ -56,7 +63,7 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 			request.SelectionMode,
 		)
 	} else {
-		projectID := strings.TrimSpace(*request.ProjectID)
+		projectID := strings.TrimSpace(request.ProjectID.value)
 		item, projectErr := s.projects.Get(r.Context(), projectID)
 		if projectErr != nil {
 			if errors.Is(projectErr, project.ErrNotFound) {
@@ -98,6 +105,23 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 		"terminal":  metadata,
 		"selection": selected,
 	})
+}
+
+type optionalProjectID struct {
+	value   string
+	present bool
+	null    bool
+}
+
+func (id *optionalProjectID) UnmarshalJSON(data []byte) error {
+	id.present = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		id.null = true
+		id.value = ""
+		return nil
+	}
+	id.null = false
+	return json.Unmarshal(data, &id.value)
 }
 
 func (s *Server) applyCreatedTerminalSelection(

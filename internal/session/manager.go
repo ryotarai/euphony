@@ -507,7 +507,7 @@ func (m *Manager) AssignProject(id, projectID string) (Metadata, error) {
 			m.mu.Lock()
 			if current, exists := m.sessions[id]; exists && current == item &&
 				current.metadata.ProjectID == after.ProjectID {
-				item.metadata.ProjectID = before.ProjectID
+				item.metadata = before
 			}
 			m.mu.Unlock()
 			releaseMetadataSave()

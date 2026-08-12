@@ -64,10 +64,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func isInvalidProjectPath(err error) bool {
-	message := err.Error()
-	return strings.Contains(message, "normalize project path") ||
-		strings.Contains(message, "stat project path") ||
-		strings.Contains(message, "project path is not a directory")
+	return errors.Is(err, project.ErrInvalidPath)
 }
 
 func migrateLegacyProjects(
@@ -85,22 +82,49 @@ func migrateLegacyProjects(
 		if metadata.ProjectID != "" {
 			continue
 		}
+		current, ok := sessions.Metadata(metadata.ID)
+		if !ok || current.ProjectID != "" {
+			continue
+		}
+		metadata = current
 		path, err := filepath.Abs(filepath.Clean(metadata.CWD))
 		if err != nil {
 			return fmt.Errorf("normalize legacy terminal %s directory: %w", metadata.ID, err)
 		}
 		item, ok := byPath[path]
+		created := false
 		if !ok {
 			item, err = projects.Create(ctx, path)
 			if err != nil {
 				return fmt.Errorf("create project for legacy terminal %s: %w", metadata.ID, err)
 			}
 			byPath[item.Path] = item
+			created = true
 		}
 		if _, err := sessions.AssignProject(metadata.ID, item.ID); err != nil {
+			if errors.Is(err, session.ErrNotFound) {
+				if created && !hasProjectAssignment(sessions, item.ID) {
+					if deleteErr := projects.Delete(ctx, item.ID); deleteErr != nil &&
+						!errors.Is(deleteErr, project.ErrNotFound) {
+						return fmt.Errorf("reconcile project %s after terminal %s disappeared: %w",
+							item.ID, metadata.ID, deleteErr)
+					}
+					delete(byPath, item.Path)
+				}
+				continue
+			}
 			return fmt.Errorf("assign legacy terminal %s to project %s: %w",
 				metadata.ID, item.ID, err)
 		}
 	}
 	return nil
+}
+
+func hasProjectAssignment(sessions *session.Manager, projectID string) bool {
+	for _, metadata := range sessions.ListCurrent() {
+		if metadata.ProjectID == projectID {
+			return true
+		}
+	}
+	return false
 }

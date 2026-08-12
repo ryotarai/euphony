@@ -15,6 +15,7 @@ import (
 var (
 	ErrNotFound      = errors.New("project not found")
 	ErrAlreadyExists = errors.New("project already exists")
+	ErrInvalidPath   = errors.New("invalid project path")
 )
 
 type Project struct {
@@ -55,6 +56,10 @@ func (s *Service) Get(ctx context.Context, id string) (Project, error) {
 	return s.repository.Get(ctx, id)
 }
 
+func (s *Service) Delete(ctx context.Context, id string) error {
+	return s.repository.Delete(ctx, id)
+}
+
 func (s *Service) Create(ctx context.Context, path string) (Project, error) {
 	path, err := normalizePath(path)
 	if err != nil {
@@ -80,15 +85,15 @@ func (s *Service) Create(ctx context.Context, path string) (Project, error) {
 func normalizePath(path string) (string, error) {
 	absolute, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
-		return "", fmt.Errorf("normalize project path: %w", err)
+		return "", fmt.Errorf("%w: normalize project path: %v", ErrInvalidPath, err)
 	}
 	absolute = filepath.Clean(absolute)
 	info, err := os.Stat(absolute)
 	if err != nil {
-		return "", fmt.Errorf("stat project path: %w", err)
+		return "", fmt.Errorf("%w: stat project path: %v", ErrInvalidPath, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("project path is not a directory: %s", absolute)
+		return "", fmt.Errorf("%w: project path is not a directory: %s", ErrInvalidPath, absolute)
 	}
 	return absolute, nil
 }
