@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,6 +45,37 @@ func TestCreateRejectsMissingAndDuplicateDirectories(t *testing.T) {
 	}
 	if _, err := service.Create(context.Background(), directory); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("duplicate error = %v", err)
+	}
+}
+
+func TestCreateRejectsDuplicateNormalizedDirectoryAliases(t *testing.T) {
+	repo := NewMemoryRepository()
+	ids := []string{"project-1", "project-2"}
+	service := NewService(repo, time.Now, func() string {
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	})
+	directory := t.TempDir()
+	if _, err := service.Create(context.Background(), directory); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	alias := directory + string(filepath.Separator) + "."
+	if _, err := service.Create(context.Background(), alias); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("normalized alias error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestCreateRejectsNonDirectoryPath(t *testing.T) {
+	directory := t.TempDir()
+	file := filepath.Join(directory, "project-file")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	service := NewService(NewMemoryRepository(), time.Now, func() string { return "project-1" })
+	if _, err := service.Create(context.Background(), file); err == nil {
+		t.Fatal("Create(file) error = nil")
 	}
 }
 

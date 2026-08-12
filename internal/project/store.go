@@ -160,6 +160,7 @@ func (r *SQLiteRepository) List(ctx context.Context) ([]Project, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
+	sortProjects(projects)
 	return projects, nil
 }
 
