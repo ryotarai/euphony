@@ -66,6 +66,7 @@ import {
 import type {
   CwdSelectionFilter,
   AgentSummary,
+  Project,
   ReplaceSelectionRequest,
   SelectionSnapshot,
   Session,
@@ -273,6 +274,45 @@ function parseTerminalScrollSensitivity(value: string): number | null {
 function sessionActivity(session: Session) {
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
+}
+
+function deriveLegacyProjects(sessions: Session[]): Project[] {
+  const projects = new Map<string, Project>();
+  for (const session of sessions) {
+    const id = session.projectId?.trim();
+    const path = session.repoRoot?.trim() || session.cwd.trim();
+    if (!id || !path || projects.has(id)) continue;
+    projects.set(id, {
+      id,
+      path,
+      createdAt: session.createdAt,
+    });
+  }
+  return [...projects.values()].sort((left, right) => {
+    const createdAt = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+    return Number.isNaN(createdAt) || createdAt === 0
+      ? left.id.localeCompare(right.id)
+      : createdAt;
+  });
+}
+
+function projectsEqual(left: Project[], right: Project[]): boolean {
+  return left.length === right.length && left.every((project, index) => {
+    const other = right[index];
+    return project.id === other?.id
+      && project.path === other.path
+      && project.createdAt === other.createdAt;
+  });
+}
+
+function isProjectList(value: unknown): value is Project[] {
+  return Array.isArray(value) && value.every((project) => {
+    if (!project || typeof project !== "object") return false;
+    const candidate = project as Record<string, unknown>;
+    return typeof candidate.id === "string"
+      && typeof candidate.path === "string"
+      && typeof candidate.createdAt === "string";
+  });
 }
 
 function availableQuickActionValues(
@@ -510,6 +550,8 @@ export function App({
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  const projectEndpointAvailableRef = useRef(false);
   const [annotationRevision, setAnnotationRevision] = useState(0);
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const [pinnedIDs, setPinnedIDs] = useState<string[]>([]);
@@ -608,6 +650,10 @@ export function App({
   );
   const [createOpen, setCreateOpen] = useState(false);
   const [cwdDraft, setCWDDraft] = useState("");
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
+  const [projectPathDraft, setProjectPathDraft] = useState("");
+  const [projectCreateError, setProjectCreateError] = useState("");
+  const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [pendingRename, setPendingRename] = useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -950,6 +996,12 @@ export function App({
     setSessions((current) =>
       current && sessionsEqual(current, items) ? current : items,
     );
+    if (!projectEndpointAvailableRef.current) {
+      const legacyProjects = deriveLegacyProjects(items);
+      setProjects((current) =>
+        current && projectsEqual(current, legacyProjects) ? current : legacyProjects,
+      );
+    }
     for (const session of transitions) {
       if (
         typeof Notification !== "undefined" &&
@@ -1249,85 +1301,124 @@ export function App({
   useEffect(() => {
     if (!api) {
       setSessions(null);
+      setProjects(null);
+      projectEndpointAvailableRef.current = false;
       return;
     }
     let active = true;
-    api
-      .listSessions()
-      .then(async (items) => {
-        if (!active) return;
-        if (items.length === 0) {
-          if (syncSelection) {
-            const created = await api.createTerminal("Terminal", undefined, "replace");
-            if (!active) return;
-            items = [created.terminal];
-            applyServerSelection(created.selection);
-            selectionSyncReadyRef.current = true;
-          } else {
-            const created = await api.createSession("Terminal");
-            if (!active) return;
-            items = [created];
-          }
-        }
-        if (syncSelection && !selectionSyncReadyRef.current) {
-          let selection = await api.getSelection();
-          if (!active) return;
-          if (selection.terminalIds.length === 0 && items[0]) {
-            selection = await api.replaceSelection({
-              manualTerminalIds: [items[0].id],
-              pinnedTerminalIds: [],
-              focusedTerminalId: items[0].id,
-              filters: { statuses: [], cwds: [] },
-              pinnedFilters: { statuses: [], cwds: [] },
-              expectedRevision: selection.revision,
-            });
-          }
-          if (!active) return;
-          applyServerSelection(selection);
-          selectionSyncReadyRef.current = true;
-        }
-        setSessions(items);
-        previousSessionOrderRef.current = items;
-        previousSessionsRef.current = items;
-        if (syncSelection) return;
-        const workspace = workspaceFromURL(items);
-        setSelectedIDs(workspace.selectedIDs);
-        setPinnedIDs(workspace.pinnedIDs);
-        setFocusedID(workspace.focusedID);
-        setStatusFilters(workspace.statusFilters);
-        setCwdFilters(workspace.cwdFilters);
-        setPinnedStatusFilters(workspace.pinnedStatusFilters);
-        setPinnedCwdFilters(workspace.pinnedCwdFilters);
-        decomposedPinnedStatusFiltersRef.current = new Set(
-          workspace.pinnedCwdFilters
-            .map(parseCwdFilter)
-            .filter((filter): filter is CwdSelectionFilter => filter !== null)
-            .map((filter) => filter.status)
-            .filter((status) =>
-              !workspace.pinnedStatusFilters.includes(status)
-            ),
-        );
-        writeWorkspaceToURL(
-          workspace.selectedIDs,
-          workspace.pinnedIDs,
-          workspace.focusedID,
-          workspace.statusFilters,
-          workspace.cwdFilters,
-          "replace",
-          workspace.pinnedStatusFilters,
-          workspace.pinnedCwdFilters,
-        );
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
+    const loadInitialState = async () => {
+      const [sessionResult, projectResult] = await Promise.allSettled([
+        api.listSessions(),
+        api.listProjects(),
+      ]);
+      if (!active) return;
+
+      if (sessionResult.status === "rejected") {
+        const error = sessionResult.reason;
         if (error instanceof ApiError && error.status === 401) {
           sessionStorage.removeItem(tokenKey);
           setAuthError(true);
           setToken("");
         } else {
-          setRequestError(error instanceof Error ? error.message : "Euphony could not load sessions.");
+          setRequestError(
+            error instanceof Error
+              ? error.message
+              : "Euphony could not load sessions.",
+          );
         }
-      });
+        return;
+      }
+
+      const items = sessionResult.value;
+      if (projectResult.status === "fulfilled" && isProjectList(projectResult.value)) {
+        projectEndpointAvailableRef.current = true;
+        setProjects(projectResult.value);
+      } else if (
+        projectResult.status === "rejected"
+        && projectResult.reason instanceof ApiError
+        && projectResult.reason.status === 401
+      ) {
+        sessionStorage.removeItem(tokenKey);
+        setAuthError(true);
+        setToken("");
+        return;
+      } else {
+        projectEndpointAvailableRef.current = false;
+        setProjects(deriveLegacyProjects(items));
+      }
+
+      if (syncSelection && !selectionSyncReadyRef.current) {
+        let selection = await api.getSelection();
+        if (!active) return;
+        if (selection.terminalIds.length > 0 && items.length === 0) {
+          selection = {
+            ...selection,
+            terminalIds: [],
+            manualTerminalIds: [],
+            pinnedTerminalIds: [],
+            focusedTerminalId: undefined,
+          };
+        }
+        if (selection.terminalIds.length === 0 && items[0]) {
+          selection = await api.replaceSelection({
+            manualTerminalIds: [items[0].id],
+            pinnedTerminalIds: [],
+            focusedTerminalId: items[0].id,
+            filters: { statuses: [], cwds: [] },
+            pinnedFilters: { statuses: [], cwds: [] },
+            expectedRevision: selection.revision,
+          });
+        }
+        if (!active) return;
+        applyServerSelection(selection);
+        selectionSyncReadyRef.current = true;
+      }
+      setSessions(items);
+      previousSessionOrderRef.current = items;
+      previousSessionsRef.current = items;
+      if (syncSelection) return;
+      const workspace = workspaceFromURL(items);
+      setSelectedIDs(workspace.selectedIDs);
+      setPinnedIDs(workspace.pinnedIDs);
+      setFocusedID(workspace.focusedID);
+      setStatusFilters(workspace.statusFilters);
+      setCwdFilters(workspace.cwdFilters);
+      setPinnedStatusFilters(workspace.pinnedStatusFilters);
+      setPinnedCwdFilters(workspace.pinnedCwdFilters);
+      decomposedPinnedStatusFiltersRef.current = new Set(
+        workspace.pinnedCwdFilters
+          .map(parseCwdFilter)
+          .filter((filter): filter is CwdSelectionFilter => filter !== null)
+          .map((filter) => filter.status)
+          .filter((status) =>
+            !workspace.pinnedStatusFilters.includes(status)
+          ),
+      );
+      writeWorkspaceToURL(
+        workspace.selectedIDs,
+        workspace.pinnedIDs,
+        workspace.focusedID,
+        workspace.statusFilters,
+        workspace.cwdFilters,
+        "replace",
+        workspace.pinnedStatusFilters,
+        workspace.pinnedCwdFilters,
+      );
+    };
+    void loadInitialState().catch((error: unknown) => {
+      if (!active) return;
+      if (error instanceof ApiError && error.status === 401) {
+        sessionStorage.removeItem(tokenKey);
+        setAuthError(true);
+        setToken("");
+      } else {
+        setRequestError(
+          error instanceof Error
+            ? error.message
+            : "Euphony could not load sessions.",
+        );
+      }
+    });
     return () => {
       active = false;
     };
@@ -2519,21 +2610,26 @@ export function App({
     setToken(value);
   }
 
-  async function createSession(split = false, cwd?: string) {
+  async function createSession(split = false, cwd?: string, projectId?: string) {
     if (!api) return;
+    if (projectId === undefined && sessions?.length === 0 && projects?.length === 0) {
+      openProjectDialog();
+      return;
+    }
     try {
       const inheritedCWD =
-        cwd === undefined
+        projectId === undefined && cwd === undefined
           ? sessions?.find((session) => session.id === focusedID)?.cwd
           : undefined;
       let created: Session;
       let serverSelection: SelectionSnapshot | null = null;
       try {
-        if (syncSelection) {
+        if (syncSelection || projectId !== undefined) {
           const result = await api.createTerminal(
             "Terminal",
-            cwd ?? inheritedCWD,
+            projectId === undefined ? cwd ?? inheritedCWD : undefined,
             split ? "add" : "replace",
+            projectId,
           );
           created = result.terminal;
           serverSelection = result.selection;
@@ -2544,6 +2640,7 @@ export function App({
         if (
           !(error instanceof ApiError) ||
           error.code !== "invalid_cwd" ||
+          projectId !== undefined ||
           inheritedCWD === undefined
         ) {
           throw error;
@@ -2610,6 +2707,45 @@ export function App({
     setCWDDraft(focused?.cwd ?? "");
     setCommandOpen(false);
     setCreateOpen(true);
+  }
+
+  function openProjectDialog() {
+    setCommandOpen(false);
+    setProjectPathDraft("");
+    setProjectCreateError("");
+    setProjectCreateOpen(true);
+  }
+
+  async function submitProject(event: FormEvent) {
+    event.preventDefault();
+    if (!api || projectCreateSubmitting) return;
+    const path = projectPathDraft.trim();
+    if (!path) {
+      setProjectCreateError("Enter a project directory.");
+      return;
+    }
+
+    setProjectCreateSubmitting(true);
+    setProjectCreateError("");
+    try {
+      const created = await api.createProject(path);
+      projectEndpointAvailableRef.current = true;
+      setProjects((current) => [
+        ...(current ?? []).filter((project) => project.id !== created.id),
+        created,
+      ]);
+      setProjectPathDraft("");
+      setProjectCreateOpen(false);
+      setRequestError("");
+    } catch (error) {
+      setProjectCreateError(
+        error instanceof Error
+          ? error.message
+          : "The project could not be created.",
+      );
+    } finally {
+      setProjectCreateSubmitting(false);
+    }
   }
 
   async function submitCreate(event: FormEvent) {
@@ -3334,6 +3470,14 @@ export function App({
     : [];
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
   const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
+  const projectList = projects ?? [];
+  const projectNavigationProps = {
+    projects: projectList,
+    onAddProject: openProjectDialog,
+    onCreateTerminal: (projectID: string) => {
+      void createSession(false, undefined, projectID);
+    },
+  };
   const summaryByTerminalID = new Map(
     agentSummaries.map((summary) => [summary.terminalId, summary]),
   );
@@ -3517,21 +3661,58 @@ export function App({
     });
   };
 
+  const projectState = (
+    <section className="project-state" aria-label="Projects">
+      {projectList.map((project) => {
+        const projectSessions = sessions.filter(
+          (session) => session.projectId === project.id,
+        );
+        return (
+          <section
+            className="project-empty-section"
+            data-project-id={project.id}
+            key={project.id}
+          >
+            <h2>{project.path}</h2>
+            {projectSessions.length === 0 && (
+              <p>No terminals in this project yet.</p>
+            )}
+            <Button
+              type="button"
+              onClick={() => void createSession(false, undefined, project.id)}
+            >
+              Create terminal in {project.path}
+            </Button>
+          </section>
+        );
+      })}
+      <Button type="button" onClick={openProjectDialog}>
+        Add project
+      </Button>
+    </section>
+  );
+
   const emptyState = (
     <div className="empty-state">
       <div className="empty-state-card">
         <span className="empty-state-kicker">Terminal workspace</span>
         <h2 className="empty-state-title">No signal yet.</h2>
         <p className="empty-state-description">
-          Start a terminal to begin a session.
+          {sessions.length === 0
+            ? projectList.length === 0
+              ? "Add a project before starting a session."
+              : "Choose a project to begin a session."
+            : "Start a terminal to begin a session."}
         </p>
-        <Button
-          type="button"
-          className="empty-state-action"
-          onClick={() => void createSession()}
-        >
-          Start a terminal
-        </Button>
+        {sessions.length > 0 && (
+          <Button
+            type="button"
+            className="empty-state-action"
+            onClick={() => void createSession()}
+          >
+            Start a terminal
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -3544,6 +3725,7 @@ export function App({
       } as CSSProperties}
     >
       <SessionNavigation
+        {...projectNavigationProps}
         sessions={sessions}
         selectedIDs={selectedIDs}
         pinnedIDs={pinnedIDs}
@@ -3567,6 +3749,7 @@ export function App({
         className="terminal-stage"
         data-multiple={workspacePanes.length > 1}
       >
+        {projectState}
         {requestError && <p role="alert">{requestError}</p>}
         {disconnectedIDs.length > 0 ? (
           <div
@@ -3696,6 +3879,58 @@ export function App({
                 Cancel
               </Button>
               <Button type="submit">Create terminal</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={projectCreateOpen}
+        onOpenChange={(open) => {
+          if (projectCreateSubmitting) return;
+          setProjectCreateOpen(open);
+          if (!open) setProjectCreateError("");
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add project</DialogTitle>
+            <DialogDescription>
+              Choose an existing directory before starting terminal work.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => void submitProject(event)}>
+            <Field data-invalid={Boolean(projectCreateError)}>
+              <FieldLabel htmlFor="project-directory">Project directory</FieldLabel>
+              <Input
+                id="project-directory"
+                value={projectPathDraft}
+                onChange={(event) => {
+                  setProjectPathDraft(event.target.value);
+                  if (projectCreateError) setProjectCreateError("");
+                }}
+                aria-invalid={Boolean(projectCreateError)}
+                aria-describedby={projectCreateError ? "project-directory-error" : undefined}
+                autoFocus
+                disabled={projectCreateSubmitting}
+              />
+              {projectCreateError && (
+                <FieldError id="project-directory-error">
+                  {projectCreateError}
+                </FieldError>
+              )}
+            </Field>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setProjectCreateOpen(false)}
+                disabled={projectCreateSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={projectCreateSubmitting}>
+                {projectCreateSubmitting ? "Adding…" : "Add project"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
