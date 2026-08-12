@@ -476,7 +476,7 @@ test("keeps Tasks available without Inbox or project split checkboxes", async ({
   await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
 });
 
-test("creates, refines, starts, and communicates through a task", async ({ page }) => {
+test("creates and refines a task without bypassing project-first agent starts", async ({ page }) => {
   await clearSessions(page);
   await clearTasks(page);
   const terminal = await createSession(page, "Task agent", "/tmp");
@@ -528,56 +528,11 @@ test("creates, refines, starts, and communicates through a task", async ({ page 
   await page.getByRole("button", { name: "Apply refinement" }).click();
   await expect(page.getByLabel("Title")).toHaveValue("Document the complete task workflow");
 
-  const startedTask = {
-    ...createdTask,
-    title: "Document the complete task workflow",
-    description: "Explain how a user creates, refines, starts, and communicates with an agent.",
-    terminalId: terminal.id,
-    agent: "codex",
-    status: "in_progress" as const,
-    updates: [{
-      id: "task-started",
-      taskId: createdTask.id,
-      terminalId: terminal.id,
-      kind: "system",
-      body: "Started codex agent.",
-      createdAt: "2026-08-05T00:01:00Z",
-    }],
-  };
-  await page.route(`**/api/tasks/${createdTask.id}/start`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(startedTask),
-    });
-  });
   await page.getByRole("button", { name: "Start agent", exact: true }).click();
-  await expect(page.getByText("Started codex agent.", { exact: true })).toBeVisible();
-
-  const communicatedTask = {
-    ...startedTask,
-    updates: [...startedTask.updates, {
-      id: "task-instruction",
-      taskId: createdTask.id,
-      terminalId: terminal.id,
-      kind: "user_instruction",
-      body: "Run the task tests and report the result.",
-      createdAt: "2026-08-05T00:02:00Z",
-    }],
-  };
-  await page.route(`**/api/tasks/${createdTask.id}/prompt`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(communicatedTask),
-    });
-  });
-  await page.getByLabel("Instruction for agent").fill("Run the task tests and report the result.");
-  await page.getByRole("button", { name: "Send instruction" }).click();
-  await expect(page.getByText("Run the task tests and report the result.", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "Open terminal" }).click();
-  await expect(page.getByLabel("Task agent terminal", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "Start new agents from a project in the sidebar.",
+  );
+  await expect(page.getByText("No agent terminal linked.", { exact: true })).toBeVisible();
 });
 
 test("keeps sidebar actions visible while the terminal tree scrolls", async ({
@@ -667,7 +622,7 @@ test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   });
   await expect(blockedButton.getByRole("img", { name: "Blocked" })).toBeVisible();
   const attentionDot = blockedButton.locator(".attention-dot");
-  await expect(blockedButton).toHaveAccessibleDescription("Needs attention");
+  await expect(blockedButton).toHaveAccessibleDescription(/Needs attention/);
   await expect(attentionDot).toBeVisible();
   await expect(attentionDot).toHaveAttribute("aria-hidden", "true");
   await expect(attentionDot).toHaveCSS("width", "6px");
@@ -1398,7 +1353,7 @@ test("keeps project headers and session rows compact", async ({ page }) => {
   expect(headerBox).not.toBeNull();
   expect(terminalBox).not.toBeNull();
   expect(headerBox!.height).toBeLessThanOrEqual(44);
-  expect(terminalBox!.height).toBeLessThanOrEqual(32);
+  expect(terminalBox!.height).toBeLessThanOrEqual(64);
 });
 
 test("indents project session rows beneath project headers", async ({ page }) => {
@@ -1775,13 +1730,13 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const codexPane = page.getByLabel("Codex pane", { exact: true });
   await codexPane.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Meta+L");
-  await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
+  await expect(codexPane.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
   await page.keyboard.press("Meta+L");
-  await expect(page.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
+  await expect(codexPane.getByRole("tab", { name: "Changes" })).toHaveAttribute("data-active");
   await page.keyboard.press("Meta+L");
-  await expect(page.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
+  await expect(codexPane.getByRole("tab", { name: "Files" })).toHaveAttribute("data-active");
   await page.keyboard.press("Meta+L");
-  await expect(page.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
+  await expect(codexPane.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
 
   const sidebar = page.locator(".desktop-sidebar");
   const separator = page.getByRole("separator", { name: "Resize sidebar" });

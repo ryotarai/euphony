@@ -619,7 +619,10 @@ test("keeps a running Claude terminal fitted across project pane changes", async
   test.setTimeout(60_000);
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;
-    const records: ResizeRecord[] = [];
+    const storageKey = "euphony-resize-records";
+    const records = JSON.parse(
+      sessionStorage.getItem(storageKey) ?? "[]",
+    ) as ResizeRecord[];
     Object.defineProperty(window, "__euphonyResizeRecords", { value: records });
 
     class RecordingWebSocket extends NativeWebSocket {
@@ -641,6 +644,7 @@ test("keeps a running Claude terminal fitted across project pane changes", async
                 screenWidth:
                   host?.querySelector(".xterm-screen")?.getBoundingClientRect().width ?? 0,
               });
+              sessionStorage.setItem(storageKey, JSON.stringify(records));
             }
           }
           nativeSend(data);

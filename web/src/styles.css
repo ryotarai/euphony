@@ -5662,6 +5662,7 @@ input {
   min-width: 0;
   align-items: stretch;
   gap: 0.15rem;
+  margin-left: 0.65rem;
 }
 
 .project-session-select {
@@ -5677,6 +5678,7 @@ input {
   border-radius: 0.15rem;
   background: transparent;
   padding: 0.38rem 0.35rem;
+  position: relative;
   text-align: left;
 }
 

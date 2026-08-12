@@ -233,6 +233,7 @@ function ProjectSessionRow({
     `Latest summary: ${latestSummary}.`,
     `Required action: ${requiredAction}.`,
     unread ? "Unread." : "Read.",
+    ...(session.needsAttention ? ["Needs attention."] : []),
   ].join(" ");
   const selectionDetails = [purpose, action].filter(Boolean).join(" — ");
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
@@ -241,6 +242,7 @@ function ProjectSessionRow({
     <li
       className="project-session-row"
       data-agent={summary || session.agent ? "true" : undefined}
+      data-attention={session.needsAttention ? "true" : undefined}
       data-state={status}
       data-unread={unread ? "true" : "false"}
     >
@@ -276,6 +278,7 @@ function ProjectSessionRow({
             {action}
           </span>
         )}
+        {session.needsAttention && <span className="attention-dot" aria-hidden="true" />}
       </button>
       <span id={accessibleDescriptionID} className="sr-only">
         {accessibleDescription}

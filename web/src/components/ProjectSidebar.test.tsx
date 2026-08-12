@@ -127,6 +127,18 @@ test("announces row status, summary, action, and unread state", () => {
   );
 });
 
+test("preserves attention state on project rows", () => {
+  renderSidebar({
+    sessions: [{ ...agentSession, needsAttention: true }],
+  });
+
+  const row = screen.getByRole("button", { name: /Select Codex/ });
+  expect(row).toHaveAttribute("aria-describedby");
+  expect(row).toHaveAccessibleDescription(/Needs attention/);
+  expect(row.querySelector(".attention-dot")).toHaveAttribute("aria-hidden", "true");
+  expect(row.closest(".project-session-row")).toHaveAttribute("data-attention", "true");
+});
+
 test("starts terminal or agent work only through project callbacks", async () => {
   const user = userEvent.setup();
   const { props } = renderSidebar();
