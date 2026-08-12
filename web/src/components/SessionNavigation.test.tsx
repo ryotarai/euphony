@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SessionNavigation } from "./SessionNavigation";
-import type { Session, Settings } from "../types";
+import type { AgentSummary, Project, Session, Settings } from "../types";
 
 function useMobileViewport() {
   Object.defineProperty(window, "innerWidth", {
@@ -65,6 +65,30 @@ const sessions: Session[] = [
     createdAt: "2026-07-28T00:02:00Z",
   },
 ];
+
+const project: Project = {
+  id: "project-euphony",
+  path: "/workspace/euphony",
+  createdAt: "2026-08-12T00:00:00Z",
+};
+
+const projectAgent: Session = {
+  ...sessions[0],
+  id: "project-agent",
+  name: "Codex",
+  cwd: project.path,
+  projectId: project.id,
+  agentTitle: "Implement the sidebar",
+};
+
+const projectSummary: AgentSummary = {
+  terminalId: projectAgent.id,
+  provider: "codex",
+  status: "running",
+  summary: "Implementing the sidebar",
+  generatedAt: "2026-08-12T00:05:00Z",
+  unread: true,
+};
 
 test("composes terminal navigation from the shadcn sidebar without a monogram", () => {
   render(
@@ -145,6 +169,61 @@ test("treats Tasks and Agents as selectable panes with checkboxes", async () => 
 
   await user.click(agentsCheckbox);
   expect(onOpenAgents).toHaveBeenCalledWith(true);
+});
+
+test("renders the project tree without Inbox or split controls", () => {
+  render(
+    <SessionNavigation
+      projects={[project]}
+      sessions={[projectAgent]}
+      agentSummaries={[projectSummary]}
+      selectedIDs={[projectAgent.id]}
+      selectedID={projectAgent.id}
+      onSelect={() => undefined}
+      onSelectSession={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onCreateTerminal={() => undefined}
+      onCreateAgent={() => undefined}
+      onAddProject={() => undefined}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: project.path })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /Include .* in split/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Inbox" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+});
+
+test("selecting a project session closes the mobile drawer", async () => {
+  useMobileViewport();
+  const onSelectSession = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      projects={[project]}
+      sessions={[projectAgent]}
+      agentSummaries={[projectSummary]}
+      selectedIDs={[projectAgent.id]}
+      selectedID={projectAgent.id}
+      onSelect={() => undefined}
+      onSelectSession={onSelectSession}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onCreateTerminal={() => undefined}
+      onCreateAgent={() => undefined}
+      onAddProject={() => undefined}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Open terminal menu" }));
+  const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
+  await user.click(
+    within(drawer).getByRole("button", { name: /Select Codex/ }),
+  );
+
+  expect(onSelectSession).toHaveBeenCalledWith(projectAgent.id);
+  expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
 
 test("reports whether more terminal tree content remains below", () => {
