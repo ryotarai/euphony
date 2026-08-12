@@ -544,10 +544,28 @@ function SessionNavigationContent({
               agentSummaries={props.agentSummaries ?? []}
               selectedID={props.selectedID ?? props.selectedIDs[0] ?? null}
               onSelectSession={selectProjectSession}
-              onCreateTerminal={props.onCreateTerminal}
-              onCreateAgent={props.onCreateAgent}
-              onAddProject={props.onAddProject}
-              onDelete={props.onDelete}
+              onCreateTerminal={props.onCreateTerminal
+                ? (projectID) => {
+                  props.onCreateTerminal?.(projectID);
+                  if (isMobile) setOpenMobile(false);
+                }
+                : undefined}
+              onCreateAgent={props.onCreateAgent
+                ? (projectID) => {
+                  props.onCreateAgent?.(projectID);
+                  if (isMobile) setOpenMobile(false);
+                }
+                : undefined}
+              onAddProject={props.onAddProject
+                ? () => {
+                  props.onAddProject?.();
+                  if (isMobile) setOpenMobile(false);
+                }
+                : undefined}
+              onDelete={(session) => {
+                props.onDelete(session);
+                if (isMobile) setOpenMobile(false);
+              }}
             />
           ) : (
             <SessionList {...props} settings={settings} />
