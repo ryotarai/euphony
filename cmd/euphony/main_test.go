@@ -5,14 +5,81 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
+
+func TestHTTPServerShutdownCancelsLongLivedRequests(t *testing.T) {
+	requestContext, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	requestStarted := make(chan struct{})
+	requestDone := make(chan struct{})
+	server := newHTTPServer(
+		"",
+		http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			close(requestStarted)
+			<-request.Context().Done()
+			close(requestDone)
+		}),
+		requestContext,
+		cancelRequests,
+	)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = listener.Close()
+	})
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
+	clientDone := make(chan error, 1)
+	go func() {
+		response, requestErr := http.Get("http://" + listener.Addr().String())
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		clientDone <- requestErr
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("long-lived request did not start")
+	}
+
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		t.Fatalf("server.Shutdown() error = %v", err)
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("long-lived request was not canceled")
+	}
+	select {
+	case err := <-serveDone:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("server.Serve() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server.Serve() did not stop")
+	}
+	select {
+	case <-clientDone:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP client did not observe the closed request")
+	}
+}
 
 func TestShutdownStepReportsTimeoutStage(t *testing.T) {
 	var messages strings.Builder

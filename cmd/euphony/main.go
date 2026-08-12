@@ -180,15 +180,10 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	defer cleanupSocket()
 
 	log.Printf("Euphony listening on http://%s and unix://%s", actualAddress, socketPath)
-	httpServer := &http.Server{
-		Addr:              actualAddress,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	unixServer := &http.Server{
-		Handler:           srv.LocalHandler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	requestContext, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	httpServer := newHTTPServer(actualAddress, srv.Handler(), requestContext, cancelRequests)
+	unixServer := newHTTPServer("", srv.LocalHandler(), requestContext, cancelRequests)
 	result := make(chan error, 2)
 	go func() {
 		result <- httpServer.Serve(tcpListener)
@@ -245,6 +240,24 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 }
 
 const shutdownTimeout = 5 * time.Second
+
+func newHTTPServer(
+	address string,
+	handler http.Handler,
+	requestContext context.Context,
+	cancelRequests context.CancelFunc,
+) *http.Server {
+	server := &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext: func(net.Listener) context.Context {
+			return requestContext
+		},
+	}
+	server.RegisterOnShutdown(cancelRequests)
+	return server
+}
 
 func shutdownStep(
 	ctx context.Context,
