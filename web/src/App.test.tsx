@@ -1965,6 +1965,96 @@ test("keeps legacy terminal creation when the project API is unavailable", async
   });
 });
 
+test("does not create work while the initial project capability is loading", async () => {
+  let releaseSessions!: (response: Response) => void;
+  const sessionsGate = new Promise<Response>((resolve) => {
+    releaseSessions = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return sessionsGate;
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/sessions" && init?.method === "POST") {
+      return jsonResponse(runningSession, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+    />,
+  );
+
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "c" });
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/sessions" && init?.method === "POST",
+  )).toBe(false);
+
+  releaseSessions(await jsonResponse([]));
+  expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
+});
+
+test("does not let Tasks start an unassigned agent in project mode", async () => {
+  const task: Task = {
+    id: "task-project-boundary",
+    title: "Start only from a project",
+    description: "The task has no project-linked terminal yet.",
+    priority: "medium",
+    status: "todo",
+    createdAt: "2026-08-12T00:00:00Z",
+    updatedAt: "2026-08-12T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([{
+        id: "project-1",
+        path: "/workspace/project",
+        createdAt: "2026-08-12T00:00:00Z",
+      } satisfies Project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/tasks" && (!init || init.method === undefined)) {
+      return jsonResponse([task]);
+    }
+    if (input === "/api/tasks/task-project-boundary/start") {
+      throw new Error("Tasks must not start an unassigned agent in project mode.");
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: `Open task ${task.title}` }));
+  await user.click(screen.getByRole("button", { name: "Start agent" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Start new agents from a project in the sidebar.",
+  );
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/tasks/task-project-boundary/start" && init?.method === "POST",
+  )).toBe(false);
+});
+
 test("creates a project and renders its empty project section", async () => {
   const createdProject: Project = {
     id: "project-new",

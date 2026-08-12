@@ -2080,7 +2080,7 @@ export function App({
       prefixActiveRef.current = false;
       setPrefixActive(false);
     };
-    const handleKey = (event: KeyboardEvent) => {
+  const handleKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return;
       if (!prefixActiveRef.current) {
         if (!matchesPrefix(event, settings.prefix)) return;
@@ -2626,6 +2626,7 @@ export function App({
     projectId?: string,
   ): Promise<Session | null> {
     if (!api) return null;
+    if (sessions === null) return null;
     if (projectEndpointAvailableRef.current && projectId === undefined) {
       if (projects?.length === 0) openProjectDialog();
       else setRequestError("Choose a project from the sidebar before starting work.");
@@ -3273,6 +3274,19 @@ export function App({
 
   async function startTaskAgent(id: string, input: TaskStartInput) {
     if (!api) return;
+    if (projectEndpointAvailableRef.current) {
+      const task = tasks.find((item) => item.id === id);
+      const linkedSession = task?.terminalId
+        ? sessions?.find((session) => session.id === task.terminalId)
+        : undefined;
+      const linkedProject = linkedSession?.projectId
+        ? projects?.some((project) => project.id === linkedSession.projectId)
+        : false;
+      if (!linkedProject) {
+        setTasksError("Start new agents from a project in the sidebar.");
+        return;
+      }
+    }
     try {
       const updated = await api.startTaskAgent(id, input);
       replaceTask(updated);
