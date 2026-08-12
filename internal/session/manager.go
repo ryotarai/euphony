@@ -492,7 +492,6 @@ func (m *Manager) create(
 		discardStartedSession(item.session)
 		return Metadata{}, ErrManagerClosing
 	}
-	m.applyPendingAgentUpdates(id)
 	created := item.metadata
 	m.mu.Lock()
 	change := m.nextChangeLocked(ChangeCreated, nil, &created)
@@ -502,6 +501,7 @@ func (m *Manager) create(
 	m.finishCreate()
 	createLifecycleFinished = true
 	m.emitChange(change)
+	m.applyPendingAgentUpdates(id)
 	return item.metadata, nil
 }
 
@@ -621,8 +621,8 @@ func (m *Manager) restore(metadata Metadata) error {
 		discardStartedSession(item.session)
 		return ErrManagerClosing
 	}
-	m.applyPendingAgentUpdates(metadata.ID)
 	go m.watch(item)
+	m.applyPendingAgentUpdates(metadata.ID)
 	return nil
 }
 
@@ -748,8 +748,8 @@ func (m *Manager) applyPendingAgentUpdates(id string) {
 		return
 	}
 
-	pending.mu.Lock()
-	for pending.accepting {
+	for {
+		pending.mu.Lock()
 		if len(pending.updates) == 0 {
 			pending.accepting = false
 			pending.mu.Unlock()
@@ -760,11 +760,13 @@ func (m *Manager) applyPendingAgentUpdates(id string) {
 			m.mu.Unlock()
 			return
 		}
-		update := pending.updates[0]
-		pending.updates = pending.updates[1:]
-		m.applyPendingAgentUpdate(id, update)
+		updates := append([]AgentUpdate(nil), pending.updates...)
+		pending.updates = nil
+		pending.mu.Unlock()
+		for _, update := range updates {
+			m.applyPendingAgentUpdate(id, update)
+		}
 	}
-	pending.mu.Unlock()
 }
 
 func (m *Manager) applyPendingAgentUpdate(id string, update AgentUpdate) {

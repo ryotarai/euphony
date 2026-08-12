@@ -87,6 +87,10 @@ func TestCreateWithCommandQueuesAgentHookBeforeRegistration(t *testing.T) {
 	store := &recordingMetadataStore{}
 	manager := NewManager("/bin/sh")
 	manager.store = store
+	var changes []Change
+	manager.SetChangeHandler(func(change Change) {
+		changes = append(changes, change)
+	})
 	manager.beforeStoreOperation = func(sequence uint64) {
 		if sequence != 1 {
 			return
@@ -117,6 +121,10 @@ func TestCreateWithCommandQueuesAgentHookBeforeRegistration(t *testing.T) {
 	}
 	if metadata.Agent != "codex" || metadata.AgentStatus != "waiting" {
 		t.Fatalf("created metadata = %#v, want queued hook applied", metadata)
+	}
+	if len(changes) != 2 || changes[0].Kind != ChangeCreated ||
+		changes[1].Kind != ChangeUpdated || changes[1].After.Agent != "codex" {
+		t.Fatalf("change order = %#v, want created then agent update", changes)
 	}
 }
 
