@@ -12,8 +12,79 @@ import (
 
 	"github.com/ryotarai/euphony/internal/annotation"
 	"github.com/ryotarai/euphony/internal/localapi"
+	"github.com/ryotarai/euphony/internal/project"
 	"github.com/ryotarai/euphony/internal/server"
 )
+
+func TestClientListsAndCreatesProjects(t *testing.T) {
+	directory := t.TempDir()
+	created := project.Project{
+		ID: "project-1", Path: directory, CreatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC),
+	}
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects":
+			var body struct {
+				Path string `json:"path"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode project request: %v", err)
+			}
+			if body.Path != directory {
+				t.Fatalf("project request = %#v, want %q", body, directory)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(created)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode([]project.Project{created})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(testServer.Close)
+	client, err := New(Config{BaseURL: testServer.URL})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	got, err := client.CreateProject(context.Background(), directory)
+	if err != nil || got != created {
+		t.Fatalf("CreateProject() = %#v, %v; want %#v", got, err, created)
+	}
+	projects, err := client.ListProjects(context.Background())
+	if err != nil || len(projects) != 1 || projects[0] != created {
+		t.Fatalf("ListProjects() = %#v, %v; want %#v", projects, err, []project.Project{created})
+	}
+}
+
+func TestClientCreateTerminalSendsProjectID(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/terminals" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var request CreateTerminalRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode terminal request: %v", err)
+		}
+		if request.Name != "Project terminal" || request.ProjectID != "project-1" ||
+			request.CWD != "" || request.SelectionMode != "none" {
+			t.Fatalf("terminal request = %#v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"terminal":{"id":"terminal-1","projectId":"project-1"},"selection":{}}}`))
+	}))
+	t.Cleanup(testServer.Close)
+	client, err := New(Config{BaseURL: testServer.URL})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	result, err := client.CreateTerminal(context.Background(), CreateTerminalRequest{
+		Name: "Project terminal", ProjectID: "project-1", SelectionMode: "none",
+	})
+	if err != nil || result.Terminal.ID != "terminal-1" || result.Terminal.ProjectID != "project-1" {
+		t.Fatalf("CreateTerminal() = %#v, %v", result, err)
+	}
+}
 
 func TestClientSendsBearerTokenAndDecodesEnvelope(t *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

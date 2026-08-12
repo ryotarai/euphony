@@ -18,6 +18,7 @@ type Repository interface {
 	Create(context.Context, Project) error
 	Get(context.Context, string) (Project, error)
 	List(context.Context) ([]Project, error)
+	Delete(context.Context, string) error
 	Close() error
 }
 
@@ -53,6 +54,16 @@ func (r *memoryRepository) Get(_ context.Context, id string) (Project, error) {
 		return Project{}, ErrNotFound
 	}
 	return project, nil
+}
+
+func (r *memoryRepository) Delete(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.projects[id]; !exists {
+		return ErrNotFound
+	}
+	delete(r.projects, id)
+	return nil
 }
 
 func (r *memoryRepository) List(_ context.Context) ([]Project, error) {
@@ -140,6 +151,21 @@ func (r *SQLiteRepository) Get(ctx context.Context, id string) (Project, error) 
 		return Project{}, fmt.Errorf("get project: %w", err)
 	}
 	return project, nil
+}
+
+func (r *SQLiteRepository) Delete(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete project result: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *SQLiteRepository) List(ctx context.Context) ([]Project, error) {
