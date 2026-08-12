@@ -5649,6 +5649,25 @@ input {
   font-style: italic;
 }
 
+.project-directory-picker {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.project-directory-picker > [data-slot="input"] {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+@media (max-width: 520px) {
+  .project-directory-picker {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .project-sidebar-session-list {
   display: grid;
   gap: 0.1rem;
@@ -5670,7 +5689,7 @@ input {
   min-width: 0;
   flex: 1 1 auto;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   column-gap: 0.45rem;
   align-items: center;
   border: 0;
@@ -5697,26 +5716,26 @@ input {
 }
 
 .project-session-status-icon {
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   width: 0.85rem;
   height: 0.85rem;
   color: var(--muted-foreground);
 }
 
-.project-session-status-running,
+.project-session-status-running {
+  color: #4ade80;
+}
+
 .project-session-status-waiting {
-  color: var(--foreground);
+  color: #fbbf24;
 }
 
-.project-session-identity {
-  display: grid;
-  min-width: 0;
-  gap: 0.08rem;
+.project-session-status-blocked,
+.project-session-status-failed {
+  color: #f87171;
 }
 
-.project-session-name,
 .project-session-purpose,
-.project-session-status,
 .project-session-summary,
 .project-session-action {
   overflow: hidden;
@@ -5724,24 +5743,19 @@ input {
   white-space: nowrap;
 }
 
-.project-session-name {
+.project-session-purpose {
   color: var(--foreground);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.69rem;
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
-.project-session-purpose,
-.project-session-status,
 .project-session-summary,
 .project-session-action {
   color: var(--muted-foreground);
   font-size: 0.62rem;
 }
 
-.project-session-status {
-  grid-column: 2;
-}
-
+.project-session-purpose,
 .project-session-summary {
   grid-column: 2;
   color: var(--foreground);
@@ -5754,9 +5768,7 @@ input {
   color: hsl(40 90% 68%);
 }
 
-.project-session-row[data-unread="true"] .project-session-name,
 .project-session-row[data-unread="true"] .project-session-purpose,
-.project-session-row[data-unread="true"] .project-session-status,
 .project-session-row[data-unread="true"] .project-session-summary,
 .project-session-row[data-unread="true"] .project-session-action {
   font-weight: 700;

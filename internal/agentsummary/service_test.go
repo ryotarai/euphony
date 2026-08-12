@@ -3,6 +3,7 @@ package agentsummary
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,6 +44,9 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 		!strings.Contains(prompt, "medium") ||
 		!strings.Contains(prompt, "low") {
 		t.Fatalf("prompt does not describe action priority: %q", prompt)
+	}
+	if !strings.Contains(prompt, `"purpose"`) || !strings.Contains(prompt, "concise label") {
+		t.Fatalf("prompt does not describe the concise session purpose: %q", prompt)
 	}
 
 	largeTerminal := []byte(strings.Repeat("x", maxTerminalContextBytes+100))
@@ -270,6 +274,20 @@ func TestParseGenerationNormalizesAndValidatesStructuredOptions(t *testing.T) {
 		if _, err := ParseGeneration(test, "waiting"); err == nil {
 			t.Fatalf("ParseGeneration(%q) error = nil", test[:min(len(test), 80)])
 		}
+	}
+}
+
+func TestParseGenerationNormalizesPurpose(t *testing.T) {
+	rawPurpose := strings.Repeat("目的", maxGeneratedPurposeRunes+10)
+	got, err := ParseGeneration(fmt.Sprintf(
+		`{"purpose":%q,"summary":"Waiting for access.","action":"Allow the request.","priority":"medium","options":[{"label":"Allow","input":"y\r"}]}`,
+		rawPurpose,
+	), "waiting")
+	if err != nil {
+		t.Fatalf("ParseGeneration() error = %v", err)
+	}
+	if got.Purpose == "" || len([]rune(got.Purpose)) > maxGeneratedPurposeRunes {
+		t.Fatalf("normalized purpose = %q, want non-empty and <= %d runes", got.Purpose, maxGeneratedPurposeRunes)
 	}
 }
 

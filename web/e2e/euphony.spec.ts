@@ -1450,6 +1450,22 @@ test("keeps project headers and session rows compact", async ({ page }) => {
   expect(terminalBox!.height).toBeLessThanOrEqual(60);
 });
 
+test("uses distinct colors for running and waiting status icons", async ({ page }) => {
+  await clearSessions(page);
+  const running = await createSession(page, "Running agent", "/tmp");
+  const waiting = await createSession(page, "Waiting agent", "/tmp");
+  await reportAgent(page, running.id, "codex", "Running work", "running");
+  await reportAgent(page, waiting.id, "claude", "Waiting work");
+
+  await page.goto("/?token=test-token");
+  const tmpGroup = await projectGroup(page, "/tmp");
+  const runningIcon = tmpGroup.locator(".project-session-status-running");
+  const waitingIcon = tmpGroup.locator(".project-session-status-waiting");
+
+  await expect(runningIcon).toHaveCSS("color", "rgb(74, 222, 128)");
+  await expect(waitingIcon).toHaveCSS("color", "rgb(251, 191, 36)");
+});
+
 test("indents project session rows beneath project headers", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Indented terminal", "/tmp");
@@ -1815,7 +1831,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(claudeItem).toHaveAttribute("data-unread", "false");
   await expect(page.getByRole("img", { name: "Codex" })).toHaveCount(0);
   await expect(page.getByRole("img", { name: "Claude" })).toHaveCount(0);
-  await expect(codexItem).toContainText("Codex");
+  await expect(codexItem).toContainText("Review persistence");
   await expect(codexItem).not.toContainText("/tmp");
   await expect(tmpGroup.getByRole("heading", { name: "/tmp", exact: true })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);

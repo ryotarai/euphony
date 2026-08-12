@@ -48,6 +48,7 @@ const unreadSummary: AgentSummary = {
   terminalId: agentSession.id,
   provider: "codex",
   status: "waiting",
+  purpose: "API permissions",
   summary: "Updating the API",
   action: "Approve the pending change",
   generatedAt: "2026-08-12T00:05:00Z",
@@ -102,15 +103,15 @@ test("routes sessions with an unknown project ID to Unassigned", () => {
   expect(screen.queryByRole("heading", { name: "missing-project" })).not.toBeInTheDocument();
 });
 
-test("renders unread purpose, latest status, and required action", () => {
+test("renders the generated purpose and required action without status text", () => {
   renderSidebar();
 
   const row = screen.getByRole("button", {
     name: /Select Codex.*Approve the pending change/i,
   });
   expect(row).toHaveAttribute("data-unread", "true");
-  expect(row).toHaveTextContent("Waiting");
-  expect(row).toHaveTextContent("Implement the API");
+  expect(row).not.toHaveTextContent("Waiting");
+  expect(row).toHaveTextContent("API permissions");
   expect(row).toHaveTextContent("Updating the API");
   expect(row).toHaveTextContent("Approve the pending change");
 });

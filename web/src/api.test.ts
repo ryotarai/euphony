@@ -209,6 +209,21 @@ test("creates a project from its directory path", async () => {
   );
 });
 
+test("opens the native project directory picker", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse({ path: "/workspace/selected" }));
+  const api = new ApiClient("token");
+
+  expect(await api.pickProjectDirectory()).toBe("/workspace/selected");
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects/pick-directory",
+    expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("starts an agent through the v1 endpoint", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() => jsonResponse({

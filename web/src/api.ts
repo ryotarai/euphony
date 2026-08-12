@@ -52,6 +52,14 @@ export class ApiClient {
     });
   }
 
+  async pickProjectDirectory(): Promise<string | null> {
+    const result = await this.request<{ path: string } | undefined>(
+      "/api/projects/pick-directory",
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return result?.path ?? null;
+  }
+
   listAgentSummaries(): Promise<AgentSummary[]> {
     return this.request("/api/agent-summaries");
   }

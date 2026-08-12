@@ -24,6 +24,30 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, projects)
 }
 
+func (s *Server) pickProjectDirectory(w http.ResponseWriter, r *http.Request) {
+	path, err := s.directoryPicker(r.Context())
+	if errors.Is(err, errDirectoryPickerCanceled) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if errors.Is(err, errDirectoryPickerUnavailable) {
+		writeError(w, http.StatusNotImplemented, "directory_picker_unavailable",
+			"The folder picker is unavailable. Enter the project directory path manually.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "directory_picker_failed",
+			"The folder picker could not be opened.")
+		return
+	}
+	if strings.TrimSpace(path) == "" {
+		writeError(w, http.StatusInternalServerError, "directory_picker_failed",
+			"The folder picker returned no directory.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": path})
+}
+
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Path string `json:"path"`

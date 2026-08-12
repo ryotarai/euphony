@@ -40,6 +40,7 @@ export interface AgentSummary {
   terminalId: string;
   provider: AgentSummaryProvider;
   status: "running" | "waiting" | "blocked";
+  purpose?: string;
   summary: string;
   action?: string;
   priority?: AgentSummaryPriority;

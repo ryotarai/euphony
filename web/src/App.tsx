@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { ApiClient, ApiError } from "./api";
+import { FolderOpenIcon } from "lucide-react";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { AgentsView } from "./components/AgentsView";
 import { TasksView } from "./components/TasksView";
@@ -119,6 +120,7 @@ function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSumma
   return summary.terminalId === snapshot.terminalId
     && summary.provider === snapshot.provider
     && summary.status === snapshot.status
+    && summary.purpose === snapshot.purpose
     && summary.summary === snapshot.summary
     && summary.action === snapshot.action
     && (summary.priority ?? "medium") === (snapshot.priority ?? "medium")
@@ -655,6 +657,7 @@ export function App({
   const [projectPathDraft, setProjectPathDraft] = useState("");
   const [projectCreateError, setProjectCreateError] = useState("");
   const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
+  const [projectDirectoryPicking, setProjectDirectoryPicking] = useState(false);
   const [agentProjectID, setAgentProjectID] = useState<string | null>(null);
   const [agentKind, setAgentKind] = useState<AgentKind>("codex");
   const [agentStartError, setAgentStartError] = useState("");
@@ -2735,7 +2738,26 @@ export function App({
     setCommandOpen(false);
     setProjectPathDraft("");
     setProjectCreateError("");
+    setProjectDirectoryPicking(false);
     setProjectCreateOpen(true);
+  }
+
+  async function chooseProjectDirectory() {
+    if (!api || projectCreateSubmitting || projectDirectoryPicking) return;
+    setProjectDirectoryPicking(true);
+    setProjectCreateError("");
+    try {
+      const path = await api.pickProjectDirectory();
+      if (path) setProjectPathDraft(path);
+    } catch (error) {
+      setProjectCreateError(
+        error instanceof Error
+          ? error.message
+          : "The folder picker could not be opened.",
+      );
+    } finally {
+      setProjectDirectoryPicking(false);
+    }
   }
 
   async function submitProject(event: FormEvent) {
@@ -3948,18 +3970,29 @@ export function App({
           <form onSubmit={(event) => void submitProject(event)}>
             <Field data-invalid={Boolean(projectCreateError)}>
               <FieldLabel htmlFor="project-directory">Project directory</FieldLabel>
-              <Input
-                id="project-directory"
-                value={projectPathDraft}
-                onChange={(event) => {
-                  setProjectPathDraft(event.target.value);
-                  if (projectCreateError) setProjectCreateError("");
-                }}
-                aria-invalid={Boolean(projectCreateError)}
-                aria-describedby={projectCreateError ? "project-directory-error" : undefined}
-                autoFocus
-                disabled={projectCreateSubmitting}
-              />
+              <div className="project-directory-picker">
+                <Input
+                  id="project-directory"
+                  value={projectPathDraft}
+                  onChange={(event) => {
+                    setProjectPathDraft(event.target.value);
+                    if (projectCreateError) setProjectCreateError("");
+                  }}
+                  aria-invalid={Boolean(projectCreateError)}
+                  aria-describedby={projectCreateError ? "project-directory-error" : undefined}
+                  autoFocus
+                  disabled={projectCreateSubmitting || projectDirectoryPicking}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void chooseProjectDirectory()}
+                  disabled={projectCreateSubmitting || projectDirectoryPicking}
+                >
+                  <FolderOpenIcon aria-hidden="true" />
+                  {projectDirectoryPicking ? "Opening…" : "Choose folder"}
+                </Button>
+              </div>
               {projectCreateError && (
                 <FieldError id="project-directory-error">
                   {projectCreateError}

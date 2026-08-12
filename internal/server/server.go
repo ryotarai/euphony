@@ -29,23 +29,25 @@ type Config struct {
 	SummaryRunner      agentsummary.Runner
 	ActionRunner       agentsummary.ActionRunner
 	TaskRefiner        agentsummary.Refiner
+	DirectoryPicker    func(context.Context) (string, error)
 	Assets             fs.FS
 }
 
 type Server struct {
-	handler       http.Handler
-	sessions      *session.Manager
-	control       *control.Service
-	summaryEvents *agentSummaryEventPublisher
-	tickets       *ticketStore
-	terminalSizes *terminalSizeCoordinator
-	agentLogs     *agentlog.Resolver
-	annotations   *annotation.Store
-	summaries     *agentsummary.Service
-	actionRunner  agentsummary.ActionRunner
-	tasks         *tasks.Service
-	projects      *project.Service
-	projectRepo   project.Repository
+	handler         http.Handler
+	sessions        *session.Manager
+	control         *control.Service
+	summaryEvents   *agentSummaryEventPublisher
+	tickets         *ticketStore
+	terminalSizes   *terminalSizeCoordinator
+	agentLogs       *agentlog.Resolver
+	annotations     *annotation.Store
+	summaries       *agentsummary.Service
+	actionRunner    agentsummary.ActionRunner
+	tasks           *tasks.Service
+	projects        *project.Service
+	projectRepo     project.Repository
+	directoryPicker func(context.Context) (string, error)
 }
 
 func New(config Config) (*Server, error) {
@@ -125,19 +127,24 @@ func New(config Config) (*Server, error) {
 		_ = sessionManager.Close(context.Background())
 		return nil, err
 	}
+	directoryPicker := config.DirectoryPicker
+	if directoryPicker == nil {
+		directoryPicker = pickDirectory
+	}
 	server := &Server{
-		sessions:      sessionManager,
-		control:       controlService,
-		summaryEvents: summaryEvents,
-		tickets:       tickets,
-		terminalSizes: newTerminalSizeCoordinator(),
-		agentLogs:     transcriptResolver,
-		annotations:   annotation.NewStore(time.Now, uuid.NewString),
-		summaries:     summaryService,
-		actionRunner:  actionRunner,
-		tasks:         taskService,
-		projects:      projectService,
-		projectRepo:   projectRepo,
+		sessions:        sessionManager,
+		control:         controlService,
+		summaryEvents:   summaryEvents,
+		tickets:         tickets,
+		terminalSizes:   newTerminalSizeCoordinator(),
+		agentLogs:       transcriptResolver,
+		annotations:     annotation.NewStore(time.Now, uuid.NewString),
+		summaries:       summaryService,
+		actionRunner:    actionRunner,
+		tasks:           taskService,
+		projects:        projectService,
+		projectRepo:     projectRepo,
+		directoryPicker: directoryPicker,
 	}
 	summaryService.Start()
 	taskService.Start()
@@ -190,6 +197,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/agent-summaries/{id}/options/{optionID}/execute", server.executeAgentSummaryOption)
 	protected.HandleFunc("GET /api/projects", server.listProjects)
 	protected.HandleFunc("POST /api/projects", server.createProject)
+	protected.HandleFunc("POST /api/projects/pick-directory", server.pickProjectDirectory)
 	protected.HandleFunc("GET /api/tasks", server.listTasks)
 	protected.HandleFunc("POST /api/tasks", server.createTask)
 	protected.HandleFunc("GET /api/tasks/{id}", server.getTask)

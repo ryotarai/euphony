@@ -423,6 +423,7 @@ func TestSQLiteStorePersistsAgentSummary(t *testing.T) {
 		TerminalID:  "terminal-1",
 		Provider:    "codex",
 		Status:      "blocked",
+		Purpose:     "API access approval",
 		Summary:     "The agent is waiting for permission to edit the API.",
 		Action:      "Approve the requested file access.",
 		Options:     []AgentSummaryOption{{ID: "option-1", Label: "Allow", Input: "y\r"}},

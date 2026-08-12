@@ -48,9 +48,16 @@ function sessionIdentity(session: Session, summary: SessionSummary) {
 }
 
 function sessionPurpose(session: Session, summary: SessionSummary) {
-  const purpose = session.agentTitle?.trim() || session.processName?.trim();
-  if (!purpose || purpose === sessionIdentity(session, summary)) return "";
-  return purpose;
+  const identity = sessionIdentity(session, summary).trim().toLocaleLowerCase();
+  const generatedPurpose = summary?.purpose?.trim();
+  if (generatedPurpose && generatedPurpose.toLocaleLowerCase() !== identity) {
+    return generatedPurpose;
+  }
+  const metadataPurpose = session.agentTitle?.trim() || session.processName?.trim();
+  if (metadataPurpose && metadataPurpose.toLocaleLowerCase() !== identity) {
+    return metadataPurpose;
+  }
+  return "";
 }
 
 function latestSummaries(summaries: AgentSummary[]) {
@@ -225,7 +232,9 @@ function ProjectSessionRow({
   const purpose = sessionPurpose(session, summary);
   const action = summary?.action?.trim() || "";
   const unread = summary?.unread === true;
-  const latestSummary = summary?.summary?.trim() || "None";
+  const latestSummary = summary?.summary?.trim() || "";
+  const purposeText = purpose || latestSummary;
+  const showSummary = Boolean(latestSummary && purpose && latestSummary !== purpose);
   const requiredAction = action || "None";
   const accessibleDescriptionID = `project-session-details-${session.id}`;
   const accessibleDescription = [
@@ -257,17 +266,17 @@ function ProjectSessionRow({
         onClick={() => onSelectSession(session.id)}
       >
         {sessionStatusIcon(status)}
-        <span className="project-session-identity" data-unread={unread ? "true" : "false"}>
-          <span className="project-session-name">{identity}</span>
-          {purpose && <span className="project-session-purpose">{purpose}</span>}
-        </span>
-        <span className="project-session-status">{statusLabel(status)}</span>
-        {summary && (
+        {purposeText && (
+          <span className="project-session-purpose" data-unread={unread ? "true" : "false"}>
+            {purposeText}
+          </span>
+        )}
+        {showSummary && (
           <span
             className="project-session-summary"
             data-unread={unread ? "true" : "false"}
           >
-            {summary.summary}
+            {latestSummary}
           </span>
         )}
         {action && (

@@ -85,6 +85,7 @@ const projectSummary: AgentSummary = {
   terminalId: projectAgent.id,
   provider: "codex",
   status: "running",
+  purpose: "Sidebar fix",
   summary: "Implementing the sidebar",
   generatedAt: "2026-08-12T00:05:00Z",
   unread: true,
@@ -208,6 +209,33 @@ test("renders the project tree without Inbox or split controls", () => {
   expect(screen.queryByRole("checkbox", { name: /Include .* in split/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Inbox" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+});
+
+test("renders the generated session purpose without provider or status text", () => {
+  const { container } = render(
+    <SessionNavigation
+      projects={[project]}
+      sessions={[projectAgent]}
+      agentSummaries={[projectSummary]}
+      selectedIDs={[projectAgent.id]}
+      selectedID={projectAgent.id}
+      onSelect={() => undefined}
+      onSelectSession={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onCreateTerminal={() => undefined}
+      onCreateAgent={() => undefined}
+      onAddProject={() => undefined}
+    />,
+  );
+
+  const row = container.querySelector(".project-session-row");
+  expect(row).not.toBeNull();
+  expect(row?.querySelector(".project-session-name")).toBeNull();
+  expect(row?.querySelector(".project-session-purpose")).toHaveTextContent("Sidebar fix");
+  expect(row?.querySelector(".project-session-status")).toBeNull();
+  expect(screen.queryByText("Running")).not.toBeInTheDocument();
+  expect(screen.getByText(projectSummary.summary)).toBeVisible();
 });
 
 test("selecting a project session closes the mobile drawer", async () => {

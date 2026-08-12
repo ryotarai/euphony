@@ -284,7 +284,7 @@ func (s *Service) generate(ctx context.Context, metadata session.Metadata) {
 	}
 	summary := session.AgentSummary{
 		TerminalID: metadata.ID, Provider: provider, Status: metadata.AgentStatus,
-		Summary: generation.Summary, Action: generation.Action, Priority: generation.Priority,
+		Purpose: generation.Purpose, Summary: generation.Summary, Action: generation.Action, Priority: generation.Priority,
 		Options:     generation.Options,
 		GeneratedAt: s.now().UTC(),
 	}
@@ -306,6 +306,7 @@ func (s *Service) saveResult(ctx context.Context, expected session.Metadata, sum
 	if summary.Error != "" {
 		for _, previous := range s.sessions.AgentSummaries() {
 			if previous.TerminalID == expected.ID && previous.Error == "" {
+				summary.Purpose = previous.Purpose
 				summary.Summary = previous.Summary
 				summary.Action = previous.Action
 				summary.Priority = previous.Priority

@@ -16,6 +16,7 @@ const (
 	maxTranscriptEntries      = 40
 	maxPromptBytes            = 128 << 10
 	maxAdditionalPromptRunes  = 8000
+	maxGeneratedPurposeRunes  = 32
 	maxGeneratedSummaryRunes  = 1200
 	maxGeneratedActionRunes   = 600
 )
@@ -39,9 +40,10 @@ func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTa
 	prompt := fmt.Sprintf(`You are an assistant for a local terminal workspace. Summarize what one coding agent is doing right now for a human who is monitoring several terminals.
 
 Return exactly one JSON object and no markdown:
-{"summary":"what the agent is doing now","action":"what the user should do next, or an empty string","priority":"high, medium, low, or an empty string","options":[{"label":"visible choice","input":"raw PTY input"}]}
+{"purpose":"short label for the session's goal","summary":"what the agent is doing now","action":"what the user should do next, or an empty string","priority":"high, medium, low, or an empty string","options":[{"label":"visible choice","input":"raw PTY input"}]}
 
 Rules:
+- Set purpose to a concise label of no more than 32 characters that identifies the session's goal or current topic. Use a noun phrase, not a sentence, and do not mention the provider or lifecycle status.
 - Keep summary concrete and short. Mention the current goal, file, command, or blocker when the context supports it.
 - For running agents, action must be an empty string.
 - For running agents, priority must be an empty string.

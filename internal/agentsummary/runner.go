@@ -28,6 +28,7 @@ const (
 )
 
 type Generation struct {
+	Purpose  string                       `json:"purpose"`
 	Summary  string                       `json:"summary"`
 	Action   string                       `json:"action"`
 	Priority string                       `json:"priority"`
@@ -274,6 +275,7 @@ func sharedSummarySchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
+			"purpose": map[string]any{"type": "string"},
 			"summary": map[string]any{"type": "string"},
 			"action":  map[string]any{"type": "string"},
 			"priority": map[string]any{
@@ -294,7 +296,7 @@ func sharedSummarySchema() map[string]any {
 				},
 			},
 		},
-		"required": []string{"summary", "action", "priority", "options"},
+		"required": []string{"purpose", "summary", "action", "priority", "options"},
 	}
 }
 
@@ -526,6 +528,7 @@ func extractJSONObject(output, source string) (string, error) {
 }
 
 func normalizeGeneration(generation Generation, status string) (Generation, error) {
+	generation.Purpose = normalizeGeneratedText(generation.Purpose, maxGeneratedPurposeRunes)
 	generation.Summary = normalizeGeneratedText(generation.Summary, maxGeneratedSummaryRunes)
 	generation.Action = normalizeGeneratedText(generation.Action, maxGeneratedActionRunes)
 	generation.Priority = strings.ToLower(strings.TrimSpace(generation.Priority))

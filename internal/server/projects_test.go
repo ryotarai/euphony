@@ -49,6 +49,35 @@ func TestProjectsEndpointCreatesAndListsProjects(t *testing.T) {
 	}
 }
 
+func TestProjectDirectoryPickerEndpointReturnsTheSelectedDirectory(t *testing.T) {
+	directory := t.TempDir()
+	pickerCalls := 0
+	srv, err := New(Config{
+		Token: "token",
+		Shell: "/bin/sh",
+		DirectoryPicker: func(context.Context) (string, error) {
+			pickerCalls++
+			return directory, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodPost, "/api/projects/pick-directory", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("pick status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Path string `json:"path"`
+	}
+	decodeResponse(t, response, &result)
+	if pickerCalls != 1 || result.Path != directory {
+		t.Fatalf("picker calls/result = %d/%q, want 1/%q", pickerCalls, result.Path, directory)
+	}
+}
+
 func TestProjectsEndpointUsesStrictJSONAndStablePathErrors(t *testing.T) {
 	srv := newProjectTestServer(t)
 	directory := t.TempDir()

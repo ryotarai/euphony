@@ -112,6 +112,10 @@
 
 ## Rendering and terminal geometry
 
+- Make compact status icons distinguishable at a glance with both semantic
+  shape and state-specific color, and verify their computed colors in browser
+  tests.
+
 - Give rendered Markdown tables explicit cell padding and borders so dense
   transcript data remains legible.
 - Keep CJK punctuation spacing untrimmed inside terminal renderers so every

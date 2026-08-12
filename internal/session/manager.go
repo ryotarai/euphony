@@ -73,6 +73,7 @@ type AgentSummary struct {
 	TerminalID  string               `json:"terminalId"`
 	Provider    string               `json:"provider"`
 	Status      string               `json:"status"`
+	Purpose     string               `json:"purpose,omitempty"`
 	Summary     string               `json:"summary"`
 	Action      string               `json:"action,omitempty"`
 	Priority    string               `json:"priority,omitempty"`
@@ -2206,6 +2207,7 @@ func sameAgentSummaryGeneration(left, right AgentSummary) bool {
 	return left.TerminalID == right.TerminalID &&
 		left.Provider == right.Provider &&
 		left.Status == right.Status &&
+		left.Purpose == right.Purpose &&
 		left.Summary == right.Summary &&
 		strings.TrimSpace(left.Action) == strings.TrimSpace(right.Action) &&
 		left.Priority == right.Priority &&

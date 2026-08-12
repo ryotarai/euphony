@@ -2101,6 +2101,42 @@ test("creates a project and renders its empty project section", async () => {
   )).toBe(false);
 });
 
+test("fills the project path from the GUI folder picker", async () => {
+  const selectedPath = "/workspace/selected-project";
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects/pick-directory" && init?.method === "POST") {
+      return jsonResponse({ path: selectedPath });
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Add project" }));
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  await user.click(within(dialog).getByRole("button", { name: "Choose folder" }));
+
+  expect(within(dialog).getByLabelText("Project directory")).toHaveValue(selectedPath);
+  expect(fetchMock.mock.calls.some(
+    ([input, init]) => input === "/api/projects" && init?.method === "POST",
+  )).toBe(false);
+});
+
 test("keeps the project dialog open when creation fails", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (input === "/api/sessions" && (!init || init.method === undefined)) {
