@@ -504,7 +504,7 @@ input {
   overflow: auto;
   border-left: 1px solid #293038;
   border-right: 1px solid #293038;
-  background: #161b20;
+  background: var(--sidebar);
   color: var(--foreground);
 }
 
@@ -1640,6 +1640,7 @@ input:focus-visible,
 .session-select {
   position: relative;
   display: flex;
+  width: 100%;
   min-width: 0;
   height: 2rem;
   align-items: center;
@@ -5848,6 +5849,7 @@ input {
 
 .project-session-select {
   display: grid;
+  width: 100%;
   min-width: 0;
   flex: 1 1 auto;
   grid-template-columns: auto minmax(0, 1fr);

@@ -353,6 +353,53 @@ test("renders persisted projects and creates a terminal from a project action", 
   }).toEqual({ cwd: "/tmp", projectId: tmpProject.id });
 });
 
+test("matches the session information background to the terminal sidebar", async ({ page }) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Session details", "/tmp");
+  await replaceSharedSelection(page, [terminal.id], terminal.id);
+  await page.goto("/?token=test-token");
+
+  await expect(page.locator(".session-info-pane")).toBeVisible();
+  const colors = await page.evaluate(() => {
+    const sidebar = document.querySelector<HTMLElement>(".desktop-sidebar");
+    const infoPane = document.querySelector<HTMLElement>(".session-info-pane");
+    if (!sidebar || !infoPane) throw new Error("Expected sidebar and session information pane.");
+    return {
+      sidebar: getComputedStyle(sidebar).backgroundColor,
+      infoPane: getComputedStyle(infoPane).backgroundColor,
+    };
+  });
+
+  expect(colors.infoPane).toBe(colors.sidebar);
+});
+
+test("makes project terminal rows fully clickable", async ({ page }) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Full-width terminal", "/tmp");
+
+  await page.goto("/?token=test-token");
+  const tmpGroup = await projectGroup(page, "/tmp");
+  const button = tmpGroup.getByRole("button", { name: "Select Full-width terminal" });
+  const row = button.locator("..");
+  await expect(button).toBeVisible();
+
+  const [rowBox, buttonBox] = await Promise.all([row.boundingBox(), button.boundingBox()]);
+  expect(rowBox).not.toBeNull();
+  expect(buttonBox).not.toBeNull();
+  expect(buttonBox!.x).toBeCloseTo(rowBox!.x, 0);
+  expect(buttonBox!.width).toBeCloseTo(rowBox!.width, 0);
+
+  await page.mouse.click(
+    buttonBox!.x + buttonBox!.width - 2,
+    buttonBox!.y + buttonBox!.height / 2,
+  );
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".session-info-pane")).toHaveAttribute(
+    "data-session-id",
+    terminal.id,
+  );
+});
+
 test("renders an agent summary inside its project and follows the row", async ({ page }) => {
   await clearSessions(page);
   const agent = await createSession(page, "Needs approval", "/tmp");

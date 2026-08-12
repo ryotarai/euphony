@@ -13,11 +13,6 @@ interface SessionInfoPaneProps {
   summary?: AgentSummary;
 }
 
-function providerLabel(provider: string | undefined) {
-  if (!provider) return "Terminal";
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
-}
-
 function statusIcon(session: Session) {
   const status = session.agentStatus || (session.state === "running" ? "terminal" : session.state);
   const props = {
@@ -74,7 +69,7 @@ export function SessionInfoPane({ session, summary }: SessionInfoPaneProps) {
         <span className="session-info-kicker">Session information</span>
         <div className="session-info-identity">
           {statusIcon(session)}
-          <h2>{providerLabel(summary?.provider ?? session.agent)}</h2>
+          <h2>Purpose</h2>
         </div>
         <p className="session-info-cwd" title={session.cwd}>{session.cwd}</p>
       </header>
