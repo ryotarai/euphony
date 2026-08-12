@@ -420,6 +420,7 @@ test("renders an agent summary inside its project and follows the row", async ({
         terminalId: agent.id,
         provider: "claude",
         status: "waiting",
+        purpose: "Review the requested change.",
         summary: "The agent is waiting for approval.",
         action: "Approve the requested change.",
         priority: "high",
@@ -439,6 +440,7 @@ test("renders an agent summary inside its project and follows the row", async ({
         terminalId: agent.id,
         provider: "claude",
         status: "waiting",
+        purpose: "Review the requested change.",
         summary: "The agent is waiting for approval.",
         action: "Approve the requested change.",
         priority: "high",
@@ -460,7 +462,8 @@ test("renders an agent summary inside its project and follows the row", async ({
   });
   await expect(row).toHaveAttribute("data-unread", "true");
   const info = page.getByRole("region", { name: "Session information" });
-  await expect(info).toContainText("Purpose");
+  await expect(info.getByRole("heading", { name: "Review the requested change.", exact: true })).toBeVisible();
+  await expect(info.locator("dt", { hasText: "Purpose" })).toHaveCount(0);
   await expect(info).toContainText("Summary");
   await expect(info).toContainText("Action");
   const divider = page.getByRole("separator", { name: "Resize session information" });
