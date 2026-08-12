@@ -97,13 +97,40 @@ func (s *Service) CreateTerminal(
 	name, cwd string,
 	mode SelectionMode,
 ) (session.Metadata, selection.Snapshot, error) {
+	return s.createTerminal(ctx, name, cwd, mode, "")
+}
+
+// CreateTerminalWithCommand starts an executable directly as the terminal's
+// initial process. The caller is responsible for restricting command names to
+// the supported launchers exposed by its API.
+func (s *Service) CreateTerminalWithCommand(
+	ctx context.Context,
+	name, cwd string,
+	mode SelectionMode,
+	command string,
+) (session.Metadata, selection.Snapshot, error) {
+	return s.createTerminal(ctx, name, cwd, mode, command)
+}
+
+func (s *Service) createTerminal(
+	ctx context.Context,
+	name, cwd string,
+	mode SelectionMode,
+	command string,
+) (session.Metadata, selection.Snapshot, error) {
 	if mode == "" {
 		mode = SelectionNone
 	}
 	if mode != SelectionNone && mode != SelectionAdd && mode != SelectionReplace {
 		return session.Metadata{}, selection.Snapshot{}, ErrInvalidInput
 	}
-	metadata, err := s.sessions.Create(ctx, name, cwd)
+	var metadata session.Metadata
+	var err error
+	if command == "" {
+		metadata, err = s.sessions.Create(ctx, name, cwd)
+	} else {
+		metadata, err = s.sessions.CreateWithCommand(ctx, name, cwd, command)
+	}
 	if err != nil {
 		return session.Metadata{}, selection.Snapshot{}, err
 	}

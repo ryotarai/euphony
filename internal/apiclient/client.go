@@ -61,6 +61,7 @@ type CreateTerminalRequest struct {
 	CWD           string                `json:"cwd,omitempty"`
 	ProjectID     string                `json:"projectId,omitempty"`
 	SelectionMode control.SelectionMode `json:"selectionMode,omitempty"`
+	Command       string                `json:"command,omitempty"`
 }
 
 type CreateTerminalResult struct {

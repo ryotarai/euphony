@@ -2658,6 +2658,7 @@ export function App({
     split = false,
     cwd?: string,
     projectId?: string,
+    command?: AgentKind,
   ): Promise<Session | null> {
     if (!api) return null;
     if (sessions === null) return null;
@@ -2680,6 +2681,7 @@ export function App({
             projectId === undefined ? cwd ?? inheritedCWD : undefined,
             split ? "add" : "replace",
             projectId,
+            command,
           );
           created = result.terminal;
           serverSelection = result.selection;
@@ -2832,12 +2834,11 @@ export function App({
     if (!api || agentStartSubmittingRef.current) return;
     agentStartSubmittingRef.current = true;
     try {
-      const created = await createSession(false, undefined, projectID);
+      const created = await createSession(false, undefined, projectID, kind);
       if (!created) {
         setRequestError("The project terminal could not be created.");
         return;
       }
-      await api.startAgent(created.id, kind);
       try {
         applySessionSnapshot(await api.listSessions());
       } catch {

@@ -26,6 +26,7 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name          string                `json:"name"`
 		CWD           string                `json:"cwd"`
+		Command       string                `json:"command"`
 		ProjectID     optionalProjectID     `json:"projectId"`
 		SelectionMode control.SelectionMode `json:"selectionMode"`
 	}
@@ -51,17 +52,25 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 			"projectId must be a string when provided.", nil)
 		return
 	}
+	if request.Command != "" && request.Command != "codex" && request.Command != "claude" {
+		writeV1Error(w, http.StatusBadRequest, "invalid_command",
+			"command must be codex or claude when provided.", nil)
+		return
+	}
 
 	var metadata session.Metadata
 	var selected selection.Snapshot
 	var err error
 	if !request.ProjectID.present {
-		metadata, selected, err = s.control.CreateTerminal(
-			r.Context(),
-			request.Name,
-			request.CWD,
-			request.SelectionMode,
-		)
+		if request.Command == "" {
+			metadata, selected, err = s.control.CreateTerminal(
+				r.Context(), request.Name, request.CWD, request.SelectionMode,
+			)
+		} else {
+			metadata, selected, err = s.control.CreateTerminalWithCommand(
+				r.Context(), request.Name, request.CWD, request.SelectionMode, request.Command,
+			)
+		}
 	} else {
 		projectID := strings.TrimSpace(request.ProjectID.value)
 		item, projectErr := s.projects.Get(r.Context(), projectID)
@@ -75,9 +84,15 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		metadata, err = s.sessions.CreateInProject(
-			r.Context(), request.Name, projectID, item.Path,
-		)
+		if request.Command == "" {
+			metadata, err = s.sessions.CreateInProject(
+				r.Context(), request.Name, projectID, item.Path,
+			)
+		} else {
+			metadata, err = s.sessions.CreateInProjectWithCommand(
+				r.Context(), request.Name, projectID, item.Path, request.Command,
+			)
+		}
 		if err == nil {
 			selected, err = s.applyCreatedTerminalSelection(
 				r.Context(), metadata.ID, request.SelectionMode,

@@ -67,7 +67,7 @@ func TestClientCreateTerminalSendsProjectID(t *testing.T) {
 			t.Fatalf("decode terminal request: %v", err)
 		}
 		if request.Name != "Project terminal" || request.ProjectID != "project-1" ||
-			request.CWD != "" || request.SelectionMode != "none" {
+			request.CWD != "" || request.SelectionMode != "none" || request.Command != "codex" {
 			t.Fatalf("terminal request = %#v", request)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -79,7 +79,7 @@ func TestClientCreateTerminalSendsProjectID(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	result, err := client.CreateTerminal(context.Background(), CreateTerminalRequest{
-		Name: "Project terminal", ProjectID: "project-1", SelectionMode: "none",
+		Name: "Project terminal", ProjectID: "project-1", SelectionMode: "none", Command: "codex",
 	})
 	if err != nil || result.Terminal.ID != "terminal-1" || result.Terminal.ProjectID != "project-1" {
 		t.Fatalf("CreateTerminal() = %#v, %v", result, err)

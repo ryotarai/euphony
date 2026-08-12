@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,6 +83,46 @@ func TestV1TerminalCreateListGetAndDelete(t *testing.T) {
 	if missing.Code != http.StatusNotFound || errorEnvelope.OK ||
 		errorEnvelope.Error.Code != "terminal_not_found" {
 		t.Fatalf("missing response = %d %#v", missing.Code, errorEnvelope)
+	}
+}
+
+func TestV1TerminalCreateStartsRequestedAgentCommand(t *testing.T) {
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf 'v1-direct-command-ready\\n'\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(command) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"Codex","cwd":`+strconv.Quote(t.TempDir())+`,"command":"codex"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var envelope struct {
+		Result struct {
+			Terminal session.Metadata `json:"terminal"`
+		} `json:"result"`
+	}
+	decodeResponse(t, created, &envelope)
+	waited, err := srv.control.WaitOutput(context.Background(), envelope.Result.Terminal.ID,
+		control.OutputMatch{Literal: "v1-direct-command-ready", MaxBytes: 1024})
+	if err != nil || !strings.Contains(waited.MatchedLine, "v1-direct-command-ready") {
+		t.Fatalf("WaitOutput() = %#v, %v", waited, err)
+	}
+	running, ok := srv.sessions.Get(envelope.Result.Terminal.ID)
+	if !ok {
+		t.Fatal("created command session is not registered")
+	}
+	command, err := running.ForegroundCommand()
+	if err != nil || !strings.Contains(command, "codex") {
+		t.Fatalf("ForegroundCommand() = %q, %v; want codex", command, err)
 	}
 }
 
@@ -263,6 +305,26 @@ func TestV1TerminalRequestRejectsUnknownFields(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil ||
 		envelope["ok"] != false {
 		t.Fatalf("error envelope = %#v, %v", envelope, err)
+	}
+}
+
+func TestV1TerminalCreateRejectsUnsupportedCommand(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"Invalid command","command":"vim"}`)
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeResponse(t, response, &envelope)
+	if response.Code != http.StatusBadRequest || envelope.Error.Code != "invalid_command" {
+		t.Fatalf("response = %d %#v", response.Code, envelope)
 	}
 }
 

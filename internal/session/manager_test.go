@@ -53,6 +53,36 @@ func TestCreateInProjectRoundTripsProjectID(t *testing.T) {
 	}
 }
 
+func TestCreateWithCommandStartsRequestedExecutable(t *testing.T) {
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf 'direct-command-ready\\n'\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(command) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.CreateWithCommand(
+		context.Background(), "Codex", t.TempDir(), "codex",
+	)
+	if err != nil {
+		t.Fatalf("CreateWithCommand() error = %v", err)
+	}
+	running, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatal("created command session is not registered")
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		data, _ := running.HistorySnapshot(1024)
+		return strings.Contains(string(data), "direct-command-ready")
+	})
+	command, err := running.ForegroundCommand()
+	if err != nil || !strings.Contains(command, "codex") {
+		t.Fatalf("ForegroundCommand() = %q, %v; want codex", command, err)
+	}
+}
+
 func TestCreateRejectsBlankName(t *testing.T) {
 	t.Parallel()
 

@@ -331,6 +331,7 @@ func runTerminalCommand(
 		flags, err := parseFlags("terminal create", args[1:], func(flags *flag.FlagSet) {
 			flags.StringVar(&request.Name, "name", "", "terminal name")
 			flags.StringVar(&request.CWD, "cwd", "", "working directory")
+			flags.StringVar(&request.Command, "command", "", "initial command (codex or claude)")
 			flags.Var((*selectionModeValue)(&request.SelectionMode), "selection", "none, add, or replace")
 		})
 		if err != nil || len(flags.Args()) != 0 {

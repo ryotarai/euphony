@@ -42,6 +42,35 @@ func TestAutomationCLIPrintsStableSuccessJSON(t *testing.T) {
 	}
 }
 
+func TestAutomationCLICreatesTerminalWithInitialCommand(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/terminals" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if request["command"] != "codex" || request["name"] != "Agent" {
+			t.Fatalf("terminal request = %#v", request)
+		}
+		_, _ = io.WriteString(w,
+			`{"ok":true,"result":{"terminal":{"id":"terminal-1"},"selection":{}}}`)
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("EUPHONY_URL", api.URL)
+	t.Setenv("EUPHONY_SOCKET", t.TempDir()+"/missing.sock")
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		[]string{"terminal", "create", "--name", "Agent", "--command", "codex"},
+		bytes.NewReader(nil), &stdout, &stderr,
+	)
+	if err != nil || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"id":"terminal-1"`) {
+		t.Fatalf("run() = %v, stdout = %q, stderr = %q", err, stdout.String(), stderr.String())
+	}
+}
+
 func TestAnnotateCLIWaitsForCommentsAndPrintsStableJSON(t *testing.T) {
 	documentPath := filepath.Join(t.TempDir(), "review.md")
 	if err := os.WriteFile(documentPath, []byte("# Review\n\nSelect this."), 0o644); err != nil {

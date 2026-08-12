@@ -2288,18 +2288,10 @@ test("starts an agent from a project section", async () => {
         name: "Terminal",
         selectionMode: "replace",
         projectId: project.id,
-      });
-      listedSessions = [created];
-      return jsonResponse({ ok: true, result: { terminal: created, selection } }, 201);
-    }
-    if (input === `/api/v1/agents/${created.id}/start` && init?.method === "POST") {
-      expect(JSON.parse(String(init.body))).toEqual({
-        kind: "codex",
-        args: [],
-        timeoutMs: 30_000,
+        command: "claude",
       });
       listedSessions = [started];
-      return jsonResponse({ ok: true, result: { agent: started } });
+      return jsonResponse({ ok: true, result: { terminal: created, selection } }, 201);
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -2322,20 +2314,10 @@ test("starts an agent from a project section", async () => {
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/v1/agents/${created.id}/start`,
+      "/api/v1/terminals",
       expect.objectContaining({ method: "POST" }),
     );
   });
-  expect(fetchMock).toHaveBeenCalledWith(
-    `/api/v1/agents/${created.id}/start`,
-    expect.objectContaining({
-      body: JSON.stringify({
-        kind: "claude",
-        args: [],
-        timeoutMs: 30_000,
-      }),
-    }),
-  );
   expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
 });
 

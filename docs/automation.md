@@ -66,7 +66,7 @@ sequences removed.
 ```text
 euphony terminal list
 euphony terminal get ID
-euphony terminal create [--name NAME] [--cwd PATH]
+euphony terminal create [--name NAME] [--cwd PATH] [--command codex|claude]
                         [--selection none|add|replace]
 euphony terminal delete ID
 euphony terminal read [--max-bytes N] ID
@@ -86,6 +86,10 @@ and modifier combinations such as `ctrl+c`.
 `terminal run` is safer than raw input for shell automation. It succeeds only
 when the shell owns the PTY foreground and returns `terminal_busy` when an
 editor, agent, or another foreground process is active.
+
+Use `terminal create --command codex` or `--command claude` to launch an agent
+directly as the terminal's initial process. This avoids sending an agent
+launcher through an already-running shell.
 
 `terminal observe` emits WebSocket frames as NDJSON and cannot write to the
 PTY. `terminal attach` is the interactive exception to JSON output: it writes

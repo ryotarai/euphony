@@ -22,6 +22,7 @@ type StartInput struct {
 
 type AgentController interface {
 	CreateTerminal(context.Context, string, string, control.SelectionMode) (session.Metadata, selection.Snapshot, error)
+	CreateTerminalWithCommand(context.Context, string, string, control.SelectionMode, string) (session.Metadata, selection.Snapshot, error)
 	StartAgent(context.Context, string, string, []string) (session.Metadata, error)
 	GetAgent(string) (session.Metadata, error)
 	GetTerminal(string) (session.Metadata, error)
@@ -247,6 +248,7 @@ func (s *Service) StartAgent(ctx context.Context, id string, input StartInput) (
 		return Task{}, errors.New("done tasks cannot start an agent")
 	}
 	terminalID := task.TerminalID
+	createdTerminal := false
 	if terminalID != "" {
 		metadata, terminalErr := s.agents.GetTerminal(terminalID)
 		if terminalErr != nil {
@@ -265,11 +267,14 @@ func (s *Service) StartAgent(ctx context.Context, id string, input StartInput) (
 				}
 			}
 		}
-		metadata, _, createErr := s.agents.CreateTerminal(ctx, task.Title, cwd, control.SelectionAdd)
+		metadata, _, createErr := s.agents.CreateTerminalWithCommand(
+			ctx, task.Title, cwd, control.SelectionAdd, input.Agent,
+		)
 		if createErr != nil {
 			return Task{}, createErr
 		}
 		terminalID = metadata.ID
+		createdTerminal = true
 	}
 	task.TerminalID = terminalID
 	task.Agent = input.Agent
@@ -279,10 +284,12 @@ func (s *Service) StartAgent(ctx context.Context, id string, input StartInput) (
 		return Task{}, err
 	}
 	s.publish("task.updated", task)
-	if _, err := s.agents.StartAgent(ctx, terminalID, input.Agent, nil); err != nil {
-		_, _ = s.appendUpdate(ctx, task, UpdateError,
-			fmt.Sprintf("Could not start %s: %s", input.Agent, err))
-		return task, err
+	if !createdTerminal {
+		if _, err := s.agents.StartAgent(ctx, terminalID, input.Agent, nil); err != nil {
+			_, _ = s.appendUpdate(ctx, task, UpdateError,
+				fmt.Sprintf("Could not start %s: %s", input.Agent, err))
+			return task, err
+		}
 	}
 	updated, err := s.appendUpdate(ctx, task, UpdateSystem,
 		fmt.Sprintf("Started %s agent.", input.Agent))

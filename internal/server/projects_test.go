@@ -4,12 +4,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/project"
 	"github.com/ryotarai/euphony/internal/session"
 )
@@ -123,6 +126,43 @@ func TestProjectTerminalCreationResolvesProjectDirectoryServerSide(t *testing.T)
 	if envelope.Result.Terminal.CWD != directory ||
 		envelope.Result.Terminal.ProjectID != createdProject.ID {
 		t.Fatalf("created terminal = %#v, want project directory and ID", envelope.Result.Terminal)
+	}
+}
+
+func TestProjectTerminalCreationStartsRequestedAgentCommand(t *testing.T) {
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf 'project-direct-command-ready\\n'\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(command) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	srv := newProjectTestServer(t)
+	directory := t.TempDir()
+	projectResponse := performRequest(t, srv, http.MethodPost, "/api/projects",
+		`{"path":`+strconv.Quote(directory)+`}`)
+	var createdProject project.Project
+	decodeResponse(t, projectResponse, &createdProject)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"Codex","projectId":`+strconv.Quote(createdProject.ID)+`,"command":"codex"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var envelope struct {
+		Result struct {
+			Terminal session.Metadata `json:"terminal"`
+		} `json:"result"`
+	}
+	decodeResponse(t, created, &envelope)
+	if envelope.Result.Terminal.CWD != directory ||
+		envelope.Result.Terminal.ProjectID != createdProject.ID {
+		t.Fatalf("created terminal = %#v, want project directory and ID", envelope.Result.Terminal)
+	}
+	waited, err := srv.control.WaitOutput(context.Background(), envelope.Result.Terminal.ID,
+		control.OutputMatch{Literal: "project-direct-command-ready", MaxBytes: 1024})
+	if err != nil || !strings.Contains(waited.MatchedLine, "project-direct-command-ready") {
+		t.Fatalf("WaitOutput() = %#v, %v", waited, err)
 	}
 }
 

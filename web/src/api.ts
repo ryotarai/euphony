@@ -6,6 +6,7 @@ import type {
   AnnotationComment,
   AnnotationResult,
   AnnotationSession,
+  CodingAgent,
   APIEvent,
   ApiErrorBody,
   Project,
@@ -154,6 +155,7 @@ export class ApiClient {
     cwd: string | undefined,
     selectionMode: "none" | "add" | "replace",
     projectId?: string,
+    command?: CodingAgent,
   ): Promise<{ terminal: Session; selection: SelectionSnapshot }> {
     return this.v1Request("/api/v1/terminals", {
       method: "POST",
@@ -162,6 +164,7 @@ export class ApiClient {
         ...(cwd ? { cwd } : {}),
         selectionMode,
         ...(projectId ? { projectId } : {}),
+        ...(command ? { command } : {}),
       }),
     });
   }

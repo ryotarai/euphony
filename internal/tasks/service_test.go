@@ -54,8 +54,8 @@ func TestServiceStartAgentLinksTerminalAndMarksTaskInProgress(t *testing.T) {
 	if agents.createdName != task.Title || agents.createdCWD != "/repo" || agents.createdMode != control.SelectionAdd {
 		t.Fatalf("CreateTerminal() = %q %q %q", agents.createdName, agents.createdCWD, agents.createdMode)
 	}
-	if agents.startedID != "terminal-new" || agents.startedKind != "claude" {
-		t.Fatalf("StartAgent control call = %q %q", agents.startedID, agents.startedKind)
+	if agents.createdCommand != "claude" {
+		t.Fatalf("CreateTerminalWithCommand() command = %q, want claude", agents.createdCommand)
 	}
 	updates, err := service.Get(context.Background(), task.ID)
 	if err != nil {
@@ -190,19 +190,29 @@ func TestServicePersistsAgentEventsAndUnlinksDeletedTerminal(t *testing.T) {
 }
 
 type testAgents struct {
-	metadata    session.Metadata
-	createdName string
-	createdCWD  string
-	createdMode control.SelectionMode
-	startedID   string
-	startedKind string
-	prompt      string
-	promptErr   error
+	metadata       session.Metadata
+	createdName    string
+	createdCWD     string
+	createdMode    control.SelectionMode
+	createdCommand string
+	startedID      string
+	startedKind    string
+	prompt         string
+	promptErr      error
 }
 
 func (a *testAgents) CreateTerminal(_ context.Context, name, cwd string, mode control.SelectionMode) (session.Metadata, selection.Snapshot, error) {
 	a.createdName, a.createdCWD, a.createdMode = name, cwd, mode
 	a.metadata = session.Metadata{ID: "terminal-new", Name: name, CWD: cwd, State: session.StateRunning}
+	return a.metadata, selection.Snapshot{}, nil
+}
+
+func (a *testAgents) CreateTerminalWithCommand(_ context.Context, name, cwd string, mode control.SelectionMode, command string) (session.Metadata, selection.Snapshot, error) {
+	a.createdName, a.createdCWD, a.createdMode, a.createdCommand = name, cwd, mode, command
+	a.metadata = session.Metadata{
+		ID: "terminal-new", Name: name, CWD: cwd, State: session.StateRunning,
+		Agent: command, AgentStatus: "waiting",
+	}
 	return a.metadata, selection.Snapshot{}, nil
 }
 

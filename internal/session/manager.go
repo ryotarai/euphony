@@ -363,17 +363,40 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 }
 
 func (m *Manager) Create(ctx context.Context, name string, requestedCWD ...string) (Metadata, error) {
-	return m.create(ctx, name, "", requestedCWD...)
+	return m.create(ctx, name, "", m.shell, requestedCWD...)
+}
+
+// CreateWithCommand starts the requested executable as the terminal's initial
+// foreground process instead of starting the configured shell first.
+func (m *Manager) CreateWithCommand(
+	ctx context.Context, name, cwd, command string,
+) (Metadata, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return Metadata{}, errors.New("launch command is required")
+	}
+	return m.create(ctx, name, "", command, cwd)
 }
 
 func (m *Manager) CreateInProject(
 	ctx context.Context, name, projectID, cwd string,
 ) (Metadata, error) {
-	return m.create(ctx, name, projectID, cwd)
+	return m.create(ctx, name, projectID, m.shell, cwd)
+}
+
+// CreateInProjectWithCommand is the project-scoped form of CreateWithCommand.
+func (m *Manager) CreateInProjectWithCommand(
+	ctx context.Context, name, projectID, cwd, command string,
+) (Metadata, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return Metadata{}, errors.New("launch command is required")
+	}
+	return m.create(ctx, name, projectID, command, cwd)
 }
 
 func (m *Manager) create(
-	_ context.Context, name, projectID string, requestedCWD ...string,
+	_ context.Context, name, projectID, command string, requestedCWD ...string,
 ) (Metadata, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -425,7 +448,7 @@ func (m *Manager) create(
 		CreatedAt: createdAt,
 		UpdatedAt: createdAt,
 	}
-	item, err := m.start(metadata, exec.Command(m.shell))
+	item, err := m.start(metadata, exec.Command(command))
 	if err != nil {
 		return Metadata{}, err
 	}
