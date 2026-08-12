@@ -8,6 +8,20 @@ const e2ePort = requestedPort && /^\d+$/.test(requestedPort) ? requestedPort : "
 const claudeConfigDir = `/tmp/euphony-e2e-${e2ePort}-claude`;
 const execFileAsync = promisify(execFile);
 
+type ProjectFixture = {
+  id: string;
+  path: string;
+  createdAt: string;
+};
+
+type TerminalFixture = {
+  id: string;
+  name: string;
+  cwd: string;
+  projectId?: string;
+  processName?: string;
+};
+
 async function runGit(repo: string, ...args: string[]) {
   await execFileAsync("git", ["-C", repo, ...args]);
 }
@@ -123,16 +137,50 @@ async function createSession(
   page: Page,
   name: string,
   cwd?: string,
-): Promise<{ id: string; name: string; processName?: string }> {
-  const response = await page.request.post("/api/sessions", {
+): Promise<TerminalFixture> {
+  const project = await getOrCreateProject(page, cwd ?? "/tmp");
+  const response = await page.request.post("/api/v1/terminals", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
     },
-    data: { name, ...(cwd ? { cwd } : {}) },
+    data: {
+      name,
+      projectId: project.id,
+      selectionMode: "none",
+    },
   });
   expect(response.ok()).toBe(true);
-  return response.json();
+  const envelope = await response.json() as {
+    result: { terminal: TerminalFixture };
+  };
+  expect(envelope.result.terminal.projectId).toBe(project.id);
+  return envelope.result.terminal;
+}
+
+async function getOrCreateProject(page: Page, path: string): Promise<ProjectFixture> {
+  const listResponse = await page.request.get("/api/projects", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  expect(listResponse.ok()).toBe(true);
+  const projects = await listResponse.json() as ProjectFixture[];
+  const existing = projects.find((project) => project.path === path);
+  if (existing) return existing;
+
+  const createResponse = await page.request.post("/api/projects", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: { path },
+  });
+  expect(createResponse.status()).toBe(201);
+  return createResponse.json();
+}
+
+async function projectGroup(page: Page, path: string) {
+  const project = await getOrCreateProject(page, path);
+  return page.locator(`[data-project-id="${project.id}"]`);
 }
 
 function claudeTranscriptLine(index: number) {
@@ -191,6 +239,7 @@ function claudeToolTranscriptLines() {
 
 test("opens from a development token URL and immediately scrubs it", async ({ page }) => {
   await clearSessions(page);
+  await createSession(page, "Terminal", "/tmp");
   await page.goto("/?token=test-token");
 
   await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
@@ -259,144 +308,51 @@ test("follows the previous terminal when the focused shell exits", async ({ page
   expect(selectionEnvelope.result.focusedTerminalId).toBe(second.id);
 });
 
-test("renders a cwd-first tree and creates a terminal from its cwd", async ({
+test("renders persisted projects and creates a terminal from a project action", async ({
   page,
 }, testInfo) => {
   await clearSessions(page);
   const shell = await createSession(page, "Shell", "/tmp");
-  await createSession(page, "Project", "/Users/ryotarai/work/euphony");
+  const workspace = await createSession(page, "Project", "/Users/ryotarai/work/euphony");
+  const tmpProject = await getOrCreateProject(page, "/tmp");
+  const tmpGroup = page.locator(`[data-project-id="${tmpProject.id}"]`);
   await page.goto("/?token=test-token");
 
-  await expect(page.getByRole("heading", { name: "/tmp" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "~/work/euphony" })).toBeVisible();
+  await expect(tmpGroup.getByRole("heading", { name: "/tmp", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "/Users/ryotarai/work/euphony" })).toBeVisible();
   await expect(page.getByRole("img", { name: "Terminal" })).toHaveCount(2);
   expect(shell.processName).toBeTruthy();
   await expect(
-    page
-      .getByRole("button", { name: "Select Shell" })
-      .getByText(shell.processName!, { exact: true }),
+    page.locator(`[data-project-id="${tmpProject.id}"]`).getByRole("button", {
+      name: "Select Shell",
+    }),
   ).toBeVisible();
+  await expect(
+    page.locator(`[data-project-id="${workspace.projectId}"]`),
+  ).toContainText("Project");
   await expect(page.getByRole("img", { name: "Codex" })).toHaveCount(0);
   await expect(page.getByRole("img", { name: "Claude" })).toHaveCount(0);
-  await expect(
-    page.getByRole("checkbox", { name: /Show all .* terminals/ }),
-  ).toHaveCount(0);
-  await expect(page.getByText("No terminal", { exact: true })).toHaveCount(0);
-  await page.screenshot({ path: testInfo.outputPath("cwd-sidebar-tree.png") });
+  await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /Done/ })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("project-sidebar.png") });
 
   await page.getByRole("button", { name: "Create terminal in /tmp" }).click();
   const createdTerminal = page.getByRole("button", { name: "Select Terminal" });
   await expect(createdTerminal).toBeVisible();
-  await expect(createdTerminal).toHaveAttribute("title", "/tmp");
   await expect.poll(async () => {
-    const response = await page.request.get("/api/sessions", {
+    const response = await page.request.get("/api/v1/terminals", {
       headers: { Authorization: "Bearer test-token" },
     });
-    const sessions = (await response.json()) as Array<{
-      name: string;
-      cwd: string;
-    }>;
-    return sessions.find((session) => session.name === "Terminal")?.cwd;
-  }).toBe("/tmp");
+    const envelope = await response.json() as {
+      result: { terminals: TerminalFixture[] };
+    };
+    const terminal = envelope.result.terminals.find((session) => session.name === "Terminal");
+    return terminal ? { cwd: terminal.cwd, projectId: terminal.projectId } : null;
+  }).toEqual({ cwd: "/tmp", projectId: tmpProject.id });
 });
 
-test("opens the Inbox and follows a summarized agent", async ({ page }) => {
-  await clearSessions(page);
-  const agent = await createSession(page, "Needs approval", "/tmp");
-  await replaceSharedSelection(page, [agent.id], agent.id);
-  await reportAgent(page, agent.id, "claude", "Needs approval", "waiting");
-  let summaryDone = false;
-  await page.route("**/api/v1/events", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/x-ndjson",
-      body: "",
-    });
-  });
-  await page.route("**/api/agent-summaries", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([{
-        terminalId: agent.id,
-        provider: "claude",
-        status: "waiting",
-        summary: "The agent is waiting for approval.",
-        action: "Approve the requested change.",
-        priority: "high",
-        generatedAt: "2026-08-05T00:00:00Z",
-        unread: true,
-        done: summaryDone,
-      }]),
-    });
-  });
-  await page.route(`**/api/agent-summaries/${agent.id}/read`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        terminalId: agent.id,
-        provider: "claude",
-        status: "waiting",
-        summary: "The agent is waiting for approval.",
-        action: "Approve the requested change.",
-        priority: "high",
-        generatedAt: "2026-08-05T00:00:00Z",
-        unread: false,
-        done: summaryDone,
-      }),
-    });
-  });
-  await page.route(`**/api/agent-summaries/${agent.id}/done`, async (route) => {
-    summaryDone = true;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        terminalId: agent.id,
-        provider: "claude",
-        status: "waiting",
-        summary: "The agent is waiting for approval.",
-        action: "Approve the requested change.",
-        priority: "high",
-        generatedAt: "2026-08-05T00:00:00Z",
-        unread: false,
-        done: true,
-      }),
-    });
-  });
-  await page.goto("/?token=test-token");
-
-  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Inbox" }).click();
-  await expect(page.locator(".agents-view")).toHaveCSS("padding-top", "0px");
-  await expect(page.locator(".agents-view")).toHaveCSS("padding-left", "0px");
-  await expect(page.locator(".agents-tab-panel")).toHaveCSS("max-width", "none");
-  await expect(page.locator(".agents-tab-panel")).toHaveCSS("margin-left", "0px");
-  await expect(page.locator(".agents-mailbox")).toHaveCSS("min-height", "0px");
-  await expect(page.locator(".agents-section-heading h2").first()).toHaveCSS("font-size", "8.8px");
-  await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
-  await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
-  await expect(page.locator(".agents-detail-title")).toHaveCSS("font-size", "16px");
-  await expect(page.getByTestId("agent-summary-priority")).toHaveAttribute("data-priority", "high");
-  await expect(page).toHaveURL(/\/inbox\/[^/?#]+/);
-
-  await page.getByRole("button", { name: "Open Needs approval" }).click();
-  await expect(page.getByRole("region", { name: "Selected Inbox item" })).toBeVisible();
-  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Open terminal" }).click();
-  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Action required" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Inbox" }).click();
-  await page.getByRole("button", { name: "Mark Needs approval as done" }).click();
-  await expect(page.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("tab", { name: "Done 1" }).click();
-  await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
-});
-
-test("locks the terminal while an Inbox choice is resolved", async ({ page }) => {
+test("renders an agent summary inside its project and follows the row", async ({ page }) => {
   await clearSessions(page);
   const agent = await createSession(page, "Needs approval", "/tmp");
   await replaceSharedSelection(page, [agent.id], agent.id);
@@ -419,19 +375,15 @@ test("locks the terminal while an Inbox choice is resolved", async ({ page }) =>
         summary: "The agent is waiting for approval.",
         action: "Approve the requested change.",
         priority: "high",
-        options: [{ id: "option-1", label: "Allow access" }],
         generatedAt: "2026-08-05T00:00:00Z",
         unread: true,
         done: false,
       }]),
     });
   });
-  let releaseExecute: (() => void) | undefined;
-  const executePending = new Promise<void>((resolve) => {
-    releaseExecute = resolve;
-  });
-  await page.route(`**/api/agent-summaries/${agent.id}/options/option-1/execute`, async (route) => {
-    await executePending;
+  let readCalled = false;
+  await page.route(`**/api/agent-summaries/${agent.id}/read`, async (route) => {
+    readCalled = true;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -442,46 +394,86 @@ test("locks the terminal while an Inbox choice is resolved", async ({ page }) =>
         summary: "The agent is waiting for approval.",
         action: "Approve the requested change.",
         priority: "high",
-        options: [{ id: "option-1", label: "Allow access" }],
         generatedAt: "2026-08-05T00:00:00Z",
         unread: false,
-        done: true,
+        done: false,
       }),
     });
   });
   await page.goto("/?token=test-token");
 
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Inbox" }).click();
-  await page.getByRole("button", { name: "Allow access" }).click();
-  await expect(page.locator('.terminal-view[data-locked="true"]')).toHaveCount(1);
-  await expect(page.locator('.terminal-view[data-locked="true"] .terminal-automation-lock')).toHaveCount(1);
+  const tmpGroup = await projectGroup(page, "/tmp");
+  await expect(tmpGroup.getByRole("heading", { name: "/tmp", exact: true })).toBeVisible();
+  await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
+  const row = page.getByRole("button", {
+    name: /Select Claude.*Approve the requested change\./,
+  });
+  await expect(row).toHaveAttribute("data-unread", "true");
+  await expect(page.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /Done/ })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/\/inbox/);
 
-  releaseExecute?.();
-  await expect(page.getByRole("tab", { name: /Inbox · Action required 0/ })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "Done 1" })).toBeVisible();
-  await expect(page.locator('.terminal-view[data-locked="true"]')).toHaveCount(0);
+  await row.click();
+  await expect.poll(() => readCalled).toBe(true);
+  await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
 });
 
-test("treats dashboard panes like terminals and supports split checkboxes", async ({ page }) => {
+test("starts an agent from a persisted project action", async ({ page }) => {
+  await clearSessions(page);
+  const project = await getOrCreateProject(page, "/tmp");
+  let startRequest: { url: string; body: unknown } | null = null;
+  await page.route("**/api/v1/agents/*/start", async (route) => {
+    startRequest = {
+      url: route.request().url(),
+      body: route.request().postDataJSON(),
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, result: {} }),
+    });
+  });
+  await page.goto("/?token=test-token");
+
+  await page.getByRole("button", { name: `Start agent in ${project.path}`, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Start an agent" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Start Codex agent" }).click();
+
+  await expect(page.getByRole("button", { name: "Select Terminal" })).toBeVisible();
+  await expect.poll(() => startRequest).toEqual({
+    url: expect.stringMatching(/\/api\/v1\/agents\/[^/]+\/start$/),
+    body: { kind: "codex", args: [], timeoutMs: 30_000 },
+  });
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/v1/terminals", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const envelope = await response.json() as {
+      result: { terminals: TerminalFixture[] };
+    };
+    const terminal = envelope.result.terminals.find((item) => item.name === "Terminal");
+    return terminal?.projectId;
+  }).toBe(project.id);
+});
+
+test("keeps Tasks available without Inbox or project split checkboxes", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Terminal", "/tmp");
   await page.goto("/?token=test-token");
 
   await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
-  const tasksCheckbox = page.getByRole("checkbox", { name: "Include Tasks in split" });
+  await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /Done/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Tasks" }).click();
   await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-  await expect(tasksCheckbox).toBeChecked();
 
   await page.getByRole("button", { name: "Select Terminal" }).click();
   await expect(page.getByRole("heading", { name: "Tasks" })).toHaveCount(0);
   await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
-
-  await tasksCheckbox.click();
-  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
-  await expect(tasksCheckbox).toBeChecked();
 });
 
 test("creates, refines, starts, and communicates through a task", async ({ page }) => {
@@ -559,7 +551,7 @@ test("creates, refines, starts, and communicates through a task", async ({ page 
       body: JSON.stringify(startedTask),
     });
   });
-  await page.getByRole("button", { name: "Start agent" }).click();
+  await page.getByRole("button", { name: "Start agent", exact: true }).click();
   await expect(page.getByText("Started codex agent.", { exact: true })).toBeVisible();
 
   const communicatedTask = {
@@ -651,20 +643,27 @@ test("shows the overflow fade when the mobile terminal drawer opens", async ({
 
 test("marks a blocked terminal with a blue attention dot", async ({ page }) => {
   await clearSessions(page);
-  await createSession(page, "Focused");
+  const focused = await createSession(page, "Focused");
   const blocked = await createSession(page, "Permission request");
+  await replaceSharedSelection(page, [focused.id, blocked.id], focused.id);
   await reportAgent(page, blocked.id, "codex", "Review changes", "running");
   await page.goto("/?token=test-token");
   await expect(page.getByText("Review changes", { exact: true })).toBeVisible();
-  await page
-    .getByRole("button", { name: "Select Permission request" })
-    .click({ modifiers: ["Meta"] });
-  await page.getByLabel("Focused pane", { exact: true }).click();
 
   await reportAgent(page, blocked.id, "codex", "Review changes", "blocked");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = await response.json() as Array<{
+      id: string;
+      agentStatus?: string;
+    }>;
+    return sessions.find((session) => session.id === blocked.id)?.agentStatus;
+  }, { timeout: 15_000 }).toBe("blocked");
 
   const blockedButton = page.getByRole("button", {
-    name: "Select Permission request",
+    name: /^Select Codex.*Review changes/,
   });
   await expect(blockedButton.getByRole("img", { name: "Blocked" })).toBeVisible();
   const attentionDot = blockedButton.locator(".attention-dot");
@@ -725,7 +724,7 @@ test("centers the delete action within its terminal row", async ({ page }) => {
   await createSession(page, "Alignment check", "/tmp");
   await page.goto("/?token=test-token");
 
-  const row = page.locator(".session-channel").filter({
+  const row = page.locator(".project-session-row").filter({
     has: page.getByRole("button", { name: "Select Alignment check" }),
   });
   const deleteButton = row.getByRole("button", { name: "Delete Alignment check" });
@@ -1112,6 +1111,7 @@ test("does not select a terminal when it needs attention", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "First", "/tmp");
   const second = await createSession(page, "Second", "/tmp");
+  await replaceSharedSelection(page, [first.id], first.id);
 
   await page.goto("/?token=test-token");
   await expect(page.getByLabel("First terminal", { exact: true })).toBeVisible();
@@ -1152,6 +1152,7 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   });
 
   await clearSessions(page);
+  await createSession(page, "Terminal", "/tmp");
 
   await page.goto("/");
   await page.getByLabel("Access token").fill("test-token");
@@ -1208,8 +1209,9 @@ test("runs a terminal and adapts the workspace to mobile", async ({ page }, test
   expect(failedRequests).toEqual([]);
 });
 
-test("updates the sidebar after the shell changes directory", async ({ page }) => {
+test("keeps the project sidebar stable after the shell changes directory", async ({ page }) => {
   await clearSessions(page);
+  await createSession(page, "Terminal", "/tmp");
   await page.goto("/?token=test-token");
 
   const terminal = page.getByLabel("Terminal terminal", { exact: true });
@@ -1219,15 +1221,21 @@ test("updates the sidebar after the shell changes directory", async ({ page }) =
   await page.keyboard.type("cd /etc");
   await page.keyboard.press("Enter");
 
-  await expect(page.getByRole("heading", { name: "/etc" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Select Terminal" })).toHaveAttribute(
-    "title",
-    /^\/(?:private\/)?etc$/,
-  );
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = await response.json() as Array<{ cwd: string }>;
+    return sessions[0]?.cwd;
+  }).toMatch(/^\/(?:private\/)?etc$/);
+  const tmpGroup = await projectGroup(page, "/tmp");
+  await expect(tmpGroup.getByRole("heading", { name: "/tmp", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "/etc", exact: true })).toHaveCount(0);
 });
 
 test("reloads a running terminal with its previous output", async ({ page }) => {
   await clearSessions(page);
+  await createSession(page, "Terminal", "/tmp");
   await page.goto("/");
   await page.getByLabel("Access token").fill("test-token");
   await page.getByRole("button", { name: "Open Euphony" }).click();
@@ -1273,63 +1281,41 @@ test("keeps the server selection authoritative across navigation and reload", as
   await expect(page).toHaveURL(new RegExp(`terminal=${first.id}`));
 });
 
-test("keeps a selected split checkbox visibly checked", async ({ page }) => {
+test("selects a project terminal without rendering a split checkbox", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Left");
   await createSession(page, "Right");
 
   await page.goto("/?token=test-token");
-  const checkbox = page.getByRole("checkbox", { name: "Include Right in split" });
-  await checkbox.click();
-
-  await expect(checkbox).toBeChecked();
-  await expect(checkbox).toHaveCSS("background-color", "rgb(245, 245, 245)");
+  await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Select Right" }).click();
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Left terminal", { exact: true })).toBeHidden();
 });
 
-test("pins a terminal checkbox until that checkbox is clicked", async ({ page }) => {
+test("preserves server-selected terminal panes without sidebar split controls", async ({ page }) => {
   await clearSessions(page);
   const left = await createSession(page, "Left");
   const right = await createSession(page, "Right");
+  await replaceSharedSelection(page, [left.id, right.id], left.id);
 
   await page.goto("/?token=test-token");
-  const leftCheckbox = page.getByRole("checkbox", {
-    name: "Include Left in split",
-  });
-  await leftCheckbox.click({ modifiers: ["Alt"] });
-  await expect(leftCheckbox).toHaveAttribute("data-pinned", "true");
-  await expect(leftCheckbox).toHaveCSS("background-color", "rgb(245, 158, 11)");
-  await expect(page.locator(".pane-checkbox-pin")).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Select Right" }).click();
-
   await expect(page.getByLabel("Left terminal", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
-  let parameters = new URL(page.url()).searchParams;
-  expect(parameters.getAll("terminal")).toEqual([left.id, right.id]);
-  expect(parameters.getAll("pin")).toEqual([left.id]);
+  await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByLabel("Left terminal", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
-  await page
-    .getByRole("checkbox", { name: "Include Left in split" })
-    .click();
-
-  await expect(page.getByLabel("Left terminal", { exact: true })).toBeHidden();
-  await expect(page.getByLabel("Right terminal", { exact: true })).toBeVisible();
-  parameters = new URL(page.url()).searchParams;
-  expect(parameters.getAll("terminal")).toEqual([right.id]);
-  expect(parameters.getAll("pin")).toEqual([]);
 });
 
 test("deselects a terminal from its pane rail", async ({ page }, testInfo) => {
   await clearSessions(page);
   const left = await createSession(page, "Left", "/private/tmp");
   const right = await createSession(page, "Right", "/private/var");
+  await replaceSharedSelection(page, [left.id, right.id], left.id);
 
   await page.goto("/?token=test-token");
-  await page.getByRole("checkbox", { name: "Include Right in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
 
   const leftSelection = page.getByRole("checkbox", { name: "Deselect Left" });
@@ -1394,50 +1380,54 @@ test("keeps a terminal selected when its agent starts running", async ({ page })
   expect(parameters.get("focus")).toBe(first.id);
 });
 
-test("keeps cwd and terminal navigation rows compact", async ({ page }) => {
+test("keeps project headers and session rows compact", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Compact terminal", "/tmp");
 
   await page.goto("/?token=test-token");
-  const cwd = page.locator(".cwd-heading").filter({ hasText: "/tmp" });
-  const terminal = page.getByRole("button", {
+  const tmpGroup = await projectGroup(page, "/tmp");
+  const projectHeader = tmpGroup.locator(".project-sidebar-header");
+  const terminal = tmpGroup.getByRole("button", {
     name: "Select Compact terminal",
   });
 
-  const [cwdBox, terminalBox] = await Promise.all([
-    cwd.boundingBox(),
+  const [headerBox, terminalBox] = await Promise.all([
+    projectHeader.boundingBox(),
     terminal.boundingBox(),
   ]);
-  expect(cwdBox).not.toBeNull();
+  expect(headerBox).not.toBeNull();
   expect(terminalBox).not.toBeNull();
-  expect(cwdBox!.height).toBeLessThanOrEqual(26);
+  expect(headerBox!.height).toBeLessThanOrEqual(44);
   expect(terminalBox!.height).toBeLessThanOrEqual(32);
 });
 
-test("indents terminal rows beneath cwd headings", async ({ page }) => {
+test("indents project session rows beneath project headers", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Indented terminal", "/tmp");
 
   await page.goto("/?token=test-token");
-  const cwdX = (await page.locator(".cwd-heading").filter({ hasText: "/tmp" }).boundingBox())?.x;
-  const terminalX = (
-    await page.getByRole("checkbox", {
-      name: "Include Indented terminal in split",
-    }).boundingBox()
-  )?.x;
+  const tmpGroup = await projectGroup(page, "/tmp");
+  const projectX = (await tmpGroup.locator(".project-sidebar-header").boundingBox())?.x;
+  const terminalX = (await tmpGroup.locator(".project-session-row").filter({
+    hasText: "Indented terminal",
+  }).boundingBox())?.x;
 
-  expect(cwdX).toBeDefined();
+  expect(projectX).toBeDefined();
   expect(terminalX).toBeDefined();
-  expect(terminalX!).toBeGreaterThan(cwdX!);
+  expect(terminalX!).toBeGreaterThan(projectX!);
 });
 
 test("uses a flush black workspace with only a divider between panes", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "Left");
   await createSession(page, "Right");
+  const sessions = await page.request.get("/api/sessions", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const terminalIDs = (await sessions.json() as Array<{ id: string }>).map((session) => session.id);
+  await replaceSharedSelection(page, terminalIDs, terminalIDs[0]);
 
   await page.goto("/?token=test-token");
-  await page.getByRole("checkbox", { name: "Include Right in split" }).click();
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
 
   await expect(page.locator('[data-slot="sidebar"]').first()).toBeVisible();
@@ -1532,23 +1522,19 @@ test("navigates Quick Actions with arrows and Ctrl-P/N before confirming", async
   await expect(inputWrapper).toHaveCSS("border-bottom-width", "1px");
 
   await page.keyboard.press("Control+N");
-  await expect(page.getByRole("option", { name: /^Enable attention alerts/ })).toHaveAttribute(
+  await expect(page.getByRole("option", { name: /^Delete selected terminals/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   await page.keyboard.press("Control+P");
   await expect(
-    page.getByRole("option", { name: /^New terminal in directory…/ }),
+    page.getByRole("option", { name: /^Right/ }),
   ).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(
-    page.getByRole("option", { name: /^Show only Terminal terminals/ }),
+    page.getByRole("option", { name: /^Rename terminal…/ }),
   ).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("Enter");
-
-  await expect(page.getByRole("dialog", { name: "Quick Actions" })).toHaveCount(0);
-  expect(new URL(page.url()).searchParams.getAll("status")).toEqual(["terminal"]);
 });
 
 test("deletes selected terminals from Quick Actions", async ({ page }) => {
@@ -1624,7 +1610,7 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
     commandList.evaluate((element) => element.scrollHeight > element.clientHeight),
   ).toBe(true);
 
-  for (let index = 0; index < 14; index += 1) {
+  for (let index = 0; index < 16; index += 1) {
     await page.keyboard.press("ArrowDown");
   }
 
@@ -1642,12 +1628,12 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
   const scrolledDown = await commandList.evaluate((element) => element.scrollTop);
   expect(scrolledDown).toBeGreaterThan(0);
 
-  for (let index = 0; index < 14; index += 1) {
+  for (let index = 0; index < 15; index += 1) {
     await page.keyboard.press("ArrowUp");
   }
 
   const firstAction = page.getByRole("option", {
-    name: /^New terminal in directory…/,
+    name: /^Delete selected terminals/,
   });
   await expect(firstAction).toHaveAttribute("aria-selected", "true");
   await expect.poll(() =>
@@ -1663,13 +1649,13 @@ test("keeps the Quick Actions keyboard selection in the scroll viewport", async 
     .toBeLessThan(scrolledDown);
 });
 
-test("command-selects terminal panes and keeps one active pane on mobile", async ({ page }) => {
+test("preserves server-selected terminal panes and keeps one active pane on mobile", async ({ page }) => {
   await clearSessions(page);
   const first = await createSession(page, "Left");
   const second = await createSession(page, "Right");
+  await replaceSharedSelection(page, [first.id, second.id], second.id);
 
   await page.goto("/?token=test-token");
-  await page.getByRole("button", { name: "Select Right" }).click({ modifiers: ["Meta"] });
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await expect(page.getByLabel("Left terminal")).toBeVisible();
   await expect(page.getByLabel("Right terminal")).toBeVisible();
@@ -1769,19 +1755,21 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   const claude = await createSession(page, "Claude");
   await createSession(page, "Shell");
   await reportAgent(page, codex.id, "codex", "Review persistence");
-  await reportAgent(page, claude.id, "claude", "Check shortcuts");
+  await replaceSharedSelection(page, [codex.id, claude.id], codex.id);
 
   await page.goto("/?token=test-token");
-  const codexItem = page.getByRole("button", { name: "Select Codex" });
-  const claudeItem = page.getByRole("button", { name: "Select Claude" });
+  const tmpGroup = await projectGroup(page, "/tmp");
+  const codexItem = tmpGroup.getByRole("button", { name: /^Select Codex/ });
+  const claudeItem = tmpGroup.getByRole("button", { name: /^Select Claude/ });
   await expect(codexItem.getByText("Review persistence", { exact: true })).toBeVisible();
-  await expect(claudeItem.getByText("Check shortcuts", { exact: true })).toBeVisible();
+  await expect(claudeItem).toBeVisible();
+  await expect(claudeItem).toHaveAttribute("data-unread", "false");
   await expect(page.getByRole("img", { name: "Codex" })).toHaveCount(0);
   await expect(page.getByRole("img", { name: "Claude" })).toHaveCount(0);
-  await expect(codexItem).not.toContainText("Codex");
-  await expect(codexItem).not.toContainText("~/work/euphony");
-  await expect(page.getByRole("heading", { name: "~/work/euphony" }).first()).toBeVisible();
-  await page.getByRole("checkbox", { name: "Include Claude in split" }).click();
+  await expect(codexItem).toContainText("Codex");
+  await expect(codexItem).not.toContainText("/tmp");
+  await expect(tmpGroup.getByRole("heading", { name: "/tmp", exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);
   await expect(page.locator(".terminal-pane")).toHaveCount(2);
   await codexItem.click();
   const codexPane = page.getByLabel("Codex pane", { exact: true });
@@ -1883,7 +1871,7 @@ test("persists sidebar controls, settings, and tmux-style commands", async ({ pa
   await expect(page.getByRole("checkbox", { name: "Unlimited history" })).toBeChecked();
   await expect(page.getByLabel("History buffer")).toBeDisabled();
   await page.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("button", { name: "Select Codex" }).click();
+  await codexItem.click();
   await codexPane.locator(".xterm-helper-textarea").focus();
   await page.keyboard.press("Control+J");
   await expect(page.getByRole("tab", { name: "Agent log" })).toHaveAttribute("data-active");
