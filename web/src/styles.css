@@ -5692,6 +5692,10 @@ input {
   border-left-color: var(--foreground);
 }
 
+.project-session-row[data-attention="true"] .project-session-select {
+  padding-right: 1.4rem;
+}
+
 .project-session-status-icon {
   grid-row: 1 / span 2;
   width: 0.85rem;

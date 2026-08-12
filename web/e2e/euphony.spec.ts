@@ -528,11 +528,105 @@ test("creates and refines a task without bypassing project-first agent starts", 
   await page.getByRole("button", { name: "Apply refinement" }).click();
   await expect(page.getByLabel("Title")).toHaveValue("Document the complete task workflow");
 
+  let startRequested = false;
+  await page.route(`**/api/tasks/${createdTask.id}/start`, async (route) => {
+    startRequested = true;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "project_boundary_bypassed" }),
+    });
+  });
   await page.getByRole("button", { name: "Start agent", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText(
     "Start new agents from a project in the sidebar.",
   );
   await expect(page.getByText("No agent terminal linked.", { exact: true })).toBeVisible();
+  expect(startRequested).toBe(false);
+});
+
+test("keeps the legacy Tasks agent workflow when the project API is unavailable", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  await clearTasks(page);
+  const terminal = await createSession(page, "Legacy task agent", "/tmp");
+  await replaceSharedSelection(page, [terminal.id], terminal.id);
+  await page.route("**/api/projects", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "projects_unavailable" }),
+    });
+  });
+  await page.goto("/?token=test-token");
+
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  const dialog = page.getByRole("dialog", { name: "New task" });
+  await dialog.getByLabel("Title").fill("Run the legacy task flow");
+  await dialog.getByLabel("Description").fill("Verify compatibility while projects are unavailable.");
+  await dialog.getByRole("button", { name: "Create task" }).click();
+
+  const taskResponse = await page.request.get("/api/tasks", {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  const [createdTask] = await taskResponse.json() as Array<{
+    id: string;
+    title: string;
+    description: string;
+    priority: "low" | "medium" | "high";
+    status: "todo" | "in_progress" | "blocked" | "done";
+    updates: Array<unknown>;
+  }>;
+  const startedTask = {
+    ...createdTask,
+    terminalId: terminal.id,
+    agent: "codex",
+    status: "in_progress" as const,
+    updates: [{
+      id: "legacy-task-started",
+      taskId: createdTask.id,
+      terminalId: terminal.id,
+      kind: "system",
+      body: "Started codex agent.",
+      createdAt: "2026-08-05T00:01:00Z",
+    }],
+  };
+  await page.route(`**/api/tasks/${createdTask.id}/start`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(startedTask),
+    });
+  });
+  await page.getByRole("button", { name: "Start agent", exact: true }).click();
+  await expect(page.getByText("Started codex agent.", { exact: true })).toBeVisible();
+
+  const communicatedTask = {
+    ...startedTask,
+    updates: [...startedTask.updates, {
+      id: "legacy-task-instruction",
+      taskId: createdTask.id,
+      terminalId: terminal.id,
+      kind: "user_instruction",
+      body: "Run the compatibility tests.",
+      createdAt: "2026-08-05T00:02:00Z",
+    }],
+  };
+  await page.route(`**/api/tasks/${createdTask.id}/prompt`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(communicatedTask),
+    });
+  });
+  await page.getByLabel("Instruction for agent").fill("Run the compatibility tests.");
+  await page.getByRole("button", { name: "Send instruction" }).click();
+  await expect(page.getByText("Run the compatibility tests.", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Open terminal" }).click();
+  await expect(page.getByLabel("Legacy task agent terminal", { exact: true })).toBeVisible();
 });
 
 test("keeps sidebar actions visible while the terminal tree scrolls", async ({
@@ -1353,7 +1447,7 @@ test("keeps project headers and session rows compact", async ({ page }) => {
   expect(headerBox).not.toBeNull();
   expect(terminalBox).not.toBeNull();
   expect(headerBox!.height).toBeLessThanOrEqual(44);
-  expect(terminalBox!.height).toBeLessThanOrEqual(64);
+  expect(terminalBox!.height).toBeLessThanOrEqual(60);
 });
 
 test("indents project session rows beneath project headers", async ({ page }) => {
