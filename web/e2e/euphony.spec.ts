@@ -1549,6 +1549,7 @@ test("indents project session rows beneath project headers", async ({ page }) =>
 
 test("uses a flush black workspace with only a divider between panes", async ({ page }) => {
   await clearSessions(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
   await createSession(page, "Left");
   await createSession(page, "Right");
   const sessions = await page.request.get("/api/sessions", {
@@ -1617,6 +1618,11 @@ test("uses a flush black workspace with only a divider between panes", async ({ 
     borderLeft: "1px",
   });
   expect(layout.dividerDelta).toBeLessThanOrEqual(0.5);
+
+  const splitDivider = page.locator(".terminal-pane").nth(1);
+  await expect(splitDivider).toHaveCSS("border-left-color", "rgb(38, 38, 38)");
+  await splitDivider.hover();
+  await expect(splitDivider).toHaveCSS("border-left-color", "rgb(115, 115, 115)");
 });
 
 test("opens Quick Actions with Command-K but not Control-K", async ({ page }) => {

@@ -51,3 +51,26 @@ test("keeps project session rows flush with the project list", () => {
 
   expect(rowRule).toContain("margin-left: 0;");
 });
+
+function latestRule(selector: string, requiredDeclaration?: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rules = [
+    ...stylesheet.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g")),
+  ];
+  return rules
+    .map((rule) => rule[1])
+    .reverse()
+    .find((body) => !requiredDeclaration || body.includes(requiredDeclaration)) ?? "";
+}
+
+test("renders pane splits as one gray line with a light-gray hover state", () => {
+  const splitRule = latestRule(
+    ".terminal-pane + .terminal-pane",
+    "border-left: 1px solid var(--border);",
+  );
+  expect(splitRule).toContain("border-left: 1px solid var(--border);");
+  expect(splitRule).not.toMatch(/border-(top|right|bottom):/);
+
+  const hoverRule = latestRule(".terminal-pane + .terminal-pane:hover");
+  expect(hoverRule).toContain("border-left-color: #737373;");
+});

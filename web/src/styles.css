@@ -2907,6 +2907,10 @@ input:focus-visible,
   border-left: 1px solid var(--border);
 }
 
+.terminal-pane + .terminal-pane:hover {
+  border-left-color: #737373;
+}
+
 .pane-carousel-control {
   position: absolute;
   z-index: 7;
