@@ -32,6 +32,7 @@ const defaultSettings: Settings = {
   terminalCursorBlink: false,
   terminalScrollSensitivity: 3,
   terminalOptionAsAlt: true,
+  codingAgent: "codex",
   agentSummaryProvider: "codex",
   agentSummaryOpenAIEffort: "low",
   agentSummaryPrompt: "Focus on risks and next steps.",
@@ -1054,9 +1055,9 @@ test("does not let the startup summary snapshot overwrite an earlier SSE update"
     data: liveSummary,
   }) + "\n"));
   await user.click(screen.getByRole("button", { name: "Inbox" }));
-  expect(await screen.findByText(liveSummary.summary)).toBeInTheDocument();
+  expect((await screen.findAllByText(liveSummary.summary)).length).toBeGreaterThan(0);
   releaseSummary?.();
-  await waitFor(() => expect(screen.getByText(liveSummary.summary)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getAllByText(liveSummary.summary).length).toBeGreaterThan(0));
   expect(screen.queryByText(staleSummary.summary)).not.toBeInTheDocument();
   eventController?.close();
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
@@ -1100,7 +1101,7 @@ test("retries the startup summary load when opening Agents after a failure", asy
   await waitFor(() => expect(summaryRequestCount).toBe(1));
   await user.click(screen.getByRole("button", { name: "Inbox" }));
   await waitFor(() => expect(summaryRequestCount).toBe(2));
-  expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect((await screen.findAllByText(summary.summary)).length).toBeGreaterThan(0);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
 });
@@ -1153,7 +1154,7 @@ test("keeps a failed agent read unread while still opening its terminal", async 
   expect(await screen.findByLabelText("Claude terminal pane")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Inbox" }));
-  expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect((await screen.findAllByText(summary.summary)).length).toBeGreaterThan(0);
   expect(await screen.findByRole("alert")).toHaveTextContent("The read failed.");
   expect(screen.getByTestId("agent-summary-card-session-2")).toHaveAttribute("data-unread", "true");
   expect(fetchMock).toHaveBeenCalledWith(
@@ -1225,7 +1226,7 @@ test("keeps an updated summary in Action required while changing its unread weig
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(eventController).toBeDefined());
   await user.click(screen.getByRole("button", { name: "Inbox" }));
-  expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
+  expect(screen.getAllByText(readSummary.summary).length).toBeGreaterThan(0);
 
   eventController?.enqueue(encoder.encode(JSON.stringify({
     sequence: 10,
@@ -1237,7 +1238,7 @@ test("keeps an updated summary in Action required while changing its unread weig
   await waitFor(() => {
     expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
   });
-  expect(screen.getByText(unreadSummary.summary)).toBeInTheDocument();
+  expect(screen.getAllByText(unreadSummary.summary).length).toBeGreaterThan(0);
   eventController?.close();
 });
 
@@ -1307,7 +1308,7 @@ test("reloads agent summaries after an SSE reconnect", async () => {
     expect(eventControllers).toHaveLength(1);
   });
   await user.click(screen.getByRole("button", { name: "Inbox" }));
-  expect(screen.getByText(readSummary.summary)).toBeInTheDocument();
+  expect(screen.getAllByText(readSummary.summary).length).toBeGreaterThan(0);
 
   eventControllers[0].close();
   await waitFor(() => expect(summaryLoads).toBe(2), { timeout: 2_000 });
@@ -1431,7 +1432,7 @@ test("retries agent summaries after an initial load failure when Agents opens", 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   await waitFor(() => expect(summaryLoads).toBe(1));
   await user.click(screen.getByRole("button", { name: "Inbox" }));
-  expect(await screen.findByText(summary.summary)).toBeInTheDocument();
+  expect((await screen.findAllByText(summary.summary)).length).toBeGreaterThan(0);
   expect(summaryLoads).toBe(2);
   expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
 });
@@ -1525,7 +1526,7 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
     expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
   });
 
-  expect(await screen.findByText(unreadSummary.summary)).toBeInTheDocument();
+  expect((await screen.findAllByText(unreadSummary.summary)).length).toBeGreaterThan(0);
 
   releaseRead?.();
   await waitFor(() => {
@@ -1533,7 +1534,7 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
       "aria-selected",
       "true",
     );
-    expect(screen.getByText(unreadSummary.summary)).toBeInTheDocument();
+    expect(screen.getAllByText(unreadSummary.summary).length).toBeGreaterThan(0);
     expect(screen.queryByText(readSummary.summary)).not.toBeInTheDocument();
   });
   await user.click(screen.getByRole("button", { name: "Open terminal" }));
@@ -1618,12 +1619,12 @@ test("restores a selected Inbox item from its URL", async () => {
   );
 
   expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
-  expect(screen.getByText(secondSummary.summary)).toBeVisible();
+  expect(screen.getAllByText(secondSummary.summary).length).toBeGreaterThan(0);
   expect(window.location.pathname).toBe("/inbox/session-2");
 
   await user.click(screen.getByRole("button", { name: "Open Implement v0.2" }));
   expect(window.location.pathname).toBe("/inbox/session-1");
-  expect(screen.getByText(firstSummary.summary)).toBeVisible();
+  expect(screen.getAllByText(firstSummary.summary).length).toBeGreaterThan(0);
 });
 
 test("restores and updates a selected Tasks item from its URL", async () => {
@@ -2307,7 +2308,7 @@ test("starts an agent from a project section", async () => {
   render(
     <App
       initialToken="valid-token"
-      initialSettings={defaultSettings}
+      initialSettings={{ ...defaultSettings, codingAgent: "claude" }}
       syncSelection={false}
       syncEvents={false}
       renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
@@ -2317,8 +2318,7 @@ test("starts an agent from a project section", async () => {
   await user.click(await screen.findByRole("button", {
     name: `Start agent in ${project.path}`,
   }));
-  expect(screen.getByRole("dialog", { name: "Start an agent" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Start Codex agent" }));
+  expect(screen.queryByRole("dialog", { name: "Start an agent" })).not.toBeInTheDocument();
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
@@ -2326,8 +2326,116 @@ test("starts an agent from a project section", async () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+  expect(fetchMock).toHaveBeenCalledWith(
+    `/api/v1/agents/${created.id}/start`,
+    expect.objectContaining({
+      body: JSON.stringify({
+        kind: "claude",
+        args: [],
+        timeoutMs: 30_000,
+      }),
+    }),
+  );
   expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
-  expect(screen.queryByRole("dialog", { name: "Start an agent" })).not.toBeInTheDocument();
+});
+
+test("shows the selected session information beside the terminal", async () => {
+  const project: Project = {
+    id: "project-info",
+    path: "/workspace/info-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const session: Session = {
+    ...plainTerminalSession,
+    id: "session-info",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "waiting",
+  };
+  const summary: AgentSummary = {
+    terminalId: session.id,
+    provider: "codex",
+    status: "waiting",
+    purpose: "Review the release changes",
+    summary: "The release branch is ready for final checks.",
+    action: "Run the release test suite",
+    generatedAt: "2026-08-12T00:01:00Z",
+    unread: true,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    if (input === "/api/sessions") return jsonResponse([session]);
+    if (input === "/api/projects") return jsonResponse([project]);
+    if (input === "/api/agent-summaries") return jsonResponse([summary]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(item) => <div aria-label={`${item.name} terminal pane`} />}
+    />,
+  );
+
+  const info = await screen.findByRole("region", { name: "Session information" });
+  await waitFor(() => {
+    expect(info).toHaveTextContent("Review the release changes");
+    expect(info).toHaveTextContent("The release branch is ready for final checks.");
+    expect(info).toHaveTextContent("Run the release test suite");
+  });
+  expect(screen.getByLabelText("Terminal terminal pane")).toBeVisible();
+  const divider = screen.getByRole("separator", { name: "Resize session information" });
+  expect(divider).toHaveAttribute("aria-valuenow", "320");
+
+  fireEvent.pointerDown(divider, { clientX: 320 });
+  fireEvent.pointerMove(document, { clientX: 400 });
+  fireEvent.pointerUp(document, { clientX: 400 });
+
+  await waitFor(() => expect(divider).toHaveAttribute("aria-valuenow", "400"));
+  expect(fetchMock).toHaveBeenCalled();
+});
+
+test("selects the coding agent in Settings", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (input === "/api/settings" && init?.method === "PATCH") {
+      return jsonResponse(JSON.parse(String(init.body)));
+    }
+    if (input === "/api/settings") return jsonResponse(defaultSettings);
+    return jsonResponse([runningSession]);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: /Select Codex/ }));
+  await screen.findByLabelText("Codex terminal pane");
+  await user.click(screen.getByRole("button", { name: "Open settings" }));
+
+  const codingAgent = screen.getByLabelText("Coding agent");
+  expect(codingAgent).toHaveValue("codex");
+  await user.selectOptions(codingAgent, "claude");
+  await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.stringContaining('"codingAgent":"claude"'),
+      }),
+    );
+  });
 });
 
 test("creates a terminal in the cwd chosen from the sidebar", async () => {
@@ -2410,7 +2518,9 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
     }),
   );
   expect(await screen.findByRole("button", { name: "Select Claude" })).toHaveAttribute("aria-current", "true");
-  await user.click(screen.getByRole("button", { name: "Delete Claude" }));
+  fireEvent.contextMenu(screen.getByRole("button", { name: "Select Claude" }));
+  let sessionMenu = screen.getByRole("menu", { name: "Actions for Claude" });
+  await user.click(within(sessionMenu).getByRole("menuitem", { name: "Delete" }));
 
   expect(screen.getByRole("dialog", { name: "Delete terminal?" })).toBeVisible();
   expect(screen.getByText(/“Claude” will be stopped/)).toBeVisible();
@@ -2420,14 +2530,16 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   expect(screen.queryByRole("dialog", { name: "Delete terminal?" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Delete Claude" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Select Claude" })).toBeVisible();
   expect(fetchMock).toHaveBeenCalledTimes(4);
 
-  await user.click(screen.getByRole("button", { name: "Delete Claude" }));
+  fireEvent.contextMenu(screen.getByRole("button", { name: "Select Claude" }));
+  sessionMenu = screen.getByRole("menu", { name: "Actions for Claude" });
+  await user.click(within(sessionMenu).getByRole("menuitem", { name: "Delete" }));
   await user.click(screen.getByRole("button", { name: "Delete terminal" }));
 
   await waitFor(() => {
-    expect(screen.queryByRole("button", { name: "Delete Claude" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select Claude" })).not.toBeInTheDocument();
   });
   expect(fetchMock).toHaveBeenCalledTimes(5);
   expect(fetchMock).toHaveBeenNthCalledWith(
@@ -2671,7 +2783,7 @@ test("renames the focused selected terminal from Quick Actions and updates the s
     expect(screen.getByText("Renamed Claude")).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "Rename terminal" })).not.toBeInTheDocument();
   });
-  expect(screen.queryByText("Needs approval")).not.toBeInTheDocument();
+  expect(document.querySelector(".desktop-sidebar")).not.toHaveTextContent("Needs approval");
   expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions:v1") ?? "[]"))
     .toContain("rename-terminal");
   expect(fetchMock.mock.calls.filter(
@@ -3400,11 +3512,10 @@ test("restores pinned filters from URL state", async () => {
   ]);
 });
 
-test("pane rail checkboxes remove selected terminals and allow an empty workspace", async () => {
+test("does not render terminal pane deselection checkboxes", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession]),
   );
-  const user = userEvent.setup();
   render(
     <App syncSelection={false}
       initialToken="valid-token"
@@ -3414,34 +3525,10 @@ test("pane rail checkboxes remove selected terminals and allow an empty workspac
   );
 
   await screen.findByLabelText("Codex terminal pane");
-  fireEvent.click(screen.getByRole("button", { name: "Select Claude" }), {
-    metaKey: true,
-  });
-  await screen.findByLabelText("Claude terminal pane");
-
-  await user.click(screen.getByRole("checkbox", { name: "Deselect Claude" }));
-
-  expectTerminalPaneHidden("Claude terminal pane");
-  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
-  let parameters = new URLSearchParams(window.location.search);
-  expect(parameters.getAll("terminal")).toEqual(["session-1"]);
-  expect(parameters.get("focus")).toBe("session-1");
-
-  await user.click(screen.getByRole("checkbox", { name: "Deselect Codex" }));
-
-  expectTerminalPaneHidden("Codex terminal pane");
-  const emptyStateTitle = screen.getByRole("heading", { name: "No signal yet." });
-  expect(emptyStateTitle).toHaveClass("empty-state-title");
-  expect(emptyStateTitle.closest(".empty-state-card")).not.toBeNull();
-  const startButton = screen.getByRole("button", { name: "Start a terminal" });
-  expect(startButton).toHaveClass("empty-state-action");
-  expect(startButton).toHaveAttribute("data-slot", "button");
-  parameters = new URLSearchParams(window.location.search);
-  expect(parameters.getAll("terminal")).toEqual([]);
-  expect(parameters.has("focus")).toBe(false);
+  expect(screen.queryByRole("checkbox", { name: /Deselect/ })).not.toBeInTheDocument();
 });
 
-test("deselecting an unfocused pane preserves the current focus", async () => {
+test("keeps the focused pane visible without a terminal pane checkbox", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession, secondRunningSession, thirdRunningSession]),
   );
@@ -3465,22 +3552,13 @@ test("deselecting an unfocused pane preserves the current focus", async () => {
     "true",
   );
 
-  fireEvent.click(screen.getByRole("checkbox", {
-    name: "Deselect Claude",
-    hidden: true,
-  }));
-
-  expectTerminalPaneHidden("session-2 terminal pane");
-  expect(screen.getByLabelText("Terminal pane")).toHaveAttribute(
-    "data-active",
-    "true",
-  );
+  expect(screen.queryByRole("checkbox", { name: /Deselect/ })).not.toBeInTheDocument();
   expect(new URLSearchParams(window.location.search).get("focus")).toBe(
     "session-3",
   );
 });
 
-test("deselecting a filter-owned unfocused pane preserves the current focus", async () => {
+test("keeps a filter-owned pane focused without a terminal pane checkbox", async () => {
   history.replaceState(null, "", "/?terminal=session-1&status=running");
   const fourthRunningSession = {
     ...thirdRunningSession,
@@ -3511,16 +3589,7 @@ test("deselecting a filter-owned unfocused pane preserves the current focus", as
     "true",
   );
 
-  fireEvent.click(screen.getByRole("checkbox", {
-    name: "Deselect Terminal",
-    hidden: true,
-  }));
-
-  expectTerminalPaneHidden("session-3 terminal pane");
-  expect(screen.getByLabelText("Fourth pane")).toHaveAttribute(
-    "data-active",
-    "true",
-  );
+  expect(screen.queryByRole("checkbox", { name: /Deselect/ })).not.toBeInTheDocument();
   expect(new URLSearchParams(window.location.search).get("focus")).toBe(
     "session-4",
   );

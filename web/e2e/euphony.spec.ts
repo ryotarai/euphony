@@ -48,6 +48,7 @@ async function clearSessions(page: Page) {
       terminalCursorBlink: false,
       terminalScrollSensitivity: 3,
       terminalOptionAsAlt: true,
+      codingAgent: "codex",
     },
   });
   expect(settingsResponse.ok()).toBe(true);
@@ -405,12 +406,31 @@ test("renders an agent summary inside its project and follows the row", async ({
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
   const tmpGroup = await projectGroup(page, "/tmp");
   await expect(tmpGroup.getByRole("heading", { name: "/tmp", exact: true })).toBeVisible();
-  await expect(page.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Approve the requested change.", { exact: true })).toBeVisible();
+  await expect(tmpGroup.getByText("The agent is waiting for approval.", { exact: true })).toBeVisible();
+  await expect(tmpGroup.getByText("Approve the requested change.", { exact: true })).toBeVisible();
   const row = page.getByRole("button", {
     name: /Select Claude.*Approve the requested change\./,
   });
   await expect(row).toHaveAttribute("data-unread", "true");
+  const info = page.getByRole("region", { name: "Session information" });
+  await expect(info).toContainText("Purpose");
+  await expect(info).toContainText("Summary");
+  await expect(info).toContainText("Action");
+  const divider = page.getByRole("separator", { name: "Resize session information" });
+  const dividerBounds = await divider.boundingBox();
+  expect(dividerBounds).not.toBeNull();
+  const initialInfoWidth = Number(await divider.getAttribute("aria-valuenow"));
+  const dividerX = dividerBounds!.x + dividerBounds!.width / 2;
+  await page.mouse.move(dividerX, dividerBounds!.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(dividerX + 64, dividerBounds!.y + 24);
+  await page.mouse.up();
+  await expect(divider).toHaveAttribute("aria-valuenow", String(initialInfoWidth + 64));
+  await expect(page.getByRole("checkbox", { name: /Deselect/ })).toHaveCount(0);
+  await row.click({ button: "right" });
+  await expect(page.getByRole("menu", { name: "Actions for Claude" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu", { name: "Actions for Claude" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: /Done/ })).toHaveCount(0);
   await expect(page).not.toHaveURL(/\/inbox/);
@@ -438,9 +458,7 @@ test("starts an agent from a persisted project action", async ({ page }) => {
   await page.goto("/?token=test-token");
 
   await page.getByRole("button", { name: `Start agent in ${project.path}`, exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Start an agent" });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Start Codex agent" }).click();
+  await expect(page.getByRole("dialog", { name: "Start an agent" })).toHaveCount(0);
 
   await expect(page.getByRole("button", { name: "Select Terminal" })).toBeVisible();
   await expect.poll(() => startRequest).toEqual({

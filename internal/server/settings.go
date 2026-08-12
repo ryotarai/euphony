@@ -34,6 +34,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorBlink       *bool    `json:"terminalCursorBlink"`
 		TerminalScrollSensitivity float64  `json:"terminalScrollSensitivity"`
 		TerminalOptionAsAlt       *bool    `json:"terminalOptionAsAlt"`
+		CodingAgent               *string  `json:"codingAgent"`
 		AgentSummaryProvider      *string  `json:"agentSummaryProvider"`
 		AgentSummaryPrompt        *string  `json:"agentSummaryPrompt"`
 		AgentSummaryOpenAIEffort  *string  `json:"agentSummaryOpenAIEffort"`
@@ -49,6 +50,13 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.AgentSummaryProvider != nil {
 		provider = *input.AgentSummaryProvider
+	}
+	codingAgent := currentSettings.CodingAgent
+	if codingAgent == "" {
+		codingAgent = session.DefaultCodingAgent
+	}
+	if input.CodingAgent != nil {
+		codingAgent = *input.CodingAgent
 	}
 	agentSummaryPrompt := currentSettings.AgentSummaryPrompt
 	if input.AgentSummaryPrompt != nil {
@@ -78,6 +86,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		!validTerminalScrollSensitivity(input.TerminalScrollSensitivity) ||
 		input.TerminalOptionAsAlt == nil ||
 		!validAgentSummaryProvider(provider) ||
+		!validCodingAgent(codingAgent) ||
 		!validAgentSummaryOpenAIEffort(effort) ||
 		(input.AgentSummaryPrompt != nil && utf8.RuneCountInString(*input.AgentSummaryPrompt) > 8000) {
 		writeError(w, http.StatusBadRequest, "invalid_settings", "Provide valid Euphony settings.")
@@ -98,6 +107,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		TerminalCursorBlink:       *input.TerminalCursorBlink,
 		TerminalScrollSensitivity: int(input.TerminalScrollSensitivity),
 		TerminalOptionAsAlt:       *input.TerminalOptionAsAlt,
+		CodingAgent:               codingAgent,
 		AgentSummaryProvider:      provider,
 		AgentSummaryPrompt:        agentSummaryPrompt,
 		AgentSummaryOpenAIEffort:  effort,
@@ -143,6 +153,10 @@ func validTerminalScrollSensitivity(value float64) bool {
 
 func validAgentSummaryProvider(value string) bool {
 	return value == "openai" || value == "claude" || value == "codex"
+}
+
+func validCodingAgent(value string) bool {
+	return value == "codex" || value == "claude"
 }
 
 func validAgentSummaryOpenAIEffort(value string) bool {

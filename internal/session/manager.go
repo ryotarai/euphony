@@ -129,6 +129,7 @@ type Settings struct {
 	TerminalCursorBlink       bool    `json:"terminalCursorBlink"`
 	TerminalScrollSensitivity int     `json:"terminalScrollSensitivity"`
 	TerminalOptionAsAlt       bool    `json:"terminalOptionAsAlt"`
+	CodingAgent               string  `json:"codingAgent"`
 	AgentSummaryProvider      string  `json:"agentSummaryProvider"`
 	AgentSummaryPrompt        string  `json:"agentSummaryPrompt"`
 	AgentSummaryOpenAIEffort  string  `json:"agentSummaryOpenAIEffort"`
@@ -145,6 +146,7 @@ const (
 	DefaultTerminalScrollSensitivity = 3
 	DefaultTerminalOptionAsAlt       = true
 	DefaultAgentSummaryProvider      = "codex"
+	DefaultCodingAgent               = "codex"
 	DefaultAgentSummaryPrompt        = ""
 	DefaultAgentSummaryOpenAIEffort  = "low"
 )
@@ -164,6 +166,7 @@ func DefaultSettings() Settings {
 		TerminalCursorBlink:       DefaultTerminalCursorBlink,
 		TerminalScrollSensitivity: DefaultTerminalScrollSensitivity,
 		TerminalOptionAsAlt:       DefaultTerminalOptionAsAlt,
+		CodingAgent:               DefaultCodingAgent,
 		AgentSummaryProvider:      DefaultAgentSummaryProvider,
 		AgentSummaryPrompt:        DefaultAgentSummaryPrompt,
 		AgentSummaryOpenAIEffort:  DefaultAgentSummaryOpenAIEffort,

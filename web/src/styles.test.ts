@@ -34,3 +34,20 @@ test("defines project sidebar unread and action selectors", () => {
   expect(stylesheet).toContain(".project-create-agent");
   expect(stylesheet).toContain("prefers-reduced-motion: reduce");
 });
+
+test("keeps project paths aligned to the visible tail", () => {
+  const headingRule = stylesheet.match(
+    /\.project-sidebar-header h2\s*\{([\s\S]*?)\}/,
+  )?.[1] ?? "";
+
+  expect(headingRule).toContain("direction: rtl;");
+  expect(headingRule).toContain("text-align: right;");
+});
+
+test("keeps project session rows flush with the project list", () => {
+  const rowRule = stylesheet.match(
+    /\.project-session-row\s*\{([\s\S]*?)\}/,
+  )?.[1] ?? "";
+
+  expect(rowRule).toContain("margin-left: 0;");
+});

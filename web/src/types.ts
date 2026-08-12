@@ -27,6 +27,7 @@ export interface Session {
 }
 
 export type AgentSummaryProvider = "openai" | "codex" | "claude";
+export type CodingAgent = "codex" | "claude";
 export type AgentSummaryOpenAIEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type AgentSummaryPriority = "high" | "medium" | "low";
 
@@ -131,6 +132,7 @@ export interface Settings {
   terminalCursorBlink: boolean;
   terminalScrollSensitivity: number;
   terminalOptionAsAlt: boolean;
+  codingAgent: CodingAgent;
   agentSummaryProvider: AgentSummaryProvider;
   agentSummaryOpenAIEffort?: AgentSummaryOpenAIEffort;
   agentSummaryPrompt: string;

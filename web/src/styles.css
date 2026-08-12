@@ -156,7 +156,11 @@ input {
   width: 100%;
   height: 100dvh;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns:
+    auto
+    minmax(220px, var(--session-info-width, 320px))
+    9px
+    minmax(0, 1fr);
   overflow: hidden;
   background: #111417;
 }
@@ -491,6 +495,179 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.session-info-pane {
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid #293038;
+  border-right: 1px solid #293038;
+  background: #161b20;
+  color: var(--foreground);
+}
+
+.session-info-header {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1.1rem 1rem 0.9rem;
+  border-bottom: 1px solid #293038;
+}
+
+.session-info-kicker {
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-info-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.session-info-identity h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.session-info-cwd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.session-info-status {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  color: #829099;
+}
+
+.session-info-status-running {
+  color: #9be15d;
+}
+
+.session-info-status-waiting {
+  color: #fbbf24;
+}
+
+.session-info-status-blocked,
+.session-info-status-failed {
+  color: #f87171;
+}
+
+.session-info-status-terminal,
+.session-info-status-starting {
+  color: #94a3b8;
+}
+
+.session-info-status-exited {
+  color: #64748b;
+}
+
+.session-info-fields {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 1rem;
+}
+
+.session-info-fields > div {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.session-info-fields dt {
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.session-info-fields dd {
+  min-width: 0;
+  margin: 0;
+  color: #dce5e8;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.session-info-fields .session-info-action {
+  border-left: 2px solid hsl(40 90% 58% / 0.75);
+  padding-left: 0.55rem;
+  color: hsl(40 90% 68%);
+}
+
+.session-info-empty {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.1rem 1rem;
+}
+
+.session-info-empty p {
+  margin: 0;
+  color: #829099;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.session-info-resizer {
+  position: relative;
+  z-index: 3;
+  grid-column: 3;
+  min-width: 9px;
+  min-height: 0;
+  padding: 0;
+  cursor: col-resize;
+  touch-action: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.session-info-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 4px;
+  background: #293038;
+  transition: background 120ms ease;
+}
+
+.session-info-resizer:hover::after,
+.session-info-resizer:focus-visible::after,
+.session-info-resizer[data-resizing="true"]::after {
+  background: #b8f34a;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .session-info-pane,
+  .session-info-resizer {
+    display: none;
+  }
 }
 
 .terminal-pane {
@@ -3168,16 +3345,6 @@ input {
   align-items: center;
 }
 
-.terminal-tab-selection {
-  width: 0.875rem;
-  height: 0.875rem;
-  border-radius: 3px;
-}
-
-.terminal-tab-selection::after {
-  inset: -0.3rem;
-}
-
 .terminal-source-stage {
   position: relative;
   display: grid;
@@ -5546,8 +5713,7 @@ input {
 
 .project-add-project,
 .project-create-terminal,
-.project-create-agent,
-.project-session-delete {
+.project-create-agent {
   color: var(--muted-foreground);
   transition: color 120ms ease, background-color 120ms ease;
 }
@@ -5568,8 +5734,7 @@ input {
 
 .project-add-project svg,
 .project-create-terminal svg,
-.project-create-agent svg,
-.project-session-delete svg {
+.project-create-agent svg {
   width: 0.9rem;
   height: 0.9rem;
 }
@@ -5577,11 +5742,9 @@ input {
 .project-add-project:hover,
 .project-create-terminal:hover,
 .project-create-agent:hover,
-.project-session-delete:hover,
 .project-add-project:focus-visible,
 .project-create-terminal:focus-visible,
-.project-create-agent:focus-visible,
-.project-session-delete:focus-visible {
+.project-create-agent:focus-visible {
   color: var(--foreground);
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
@@ -5616,6 +5779,8 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  direction: rtl;
+  text-align: right;
   color: var(--muted-foreground);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.62rem;
@@ -5630,8 +5795,7 @@ input {
 }
 
 .project-create-terminal,
-.project-create-agent,
-.project-session-delete {
+.project-create-agent {
   display: inline-grid;
   min-width: 2rem;
   min-height: 2rem;
@@ -5677,11 +5841,9 @@ input {
 }
 
 .project-session-row {
-  display: flex;
+  display: block;
   min-width: 0;
-  align-items: stretch;
-  gap: 0.15rem;
-  margin-left: 0.65rem;
+  margin-left: 0;
 }
 
 .project-session-select {
@@ -5774,25 +5936,13 @@ input {
   font-weight: 700;
 }
 
-.project-session-delete {
-  flex: 0 0 auto;
-  align-self: center;
-  opacity: 0;
-}
-
-.project-session-row:hover .project-session-delete,
-.project-session-delete:focus-visible {
-  opacity: 1;
-}
-
 @media (max-width: 680px) {
   .project-sidebar {
     padding: 0 0.2rem;
   }
 
   .project-create-terminal,
-  .project-create-agent,
-  .project-session-delete {
+  .project-create-agent {
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
@@ -5805,8 +5955,36 @@ input {
 @media (prefers-reduced-motion: reduce) {
   .project-add-project,
   .project-create-terminal,
-  .project-create-agent,
-  .project-session-delete {
+  .project-create-agent {
     transition: none;
   }
+}
+
+.session-context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 9rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: #1b2026;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 35%);
+}
+
+.session-context-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  padding: 0.45rem 0.6rem;
+  color: var(--foreground);
+  text-align: left;
+  font-size: 0.72rem;
+}
+
+.session-context-menu button:hover,
+.session-context-menu button:focus-visible {
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+  outline: none;
 }
