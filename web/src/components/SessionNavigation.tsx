@@ -13,6 +13,7 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
+  ListIcon,
   ListTodoIcon,
   PlusIcon,
   Settings2Icon,
@@ -72,6 +73,7 @@ interface SessionNavigationProps {
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
+  onOpenAllSessions?(): void;
   tasksOpen?: boolean;
   focusedPaneID?: string | null;
   taskCount?: number;
@@ -426,6 +428,11 @@ function SessionNavigationContent({
     props.onOpenSettings?.();
   };
 
+  const openAllSessions = () => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenAllSessions?.();
+  };
+
   const openAgents = (event: React.MouseEvent<HTMLButtonElement>) => {
     const multiple = event.metaKey || event.ctrlKey;
     if (isMobile && !multiple) setOpenMobile(false);
@@ -581,6 +588,16 @@ function SessionNavigationContent({
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="All sessions"
+                aria-label="All sessions"
+                onClick={openAllSessions}
+              >
+                <ListIcon aria-hidden="true" />
+                <span>All sessions</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Settings"

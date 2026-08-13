@@ -3,6 +3,8 @@ import type {
   AgentLogRequest,
   AgentTranscript,
   AgentSummary,
+  AllSession,
+  AllSessionResumeResult,
   AnnotationComment,
   AnnotationResult,
   AnnotationSession,
@@ -40,6 +42,24 @@ export class ApiClient {
 
   listSessions(): Promise<Session[]> {
     return this.request("/api/sessions");
+  }
+
+  listAllSessions(): Promise<AllSession[]> {
+    return this.request("/api/all-sessions");
+  }
+
+  resumeAllSession(
+    agent: "codex" | "claude",
+    sessionID: string,
+    selectionMode: "none" | "add" | "replace" = "replace",
+  ): Promise<AllSessionResumeResult> {
+    return this.request(
+      `/api/all-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(sessionID)}/resume`,
+      {
+        method: "POST",
+        body: JSON.stringify({ selectionMode }),
+      },
+    );
   }
 
   listProjects(): Promise<Project[]> {

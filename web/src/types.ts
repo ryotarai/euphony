@@ -26,6 +26,25 @@ export interface Session {
   message?: string;
 }
 
+export interface AllSession {
+  id: string;
+  terminalId?: string;
+  agent?: "codex" | "claude";
+  sessionId?: string;
+  title: string;
+  purpose?: string;
+  summary?: string;
+  cwd: string;
+  project?: string;
+  updatedAt: string;
+  state: "open" | "resume";
+}
+
+export interface AllSessionResumeResult {
+  terminal: Session;
+  selection: SelectionSnapshot;
+}
+
 export type AgentSummaryProvider = "openai" | "codex" | "claude";
 export type CodingAgent = "codex" | "claude";
 export type AgentSummaryOpenAIEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";

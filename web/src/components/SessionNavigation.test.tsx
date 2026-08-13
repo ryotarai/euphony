@@ -797,3 +797,31 @@ test("opens settings from the desktop sidebar", async () => {
   await user.click(screen.getByRole("button", { name: "Open settings" }));
   expect(onOpenSettings).toHaveBeenCalledOnce();
 });
+
+test("places All sessions above Settings and closes the mobile drawer", async () => {
+  useMobileViewport();
+  const onOpenAllSessions = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenAllSessions={onOpenAllSessions}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Open terminal menu" }));
+  const drawer = screen.getByRole("dialog", { name: "Terminal menu" });
+  const allSessions = within(drawer).getByRole("button", { name: "All sessions" });
+  const settingsButton = within(drawer).getByRole("button", { name: "Open settings" });
+  expect(
+    allSessions.compareDocumentPosition(settingsButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  await user.click(allSessions);
+  expect(onOpenAllSessions).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
+});

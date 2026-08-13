@@ -5,6 +5,7 @@ import { App } from "./App";
 import { attentionTransitions } from "./sessionUtils";
 import type {
   AgentSummary,
+  AllSession,
   Project,
   SelectionSnapshot,
   Session,
@@ -3303,6 +3304,188 @@ test("browser navigation clears ownership from previous dynamic filters", async 
   expect(new URLSearchParams(window.location.search).getAll("status")).toEqual([
     "waiting",
   ]);
+});
+
+test("opens All sessions and selects an existing terminal", async () => {
+  const allSession: AllSession = {
+    id: "all-open",
+    terminalId: runningSession.id,
+    agent: "codex",
+    sessionId: "codex-open",
+    title: "Implement v0.2",
+    purpose: "Current terminal",
+    cwd: runningSession.cwd,
+    project: "Euphony",
+    updatedAt: "2026-08-13T00:00:00Z",
+    state: "open",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/all-sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([allSession]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "All sessions" }));
+  expect(await screen.findByRole("dialog", { name: "All sessions" })).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/all-sessions",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer valid-token" }),
+    }),
+  );
+
+  await user.click(screen.getByRole("button", { name: /Open terminal/ }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "All sessions" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("button", { name: "Select Codex" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+});
+
+test("resumes a history session once, applies returned selection, and closes the dialog", async () => {
+  const historySession: AllSession = {
+    id: "history-only",
+    agent: "codex",
+    sessionId: "history/codex",
+    title: "Resume the release work",
+    summary: "Continue from the previous run",
+    cwd: "/workspace/release",
+    updatedAt: "2026-08-13T01:00:00Z",
+    state: "resume",
+  };
+  const resumedTerminal: Session = {
+    ...runningSession,
+    id: "resumed-terminal",
+    name: "Resumed Codex",
+    cwd: historySession.cwd,
+    agentTitle: historySession.title,
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [resumedTerminal.id],
+    manualTerminalIds: [resumedTerminal.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: resumedTerminal.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 9,
+  };
+  let releaseResume!: (response: Response) => void;
+  const resumeResponse = new Promise<Response>((resolve) => {
+    releaseResume = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/all-sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([historySession]);
+    }
+    if (input === "/api/all-sessions/codex/history%2Fcodex/resume") {
+      return resumeResponse;
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "All sessions" }));
+  const resumeButton = await screen.findByRole("button", { name: /Resume session/ });
+  fireEvent.click(resumeButton);
+  fireEvent.click(resumeButton);
+  await waitFor(() => {
+    expect(fetchMock.mock.calls.filter(([input]) =>
+      input === "/api/all-sessions/codex/history%2Fcodex/resume",
+    )).toHaveLength(1);
+  });
+  expect(resumeButton).toBeDisabled();
+
+  releaseResume(jsonResponse({ terminal: resumedTerminal, selection }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "All sessions" })).not.toBeInTheDocument();
+  });
+  expect(await screen.findByLabelText("Resumed Codex terminal pane")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Select Resumed Codex" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+});
+
+test("keeps the All sessions dialog open when resume fails", async () => {
+  const historySession: AllSession = {
+    id: "stale-history",
+    agent: "claude",
+    sessionId: "stale/claude",
+    title: "Stale history",
+    cwd: "/workspace/stale",
+    updatedAt: "2026-08-13T02:00:00Z",
+    state: "resume",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/all-sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([historySession]);
+    }
+    if (input === "/api/all-sessions/claude/stale%2Fclaude/resume") {
+      return jsonResponse({ code: "stale_session", message: "The history entry disappeared." }, 404);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div>{session.name}</div>}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "All sessions" }));
+  await user.click(await screen.findByRole("button", { name: /Resume session/ }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The history entry disappeared.",
+  );
+  expect(screen.getByRole("dialog", { name: "All sessions" })).toBeVisible();
 });
 
 test("command-click selects multiple terminal panes and stores them in the URL", async () => {

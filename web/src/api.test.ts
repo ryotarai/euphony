@@ -1,6 +1,7 @@
 import { ApiClient } from "./api";
 import type {
   AgentSummary,
+  AllSession,
   AnnotationSession,
   Project,
   SelectionSnapshot,
@@ -51,6 +52,61 @@ test("reads and replaces the shared v1 selection envelope", async () => {
         filters: { statuses: [], cwds: [] },
         expectedRevision: 4,
       }),
+    }),
+  );
+});
+
+test("lists all sessions and resumes a history session with replacement selection", async () => {
+  const allSession: AllSession = {
+    id: "history-1",
+    agent: "codex",
+    sessionId: "session/one",
+    title: "Investigate the relay",
+    cwd: "/repo",
+    updatedAt: "2026-08-13T00:00:00Z",
+    state: "resume",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: ["terminal-1"],
+    manualTerminalIds: ["terminal-1"],
+    pinnedTerminalIds: [],
+    focusedTerminalId: "terminal-1",
+    filters: { statuses: [], cwds: [] },
+    revision: 5,
+  };
+  const terminal = {
+    id: "terminal-1",
+    name: "Codex",
+    state: "running" as const,
+    cwd: "/repo",
+    createdAt: "2026-08-13T00:00:01Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse([allSession]))
+    .mockImplementationOnce(() =>
+      jsonResponse({ terminal, selection }),
+    );
+  const api = new ApiClient("token");
+
+  expect(await api.listAllSessions()).toEqual([allSession]);
+  expect(await api.resumeAllSession("codex", "session/one")).toEqual({
+    terminal,
+    selection,
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/all-sessions",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/all-sessions/codex/session%2Fone/resume",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ selectionMode: "replace" }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
     }),
   );
 });
