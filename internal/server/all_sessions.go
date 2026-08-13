@@ -357,9 +357,12 @@ func truncateAllSessionName(value string) string {
 	if value == "" {
 		return ""
 	}
-	if utf8.RuneCountInString(value) <= 80 {
+	if len(value) <= 80 {
 		return value
 	}
-	runes := []rune(value)
-	return strings.TrimSpace(string(runes[:80]))
+	limit := 80
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return strings.TrimSpace(value[:limit])
 }

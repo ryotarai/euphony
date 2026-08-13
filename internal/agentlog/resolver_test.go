@@ -88,6 +88,25 @@ func TestResolverFindsCodexTranscriptByRolloutSuffix(t *testing.T) {
 	}
 }
 
+func TestResolverFindsArchivedCodexTranscript(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "codex", "sessions")
+	want := filepath.Join(filepath.Dir(root), "archived_sessions", "archived-session.jsonl")
+	writeTranscriptFixture(t, want)
+	resolver := NewResolver(root, "")
+
+	got, err := resolver.Resolve("codex", "archived-session", "")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	canonical, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+	if got != canonical {
+		t.Fatalf("Resolve() = %q, want archived transcript %q", got, canonical)
+	}
+}
+
 func TestResolverRejectsUnsafeOrEmptySessionID(t *testing.T) {
 	resolver := NewResolver(t.TempDir(), t.TempDir())
 	for _, sessionID := range []string{"", ".", "..", "../secret", "nested/session"} {

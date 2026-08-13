@@ -76,6 +76,24 @@ func TestResolverDiscoversClaudeProjectHistory(t *testing.T) {
 	}
 }
 
+func TestResolverDiscoversArchivedCodexHistory(t *testing.T) {
+	root := t.TempDir()
+	sessionsRoot := filepath.Join(root, "sessions")
+	archivedPath := filepath.Join(root, "archived_sessions", "archived-session.jsonl")
+	writeHistoryFile(t, archivedPath, strings.Join([]string{
+		`{"type":"session_meta","timestamp":"2026-08-13T07:00:00Z","payload":{"id":"archived-session","cwd":"/workspace/archived"}}`,
+		`{"type":"response_item","timestamp":"2026-08-13T07:01:00Z","payload":{"type":"message","role":"user","content":"Inspect archived work"}}`,
+	}, "\n"))
+
+	items, err := NewResolver(sessionsRoot, "").DiscoverHistory()
+	if err != nil {
+		t.Fatalf("DiscoverHistory() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Agent != "codex" || items[0].SessionID != "archived-session" {
+		t.Fatalf("archived history = %#v, want one archived Codex session", items)
+	}
+}
+
 func TestResolverSkipsMalformedHistoryRecords(t *testing.T) {
 	root := t.TempDir()
 	writeHistoryFile(t, filepath.Join(root, "valid-session.jsonl"), strings.Join([]string{
@@ -150,6 +168,35 @@ func writeHistoryFile(t *testing.T, path, contents string) {
 	}
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
+func TestHistoryScanBudgetStopsUnboundedDirectoryReads(t *testing.T) {
+	budget := historyScanBudget{}
+	for index := 0; index < maxHistoryScanFiles; index++ {
+		if !budget.reserve(1) {
+			t.Fatalf("reserve(%d) unexpectedly failed at file %d", 1, index)
+		}
+	}
+	if budget.reserve(1) || !budget.exhausted {
+		t.Fatalf("file budget = %#v, want exhausted", budget)
+	}
+
+	budget = historyScanBudget{}
+	for !budget.exhausted {
+		budget.reserve(maxHistoryWindowBytes)
+	}
+	if budget.bytes != maxHistoryScanBytes {
+		t.Fatalf("byte budget = %#v, want exhausted", budget)
+	}
+}
+
+func TestHistoryLinesKeepsTailRecordAtExactBoundary(t *testing.T) {
+	head := []byte(`{"type":"session_meta"}` + "\n")
+	tail := []byte(`{"type":"response_item"}` + "\n")
+	lines := historyLines(head, tail)
+	if len(lines) != 4 || string(lines[2]) != string(tail[:len(tail)-1]) {
+		t.Fatalf("historyLines() = %#v, want the complete boundary record", lines)
 	}
 }
 

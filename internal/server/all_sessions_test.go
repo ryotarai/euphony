@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ryotarai/euphony/internal/selection"
 	"github.com/ryotarai/euphony/internal/session"
@@ -212,6 +213,13 @@ func TestResumeWorkingDirectoryFallsBackToHomeWhenHistoryDirectoryDisappears(t *
 	working := t.TempDir()
 	if got, err := resumeWorkingDirectory(working); err != nil || got != working {
 		t.Fatalf("resumeWorkingDirectory(existing) = %q, %v; want %q", got, err, working)
+	}
+}
+
+func TestTruncateAllSessionNameRespectsManagerByteLimit(t *testing.T) {
+	name := truncateAllSessionName(strings.Repeat("再", 100))
+	if len(name) > 80 || !utf8.ValidString(name) {
+		t.Fatalf("truncated name length/validity = %d/%t", len(name), utf8.ValidString(name))
 	}
 }
 

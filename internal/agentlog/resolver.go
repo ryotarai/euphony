@@ -15,13 +15,14 @@ var ErrTranscriptNotFound = errors.New("agent transcript not found")
 const fallbackMissCacheTTL = 5 * time.Second
 
 type Resolver struct {
-	codexRoot  string
-	claudeRoot string
-	codexIndex string
-	mu         sync.Mutex
-	cache      map[string]string
-	misses     map[string]time.Time
-	now        func() time.Time
+	codexRoot         string
+	codexHistoryRoots []string
+	claudeRoot        string
+	codexIndex        string
+	mu                sync.Mutex
+	cache             map[string]string
+	misses            map[string]time.Time
+	now               func() time.Time
 }
 
 func NewResolver(codexRoot, claudeRoot string) *Resolver {
@@ -36,12 +37,27 @@ func NewResolver(codexRoot, claudeRoot string) *Resolver {
 // index. The index is kept separate from the transcript root because Codex
 // stores it next to, rather than below, the sessions directory.
 func NewResolverWithIndex(codexRoot, claudeRoot, codexIndex string) *Resolver {
+	codexRoot = cleanRoot(codexRoot)
 	return &Resolver{
-		codexRoot: cleanRoot(codexRoot), claudeRoot: cleanRoot(claudeRoot),
-		codexIndex: cleanRoot(codexIndex),
-		cache:      make(map[string]string), misses: make(map[string]time.Time),
+		codexRoot:         codexRoot,
+		codexHistoryRoots: codexHistoryRoots(codexRoot),
+		claudeRoot:        cleanRoot(claudeRoot),
+		codexIndex:        cleanRoot(codexIndex),
+		cache:             make(map[string]string), misses: make(map[string]time.Time),
 		now: time.Now,
 	}
+}
+
+func codexHistoryRoots(codexRoot string) []string {
+	if codexRoot == "" {
+		return nil
+	}
+	roots := []string{codexRoot}
+	archived := filepath.Join(filepath.Dir(codexRoot), "archived_sessions")
+	if archived != codexRoot {
+		roots = append(roots, archived)
+	}
+	return roots
 }
 
 func cleanRoot(root string) string {
@@ -52,13 +68,15 @@ func cleanRoot(root string) string {
 }
 
 func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error) {
-	root := r.root(agent)
-	if root == "" || !safeSessionID(sessionID) {
+	roots := r.roots(agent)
+	if len(roots) == 0 || !safeSessionID(sessionID) {
 		return "", ErrTranscriptNotFound
 	}
 	if recordedPath != "" && matchesSessionFilename(agent, filepath.Base(recordedPath), sessionID) {
-		if path, ok := r.resolveMatchingFile(root, agent, sessionID, recordedPath); ok {
-			return path, nil
+		for _, root := range roots {
+			if path, ok := r.resolveMatchingFile(root, agent, sessionID, recordedPath); ok {
+				return path, nil
+			}
 		}
 	}
 	key := agent + "\x00" + sessionID
@@ -67,14 +85,22 @@ func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error
 	missUntil := r.misses[key]
 	r.mu.Unlock()
 	if cached != "" {
-		if path, ok := r.resolveMatchingFile(root, agent, sessionID, cached); ok {
-			return path, nil
+		for _, root := range roots {
+			if path, ok := r.resolveMatchingFile(root, agent, sessionID, cached); ok {
+				return path, nil
+			}
 		}
 	}
 	if r.now().Before(missUntil) {
 		return "", ErrTranscriptNotFound
 	}
-	path := r.find(root, agent, sessionID)
+	var path string
+	for _, root := range roots {
+		path = r.find(root, agent, sessionID)
+		if path != "" {
+			break
+		}
+	}
 	if path == "" {
 		r.mu.Lock()
 		r.misses[key] = r.now().Add(fallbackMissCacheTTL)
@@ -88,14 +114,17 @@ func (r *Resolver) Resolve(agent, sessionID, recordedPath string) (string, error
 	return path, nil
 }
 
-func (r *Resolver) root(agent string) string {
+func (r *Resolver) roots(agent string) []string {
 	switch agent {
 	case "codex":
-		return r.codexRoot
+		return r.codexHistoryRoots
 	case "claude":
-		return r.claudeRoot
+		if r.claudeRoot == "" {
+			return nil
+		}
+		return []string{r.claudeRoot}
 	default:
-		return ""
+		return nil
 	}
 }
 

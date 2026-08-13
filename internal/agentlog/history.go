@@ -16,7 +16,46 @@ import (
 const (
 	maxHistoryWindowBytes  = 256 << 10
 	maxHistoryPreviewBytes = 4 << 10
+	maxHistoryScanFiles    = 8192
+	maxHistoryScanBytes    = 256 << 20
+	maxHistoryScanEntries  = 65536
 )
+
+var errHistoryScanBudget = errors.New("agent history scan budget exhausted")
+
+type historyScanBudget struct {
+	files     int
+	bytes     int64
+	entries   int
+	exhausted bool
+}
+
+func (b *historyScanBudget) visit() bool {
+	if b.exhausted || b.entries >= maxHistoryScanEntries {
+		b.exhausted = true
+		return false
+	}
+	b.entries++
+	return true
+}
+
+func (b *historyScanBudget) reserve(size int64) bool {
+	if b.exhausted || b.files >= maxHistoryScanFiles {
+		b.exhausted = true
+		return false
+	}
+	readBytes := size * 2
+	if readBytes > maxHistoryWindowBytes*2 {
+		readBytes = maxHistoryWindowBytes * 2
+	}
+	if readBytes < 0 || b.bytes > maxHistoryScanBytes-readBytes {
+		b.exhausted = true
+		return false
+	}
+	b.files++
+	b.bytes += readBytes
+	return true
+}
 
 // HistorySession is the bounded, display-oriented projection of an agent
 // transcript. TranscriptPath is intentionally not serialized: it is an
@@ -50,15 +89,21 @@ type historyIndexEntry struct {
 func (r *Resolver) DiscoverHistory() ([]HistorySession, error) {
 	byKey := make(map[string]HistorySession)
 	var scanErrors []error
+	budget := historyScanBudget{}
 
 	codexIndex, indexErr := r.loadCodexHistoryIndex()
 	if indexErr != nil {
 		scanErrors = append(scanErrors, indexErr)
 	}
-	for _, item := range r.discoverRoot("codex", r.codexRoot, codexIndex) {
-		mergeHistorySession(byKey, item)
+	for _, root := range r.codexHistoryRoots {
+		for _, item := range r.discoverRoot("codex", root, codexIndex, &budget) {
+			mergeHistorySession(byKey, item)
+		}
+		if budget.exhausted {
+			break
+		}
 	}
-	for _, item := range r.discoverRoot("claude", r.claudeRoot, nil) {
+	for _, item := range r.discoverRoot("claude", r.claudeRoot, nil, &budget) {
 		mergeHistorySession(byKey, item)
 	}
 
@@ -92,7 +137,7 @@ func historyKey(item HistorySession) string {
 }
 
 func (r *Resolver) discoverRoot(
-	agent, root string, index map[string]historyIndexEntry,
+	agent, root string, index map[string]historyIndexEntry, budget *historyScanBudget,
 ) []HistorySession {
 	if root == "" {
 		return nil
@@ -102,6 +147,9 @@ func (r *Resolver) discoverRoot(
 	}
 	result := make([]HistorySession, 0)
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if budget == nil || !budget.visit() {
+			return errHistoryScanBudget
+		}
 		if walkErr != nil {
 			return nil
 		}
@@ -111,6 +159,13 @@ func (r *Resolver) discoverRoot(
 		confined, ok := confinedRegularFile(root, path)
 		if !ok {
 			return nil
+		}
+		info, err := os.Stat(confined)
+		if err != nil {
+			return nil
+		}
+		if budget == nil || !budget.reserve(info.Size()) {
+			return errHistoryScanBudget
 		}
 		var sessionID string
 		if agent == "claude" {
@@ -427,11 +482,14 @@ func historyLines(head, tail []byte) [][]byte {
 	lines := bytes.Split(head, []byte("\n"))
 	if len(tail) > 0 && !bytes.Equal(head, tail) {
 		tailLines := bytes.Split(tail, []byte("\n"))
-		if len(tailLines) > 0 {
-			// A tail window can begin in the middle of a JSONL record. It is
-			// safer to discard that partial record than to join it with data
-			// outside the bounded read.
-			tailLines = tailLines[1:]
+		if len(tailLines) > 0 && len(bytes.TrimSpace(tailLines[0])) > 0 {
+			var record json.RawMessage
+			// A tail window can begin in the middle of a JSONL record. Keep the
+			// first line when it is a complete JSON value (the window may begin
+			// exactly at a record boundary); otherwise discard the partial line.
+			if json.Unmarshal(bytes.TrimSpace(tailLines[0]), &record) != nil {
+				tailLines = tailLines[1:]
+			}
 		}
 		lines = append(lines, tailLines...)
 	}
