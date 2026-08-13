@@ -31,6 +31,9 @@ type agentSummaryStore interface {
 	MarkAgentSummaryRead(context.Context, string) error
 	MarkAgentSummaryDone(context.Context, string) error
 	DeleteAgentSummary(context.Context, string) error
+	LoadAgentSummaryHistory(context.Context) (map[string][]AgentSummaryHistoryEntry, error)
+	AppendAgentSummaryHistory(context.Context, string, AgentSummaryHistoryEntry) error
+	DeleteAgentSummaryHistory(context.Context, string) error
 }
 
 type SQLiteStore struct {
@@ -135,6 +138,16 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			generated_at TEXT NOT NULL,
 			error TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS agent_summary_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			terminal_id TEXT NOT NULL,
+			purpose TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT '',
+			generated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS agent_summary_history_terminal_idx
+			ON agent_summary_history (terminal_id, id)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -827,6 +840,66 @@ func (s *SQLiteStore) DeleteAgentSummary(ctx context.Context, terminalID string)
 		"DELETE FROM agent_summaries WHERE terminal_id = ?", terminalID,
 	); err != nil {
 		return fmt.Errorf("delete agent summary: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadAgentSummaryHistory(
+	ctx context.Context,
+) (map[string][]AgentSummaryHistoryEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT terminal_id, purpose, summary, status, generated_at
+		FROM agent_summary_history ORDER BY terminal_id, id`)
+	if err != nil {
+		return nil, fmt.Errorf("load agent summary history: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string][]AgentSummaryHistoryEntry)
+	for rows.Next() {
+		var terminalID, generatedAt string
+		var entry AgentSummaryHistoryEntry
+		if err := rows.Scan(
+			&terminalID, &entry.Purpose, &entry.Summary, &entry.Status, &generatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan agent summary history: %w", err)
+		}
+		entry.GeneratedAt, err = time.Parse(time.RFC3339Nano, generatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse agent summary history timestamp: %w", err)
+		}
+		result[terminalID] = append(result[terminalID], entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load agent summary history: %w", err)
+	}
+	return result, nil
+}
+
+func (s *SQLiteStore) AppendAgentSummaryHistory(
+	ctx context.Context, terminalID string, entry AgentSummaryHistoryEntry,
+) error {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_summary_history (
+		terminal_id, purpose, summary, status, generated_at
+	) VALUES (?, ?, ?, ?, ?)`,
+		terminalID, entry.Purpose, entry.Summary, entry.Status,
+		entry.GeneratedAt.Format(time.RFC3339Nano),
+	); err != nil {
+		return fmt.Errorf("append agent summary history: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM agent_summary_history
+		WHERE terminal_id = ? AND id NOT IN (
+			SELECT id FROM agent_summary_history WHERE terminal_id = ? ORDER BY id DESC LIMIT ?
+		)`, terminalID, terminalID, MaxAgentSummaryHistoryEntries,
+	); err != nil {
+		return fmt.Errorf("prune agent summary history: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) DeleteAgentSummaryHistory(ctx context.Context, terminalID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		"DELETE FROM agent_summary_history WHERE terminal_id = ?", terminalID,
+	); err != nil {
+		return fmt.Errorf("delete agent summary history: %w", err)
 	}
 	return nil
 }

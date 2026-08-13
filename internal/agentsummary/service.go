@@ -2,6 +2,7 @@ package agentsummary
 
 import (
 	"context"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type SessionSource interface {
 	Get(string) (*session.Session, bool)
 	Settings() session.Settings
 	AgentSummaries() []session.AgentSummary
+	AgentSummaryHistory(string) []session.AgentSummaryHistoryEntry
 	SaveAgentSummary(context.Context, session.AgentSummary) error
 	DeleteAgentSummary(context.Context, string) error
 }
@@ -360,6 +362,7 @@ func (s *Service) hasFreshSummary(metadata session.Metadata) bool {
 
 func (s *Service) promptFor(metadata session.Metadata) string {
 	var transcript []agentlog.Entry
+	originalRequest := ""
 	if s.resolver != nil && metadata.AgentSessionID != "" {
 		agent := metadata.Agent
 		if agent == "" {
@@ -372,6 +375,7 @@ func (s *Service) promptFor(metadata session.Metadata) string {
 						transcript = page.Entries
 					}
 				}
+				originalRequest = readOriginalRequest(agent, file)
 				_ = file.Close()
 			}
 		}
@@ -380,7 +384,25 @@ func (s *Service) promptFor(metadata session.Metadata) string {
 	if terminal, ok := s.sessions.Get(metadata.ID); ok {
 		terminalTail, _ = terminal.HistorySnapshot(maxTerminalContextBytes)
 	}
-	return BuildPrompt(metadata, transcript, terminalTail, s.sessions.Settings().AgentSummaryPrompt)
+	return BuildPrompt(
+		metadata,
+		transcript,
+		terminalTail,
+		s.sessions.Settings().AgentSummaryPrompt,
+		originalRequest,
+		s.sessions.AgentSummaryHistory(metadata.ID),
+	)
+}
+
+// readOriginalRequest parses the head of a transcript to recover the request
+// that started the session. The tail page the summary otherwise sees only shows
+// the current subtask, which is why purpose used to drift onto it.
+func readOriginalRequest(agent string, file *os.File) string {
+	entries, err := agentlog.ParseAt(agent, io.NewSectionReader(file, 0, maxTranscriptHeadBytes), 0)
+	if err != nil {
+		return ""
+	}
+	return firstUserRequest(entries)
 }
 
 func isAgentState(metadata session.Metadata) bool {

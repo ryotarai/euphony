@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/ryotarai/euphony/internal/agentlog"
@@ -14,8 +15,11 @@ const (
 	maxTerminalContextBytes   = 24 << 10
 	maxTranscriptContextBytes = 64 << 10
 	maxTranscriptEntries      = 40
+	maxTranscriptHeadBytes    = 64 << 10
 	maxPromptBytes            = 128 << 10
 	maxAdditionalPromptRunes  = 8000
+	maxOriginalRequestRunes   = 2000
+	maxSummaryHistoryBytes    = 16 << 10
 	maxGeneratedPurposeRunes  = 32
 	maxGeneratedSummaryRunes  = 1200
 	maxGeneratedActionRunes   = 600
@@ -23,7 +27,14 @@ const (
 
 var ansiSequence = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
 
-func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTail []byte, additionalPrompt string) string {
+func BuildPrompt(
+	metadata session.Metadata,
+	entries []agentlog.Entry,
+	terminalTail []byte,
+	additionalPrompt string,
+	originalRequest string,
+	history []session.AgentSummaryHistoryEntry,
+) string {
 	transcript := formatTranscript(entries)
 	if len(transcript) > maxTranscriptContextBytes {
 		transcript = transcript[len(transcript)-maxTranscriptContextBytes:]
@@ -33,6 +44,11 @@ func BuildPrompt(metadata session.Metadata, entries []agentlog.Entry, terminalTa
 		terminal = terminal[len(terminal)-maxTerminalContextBytes:]
 	}
 	additionalPrompt = limitPromptRunes(additionalPrompt, maxAdditionalPromptRunes)
+	originalRequest = strings.TrimSpace(sanitizeTerminalText(limitPromptRunes(originalRequest, maxOriginalRequestRunes)))
+	if originalRequest == "" {
+		originalRequest = "(unavailable)"
+	}
+	historyBlock := formatSummaryHistory(history)
 	additionalInstructions := ""
 	if strings.TrimSpace(additionalPrompt) != "" {
 		additionalInstructions = fmt.Sprintf("Additional instructions from the workspace owner:\n%s\n\n", additionalPrompt)
@@ -43,7 +59,9 @@ Return exactly one JSON object and no markdown:
 {"purpose":"short label for the session's goal","summary":"what the agent is doing now","action":"what the user should do next, or an empty string","priority":"high, medium, low, or an empty string","options":[{"label":"visible choice","input":"raw PTY input"}]}
 
 Rules:
-- Set purpose to a concise label of no more than 32 characters that identifies the session's goal or current topic. Use a noun phrase, not a sentence, and do not mention the provider or lifecycle status.
+- Set purpose to a concise label of no more than 32 characters naming the session's overall goal, derived from the original request below. Use a noun phrase, not a sentence, and do not mention the provider or lifecycle status.
+- Purpose is the goal, not the current step. The transcript and terminal show only the latest slice of a longer session, so never label purpose after the subtask, file, or question the agent happens to be on right now.
+- Reuse the previous purpose verbatim unless the original request shows it was wrong or the user has redirected the session to a different goal.
 - Keep summary concrete and short. Mention the current goal, file, command, or blocker when the context supports it.
 - For running agents, action must be an empty string.
 - For running agents, priority must be an empty string.
@@ -53,6 +71,8 @@ Rules:
 - Option input is a candidate hint for a second AI step that will inspect the live terminal screen before sending anything. It must be non-empty, contain no NUL byte, and be at most 1 MiB.
 - Priority describes the user's action urgency, not the agent lifecycle status. Use high for blocking or time-sensitive decisions, medium for important but non-blocking work, and low for routine follow-up.
 - Do not invent details that are absent from the context. Say that context is unavailable when necessary.
+- The summary history below is your own earlier output for this session, oldest first. Read it as the arc of the session so far: it covers work that has scrolled out of the transcript window.
+- Treat the history as background only. Keep purpose stable across it, but rewrite summary, action, priority, and options from the current context instead of repeating an earlier entry.
 
 %sSession name: %s
 Agent: %s
@@ -60,12 +80,19 @@ Agent status: %s
 Agent title: %s
 Working directory: %s
 
+Original request that started this session (the source of truth for purpose):
+%s
+
+Summary history for this session (your own earlier output, oldest first):
+%s
+
 Recent agent transcript:
 %s
 
 Terminal output tail:
 %s
-`, additionalInstructions, metadata.Name, metadata.Agent, metadata.AgentStatus, metadata.AgentTitle, metadata.CWD, transcript, terminal)
+`, additionalInstructions, metadata.Name, metadata.Agent, metadata.AgentStatus, metadata.AgentTitle, metadata.CWD,
+		originalRequest, historyBlock, transcript, terminal)
 	if len(prompt) <= maxPromptBytes {
 		return prompt
 	}
@@ -107,6 +134,51 @@ Current terminal screen:
 		return prompt
 	}
 	return prompt[:maxPromptBytes]
+}
+
+// formatSummaryHistory renders every retained past summary oldest first so the
+// model can see the arc of a session that is longer than the transcript window.
+// Oldest entries are dropped first when the block exceeds its byte budget.
+func formatSummaryHistory(history []session.AgentSummaryHistoryEntry) string {
+	for start := 0; start < len(history); start++ {
+		var builder strings.Builder
+		for _, entry := range history[start:] {
+			builder.WriteString("- ")
+			if !entry.GeneratedAt.IsZero() {
+				builder.WriteString(entry.GeneratedAt.UTC().Format(time.RFC3339))
+				builder.WriteByte(' ')
+			}
+			if entry.Status != "" {
+				builder.WriteByte('[')
+				builder.WriteString(entry.Status)
+				builder.WriteString("] ")
+			}
+			builder.WriteString("purpose: ")
+			builder.WriteString(entry.Purpose)
+			builder.WriteString("\n  ")
+			builder.WriteString(entry.Summary)
+			builder.WriteByte('\n')
+		}
+		if builder.Len() <= maxSummaryHistoryBytes {
+			return builder.String()
+		}
+	}
+	return "(no previous summary)"
+}
+
+// firstUserRequest returns the earliest human turn in a transcript, which is the
+// stable anchor for a session's purpose. Later turns are subtasks of it.
+func firstUserRequest(entries []agentlog.Entry) string {
+	for _, entry := range entries {
+		if entry.Role != "user" || entry.Kind != "message" {
+			continue
+		}
+		content := strings.TrimSpace(entry.Content)
+		if content != "" {
+			return content
+		}
+	}
+	return ""
 }
 
 func limitPromptRunes(value string, limit int) string {
