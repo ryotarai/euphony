@@ -17,6 +17,7 @@ const fallbackMissCacheTTL = 5 * time.Second
 type Resolver struct {
 	codexRoot  string
 	claudeRoot string
+	codexIndex string
 	mu         sync.Mutex
 	cache      map[string]string
 	misses     map[string]time.Time
@@ -24,9 +25,21 @@ type Resolver struct {
 }
 
 func NewResolver(codexRoot, claudeRoot string) *Resolver {
+	return NewResolverWithIndex(
+		codexRoot,
+		claudeRoot,
+		filepath.Join(filepath.Dir(cleanRoot(codexRoot)), "session_index.jsonl"),
+	)
+}
+
+// NewResolverWithIndex creates a resolver with an explicit Codex session
+// index. The index is kept separate from the transcript root because Codex
+// stores it next to, rather than below, the sessions directory.
+func NewResolverWithIndex(codexRoot, claudeRoot, codexIndex string) *Resolver {
 	return &Resolver{
 		codexRoot: cleanRoot(codexRoot), claudeRoot: cleanRoot(claudeRoot),
-		cache: make(map[string]string), misses: make(map[string]time.Time),
+		codexIndex: cleanRoot(codexIndex),
+		cache:      make(map[string]string), misses: make(map[string]time.Time),
 		now: time.Now,
 	}
 }

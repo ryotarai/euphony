@@ -97,7 +97,7 @@ func (s *Service) CreateTerminal(
 	name, cwd string,
 	mode SelectionMode,
 ) (session.Metadata, selection.Snapshot, error) {
-	return s.createTerminal(ctx, name, cwd, mode, "")
+	return s.createTerminal(ctx, name, cwd, mode, "", nil)
 }
 
 // CreateTerminalWithCommand starts an executable directly as the terminal's
@@ -109,7 +109,20 @@ func (s *Service) CreateTerminalWithCommand(
 	mode SelectionMode,
 	command string,
 ) (session.Metadata, selection.Snapshot, error) {
-	return s.createTerminal(ctx, name, cwd, mode, command)
+	return s.CreateTerminalWithCommandArgs(ctx, name, cwd, mode, command)
+}
+
+// CreateTerminalWithCommandArgs starts an executable with separate argv
+// entries, then applies the requested selection mode through the same path as
+// ordinary terminal creation.
+func (s *Service) CreateTerminalWithCommandArgs(
+	ctx context.Context,
+	name, cwd string,
+	mode SelectionMode,
+	command string,
+	args ...string,
+) (session.Metadata, selection.Snapshot, error) {
+	return s.createTerminal(ctx, name, cwd, mode, command, args)
 }
 
 func (s *Service) createTerminal(
@@ -117,6 +130,7 @@ func (s *Service) createTerminal(
 	name, cwd string,
 	mode SelectionMode,
 	command string,
+	args []string,
 ) (session.Metadata, selection.Snapshot, error) {
 	if mode == "" {
 		mode = SelectionNone
@@ -129,7 +143,7 @@ func (s *Service) createTerminal(
 	if command == "" {
 		metadata, err = s.sessions.Create(ctx, name, cwd)
 	} else {
-		metadata, err = s.sessions.CreateWithCommand(ctx, name, cwd, command)
+		metadata, err = s.sessions.CreateWithCommandArgs(ctx, name, cwd, command, args...)
 	}
 	if err != nil {
 		return session.Metadata{}, selection.Snapshot{}, err

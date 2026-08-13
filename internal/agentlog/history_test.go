@@ -1,0 +1,167 @@
+package agentlog
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestResolverDiscoversCodexHistoryFromIndexAndTranscript(t *testing.T) {
+	root := t.TempDir()
+	indexPath := filepath.Join(root, "session_index.jsonl")
+	sessionsRoot := filepath.Join(root, "sessions")
+	transcriptPath := filepath.Join(sessionsRoot, "2026", "08", "13", "rollout-session-1.jsonl")
+	writeHistoryFile(t, indexPath, strings.Join([]string{
+		`{"id":"session-1","thread_name":"Index title","updated_at":"2026-08-13T09:10:00Z","cwd":"/workspace/euphony"}`,
+		`not-json`,
+	}, "\n"))
+	writeHistoryFile(t, transcriptPath, strings.Join([]string{
+		`{"type":"session_meta","timestamp":"2026-08-13T09:00:00Z","payload":{"id":"session-1","cwd":"/workspace/euphony"}}`,
+		`{"type":"response_item","timestamp":"2026-08-13T09:01:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Implement bounded session history"}]}}`,
+		`{"type":"response_item","timestamp":"2026-08-13T09:11:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"History discovery is ready."}]}}`,
+	}, "\n"))
+
+	resolver := NewResolverWithIndex(sessionsRoot, "", indexPath)
+	items, err := resolver.DiscoverHistory()
+	if err != nil {
+		t.Fatalf("DiscoverHistory() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("DiscoverHistory() returned %d items, want 1: %#v", len(items), items)
+	}
+	got := items[0]
+	if got.Agent != "codex" || got.SessionID != "session-1" ||
+		got.Title != "Index title" || got.CWD != "/workspace/euphony" ||
+		got.Purpose != "Implement bounded session history" ||
+		got.Summary != "History discovery is ready." ||
+		!got.UpdatedAt.Equal(time.Date(2026, 8, 13, 9, 10, 0, 0, time.UTC)) {
+		t.Fatalf("Codex history = %#v", got)
+	}
+	if got.TranscriptPath == "" {
+		t.Fatal("Codex history transcript path is empty")
+	}
+}
+
+func TestResolverDiscoversClaudeProjectHistory(t *testing.T) {
+	root := t.TempDir()
+	transcriptPath := filepath.Join(root, "workspace-euphony", "claude-session.jsonl")
+	writeHistoryFile(t, transcriptPath, strings.Join([]string{
+		`{"type":"user","sessionId":"claude-session","cwd":"/workspace/euphony","timestamp":"2026-08-13T08:00:00Z","message":{"role":"user","content":"Fix the resume flow"}}`,
+		`{"type":"ai-title","sessionId":"claude-session","aiTitle":"Generated resume work"}`,
+		`{"type":"custom-title","sessionId":"claude-session","customTitle":"Resume sessions"}`,
+		`{"type":"assistant","sessionId":"claude-session","cwd":"/workspace/euphony","timestamp":"2026-08-13T08:05:00Z","message":{"role":"assistant","content":[{"type":"text","text":"The resume endpoint now reuses open terminals."}]}}`,
+	}, "\n"))
+
+	resolver := NewResolver("", root)
+	items, err := resolver.DiscoverHistory()
+	if err != nil {
+		t.Fatalf("DiscoverHistory() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("DiscoverHistory() returned %d items, want 1: %#v", len(items), items)
+	}
+	got := items[0]
+	if got.Agent != "claude" || got.SessionID != "claude-session" ||
+		got.Title != "Resume sessions" || got.CWD != "/workspace/euphony" ||
+		got.Purpose != "Fix the resume flow" ||
+		got.Summary != "The resume endpoint now reuses open terminals." {
+		t.Fatalf("Claude history = %#v", got)
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Fatal("Claude history UpdatedAt is zero")
+	}
+}
+
+func TestResolverSkipsMalformedHistoryRecords(t *testing.T) {
+	root := t.TempDir()
+	writeHistoryFile(t, filepath.Join(root, "valid-session.jsonl"), strings.Join([]string{
+		`not-json`,
+		`{"type":"user","sessionId":"valid-session","cwd":"/workspace","timestamp":"not-a-time","message":{"role":"user","content":"Keep this one"}}`,
+		`{"type":"assistant","sessionId":"valid-session","message":{"role":"assistant","content":"Done"}}`,
+	}, "\n"))
+	writeHistoryFile(t, filepath.Join(root, "broken-session.jsonl"), "{\n")
+
+	items, err := NewResolver("", root).DiscoverHistory()
+	if err != nil {
+		t.Fatalf("DiscoverHistory() error = %v", err)
+	}
+	if len(items) != 1 || items[0].SessionID != "valid-session" {
+		t.Fatalf("DiscoverHistory() = %#v, want only valid-session", items)
+	}
+}
+
+func TestResolverOrdersHistoryNewestFirstWithStableIDTieBreak(t *testing.T) {
+	root := t.TempDir()
+	for _, item := range []struct {
+		id      string
+		updated string
+	}{
+		{id: "older", updated: "2026-08-13T08:00:00Z"},
+		{id: "same-z", updated: "2026-08-13T09:00:00Z"},
+		{id: "same-a", updated: "2026-08-13T09:00:00Z"},
+	} {
+		writeHistoryFile(t, filepath.Join(root, item.id+".jsonl"),
+			`{"type":"user","sessionId":"`+item.id+`","timestamp":"`+item.updated+`","message":{"role":"user","content":"`+item.id+`"}}`+"\n")
+	}
+
+	items, err := NewResolver("", root).DiscoverHistory()
+	if err != nil {
+		t.Fatalf("DiscoverHistory() error = %v", err)
+	}
+	var ids []string
+	for _, item := range items {
+		ids = append(ids, item.SessionID)
+	}
+	want := []string{"same-a", "same-z", "older"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("history IDs = %v, want %v", ids, want)
+	}
+}
+
+func TestResolverBoundsFallbackPreviewText(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "bounded.jsonl")
+	large := strings.Repeat("x", 2<<20)
+	writeHistoryFile(t, path, strings.Join([]string{
+		`{"type":"user","sessionId":"bounded","cwd":"/workspace","message":{"role":"user","content":"` + large + `"}}`,
+		`{"type":"assistant","sessionId":"bounded","message":{"role":"assistant","content":"final"}}`,
+	}, "\n"))
+
+	items, err := NewResolver("", root).DiscoverHistory()
+	if err != nil {
+		t.Fatalf("DiscoverHistory() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("DiscoverHistory() returned %d items, want 1", len(items))
+	}
+	if len(items[0].Purpose) > maxHistoryPreviewBytes {
+		t.Fatalf("purpose length = %d, want <= %d", len(items[0].Purpose), maxHistoryPreviewBytes)
+	}
+}
+
+func writeHistoryFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
+func TestHistorySessionJSONShapeIsStable(t *testing.T) {
+	payload, err := json.Marshal(HistorySession{
+		Agent: "codex", SessionID: "session-1", Title: "Title", CWD: "/workspace",
+		UpdatedAt: time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(payload), `"sessionId":"session-1"`) {
+		t.Fatalf("HistorySession JSON = %s", payload)
+	}
+}

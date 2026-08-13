@@ -83,6 +83,38 @@ func TestCreateWithCommandStartsRequestedExecutable(t *testing.T) {
 	}
 }
 
+func TestCreateWithCommandArgsPassesArgumentsSeparately(t *testing.T) {
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "capture-args")
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+argsPath+"\"\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(command) error = %v", err)
+	}
+
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	_, err := manager.CreateWithCommandArgs(
+		context.Background(), "Codex", t.TempDir(), commandPath,
+		"resume", "session-id;do-not-execute",
+	)
+	if err != nil {
+		t.Fatalf("CreateWithCommandArgs() error = %v", err)
+	}
+
+	var got string
+	waitFor(t, 3*time.Second, func() bool {
+		data, readErr := os.ReadFile(argsPath)
+		if readErr != nil {
+			return false
+		}
+		got = string(data)
+		return got != ""
+	})
+	if got != "resume\nsession-id;do-not-execute\n" {
+		t.Fatalf("captured argv = %q, want separate resume/session arguments", got)
+	}
+}
+
 func TestCreateWithCommandQueuesAgentHookBeforeRegistration(t *testing.T) {
 	store := &recordingMetadataStore{}
 	manager := NewManager("/bin/sh")

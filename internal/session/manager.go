@@ -394,7 +394,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 }
 
 func (m *Manager) Create(ctx context.Context, name string, requestedCWD ...string) (Metadata, error) {
-	return m.create(ctx, name, "", m.shell, requestedCWD...)
+	return m.create(ctx, name, "", m.shell, nil, requestedCWD...)
 }
 
 // CreateWithCommand starts the requested executable as the terminal's initial
@@ -402,32 +402,49 @@ func (m *Manager) Create(ctx context.Context, name string, requestedCWD ...strin
 func (m *Manager) CreateWithCommand(
 	ctx context.Context, name, cwd, command string,
 ) (Metadata, error) {
+	return m.CreateWithCommandArgs(ctx, name, cwd, command)
+}
+
+// CreateWithCommandArgs starts the requested executable with the supplied
+// arguments as separate argv entries. This keeps caller-controlled values out
+// of shell source while preserving the normal terminal startup lifecycle.
+func (m *Manager) CreateWithCommandArgs(
+	ctx context.Context, name, cwd, command string, args ...string,
+) (Metadata, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return Metadata{}, errors.New("launch command is required")
 	}
-	return m.create(ctx, name, "", command, cwd)
+	return m.create(ctx, name, "", command, args, cwd)
 }
 
 func (m *Manager) CreateInProject(
 	ctx context.Context, name, projectID, cwd string,
 ) (Metadata, error) {
-	return m.create(ctx, name, projectID, m.shell, cwd)
+	return m.create(ctx, name, projectID, m.shell, nil, cwd)
 }
 
 // CreateInProjectWithCommand is the project-scoped form of CreateWithCommand.
 func (m *Manager) CreateInProjectWithCommand(
 	ctx context.Context, name, projectID, cwd, command string,
 ) (Metadata, error) {
+	return m.CreateInProjectWithCommandArgs(ctx, name, projectID, cwd, command)
+}
+
+// CreateInProjectWithCommandArgs is the project-scoped form of
+// CreateWithCommandArgs.
+func (m *Manager) CreateInProjectWithCommandArgs(
+	ctx context.Context, name, projectID, cwd, command string, args ...string,
+) (Metadata, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return Metadata{}, errors.New("launch command is required")
 	}
-	return m.create(ctx, name, projectID, command, cwd)
+	return m.create(ctx, name, projectID, command, args, cwd)
 }
 
 func (m *Manager) create(
-	_ context.Context, name, projectID, command string, requestedCWD ...string,
+	_ context.Context, name, projectID, executable string, args []string, requestedCWD ...string,
 ) (Metadata, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -482,7 +499,7 @@ func (m *Manager) create(
 	if !m.beginPendingAgentStart(metadata) {
 		return Metadata{}, ErrManagerClosing
 	}
-	item, err := m.start(metadata, exec.Command(command))
+	item, err := m.start(metadata, exec.Command(executable, args...))
 	if err != nil {
 		m.discardPendingAgentStart(id)
 		return Metadata{}, err

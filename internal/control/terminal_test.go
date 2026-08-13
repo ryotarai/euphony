@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +13,43 @@ import (
 
 	"github.com/ryotarai/euphony/internal/session"
 )
+
+func TestCreateTerminalWithCommandArgsPassesArgumentsSeparately(t *testing.T) {
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "capture-args")
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+argsPath+"\"\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(command) error = %v", err)
+	}
+
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, _, err = service.CreateTerminalWithCommandArgs(
+		t.Context(), "Codex", t.TempDir(), SelectionNone, commandPath,
+		"resume", "session-id;do-not-execute",
+	)
+	if err != nil {
+		t.Fatalf("CreateTerminalWithCommandArgs() error = %v", err)
+	}
+
+	var got string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(argsPath)
+		if readErr == nil && len(data) > 0 {
+			got = string(data)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got != "resume\nsession-id;do-not-execute\n" {
+		t.Fatalf("captured argv = %q, want separate resume/session arguments", got)
+	}
+}
 
 func TestEncodeKeysValidatesBeforeEncoding(t *testing.T) {
 	got, err := EncodeKeys([]string{"ctrl+c", "enter", "esc", "up"})
