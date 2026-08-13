@@ -97,16 +97,25 @@ export function AllSessionsDialog({
     () => [...sessions].sort(compareSessions),
     [sessions],
   );
+  const searchableSessions = useMemo(
+    () => orderedSessions.map((session) => ({
+      session,
+      searchText: sessionSearchText(session),
+    })),
+    [orderedSessions],
+  );
   const visibleSessions = useMemo(
     () => normalizedQuery === ""
       ? orderedSessions
-      : orderedSessions.filter((session) => sessionSearchText(session).includes(normalizedQuery)),
-    [normalizedQuery, orderedSessions],
+      : searchableSessions.reduce<AllSession[]>((visible, item) => {
+        if (item.searchText.includes(normalizedQuery)) visible.push(item.session);
+        return visible;
+      }, []),
+    [normalizedQuery, orderedSessions, searchableSessions],
   );
 
   useEffect(() => {
     if (!open) return;
-    setQuery("");
     const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
@@ -210,7 +219,9 @@ export function AllSessionsDialog({
                         )}
                         <span className="all-session-metadata">
                           <span title={session.cwd}>{displayPath(session.cwd)}</span>
-                          {session.project && <span>{session.project}</span>}
+                          {session.project && session.project !== session.cwd && (
+                            <span>{session.project}</span>
+                          )}
                           <span className="all-session-updated">
                             <Clock3Icon aria-hidden="true" />
                             <time dateTime={session.updatedAt} title={session.updatedAt}>

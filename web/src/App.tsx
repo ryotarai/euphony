@@ -11,6 +11,7 @@ import {
 } from "react";
 import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
+import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { SessionInfoPane } from "./components/SessionInfoPane";
 import { AgentsView } from "./components/AgentsView";
@@ -66,8 +67,9 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import type {
-  CwdSelectionFilter,
   AgentSummary,
+  AllSession,
+  CwdSelectionFilter,
   Project,
   ReplaceSelectionRequest,
   SelectionSnapshot,
@@ -577,6 +579,11 @@ export function App({
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [allSessionsOpen, setAllSessionsOpen] = useState(false);
+  const [allSessions, setAllSessions] = useState<AllSession[]>([]);
+  const [allSessionsLoading, setAllSessionsLoading] = useState(false);
+  const [allSessionsError, setAllSessionsError] = useState("");
+  const [resumingAllSessionID, setResumingAllSessionID] = useState<string | null>(null);
   const [selectedDashboardIDs, setSelectedDashboardIDs] = useState<DashboardPaneID[]>(
     () => initialDashboardRoute.pane ? [initialDashboardRoute.pane] : [],
   );
@@ -797,6 +804,26 @@ export function App({
     };
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  useEffect(() => {
+    if (!allSessionsOpen || !api) return;
+    let active = true;
+    setAllSessionsLoading(true);
+    setAllSessionsError("");
+    api.listAllSessions().then((items) => {
+      if (!active) return;
+      setAllSessions(items);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setAllSessionsError(
+        error instanceof Error ? error.message : "All sessions could not be loaded.",
+      );
+    }).finally(() => {
+      if (active) setAllSessionsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [allSessionsOpen, api]);
   const agentSummaryRevisionsRef = useRef<Map<string, number>>(new Map());
   const agentSummaryDeletedAtRef = useRef<Map<string, string>>(new Map());
   const agentSummariesInFlightRef = useRef<{
@@ -3080,6 +3107,46 @@ export function App({
     setSettingsOpen(true);
   }
 
+  function openAllSessions() {
+    setAllSessionsOpen(true);
+  }
+
+  async function selectAllSession(item: AllSession) {
+    if (!api || resumingAllSessionID !== null) return;
+    if (item.state === "open") {
+      if (!item.terminalId) {
+        setAllSessionsError("The terminal for this session is no longer available.");
+        return;
+      }
+      setAllSessionsOpen(false);
+      selectSession(item.terminalId, false);
+      return;
+    }
+    if (!item.agent || !item.sessionId) {
+      setAllSessionsError("This session cannot be resumed.");
+      return;
+    }
+    setResumingAllSessionID(item.id);
+    setAllSessionsError("");
+    try {
+      const result = await api.resumeAllSession(item.agent, item.sessionId, "replace");
+      const nextSessions = [
+        ...(sessions ?? []).filter((session) => session.id !== result.terminal.id),
+        result.terminal,
+      ];
+      applySessionSnapshot(nextSessions);
+      applyServerSelection(result.selection, "push");
+      setAllSessionsOpen(false);
+      setRequestError("");
+    } catch (error) {
+      setAllSessionsError(
+        error instanceof Error ? error.message : "The session could not be resumed.",
+      );
+    } finally {
+      setResumingAllSessionID(null);
+    }
+  }
+
   async function saveSettings(event: FormEvent) {
     event.preventDefault();
     const prefix = normalizePrefix(prefixDraft);
@@ -3903,6 +3970,7 @@ export function App({
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
+        onOpenAllSessions={openAllSessions}
         tasksOpen={tasksOpen}
         focusedPaneID={focusedPaneID}
         taskCount={taskCount}
@@ -3910,6 +3978,16 @@ export function App({
         agentsOpen={agentsOpen}
         agentSummaryCount={agentSummaryCount}
         onOpenAgents={openAgentsWorkspace}
+      />
+      <AllSessionsDialog
+        key={allSessionsOpen ? "open" : "closed"}
+        open={allSessionsOpen}
+        sessions={allSessions}
+        loading={allSessionsLoading}
+        error={allSessionsError}
+        resumingID={resumingAllSessionID}
+        onOpenChange={setAllSessionsOpen}
+        onSelect={selectAllSession}
       />
       <SessionInfoPane
         session={selected}

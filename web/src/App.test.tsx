@@ -3432,7 +3432,7 @@ test("resumes a history session once, applies returned selection, and closes the
   });
   expect(resumeButton).toBeDisabled();
 
-  releaseResume(jsonResponse({ terminal: resumedTerminal, selection }));
+  releaseResume(await jsonResponse({ terminal: resumedTerminal, selection }));
   await waitFor(() => {
     expect(screen.queryByRole("dialog", { name: "All sessions" })).not.toBeInTheDocument();
   });

@@ -94,7 +94,14 @@ func New(config Config) (*Server, error) {
 		return nil, err
 	}
 	summaryEvents := newAgentSummaryEventPublisher(controlService, sessionManager)
-	transcriptResolver := agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot)
+	var transcriptResolver *agentlog.Resolver
+	if config.CodexSessionIndex == "" {
+		transcriptResolver = agentlog.NewResolver(config.CodexSessionsRoot, config.ClaudeProjectsRoot)
+	} else {
+		transcriptResolver = agentlog.NewResolverWithIndex(
+			config.CodexSessionsRoot, config.ClaudeProjectsRoot, config.CodexSessionIndex,
+		)
+	}
 	summaryService := agentsummary.New(agentsummary.Config{
 		Sessions: sessionManager,
 		Events:   summaryEvents,
@@ -190,6 +197,8 @@ func New(config Config) (*Server, error) {
 			"The API endpoint does not exist.", nil)
 	})
 	protected.HandleFunc("GET /api/sessions", server.listSessions)
+	protected.HandleFunc("GET /api/all-sessions", server.listAllSessions)
+	protected.HandleFunc("POST /api/all-sessions/{agent}/{sessionID}/resume", server.resumeAllSession)
 	protected.HandleFunc("GET /api/agent-summaries", server.listAgentSummaries)
 	protected.HandleFunc("POST /api/agent-summaries/refresh", server.refreshAgentSummaries)
 	protected.HandleFunc("POST /api/agent-summaries/{id}/read", server.markAgentSummaryRead)

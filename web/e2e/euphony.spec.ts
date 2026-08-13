@@ -249,6 +249,38 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
   expect(await page.evaluate(() => sessionStorage.getItem("euphony.token"))).toBe("test-token");
 });
 
+test("opens the All sessions index, searches it, and opens a current terminal", async ({
+  page,
+}) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "All sessions terminal", "/tmp");
+  await replaceSharedSelection(page, [terminal.id], terminal.id);
+  await page.goto("/?token=test-token");
+
+  await expect(page.getByRole("button", { name: "Select All sessions terminal" })).toBeVisible();
+  await page.getByRole("button", { name: "All sessions", exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: "All sessions" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("All sessions terminal", { exact: true })).toBeVisible();
+  const bounds = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(bounds!.width / viewport!.width).toBeGreaterThan(0.7);
+  expect(bounds!.height / viewport!.height).toBeGreaterThan(0.7);
+
+  const search = dialog.getByRole("searchbox", { name: "Search all sessions" });
+  await search.fill("does not exist");
+  await expect(dialog.getByText("No sessions match your search", { exact: true })).toBeVisible();
+  await search.fill("/tmp");
+  await expect(dialog.getByText("All sessions terminal", { exact: true })).toBeVisible();
+
+  await dialog.getByRole("button", { name: /Open terminal/ }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByLabel("All sessions terminal terminal", { exact: true })).toBeVisible();
+});
+
 test("renames the focused terminal from Quick Actions and updates the sidebar", async ({
   page,
 }) => {
