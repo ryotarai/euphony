@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -704,4 +705,109 @@ func (s *agentSummaryTestStore) MarkAgentSummaryDone(context.Context, string) er
 
 func (*agentSummaryTestStore) DeleteAgentSummary(context.Context, string) error {
 	return nil
+}
+
+func (*agentSummaryTestStore) LoadAgentSummaryHistory(
+	context.Context,
+) (map[string][]AgentSummaryHistoryEntry, error) {
+	return nil, nil
+}
+
+func (*agentSummaryTestStore) AppendAgentSummaryHistory(
+	context.Context, string, AgentSummaryHistoryEntry,
+) error {
+	return nil
+}
+
+func (*agentSummaryTestStore) DeleteAgentSummaryHistory(context.Context, string) error {
+	return nil
+}
+
+func TestManagerAgentSummaryHistoryAccumulatesAndCaps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent-summary-history.sqlite3")
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	generatedAt := time.Date(2026, 8, 5, 1, 2, 3, 4, time.UTC)
+	total := MaxAgentSummaryHistoryEntries + 3
+	for index := 0; index < total; index++ {
+		if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+			TerminalID:  "terminal-1",
+			Provider:    "codex",
+			Status:      "waiting",
+			Purpose:     "Ship the feature.",
+			Summary:     fmt.Sprintf("Step %d.", index),
+			GeneratedAt: generatedAt.Add(time.Duration(index) * time.Minute),
+		}); err != nil {
+			t.Fatalf("SaveAgentSummary(%d) error = %v", index, err)
+		}
+	}
+	// A repeated generation must not add a duplicate entry.
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID:  "terminal-1",
+		Provider:    "codex",
+		Status:      "waiting",
+		Purpose:     "Ship the feature.",
+		Summary:     fmt.Sprintf("Step %d.", total-1),
+		GeneratedAt: generatedAt.Add(time.Duration(total) * time.Minute),
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(duplicate) error = %v", err)
+	}
+	// Failed generations must not be recorded.
+	if err := manager.SaveAgentSummary(context.Background(), AgentSummary{
+		TerminalID:  "terminal-1",
+		Provider:    "codex",
+		Summary:     "",
+		Error:       "provider failed",
+		GeneratedAt: generatedAt.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary(error) error = %v", err)
+	}
+	assertAgentSummaryHistory(t, manager, total)
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	manager, err = NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() after reopen error = %v", err)
+	}
+	assertAgentSummaryHistory(t, manager, total)
+
+	if err := manager.DeleteAgentSummary(context.Background(), "terminal-1"); err != nil {
+		t.Fatalf("DeleteAgentSummary() error = %v", err)
+	}
+	if got := manager.AgentSummaryHistory("terminal-1"); len(got) != 0 {
+		t.Fatalf("AgentSummaryHistory() after delete = %#v, want empty", got)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() after delete error = %v", err)
+	}
+	manager, err = NewPersistentManager("/bin/sh", HookConfig{}, path)
+	if err != nil {
+		t.Fatalf("NewPersistentManager() after delete error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	if got := manager.AgentSummaryHistory("terminal-1"); len(got) != 0 {
+		t.Fatalf("AgentSummaryHistory() after delete and reopen = %#v, want empty", got)
+	}
+}
+
+func assertAgentSummaryHistory(t *testing.T, manager *Manager, total int) {
+	t.Helper()
+	history := manager.AgentSummaryHistory("terminal-1")
+	if len(history) != MaxAgentSummaryHistoryEntries {
+		t.Fatalf("AgentSummaryHistory() length = %d, want %d",
+			len(history), MaxAgentSummaryHistoryEntries)
+	}
+	for index, entry := range history {
+		want := fmt.Sprintf("Step %d.", total-MaxAgentSummaryHistoryEntries+index)
+		if entry.Summary != want {
+			t.Fatalf("AgentSummaryHistory()[%d].Summary = %q, want %q", index, entry.Summary, want)
+		}
+		if entry.Purpose != "Ship the feature." || entry.Status != "waiting" {
+			t.Fatalf("AgentSummaryHistory()[%d] = %#v, want purpose and status kept", index, entry)
+		}
+	}
 }

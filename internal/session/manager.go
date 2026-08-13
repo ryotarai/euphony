@@ -84,6 +84,18 @@ type AgentSummary struct {
 	Error       string               `json:"error,omitempty"`
 }
 
+// AgentSummaryHistoryEntry records a past successful summary generation so later
+// generations can be prompted with the terminal's history.
+type AgentSummaryHistoryEntry struct {
+	Purpose     string    `json:"purpose"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	GeneratedAt time.Time `json:"generatedAt"`
+}
+
+// MaxAgentSummaryHistoryEntries caps how many past summaries are kept per terminal.
+const MaxAgentSummaryHistoryEntries = 20
+
 type AgentSummaryOption struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -274,6 +286,7 @@ type Manager struct {
 	pendingAgentStarts              map[string]*pendingAgentStart
 	store                           metadataStore
 	agentSummaries                  map[string]AgentSummary
+	agentSummaryHistory             map[string][]AgentSummaryHistoryEntry
 	closing                         bool
 	activeCreates                   int
 	createsDone                     chan struct{}
@@ -328,6 +341,14 @@ func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager
 	for _, summary := range summaries {
 		manager.agentSummaries[summary.TerminalID] = summary
 	}
+	history, err := store.LoadAgentSummaryHistory(context.Background())
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	for terminalID, entries := range history {
+		manager.agentSummaryHistory[terminalID] = entries
+	}
 	items, err := store.Load(context.Background())
 	if err != nil {
 		_ = store.Close()
@@ -362,9 +383,10 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 	return &Manager{
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
-		pendingAgentStarts: make(map[string]*pendingAgentStart),
-		agentSummaries:     make(map[string]AgentSummary),
-		settings:           DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
+		pendingAgentStarts:  make(map[string]*pendingAgentStart),
+		agentSummaries:      make(map[string]AgentSummary),
+		agentSummaryHistory: make(map[string][]AgentSummaryHistoryEntry),
+		settings:            DefaultSettings(), cwdSampleInterval: defaultCWDSampleInterval,
 		foregroundProcessSampleInterval: defaultForegroundProcessSampleInterval,
 		claudeTitleSampleInterval:       defaultClaudeTitleSampleInterval,
 		blockedStatusGracePeriod:        defaultBlockedStatusGracePeriod,
@@ -2205,6 +2227,7 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 		m.mu.Lock()
 		m.agentSummaries[summary.TerminalID] = summary
 		m.mu.Unlock()
+		m.appendAgentSummaryHistory(ctx, nil, summary)
 		return nil
 	}
 	if err := m.runStoreOperation(operation, func() error {
@@ -2215,7 +2238,71 @@ func (m *Manager) SaveAgentSummary(ctx context.Context, summary AgentSummary) er
 	m.mu.Lock()
 	m.agentSummaries[summary.TerminalID] = summary
 	m.mu.Unlock()
+	m.appendAgentSummaryHistory(ctx, summaryStore, summary)
 	return nil
+}
+
+// AgentSummaryHistory returns the terminal's past successful summaries, oldest first.
+func (m *Manager) AgentSummaryHistory(terminalID string) []AgentSummaryHistoryEntry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	history := m.agentSummaryHistory[terminalID]
+	if len(history) == 0 {
+		return nil
+	}
+	result := make([]AgentSummaryHistoryEntry, len(history))
+	copy(result, history)
+	return result
+}
+
+// appendAgentSummaryHistory records a successful generation. A history failure
+// never fails the primary summary save.
+func (m *Manager) appendAgentSummaryHistory(
+	ctx context.Context, summaryStore agentSummaryStore, summary AgentSummary,
+) {
+	if summary.Error != "" {
+		return
+	}
+	entry := AgentSummaryHistoryEntry{
+		Purpose:     summary.Purpose,
+		Summary:     summary.Summary,
+		Status:      summary.Status,
+		GeneratedAt: summary.GeneratedAt,
+	}
+	m.mu.Lock()
+	history := m.agentSummaryHistory[summary.TerminalID]
+	if len(history) > 0 {
+		newest := history[len(history)-1]
+		if newest.Purpose == entry.Purpose && newest.Summary == entry.Summary &&
+			newest.Status == entry.Status {
+			m.mu.Unlock()
+			return
+		}
+	}
+	var operation storeOperation
+	if summaryStore != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+	if summaryStore != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return summaryStore.AppendAgentSummaryHistory(ctx, summary.TerminalID, entry)
+		}); err != nil {
+			return
+		}
+	}
+	m.mu.Lock()
+	m.agentSummaryHistory[summary.TerminalID] = trimAgentSummaryHistory(
+		append(m.agentSummaryHistory[summary.TerminalID], entry))
+	m.mu.Unlock()
+}
+
+func trimAgentSummaryHistory(history []AgentSummaryHistoryEntry) []AgentSummaryHistoryEntry {
+	if len(history) <= MaxAgentSummaryHistoryEntries {
+		return history
+	}
+	return append([]AgentSummaryHistoryEntry(nil),
+		history[len(history)-MaxAgentSummaryHistoryEntries:]...)
 }
 
 func normalizeAgentSummaryOptions(options []AgentSummaryOption) []AgentSummaryOption {
@@ -2375,16 +2462,21 @@ func (m *Manager) DeleteAgentSummary(ctx context.Context, terminalID string) err
 	if summaryStore == nil {
 		m.mu.Lock()
 		delete(m.agentSummaries, terminalID)
+		delete(m.agentSummaryHistory, terminalID)
 		m.mu.Unlock()
 		return nil
 	}
 	if err := m.runStoreOperation(operation, func() error {
-		return summaryStore.DeleteAgentSummary(ctx, terminalID)
+		if err := summaryStore.DeleteAgentSummary(ctx, terminalID); err != nil {
+			return err
+		}
+		return summaryStore.DeleteAgentSummaryHistory(ctx, terminalID)
 	}); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	delete(m.agentSummaries, terminalID)
+	delete(m.agentSummaryHistory, terminalID)
 	m.mu.Unlock()
 	return nil
 }

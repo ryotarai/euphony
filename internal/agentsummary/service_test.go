@@ -28,7 +28,7 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 		ID: "entry-1", Kind: "message", Role: "assistant",
 		Content: "I am updating the request handler.",
 	}}
-	prompt := BuildPrompt(metadata, entries, []byte("\x1b[31mterminal output\x1b[0m\n"), "Prioritize user-visible blockers.\nKeep the wording concise.")
+	prompt := BuildPrompt(metadata, entries, []byte("\x1b[31mterminal output\x1b[0m\n"), "Prioritize user-visible blockers.\nKeep the wording concise.", "", nil)
 	if !strings.Contains(prompt, "I am updating the request handler.") ||
 		!strings.Contains(prompt, "terminal output") ||
 		!strings.Contains(prompt, "Agent status: running") ||
@@ -50,7 +50,7 @@ func TestBuildPromptIncludesBoundedContextWithoutANSI(t *testing.T) {
 	}
 
 	largeTerminal := []byte(strings.Repeat("x", maxTerminalContextBytes+100))
-	bounded := BuildPrompt(metadata, nil, largeTerminal, strings.Repeat("追加指示", maxAdditionalPromptRunes+100))
+	bounded := BuildPrompt(metadata, nil, largeTerminal, strings.Repeat("追加指示", maxAdditionalPromptRunes+100), "", nil)
 	if len(bounded) > maxPromptBytes {
 		t.Fatalf("prompt length = %d, want <= %d", len(bounded), maxPromptBytes)
 	}
@@ -190,9 +190,78 @@ func TestEncodeTerminalActionInputUsesBracketedPasteForPrintableInput(t *testing
 
 func TestBuildPromptOmitsEmptyAdditionalInstructions(t *testing.T) {
 	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
-	prompt := BuildPrompt(metadata, nil, nil, "   \n\t")
+	prompt := BuildPrompt(metadata, nil, nil, "   \n\t", "", nil)
 	if strings.Contains(prompt, "Additional instructions from the workspace owner:") {
 		t.Fatalf("prompt includes an empty additional instruction section: %q", prompt)
+	}
+}
+
+func TestBuildPromptAnchorsPurposeToTheOriginalRequestAndSummaryHistory(t *testing.T) {
+	metadata := session.Metadata{ID: "terminal-1", Name: "Codex", Agent: "codex", AgentStatus: "running"}
+	history := []session.AgentSummaryHistoryEntry{
+		{
+			Purpose: "セッション目的の生成改善", Summary: "prompt.go を読んでいる",
+			Status: "running", GeneratedAt: time.Date(2026, 8, 13, 1, 0, 0, 0, time.UTC),
+		},
+		{
+			Purpose: "セッション目的の生成改善", Summary: "PR のマージ順を検討している",
+			Status: "waiting", GeneratedAt: time.Date(2026, 8, 13, 2, 0, 0, 0, time.UTC),
+		},
+	}
+	prompt := BuildPrompt(metadata, nil, nil, "", "purpose の生成を正しくしたい", history)
+	if !strings.Contains(prompt, "purpose の生成を正しくしたい") {
+		t.Fatalf("prompt omits the original request: %q", prompt)
+	}
+	if !strings.Contains(prompt, "prompt.go を読んでいる") || !strings.Contains(prompt, "PR のマージ順を検討している") {
+		t.Fatalf("prompt omits the summary history: %q", prompt)
+	}
+	if strings.Index(prompt, "prompt.go を読んでいる") > strings.Index(prompt, "PR のマージ順を検討している") {
+		t.Fatalf("summary history is not oldest first: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Purpose is the goal, not the current step.") {
+		t.Fatalf("prompt does not forbid labelling purpose after the current step: %q", prompt)
+	}
+
+	empty := BuildPrompt(metadata, nil, nil, "", "", nil)
+	if !strings.Contains(empty, "(unavailable)") || !strings.Contains(empty, "(no previous summary)") {
+		t.Fatalf("prompt does not mark missing purpose anchors: %q", empty)
+	}
+}
+
+func TestFormatSummaryHistoryDropsOldestEntriesWhenOverBudget(t *testing.T) {
+	history := make([]session.AgentSummaryHistoryEntry, 0, 200)
+	for index := 0; index < 200; index++ {
+		history = append(history, session.AgentSummaryHistoryEntry{
+			Purpose:     "目的",
+			Summary:     fmt.Sprintf("%d-%s", index, strings.Repeat("x", 400)),
+			Status:      "running",
+			GeneratedAt: time.Date(2026, 8, 13, 0, index, 0, 0, time.UTC),
+		})
+	}
+	block := formatSummaryHistory(history)
+	if len(block) > maxSummaryHistoryBytes {
+		t.Fatalf("history block length = %d, want <= %d", len(block), maxSummaryHistoryBytes)
+	}
+	if !strings.Contains(block, "199-") {
+		t.Fatalf("history block dropped the newest entry: %q", block)
+	}
+	if strings.Contains(block, "2026-08-13T00:00:00Z") {
+		t.Fatalf("history block kept the oldest entry over budget: %q", block)
+	}
+}
+
+func TestFirstUserRequestReturnsTheEarliestHumanTurn(t *testing.T) {
+	entries := []agentlog.Entry{
+		{Kind: "message", Role: "assistant", Content: "作業を始めます"},
+		{Kind: "message", Role: "user", Content: "   "},
+		{Kind: "message", Role: "user", Content: "purpose の生成を直したい"},
+		{Kind: "message", Role: "user", Content: "PR のマージ順はどうする？"},
+	}
+	if got := firstUserRequest(entries); got != "purpose の生成を直したい" {
+		t.Fatalf("firstUserRequest() = %q", got)
+	}
+	if got := firstUserRequest(nil); got != "" {
+		t.Fatalf("firstUserRequest(nil) = %q, want empty", got)
 	}
 }
 

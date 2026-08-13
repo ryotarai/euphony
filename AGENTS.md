@@ -67,6 +67,17 @@
   the guess. Read both and prefer the rename, and refresh it on read too —
   renaming fires no hook, so nothing reports it.
 
+## Agent summaries
+
+- A session's purpose is the goal it started with, not whatever the agent is
+  doing now. Derive it from the first human turn at the head of the transcript,
+  never from the tail window alone, or the label drifts onto the current
+  subtask every refresh.
+- Persist past summaries per terminal and feed them back into the next
+  generation as background. They carry the arc of a session that is longer than
+  the transcript window; keep purpose stable across them while rewriting
+  summary, action, priority, and options from current context.
+
 ## Sidebar filters, pins, and attention
 
 - Treat checked sidebar groups as persistent dynamic filters: automatically add
