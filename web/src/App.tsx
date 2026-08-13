@@ -680,6 +680,57 @@ export function App({
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [reconnectSignals, setReconnectSignals] = useState<Record<string, number>>({});
+  const connectionStatesRef = useRef(connectionStates);
+  connectionStatesRef.current = connectionStates;
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectDisconnected = useCallback(() => {
+    setReconnectSignals((current) => {
+      const next = { ...current };
+      for (const [id, state] of Object.entries(connectionStatesRef.current)) {
+        if (state === "disconnected") next[id] = (next[id] ?? 0) + 1;
+      }
+      return next;
+    });
+  }, []);
+  const disconnectedStateKey = Object.entries(connectionStates)
+    .filter(([, state]) => state === "disconnected")
+    .map(([id]) => id)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (
+      !disconnectedStateKey
+      && Object.values(connectionStatesRef.current).some((state) => state === "connected")
+    ) {
+      reconnectAttemptsRef.current = 0;
+    }
+  }, [disconnectedStateKey]);
+
+  useEffect(() => {
+    if (!disconnectedStateKey) return;
+    // ponytail: exponential backoff capped at 10s, no jitter until many clients
+    // hammer one server. Attempts reset once a terminal is connected again.
+    const delay = Math.min(500 * 2 ** reconnectAttemptsRef.current, 10_000);
+    reconnectAttemptsRef.current += 1;
+    const timer = setTimeout(reconnectDisconnected, delay);
+    return () => clearTimeout(timer);
+  }, [disconnectedStateKey, reconnectDisconnected]);
+
+  useEffect(() => {
+    // Laptop wake / network return: retry now instead of waiting out the backoff.
+    const retryNow = () => {
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      reconnectAttemptsRef.current = 0;
+      reconnectDisconnected();
+    };
+    window.addEventListener("online", retryNow);
+    document.addEventListener("visibilitychange", retryNow);
+    return () => {
+      window.removeEventListener("online", retryNow);
+      document.removeEventListener("visibilitychange", retryNow);
+    };
+  }, [reconnectDisconnected]);
   const [automationLockedIDs, setAutomationLockedIDs] = useState<Set<string>>(
     () => new Set(),
   );
@@ -3781,15 +3832,6 @@ export function App({
     }
   };
 
-  const reconnectDisconnected = () => {
-    setReconnectSignals((current) => {
-      const next = { ...current };
-      disconnectedIDs.forEach((id) => {
-        next[id] = (next[id] ?? 0) + 1;
-      });
-      return next;
-    });
-  };
 
   const beginSessionInfoResize = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -3902,6 +3944,7 @@ export function App({
             <span>
               Connection interrupted
               {disconnectedIDs.length > 1 ? ` · ${disconnectedIDs.length} panes` : ""}
+              {" · Reconnecting automatically…"}
             </span>
             <Button variant="outline" size="sm" onClick={reconnectDisconnected}>
               Reconnect

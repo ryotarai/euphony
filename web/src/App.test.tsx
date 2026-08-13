@@ -3201,6 +3201,52 @@ test("shows one workspace connection status and retries disconnected panes", asy
   ).toHaveTextContent("Terminal exited");
 });
 
+test("reconnects disconnected panes automatically", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    jsonResponse([runningSession]),
+  );
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const renderTerminal = ((
+    session: Session,
+    _api: unknown,
+    _active: boolean,
+    _layoutVersion: number,
+    onConnectionChange:
+      | ((sessionID: string, state: "connected" | "disconnected" | "exited") => void)
+      | undefined,
+    reconnectSignal = 0,
+  ) => (
+    <div>
+      <button onClick={() => onConnectionChange?.(session.id, "disconnected")}>
+        Disconnect {session.name}
+      </button>
+      <span aria-label={`${session.name} reconnect signal`}>
+        {reconnectSignal}
+      </span>
+    </div>
+  )) as unknown as ComponentProps<typeof App>["renderTerminal"];
+
+  try {
+    render(
+      <App syncSelection={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={renderTerminal}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Disconnect Codex" }));
+    expect(screen.getByLabelText("Codex reconnect signal")).toHaveTextContent("0");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(screen.getByLabelText("Codex reconnect signal")).toHaveTextContent("1");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("restores the selected session from the URL and follows browser navigation", async () => {
   history.replaceState(null, "", "/?session=session-2");
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
