@@ -27,6 +27,9 @@ import type {
   WorkspaceSearchResult,
 } from "./types";
 
+const allSessionsRequestTimeoutMs = 30_000;
+const allSessionsTimeoutMessage = "Loading all sessions timed out. Try again.";
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -45,7 +48,16 @@ export class ApiClient {
   }
 
   listAllSessions(): Promise<AllSession[]> {
-    return this.request("/api/all-sessions");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), allSessionsRequestTimeoutMs);
+    return this.request<AllSession[]>("/api/all-sessions", { signal: controller.signal })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          throw new Error(allSessionsTimeoutMessage);
+        }
+        throw error;
+      })
+      .finally(() => clearTimeout(timeout));
   }
 
   resumeAllSession(

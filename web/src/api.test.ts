@@ -111,6 +111,49 @@ test("lists all sessions and resumes a history session with replacement selectio
   );
 });
 
+test("times out when the all-sessions request never settles", async () => {
+  vi.useFakeTimers();
+  try {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      }),
+    );
+    const request = new ApiClient("token").listAllSessions();
+    const rejection = expect(request).rejects.toThrow(
+      "Loading all sessions timed out. Try again.",
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/all-sessions",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("allows a slow all-sessions response to complete before timing out", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise((resolve) => {
+        setTimeout(() => resolve(jsonResponse([])), 8_000);
+      }),
+    );
+    const request = new ApiClient("token").listAllSessions();
+
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(request).resolves.toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("turns a non-JSON v1 error response into an API error", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response("upstream failure", {
