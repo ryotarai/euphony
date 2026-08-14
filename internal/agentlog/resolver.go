@@ -180,6 +180,13 @@ func confinedRegularFile(root, path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	return confinedRegularFileUnderResolvedRoot(resolvedRoot, path)
+}
+
+func confinedRegularFileUnderResolvedRoot(resolvedRoot, path string) (string, bool) {
+	if resolvedRoot == "" {
+		return "", false
+	}
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", false

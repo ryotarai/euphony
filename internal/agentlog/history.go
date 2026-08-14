@@ -10,15 +10,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	maxHistoryWindowBytes  = 256 << 10
-	maxHistoryPreviewBytes = 4 << 10
-	maxHistoryScanFiles    = 8192
-	maxHistoryScanBytes    = 256 << 20
-	maxHistoryScanEntries  = 65536
+	maxHistoryWindowBytes   = 256 << 10
+	maxHistoryPreviewBytes  = 4 << 10
+	maxHistoryScanFiles     = 8192
+	maxHistoryScanBytes     = 256 << 20
+	maxHistoryScanEntries   = 65536
+	historyDiscoveryWorkers = 8
 )
 
 var errHistoryScanBudget = errors.New("agent history scan budget exhausted")
@@ -82,6 +84,11 @@ type historyIndexEntry struct {
 	UpdatedAt  time.Time
 }
 
+type historyFile struct {
+	path string
+	name string
+}
+
 // DiscoverHistory returns the available Codex and Claude sessions in
 // newest-first order. Missing roots, malformed records, and transcripts that
 // disappear while the directory is being walked are ignored so a transient
@@ -142,10 +149,11 @@ func (r *Resolver) discoverRoot(
 	if root == "" {
 		return nil
 	}
-	if _, err := os.Stat(root); err != nil {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
 		return nil
 	}
-	result := make([]HistorySession, 0)
+	files := make([]historyFile, 0)
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if budget == nil || !budget.visit() {
 			return errHistoryScanBudget
@@ -156,7 +164,7 @@ func (r *Resolver) discoverRoot(
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			return nil
 		}
-		confined, ok := confinedRegularFile(root, path)
+		confined, ok := confinedRegularFileUnderResolvedRoot(resolvedRoot, path)
 		if !ok {
 			return nil
 		}
@@ -167,34 +175,38 @@ func (r *Resolver) discoverRoot(
 		if budget == nil || !budget.reserve(info.Size()) {
 			return errHistoryScanBudget
 		}
+		files = append(files, historyFile{path: confined, name: entry.Name()})
+		return nil
+	})
+	return discoverHistoryFiles(files, historyDiscoveryWorkers, func(file historyFile) (HistorySession, bool) {
 		var sessionID string
 		if agent == "claude" {
-			sessionID = strings.TrimSuffix(entry.Name(), ".jsonl")
+			sessionID = strings.TrimSuffix(file.name, ".jsonl")
 		} else {
-			sessionID = codexSessionIDForFile(entry.Name(), index)
+			sessionID = codexSessionIDForFile(file.name, index)
 		}
 		if !safeSessionID(sessionID) {
-			return nil
+			return HistorySession{}, false
 		}
 
-		head, tail, info, err := readHistoryWindows(confined)
+		head, tail, info, err := readHistoryWindows(file.path)
 		if err != nil {
-			return nil
+			return HistorySession{}, false
 		}
 		preview := parseHistoryPreview(agent, sessionID, head, tail)
 		if !preview.recognized {
-			return nil
+			return HistorySession{}, false
 		}
 		if preview.sessionID != "" {
 			if preview.sessionID != sessionID {
 				if agent != "codex" || !strings.HasPrefix(sessionID, "rollout-") {
-					return nil
+					return HistorySession{}, false
 				}
 			}
 			sessionID = preview.sessionID
 		}
 		if !safeSessionID(sessionID) {
-			return nil
+			return HistorySession{}, false
 		}
 
 		item := HistorySession{
@@ -206,7 +218,7 @@ func (r *Resolver) discoverRoot(
 			CWD:            preview.cwd,
 			Project:        preview.project,
 			UpdatedAt:      preview.updatedAt,
-			TranscriptPath: confined,
+			TranscriptPath: file.path,
 		}
 		if candidate, ok := index[sessionID]; ok {
 			if candidate.ThreadName != "" {
@@ -225,10 +237,10 @@ func (r *Resolver) discoverRoot(
 			}
 		}
 		if agent == "codex" && item.Title == "" {
-			item.Title, _ = CodexThreadTitle(confined, sessionID)
+			item.Title, _ = CodexThreadTitle(file.path, sessionID)
 		}
 		if agent == "claude" && item.Title == "" {
-			item.Title = ClaudeTranscriptTitle(confined)
+			item.Title = ClaudeTranscriptTitle(file.path)
 		}
 		if item.UpdatedAt.IsZero() {
 			item.UpdatedAt = info.ModTime().UTC()
@@ -241,9 +253,49 @@ func (r *Resolver) discoverRoot(
 		if item.Project == "" && item.CWD != "" {
 			item.Project = filepath.Base(filepath.Clean(item.CWD))
 		}
-		result = append(result, item)
-		return nil
+		return item, true
 	})
+}
+
+func discoverHistoryFiles(
+	files []historyFile,
+	workerCount int,
+	discover func(historyFile) (HistorySession, bool),
+) []HistorySession {
+	if len(files) == 0 {
+		return nil
+	}
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerCount > len(files) {
+		workerCount = len(files)
+	}
+
+	jobs := make(chan historyFile)
+	result := make([]HistorySession, 0, len(files))
+	var resultMu sync.Mutex
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for index := 0; index < workerCount; index++ {
+		go func() {
+			defer workers.Done()
+			for file := range jobs {
+				item, ok := discover(file)
+				if !ok {
+					continue
+				}
+				resultMu.Lock()
+				result = append(result, item)
+				resultMu.Unlock()
+			}
+		}()
+	}
+	for _, file := range files {
+		jobs <- file
+	}
+	close(jobs)
+	workers.Wait()
 	return result
 }
 

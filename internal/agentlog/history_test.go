@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -188,6 +189,58 @@ func TestHistoryScanBudgetStopsUnboundedDirectoryReads(t *testing.T) {
 	}
 	if budget.bytes != maxHistoryScanBytes {
 		t.Fatalf("byte budget = %#v, want exhausted", budget)
+	}
+}
+
+func TestDiscoverHistoryFilesUsesBoundedParallelism(t *testing.T) {
+	const (
+		fileCount = 4
+		workers   = 2
+	)
+
+	files := make([]historyFile, fileCount)
+	started := make(chan struct{}, fileCount)
+	release := make(chan struct{})
+	completed := make(chan []HistorySession, 1)
+	var active int32
+	var maxActive int32
+
+	go func() {
+		items := discoverHistoryFiles(files, workers, func(_ historyFile) (HistorySession, bool) {
+			current := atomic.AddInt32(&active, 1)
+			for {
+				previous := atomic.LoadInt32(&maxActive)
+				if current <= previous || atomic.CompareAndSwapInt32(&maxActive, previous, current) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			atomic.AddInt32(&active, -1)
+			return HistorySession{Agent: "test", SessionID: "session"}, true
+		})
+		completed <- items
+	}()
+
+	for index := 0; index < workers; index++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("history file workers did not start concurrently")
+		}
+	}
+	close(release)
+
+	select {
+	case items := <-completed:
+		if len(items) != fileCount {
+			t.Fatalf("discovered history files = %d, want %d", len(items), fileCount)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("history file workers did not complete")
+	}
+	if got := atomic.LoadInt32(&maxActive); got != workers {
+		t.Fatalf("maximum concurrent history files = %d, want %d", got, workers)
 	}
 }
 

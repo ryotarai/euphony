@@ -171,6 +171,29 @@ func TestResolverRejectsSymlinkToAnotherSessionInsideAgentRoot(t *testing.T) {
 	}
 }
 
+func TestConfinedRegularFileUnderResolvedRootPreservesSymlinkConfinement(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "claude-projects")
+	inside := filepath.Join(root, "repo", "session-1.jsonl")
+	outside := filepath.Join(t.TempDir(), "session-2.jsonl")
+	writeTranscriptFixture(t, inside)
+	writeTranscriptFixture(t, outside)
+	escape := filepath.Join(root, "repo", "session-2.jsonl")
+	if err := os.Symlink(outside, escape); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(root) error = %v", err)
+	}
+	if got, ok := confinedRegularFileUnderResolvedRoot(resolvedRoot, inside); !ok || got == "" {
+		t.Fatalf("inside file = %q, %t; want confined regular file", got, ok)
+	}
+	if got, ok := confinedRegularFileUnderResolvedRoot(resolvedRoot, escape); ok || got != "" {
+		t.Fatalf("escaping symlink = %q, %t; want rejection", got, ok)
+	}
+}
+
 func TestResolverBrieflyCachesFallbackMisses(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "claude-projects")
 	path := filepath.Join(root, "repo", "session-1.jsonl")
