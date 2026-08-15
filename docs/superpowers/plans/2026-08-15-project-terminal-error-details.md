@@ -124,7 +124,7 @@
 
   Run `go test ./...`, `GOOS=windows GOARCH=amd64 go build ./...`, `cd web && npm test -- --run`, `npm run typecheck`, and `npm run build`. The Windows test command is not used because the repository's Unix-only test files are not build-tagged for cross-compilation.
 
-- [ ] **Step 3: Inspect the diff and commit the implementation.**
+- [x] **Step 3: Inspect the diff and commit the implementation.**
 
   Confirm only the API, client, UI, and regression-test files changed, then
-  run `git add` and `git commit -m "fix: show project terminal startup errors"`.
+  run `git add` and `git commit -m "fix: show project terminal startup errors"` (commit `5e20380`).
