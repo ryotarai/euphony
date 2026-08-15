@@ -1,15 +1,19 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
+  type MouseEvent,
   type CSSProperties,
-  type ReactNode,
+  type ReactElement,
 } from "react";
+import { FileTree as FileTreeModel } from "@pierre/trees";
+import { FileTree as PierreFileTree } from "@pierre/trees/react";
+import { File as PierreFile } from "@pierre/diffs/react";
 import {
   BinaryIcon,
-  ChevronRightIcon,
   FileTextIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -213,36 +217,26 @@ function workspaceFilesReducer(
 
 const searchDelay = 180;
 const maxRenderedLines = 5_000;
-const treeListStyle: CSSProperties = {
-  margin: 0,
-  padding: 0,
-  listStyle: "none",
-};
-const codeTableStyle: CSSProperties = {
-  display: "block",
+const treeHostStyle = {
   minWidth: "100%",
-  width: "max-content",
-  padding: "0.65rem 0 1.5rem",
-};
-const codeTableBodyStyle: CSSProperties = {
+  minHeight: "100%",
+  height: "100%",
+  "--trees-bg-override": "#0b0d0f",
+  "--trees-bg-muted-override": "#151515",
+  "--trees-fg-override": "#a3a3a3",
+  "--trees-selected-bg-override": "#191919",
+  "--trees-selected-fg-override": "#ffffff",
+  "--trees-border-color-override": "#262626",
+  "--trees-focus-ring-color-override": "#b8f34a",
+  "--trees-font-family-override": '"SFMono-Regular", Consolas, monospace',
+  "--trees-font-size-override": "0.66rem",
+  "--trees-density-override": "0.75",
+} as CSSProperties;
+const fileSurfaceStyle: CSSProperties = {
   display: "block",
-  minWidth: "100%",
-};
-const codeLineNumberStyle: CSSProperties = {
-  display: "block",
-  padding: "0 0.6rem",
-  color: "#515151",
-  background: "#080808",
-  borderRight: "1px solid #1c1c1c",
-  fontVariantNumeric: "tabular-nums",
-  textAlign: "right",
-  userSelect: "none",
-};
-const codeContentStyle: CSSProperties = {
-  display: "block",
-  padding: "0 0.8rem",
-  font: "inherit",
-  whiteSpace: "pre",
+  width: "100%",
+  height: "100%",
+  minHeight: 0,
 };
 
 function formatBytes(bytes: number): string {
@@ -257,147 +251,81 @@ function fileKind(path: string): string {
   return extension.toUpperCase();
 }
 
-function fileLines(content: string): { lines: string[]; truncated: boolean } {
-  if (content === "") return { lines: [""], truncated: false };
-  const lines: string[] = [];
+function fileContents(content: string): { content: string; truncated: boolean } {
+  if (content === "") return { content: "", truncated: false };
   let start = 0;
-  while (lines.length < maxRenderedLines) {
+  let lines = 0;
+  while (lines < maxRenderedLines) {
     const end = content.indexOf("\n", start);
     if (end < 0) {
-      lines.push(content.slice(start));
-      return { lines, truncated: false };
+      return { content, truncated: false };
     }
-    lines.push(content.slice(start, end));
+    lines += 1;
     start = end + 1;
     if (start === content.length) {
-      return { lines, truncated: false };
+      return { content, truncated: false };
     }
   }
-  return { lines, truncated: start < content.length };
+  return { content: content.slice(0, start), truncated: start < content.length };
 }
 
-function entryIcon(entry: WorkspaceEntry, expanded: boolean) {
-  if (entry.kind === "directory") {
-    return expanded
-      ? <FolderOpenIcon aria-hidden="true" />
-      : <FolderIcon aria-hidden="true" />;
-  }
+function entryIcon(entry: WorkspaceEntry) {
+  if (entry.kind === "directory") return <FolderIcon aria-hidden="true" />;
   return <FileTextIcon aria-hidden="true" />;
 }
 
-interface WorkspaceTreeProps {
-  root: WorkspaceDirectory;
-  directories: Record<string, WorkspaceDirectory>;
-  expanded: Set<string>;
-  loadingDirectories: Set<string>;
-  directoryErrors: Set<string>;
-  selectedPath: string | null;
-  onLoadDirectory: (entry: WorkspaceEntry) => void;
-  onToggleDirectory: (entry: WorkspaceEntry) => void;
-  onOpenFile: (path: string) => void;
+function canonicalDirectoryPath(path: string): string {
+  if (path === "") return "";
+  return path.endsWith("/") ? path : `${path}/`;
 }
 
-function renderWorkspaceTree({
-  root,
-  directories,
-  expanded,
-  loadingDirectories,
-  directoryErrors,
-  selectedPath,
-  onLoadDirectory,
-  onToggleDirectory,
-  onOpenFile,
-}: WorkspaceTreeProps) {
-  const renderEntries = (path: string, depth = 0): ReactNode => {
-    const directory = directories[path];
-    if (!directory) return null;
-    return (
-      <>
-        {directory.entries.map((entry) => {
-          const isExpanded = expanded.has(entry.path);
-          const isDirectory = entry.kind === "directory";
-          const isFile = entry.kind === "file";
-          const label = isDirectory
-            ? `${isExpanded ? "Collapse" : "Expand"} ${entry.path}`
-            : isFile
-              ? `Open ${entry.path}`
-              : `Unavailable ${entry.path}`;
-          return (
-            <li
-              className="workspace-tree-node"
-              key={entry.path}
-            >
-              <button
-                type="button"
-                className="workspace-tree-row"
-                aria-label={label}
-                aria-current={entry.path === selectedPath ? "true" : undefined}
-                disabled={!isDirectory && !isFile}
-                style={{ "--tree-depth": depth } as CSSProperties}
-                onClick={() => isDirectory
-                  ? onToggleDirectory(entry)
-                  : onOpenFile(entry.path)}
-              >
-                <ChevronRightIcon
-                  className="workspace-tree-chevron"
-                  data-expanded={isExpanded || undefined}
-                  aria-hidden="true"
-                />
-                {entryIcon(entry, isExpanded)}
-                <span>{entry.name}</span>
-              </button>
-              {isDirectory && isExpanded && (
-                <ul style={treeListStyle}>
-                  {directoryErrors.has(entry.path)
-                    ? (
-                      <li className="workspace-tree-feedback" role="status">
-                        <span>Directory unavailable.</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          aria-label={`Retry ${entry.path} directory`}
-                          onClick={() => onLoadDirectory(entry)}
-                        >
-                          Retry
-                        </Button>
-                      </li>
-                    )
-                    : loadingDirectories.has(entry.path)
-                    ? (
-                      <li className="workspace-tree-loading" role="status">
-                        Loading {entry.path}…
-                      </li>
-                    )
-                    : directories[entry.path]?.entries.length === 0
-                      ? (
-                        <li className="workspace-tree-empty">
-                          This directory is empty.
-                        </li>
-                      )
-                      : renderEntries(entry.path, depth + 1)}
-                </ul>
-              )}
-            </li>
-          );
-        })}
-        {directory.truncated && (
-          <li className="workspace-files-note">
-            Only the first 500 entries are shown.
-          </li>
-        )}
-      </>
-    );
-  };
+function workspacePathFromTreePath(path: string): string {
+  return path.endsWith("/") ? path.slice(0, -1) : path;
+}
 
-  return <ul style={treeListStyle}>{renderEntries(root.path)}</ul>;
+function deselectTreePath(model: FileTreeModel, path: string): void {
+  model.getItem(path)?.deselect();
+}
+
+function selectOnlyTreePath(model: FileTreeModel, path: string): void {
+  for (const selectedPath of model.getSelectedPaths()) {
+    if (selectedPath !== path) deselectTreePath(model, selectedPath);
+  }
+  model.getItem(path)?.select();
+}
+
+function treePathsFromDirectories(
+  directories: Record<string, WorkspaceDirectory>,
+): string[] {
+  const paths = new Set<string>();
+  for (const directory of Object.values(directories)) {
+    for (const entry of directory.entries) {
+      if (entry.path === "") continue;
+      paths.add(entry.kind === "directory"
+        ? canonicalDirectoryPath(entry.path)
+        : entry.path);
+    }
+  }
+  return [...paths];
+}
+
+function directoryEntriesFromDirectories(
+  directories: Record<string, WorkspaceDirectory>,
+): Map<string, WorkspaceEntry> {
+  const entries = new Map<string, WorkspaceEntry>();
+  for (const directory of Object.values(directories)) {
+    for (const entry of directory.entries) {
+      if (entry.kind === "directory") entries.set(entry.path, entry);
+    }
+  }
+  return entries;
 }
 
 interface WorkspaceFileViewerProps {
   fileLoading: boolean;
   fileError: boolean;
   selectedFile: WorkspaceFile | null;
-  renderedFile: ReturnType<typeof fileLines>;
+  renderedFile: ReturnType<typeof fileContents>;
 }
 
 function renderWorkspaceFileViewer({
@@ -468,20 +396,22 @@ function renderWorkspaceFileViewer({
             )
             : (
               <div className="workspace-code-scroll">
-                <table
-                  className="workspace-code-table"
-                  style={codeTableStyle}
-                  aria-label={`Contents of ${selectedFile.path}`}
-                >
-                  <tbody style={codeTableBodyStyle}>
-                    {renderedFile.lines.map((line, index) => (
-                      <tr className="workspace-code-row" key={index}>
-                        <td style={codeLineNumberStyle}>{index + 1}</td>
-                        <td style={codeContentStyle}>{line || " "}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <PierreFile
+                  key={selectedFile.path}
+                  file={{
+                    name: selectedFile.name,
+                    contents: renderedFile.content,
+                    cacheKey: selectedFile.path,
+                  }}
+                  options={{
+                    disableFileHeader: true,
+                    overflow: "scroll",
+                    themeType: "dark",
+                  }}
+                  disableWorkerPool
+                  className="workspace-pierre-file"
+                  style={fileSurfaceStyle}
+                />
                 {renderedFile.truncated && (
                   <p className="workspace-files-note">
                     Only the first 5,000 lines are shown.
@@ -500,6 +430,70 @@ function renderWorkspaceFileViewer({
   );
 }
 
+interface WorkspaceDirectoryFeedbackProps {
+  directories: Record<string, WorkspaceDirectory>;
+  expanded: Set<string>;
+  loadingDirectories: Set<string>;
+  directoryErrors: Set<string>;
+  directoryEntries: Map<string, WorkspaceEntry>;
+  onLoadDirectory: (entry: WorkspaceEntry) => void;
+}
+
+function renderWorkspaceDirectoryFeedback({
+  directories,
+  expanded,
+  loadingDirectories,
+  directoryErrors,
+  directoryEntries,
+  onLoadDirectory,
+}: WorkspaceDirectoryFeedbackProps): ReactElement[] {
+  return [...expanded].flatMap((path) => {
+    const entry = directoryEntries.get(path);
+    if (!entry) return [];
+    if (directoryErrors.has(path)) {
+      return [
+        <div className="workspace-tree-feedback" role="status" key={`${path}:error`}>
+          <span>Directory unavailable.</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-label={`Retry ${path} directory`}
+            onClick={() => onLoadDirectory(entry)}
+          >
+            Retry
+          </Button>
+        </div>,
+      ];
+    }
+    if (loadingDirectories.has(path)) {
+      return [
+        <p className="workspace-tree-loading" role="status" key={`${path}:loading`}>
+          Loading {path}…
+        </p>,
+      ];
+    }
+    const directory = directories[path];
+    if (!directory) return [];
+    const feedback: ReactElement[] = [];
+    if (directory.entries.length === 0) {
+      feedback.push(
+        <p className="workspace-tree-empty" key={`${path}:empty`}>
+          This directory is empty.
+        </p>,
+      );
+    }
+    if (directory.truncated) {
+      feedback.push(
+        <p className="workspace-files-note" key={`${path}:truncated`}>
+          Only the first 500 entries are shown.
+        </p>,
+      );
+    }
+    return feedback;
+  });
+}
+
 interface WorkspaceFileNavigatorProps {
   root: WorkspaceDirectory | undefined;
   rootLoading: boolean;
@@ -513,11 +507,12 @@ interface WorkspaceFileNavigatorProps {
   expanded: Set<string>;
   loadingDirectories: Set<string>;
   directoryErrors: Set<string>;
-  selectedPath: string | null;
+  directoryEntries: Map<string, WorkspaceEntry>;
+  treeModel: FileTreeModel;
   onQueryChange: (query: string) => void;
   onRefresh: () => void;
   onLoadDirectory: (entry: WorkspaceEntry) => void;
-  onToggleDirectory: (entry: WorkspaceEntry) => void;
+  onTreeClick: (event: MouseEvent<HTMLElement>) => void;
   onOpenFile: (path: string) => void;
 }
 
@@ -534,11 +529,12 @@ function renderWorkspaceFileNavigator({
   expanded,
   loadingDirectories,
   directoryErrors,
-  selectedPath,
+  directoryEntries,
+  treeModel,
   onQueryChange,
   onRefresh,
   onLoadDirectory,
-  onToggleDirectory,
+  onTreeClick,
   onOpenFile,
 }: WorkspaceFileNavigatorProps) {
   return (
@@ -634,7 +630,7 @@ function renderWorkspaceFileNavigator({
                     if (entry.kind === "file") onOpenFile(entry.path);
                   }}
                 >
-                  {entryIcon(entry, false)}
+                  {entryIcon(entry)}
                   <span>
                     <strong>{entry.name}</strong>
                     <small>{entry.path}</small>
@@ -653,22 +649,30 @@ function renderWorkspaceFileNavigator({
               className="workspace-tree"
               aria-label="Workspace files"
             >
-              {renderWorkspaceTree({
-                root,
-                directories,
-                expanded,
-                loadingDirectories,
-                directoryErrors,
-                selectedPath,
-                onLoadDirectory,
-                onToggleDirectory,
-                onOpenFile,
-              })}
+              <PierreFileTree
+                model={treeModel}
+                aria-label="Workspace file tree"
+                onClick={onTreeClick}
+                style={treeHostStyle}
+              />
               {root.entries.length === 0 && (
                 <p className="workspace-search-state">
                   This directory is empty.
                 </p>
               )}
+              {root.truncated && (
+                <p className="workspace-files-note">
+                  Only the first 500 entries are shown.
+                </p>
+              )}
+              {renderWorkspaceDirectoryFeedback({
+                directories,
+                expanded,
+                loadingDirectories,
+                directoryErrors,
+                directoryEntries,
+                onLoadDirectory,
+              })}
             </nav>
           )}
       </div>
@@ -709,6 +713,36 @@ function WorkspaceFilesViewContent({
   } = state;
   const sessionIDRef = useRef(session.id);
   const refreshGenerationRef = useRef(0);
+  const treeSelectionRef = useRef<(paths: readonly string[]) => void>(() => {});
+  const treeModel = useMemo(
+    () => new FileTreeModel({
+      paths: [],
+      flattenEmptyDirectories: false,
+      initialExpansion: "closed",
+      onSelectionChange: (paths) => treeSelectionRef.current(paths),
+    }),
+    [],
+  );
+  const treePaths = useMemo(
+    () => treePathsFromDirectories(directories),
+    [directories],
+  );
+  const treePathSet = useMemo(() => new Set(treePaths), [treePaths]);
+  const expandedTreePaths = useMemo(
+    () => {
+      const paths: string[] = [];
+      for (const path of expanded) {
+        const canonicalPath = canonicalDirectoryPath(path);
+        if (treePathSet.has(canonicalPath)) paths.push(canonicalPath);
+      }
+      return paths;
+    },
+    [expanded, treePathSet],
+  );
+  const directoryEntries = useMemo(
+    () => directoryEntriesFromDirectories(directories),
+    [directories],
+  );
 
   useLayoutEffect(() => {
     sessionIDRef.current = session.id;
@@ -795,30 +829,64 @@ function WorkspaceFilesViewContent({
     });
   };
 
-  const toggleDirectory = (entry: WorkspaceEntry) => {
-    if (entry.kind !== "directory") return;
-    if (expanded.has(entry.path)) {
-      dispatch({ type: "directoryToggled", path: entry.path });
-      return;
-    }
-    dispatch({ type: "directoryToggled", path: entry.path });
-    if (directories[entry.path] || loadingDirectories.has(entry.path)) return;
-    loadDirectory(entry);
-  };
-
   const refreshWorkspace = () => {
     refreshGenerationRef.current += 1;
     dispatch({ type: "refreshRequested" });
   };
 
-  const openFile = (path: string) => {
+  const openFile = useCallback((path: string) => {
     dispatch({ type: "fileSelected", path });
+  }, []);
+
+  const handleTreeClick = (event: MouseEvent<HTMLElement>) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+    const item = event.nativeEvent.composedPath().find(
+      (target): target is HTMLElement =>
+        target instanceof HTMLElement && target.dataset.itemPath !== undefined,
+    );
+    if (!item || item.dataset.itemType !== "folder") return;
+    const path = workspacePathFromTreePath(item.dataset.itemPath ?? "");
+    const entry = directoryEntries.get(path);
+    dispatch({ type: "directoryToggled", path });
+    if (entry && !directories[path] && !loadingDirectories.has(path)) {
+      loadDirectory(entry);
+    }
   };
+
+  useLayoutEffect(() => {
+    treeSelectionRef.current = (paths) => {
+      const filePath = paths.find((path) => !path.endsWith("/"));
+      for (const path of paths) {
+        if (path.endsWith("/")) deselectTreePath(treeModel, path);
+      }
+      if (filePath) openFile(workspacePathFromTreePath(filePath));
+    };
+  }, [openFile, treeModel]);
+
+  useLayoutEffect(() => {
+    treeModel.resetPaths(treePaths, {
+      initialExpandedPaths: expandedTreePaths,
+    });
+  }, [expandedTreePaths, treeModel, treePaths]);
+
+  useLayoutEffect(() => {
+    const selected = selectedPath && treeModel.getItem(selectedPath)
+      ? selectedPath
+      : null;
+    const current = treeModel.getSelectedPaths();
+    if (!selected) {
+      for (const path of current) deselectTreePath(treeModel, path);
+      return;
+    }
+    if (current.length !== 1 || current[0] !== selected) {
+      selectOnlyTreePath(treeModel, selected);
+    }
+  }, [selectedPath, treeModel, treePaths]);
 
   const renderedFile = useMemo(
     () => selectedFile && !selectedFile.binary
-      ? fileLines(selectedFile.content ?? "")
-      : { lines: [], truncated: false },
+      ? fileContents(selectedFile.content ?? "")
+      : { content: "", truncated: false },
     [selectedFile],
   );
 
@@ -847,13 +915,14 @@ function WorkspaceFilesViewContent({
           expanded,
           loadingDirectories,
           directoryErrors,
-          selectedPath,
+          directoryEntries,
+          treeModel,
           onQueryChange: (nextQuery) => {
             dispatch({ type: "queryChanged", query: nextQuery });
           },
           onRefresh: refreshWorkspace,
           onLoadDirectory: loadDirectory,
-          onToggleDirectory: toggleDirectory,
+          onTreeClick: handleTreeClick,
           onOpenFile: openFile,
         })}
       </div>
