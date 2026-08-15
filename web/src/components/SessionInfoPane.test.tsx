@@ -31,3 +31,20 @@ test("renders the purpose text in the session detail heading", () => {
   expect(screen.getByText("Summary", { selector: "dt" })).toBeVisible();
   expect(screen.getByText("Action", { selector: "dt" })).toBeVisible();
 });
+
+test("uses New session when the session has no purpose or summary", () => {
+  render(
+    <SessionInfoPane
+      session={{
+        ...session,
+        name: "Shell",
+        agent: undefined,
+        agentTitle: undefined,
+        processName: undefined,
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: "New session", level: 2 })).toBeVisible();
+  expect(screen.getByText("No summary yet.")).toBeVisible();
+});
