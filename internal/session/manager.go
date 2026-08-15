@@ -281,6 +281,7 @@ type Manager struct {
 	shell                           string
 	hooks                           HookConfig
 	sessions                        map[string]*entry
+	archived                        map[string]Metadata
 	pendingAgentStarts              map[string]*pendingAgentStart
 	store                           metadataStore
 	agentSummaries                  map[string]AgentSummary
@@ -354,10 +355,7 @@ func NewPersistentManager(shell string, hooks HookConfig, path string) (*Manager
 	}
 	for _, metadata := range items {
 		if metadata.State == StateExited {
-			if err := store.Delete(context.Background(), metadata.ID); err != nil {
-				_ = manager.Close(context.Background())
-				return nil, fmt.Errorf("purge exited terminal %s: %w", metadata.ID, err)
-			}
+			manager.archived[metadata.ID] = metadata
 			continue
 		}
 		if err := manager.restore(metadata); err != nil {
@@ -381,6 +379,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 	}
 	return &Manager{
 		shell: shell, hooks: hooks, sessions: make(map[string]*entry),
+		archived:            make(map[string]Metadata),
 		pendingAgentStarts:  make(map[string]*pendingAgentStart),
 		agentSummaries:      make(map[string]AgentSummary),
 		agentSummaryHistory: make(map[string][]AgentSummaryHistoryEntry),
@@ -1697,7 +1696,9 @@ func (m *Manager) watch(item *entry) {
 	_ = waitCommand(item.session.command)
 
 	var deleted *Change
-	var deleteOperation storeOperation
+	var archived Metadata
+	var archiveOperation storeOperation
+	var shouldArchive bool
 	var store metadataStore
 	m.mu.Lock()
 	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
@@ -1706,9 +1707,15 @@ func (m *Manager) watch(item *entry) {
 		m.cancelBlockedStatusLocked(item)
 		if !m.closing {
 			delete(m.sessions, item.metadata.ID)
+			archived = item.metadata
+			archived.State = StateExited
+			exitedAt := time.Now().UTC()
+			archived.ExitedAt = &exitedAt
+			archived.ExitCode = commandExitCode(item.session.command)
 			store = m.store
 			if store != nil {
-				deleteOperation = m.reserveStoreOperation()
+				archiveOperation = m.reserveStoreOperation()
+				shouldArchive = true
 			}
 			before := item.metadata
 			change := m.nextChangeLocked(ChangeDeleted, &before, nil)
@@ -1716,15 +1723,50 @@ func (m *Manager) watch(item *entry) {
 		}
 	}
 	m.mu.Unlock()
-	if store != nil {
-		_ = m.runStoreOperation(deleteOperation, func() error {
-			return store.Delete(context.Background(), item.metadata.ID)
-		})
+	if shouldArchive {
+		// Keep the record available in this process even if the first database
+		// write is transiently unavailable; persistExitedMetadata retries once.
+		_ = m.persistExitedMetadata(store, archived, archiveOperation)
+		m.mu.Lock()
+		m.archived[archived.ID] = archived
+		m.mu.Unlock()
 	}
 	if deleted != nil {
 		m.emitChange(*deleted)
 	}
 	close(item.session.waitDone)
+}
+
+const exitedMetadataSaveAttempts = 2
+
+func (m *Manager) persistExitedMetadata(
+	store metadataStore,
+	metadata Metadata,
+	operation storeOperation,
+) bool {
+	for attempt := 0; attempt < exitedMetadataSaveAttempts; attempt++ {
+		err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), metadata)
+		})
+		if err == nil {
+			return true
+		}
+		if attempt+1 < exitedMetadataSaveAttempts {
+			operation = m.reserveStoreOperation()
+		}
+	}
+	return false
+}
+
+func commandExitCode(command *exec.Cmd) *int {
+	if command == nil || command.ProcessState == nil {
+		return nil
+	}
+	code := command.ProcessState.ExitCode()
+	if code < 0 {
+		return nil
+	}
+	return &code
 }
 
 func (m *Manager) List() []Metadata {
@@ -1934,6 +1976,36 @@ func (m *Manager) ListCurrent() []Metadata {
 		return result[i].CreatedAt.Before(result[j].CreatedAt)
 	})
 	return result
+}
+
+// ListStored returns current terminals and metadata retained for terminals
+// whose processes have exited. The latter is loaded from the persistent store
+// on startup and is intentionally excluded from ListCurrent so exited
+// terminals do not reappear as live panes.
+func (m *Manager) ListStored() []Metadata {
+	result := m.List()
+	m.mu.RLock()
+	for _, metadata := range m.archived {
+		result = append(result, metadata)
+	}
+	m.mu.RUnlock()
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+	return result
+}
+
+// ListPersisted returns stored metadata only when this manager has a backing
+// metadata store. All sessions uses this method so an in-memory test manager
+// or temporary server cannot expand the index beyond Euphony's database.
+func (m *Manager) ListPersisted() []Metadata {
+	m.mu.RLock()
+	persistent := m.store != nil
+	m.mu.RUnlock()
+	if !persistent {
+		return nil
+	}
+	return m.ListStored()
 }
 
 func (m *Manager) refreshCodexTitles() []Change {
