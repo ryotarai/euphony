@@ -16,7 +16,7 @@ function jsonResponse(body: unknown, status = 200) {
   );
 }
 
-test("reads and replaces the shared v1 selection envelope", async () => {
+test("reads and replaces the shared selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],
     manualTerminalIds: ["terminal-1"],
@@ -26,9 +26,9 @@ test("reads and replaces the shared v1 selection envelope", async () => {
     revision: 4,
   };
   const fetchMock = vi.spyOn(globalThis, "fetch")
-    .mockImplementationOnce(() => jsonResponse({ ok: true, result: selection }))
+    .mockImplementationOnce(() => jsonResponse(selection))
     .mockImplementationOnce(() =>
-      jsonResponse({ ok: true, result: { ...selection, revision: 5 } }),
+      jsonResponse({ ...selection, revision: 5 }),
     );
   const api = new ApiClient("token");
 
@@ -42,7 +42,7 @@ test("reads and replaces the shared v1 selection envelope", async () => {
   })).toEqual({ ...selection, revision: 5 });
   expect(fetchMock).toHaveBeenNthCalledWith(
     2,
-    "/api/v1/selection",
+    "/api/selection",
     expect.objectContaining({
       method: "PUT",
       body: JSON.stringify({
@@ -154,7 +154,7 @@ test("allows a slow all-sessions response to complete before timing out", async 
   }
 });
 
-test("turns a non-JSON v1 error response into an API error", async () => {
+test("turns a non-JSON error response into an API error", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response("upstream failure", {
       status: 502,
@@ -170,16 +170,13 @@ test("turns a non-JSON v1 error response into an API error", async () => {
   });
 });
 
-test("includes a v1 error cause in the human-readable API error", async () => {
+test("includes an error cause in the human-readable API error", async () => {
   const cause = "start ConPTY process: The system cannot find the file specified.";
   vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>
     jsonResponse({
-      ok: false,
-      error: {
-        code: "terminal_create_failed",
-        message: "The terminal could not be created.",
-        details: { cause },
-      },
+      code: "terminal_create_failed",
+      message: "The terminal could not be created.",
+      details: { cause },
     }, 500),
   );
   const api = new ApiClient("token");
@@ -345,18 +342,17 @@ test("opens the native project directory picker", async () => {
   );
 });
 
-test("starts an agent through the v1 endpoint", async () => {
+test("starts an agent through the browser API endpoint", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() => jsonResponse({
-      ok: true,
-      result: { agent: { id: "terminal-1", kind: "codex" } },
+      agent: { id: "terminal-1", kind: "codex" },
     }));
   const api = new ApiClient("token");
 
   await api.startAgent("terminal-1", "codex");
 
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/v1/agents/terminal-1/start",
+    "/api/agents/terminal-1/start",
     expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ kind: "codex", args: [], timeoutMs: 30000 }),
@@ -365,7 +361,7 @@ test("starts an agent through the v1 endpoint", async () => {
   );
 });
 
-test("creates and deletes terminals through v1 with returned selection", async () => {
+test("creates and deletes terminals with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],
     manualTerminalIds: ["terminal-1"],
@@ -383,10 +379,10 @@ test("creates and deletes terminals through v1 with returned selection", async (
   };
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() =>
-      jsonResponse({ ok: true, result: { terminal, selection } }, 201),
+      jsonResponse({ terminal, selection }, 201),
     )
     .mockImplementationOnce(() =>
-      jsonResponse({ ok: true, result: { id: terminal.id, selection } }),
+      jsonResponse({ id: terminal.id, selection }),
     );
   const api = new ApiClient("token");
 
@@ -400,7 +396,7 @@ test("creates and deletes terminals through v1 with returned selection", async (
   });
   expect(fetchMock).toHaveBeenNthCalledWith(
     1,
-    "/api/v1/terminals",
+    "/api/terminals",
     expect.objectContaining({
       body: JSON.stringify({
         name: "Terminal",
@@ -429,14 +425,14 @@ test("includes a project ID when creating a project terminal", async () => {
   };
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() =>
-      jsonResponse({ ok: true, result: { terminal, selection } }, 201),
+      jsonResponse({ terminal, selection }, 201),
     );
   const api = new ApiClient("token");
 
   await api.createTerminal("Terminal", undefined, "replace", "project-1");
 
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/v1/terminals",
+    "/api/terminals",
     expect.objectContaining({
       method: "POST",
       body: JSON.stringify({
@@ -448,7 +444,7 @@ test("includes a project ID when creating a project terminal", async () => {
   );
 });
 
-test("renames a terminal through v1 and unwraps the returned terminal", async () => {
+test("renames a terminal and unwraps the returned terminal", async () => {
   const terminal = {
     id: "terminal/one",
     name: "Renamed terminal",
@@ -459,13 +455,13 @@ test("renames a terminal through v1 and unwraps the returned terminal", async ()
   };
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() =>
-      jsonResponse({ ok: true, result: { terminal } }),
+      jsonResponse({ terminal }),
     );
   const api = new ApiClient("token");
 
   expect(await api.renameTerminal(terminal.id, terminal.name)).toEqual(terminal);
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/v1/terminals/terminal%2Fone",
+    "/api/terminals/terminal%2Fone",
     expect.objectContaining({
       method: "PATCH",
       body: JSON.stringify({ name: "Renamed terminal" }),
@@ -503,7 +499,7 @@ test("parses split NDJSON event chunks without losing records", async () => {
 
   expect(events).toEqual(["terminal.created", "selection.changed"]);
 });
-test("reads and completes a terminal annotation through v1", async () => {
+test("reads and completes a terminal annotation", async () => {
   const annotation: AnnotationSession = {
     id: "annotation-1",
     terminalId: "terminal-1",
@@ -523,13 +519,10 @@ test("reads and completes a terminal annotation through v1", async () => {
   ];
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() =>
-      jsonResponse({ ok: true, result: { annotation } }),
+      jsonResponse({ annotation }),
     )
     .mockImplementationOnce(() =>
-      jsonResponse({
-        ok: true,
-        result: { annotationId: annotation.id, comments },
-      }),
+      jsonResponse({ annotationId: annotation.id, comments }),
     );
   const api = new ApiClient("token");
 
@@ -540,14 +533,14 @@ test("reads and completes a terminal annotation through v1", async () => {
   });
   expect(fetchMock).toHaveBeenNthCalledWith(
     1,
-    "/api/v1/terminals/terminal-1/annotation",
+    "/api/terminals/terminal-1/annotation",
     expect.objectContaining({
       headers: expect.objectContaining({ Authorization: "Bearer token" }),
     }),
   );
   expect(fetchMock).toHaveBeenNthCalledWith(
     2,
-    "/api/v1/annotations/annotation-1/complete",
+    "/api/annotations/annotation-1/complete",
     expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ comments }),

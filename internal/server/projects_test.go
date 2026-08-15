@@ -111,21 +111,18 @@ func TestProjectTerminalCreationResolvesProjectDirectoryServerSide(t *testing.T)
 	var createdProject project.Project
 	decodeResponse(t, projectResponse, &createdProject)
 
-	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+	created := performRequest(t, srv, http.MethodPost, "/api/terminals",
 		`{"name":"Project terminal","cwd":`+strconv.Quote(t.TempDir())+
 			`,"projectId":`+strconv.Quote(createdProject.ID)+`}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
 	}
-	var envelope struct {
-		Result struct {
-			Terminal session.Metadata `json:"terminal"`
-		} `json:"result"`
+	var result struct {
+		Terminal session.Metadata `json:"terminal"`
 	}
-	decodeResponse(t, created, &envelope)
-	if envelope.Result.Terminal.CWD != directory ||
-		envelope.Result.Terminal.ProjectID != createdProject.ID {
-		t.Fatalf("created terminal = %#v, want project directory and ID", envelope.Result.Terminal)
+	decodeResponse(t, created, &result)
+	if result.Terminal.CWD != directory || result.Terminal.ProjectID != createdProject.ID {
+		t.Fatalf("created terminal = %#v, want project directory and ID", result.Terminal)
 	}
 }
 
@@ -144,22 +141,19 @@ func TestProjectTerminalCreationStartsRequestedAgentCommand(t *testing.T) {
 	var createdProject project.Project
 	decodeResponse(t, projectResponse, &createdProject)
 
-	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+	created := performRequest(t, srv, http.MethodPost, "/api/terminals",
 		`{"name":"Codex","projectId":`+strconv.Quote(createdProject.ID)+`,"command":"codex"}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
 	}
-	var envelope struct {
-		Result struct {
-			Terminal session.Metadata `json:"terminal"`
-		} `json:"result"`
+	var result struct {
+		Terminal session.Metadata `json:"terminal"`
 	}
-	decodeResponse(t, created, &envelope)
-	if envelope.Result.Terminal.CWD != directory ||
-		envelope.Result.Terminal.ProjectID != createdProject.ID {
-		t.Fatalf("created terminal = %#v, want project directory and ID", envelope.Result.Terminal)
+	decodeResponse(t, created, &result)
+	if result.Terminal.CWD != directory || result.Terminal.ProjectID != createdProject.ID {
+		t.Fatalf("created terminal = %#v, want project directory and ID", result.Terminal)
 	}
-	waited, err := srv.control.WaitOutput(context.Background(), envelope.Result.Terminal.ID,
+	waited, err := srv.control.WaitOutput(context.Background(), result.Terminal.ID,
 		control.OutputMatch{Literal: "project-direct-command-ready", MaxBytes: 1024})
 	if err != nil || !strings.Contains(waited.MatchedLine, "project-direct-command-ready") {
 		t.Fatalf("WaitOutput() = %#v, %v", waited, err)
@@ -180,69 +174,61 @@ func TestProjectTerminalCreationIncludesStartFailureDetails(t *testing.T) {
 	var createdProject project.Project
 	decodeResponse(t, projectResponse, &createdProject)
 
-	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+	created := performRequest(t, srv, http.MethodPost, "/api/terminals",
 		`{"name":"Broken terminal","projectId":`+strconv.Quote(createdProject.ID)+`}`)
-	var envelope struct {
-		OK    bool `json:"ok"`
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-			Details struct {
-				Cause string `json:"cause"`
-			} `json:"details"`
-		} `json:"error"`
+	var result struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Details struct {
+			Cause string `json:"cause"`
+		} `json:"details"`
 	}
-	decodeResponse(t, created, &envelope)
-	if created.Code != http.StatusInternalServerError || envelope.OK ||
-		envelope.Error.Code != "terminal_create_failed" ||
-		envelope.Error.Message != "The terminal could not be created." ||
-		strings.TrimSpace(envelope.Error.Details.Cause) == "" {
+	decodeResponse(t, created, &result)
+	if created.Code != http.StatusInternalServerError || result.Code != "terminal_create_failed" ||
+		result.Message != "The terminal could not be created." ||
+		strings.TrimSpace(result.Details.Cause) == "" {
 		t.Fatalf("creation error = %d %#v; body = %s",
-			created.Code, envelope, created.Body.String())
+			created.Code, result, created.Body.String())
 	}
 }
 
 func TestLegacyTerminalCreationKeepsLegacyCWDAndNoProjectID(t *testing.T) {
 	srv := newProjectTestServer(t)
 	directory := t.TempDir()
-	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+	created := performRequest(t, srv, http.MethodPost, "/api/terminals",
 		`{"name":"Legacy terminal","cwd":`+strconv.Quote(directory)+`}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
 	}
-	var envelope struct {
-		Result struct {
-			Terminal session.Metadata `json:"terminal"`
-		} `json:"result"`
+	var result struct {
+		Terminal session.Metadata `json:"terminal"`
 	}
-	decodeResponse(t, created, &envelope)
-	if envelope.Result.Terminal.CWD != directory || envelope.Result.Terminal.ProjectID != "" {
-		t.Fatalf("legacy terminal = %#v, want empty project ID", envelope.Result.Terminal)
+	decodeResponse(t, created, &result)
+	if result.Terminal.CWD != directory || result.Terminal.ProjectID != "" {
+		t.Fatalf("legacy terminal = %#v, want empty project ID", result.Terminal)
 	}
 }
 
 func TestProjectTerminalCreationRejectsUnknownProject(t *testing.T) {
 	srv := newProjectTestServer(t)
-	response := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+	response := performRequest(t, srv, http.MethodPost, "/api/terminals",
 		`{"name":"Missing project","projectId":"missing-project"}`)
-	assertV1ProjectError(t, response, http.StatusNotFound, "project_not_found")
+	assertProjectError(t, response, http.StatusNotFound, "project_not_found")
 }
 
 func TestProjectTerminalCreationRejectsExplicitNullProjectID(t *testing.T) {
 	srv := newProjectTestServer(t)
-	response := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+	response := performRequest(t, srv, http.MethodPost, "/api/terminals",
 		`{"name":"Null project","cwd":`+strconv.Quote(t.TempDir())+`,"projectId":null}`)
-	assertV1ProjectError(t, response, http.StatusBadRequest, "invalid_request")
+	assertProjectError(t, response, http.StatusBadRequest, "invalid_request")
 
-	terminalsResponse := performRequest(t, srv, http.MethodGet, "/api/v1/terminals", "")
-	var envelope struct {
-		Result struct {
-			Terminals []session.Metadata `json:"terminals"`
-		} `json:"result"`
+	terminalsResponse := performRequest(t, srv, http.MethodGet, "/api/terminals", "")
+	var result struct {
+		Terminals []session.Metadata `json:"terminals"`
 	}
-	decodeResponse(t, terminalsResponse, &envelope)
-	if len(envelope.Result.Terminals) != 0 {
-		t.Fatalf("terminals after explicit null request = %#v, want none", envelope.Result.Terminals)
+	decodeResponse(t, terminalsResponse, &result)
+	if len(result.Terminals) != 0 {
+		t.Fatalf("terminals after explicit null request = %#v, want none", result.Terminals)
 	}
 }
 
@@ -317,16 +303,13 @@ func TestPersistentServerMigratesLegacyTerminalsIntoProjects(t *testing.T) {
 	if len(projects) != 1 || projects[0].Path != directory {
 		t.Fatalf("projects = %#v, want one project for %q", projects, directory)
 	}
-	terminalsResponse := performRequest(t, srv, http.MethodGet, "/api/v1/terminals", "")
-	var terminalsEnvelope struct {
-		Result struct {
-			Terminals []session.Metadata `json:"terminals"`
-		} `json:"result"`
+	terminalsResponse := performRequest(t, srv, http.MethodGet, "/api/terminals", "")
+	var terminalsResult struct {
+		Terminals []session.Metadata `json:"terminals"`
 	}
-	decodeResponse(t, terminalsResponse, &terminalsEnvelope)
-	if len(terminalsEnvelope.Result.Terminals) != 1 ||
-		terminalsEnvelope.Result.Terminals[0].ProjectID != projects[0].ID {
-		t.Fatalf("migrated terminals = %#v, want project %q", terminalsEnvelope.Result.Terminals, projects[0].ID)
+	decodeResponse(t, terminalsResponse, &terminalsResult)
+	if len(terminalsResult.Terminals) != 1 || terminalsResult.Terminals[0].ProjectID != projects[0].ID {
+		t.Fatalf("migrated terminals = %#v, want project %q", terminalsResult.Terminals, projects[0].ID)
 	}
 	if err := srv.Close(t.Context()); err != nil {
 		t.Fatalf("Server.Close() error = %v", err)
@@ -341,20 +324,6 @@ func assertProjectError(t *testing.T, response *httptest.ResponseRecorder, statu
 	decodeResponse(t, response, &body)
 	if response.Code != status || body.Code != code {
 		t.Fatalf("project error = %d %#v, want %d %q; body = %s",
-			response.Code, body, status, code, response.Body.String())
-	}
-}
-
-func assertV1ProjectError(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
-	t.Helper()
-	var body struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	decodeResponse(t, response, &body)
-	if response.Code != status || body.Error.Code != code {
-		t.Fatalf("v1 project error = %d %#v, want %d %q; body = %s",
 			response.Code, body, status, code, response.Body.String())
 	}
 }

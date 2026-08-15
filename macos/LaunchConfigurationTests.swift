@@ -18,7 +18,6 @@ struct LaunchConfigurationTests {
         precondition(configuration.environment["EUPHONY_ADDR"] == "127.0.0.1:0")
         precondition(configuration.environment["EUPHONY_TOKEN"] == "test-token")
         precondition(configuration.environment["EUPHONY_READY_FILE"] == readyFileURL.path)
-        precondition(configuration.environment["EUPHONY_SOCKET"]?.hasSuffix("/euphony.sock") == true)
         print("launch configuration passed")
     }
 }

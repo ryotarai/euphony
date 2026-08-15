@@ -12,7 +12,7 @@ cp "$repo_root/scripts/dev.sh" "$fixture/repo/scripts/dev.sh"
 cat >"$fixture/bin/go" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'token=%s\naddr=%s\nsocket=%s\nargs=%s\n' "$EUPHONY_TOKEN" "$EUPHONY_ADDR" "$EUPHONY_SOCKET" "$*" >"$DEV_TEST_LOG/go-started"
+printf 'token=%s\naddr=%s\nargs=%s\n' "$EUPHONY_TOKEN" "$EUPHONY_ADDR" "$*" >"$DEV_TEST_LOG/go-started"
 trap 'printf "stopped\n" >"$DEV_TEST_LOG/go-stopped"; exit 0' TERM INT
 while true; do sleep 0.05; done
 EOF
@@ -56,7 +56,6 @@ fi
 
 grep -q '^token=custom-token$' "$fixture/log/go-started"
 grep -q '^addr=127.0.0.1:19090$' "$fixture/log/go-started"
-grep -q "^socket=$fixture/repo/tmp/euphony-dev-5199.sock$" "$fixture/log/go-started"
 grep -q '^args=run ./cmd/euphony$' "$fixture/log/go-started"
 grep -q '^installed$' "$fixture/log/npm-installed"
 grep -q '^api_url=http://127.0.0.1:19090$' "$fixture/log/vite-started"

@@ -16,13 +16,13 @@ import (
 	"github.com/ryotarai/euphony/internal/session"
 )
 
-func (s *Server) v1ListTerminals(w http.ResponseWriter, _ *http.Request) {
-	writeV1Result(w, http.StatusOK, map[string]any{
+func (s *Server) apiListTerminals(w http.ResponseWriter, _ *http.Request) {
+	writeAPIResult(w, http.StatusOK, map[string]any{
 		"terminals": s.control.ListTerminals(),
 	})
 }
 
-func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiCreateTerminal(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name          string                `json:"name"`
 		CWD           string                `json:"cwd"`
@@ -30,8 +30,8 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 		ProjectID     optionalProjectID     `json:"projectId"`
 		SelectionMode control.SelectionMode `json:"selectionMode"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "Provide one valid terminal creation object.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "Provide one valid terminal creation object.")
 		return
 	}
 	if strings.TrimSpace(request.Name) == "" {
@@ -43,17 +43,17 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	if request.SelectionMode != control.SelectionNone &&
 		request.SelectionMode != control.SelectionAdd &&
 		request.SelectionMode != control.SelectionReplace {
-		writeV1Error(w, http.StatusBadRequest, "invalid_selection_mode",
+		writeAPIError(w, http.StatusBadRequest, "invalid_selection_mode",
 			"selectionMode must be none, add, or replace.", nil)
 		return
 	}
 	if request.ProjectID.present && request.ProjectID.null {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
+		writeAPIError(w, http.StatusBadRequest, "invalid_request",
 			"projectId must be a string when provided.", nil)
 		return
 	}
 	if request.Command != "" && request.Command != "codex" && request.Command != "claude" {
-		writeV1Error(w, http.StatusBadRequest, "invalid_command",
+		writeAPIError(w, http.StatusBadRequest, "invalid_command",
 			"command must be codex or claude when provided.", nil)
 		return
 	}
@@ -76,10 +76,10 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 		item, projectErr := s.projects.Get(r.Context(), projectID)
 		if projectErr != nil {
 			if errors.Is(projectErr, project.ErrNotFound) {
-				writeV1Error(w, http.StatusNotFound, "project_not_found",
+				writeAPIError(w, http.StatusNotFound, "project_not_found",
 					"The project does not exist.", nil)
 			} else {
-				writeV1Error(w, http.StatusInternalServerError, "project_lookup_failed",
+				writeAPIError(w, http.StatusInternalServerError, "project_lookup_failed",
 					"The project could not be loaded.", nil)
 			}
 			return
@@ -105,20 +105,20 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "working directory"):
-			writeV1Error(w, http.StatusBadRequest, "invalid_cwd",
+			writeAPIError(w, http.StatusBadRequest, "invalid_cwd",
 				"Choose an existing working directory.", nil)
 		case strings.Contains(err.Error(), "name"):
-			writeV1Error(w, http.StatusBadRequest, "invalid_name",
+			writeAPIError(w, http.StatusBadRequest, "invalid_name",
 				"Terminal names must contain 1 to 80 characters.", nil)
 		default:
-			writeV1Error(w, http.StatusInternalServerError, "terminal_create_failed",
+			writeAPIError(w, http.StatusInternalServerError, "terminal_create_failed",
 				"The terminal could not be created.", map[string]string{
 					"cause": err.Error(),
 				})
 		}
 		return
 	}
-	writeV1Result(w, http.StatusCreated, map[string]any{
+	writeAPIResult(w, http.StatusCreated, map[string]any{
 		"terminal":  metadata,
 		"selection": selected,
 	})
@@ -158,56 +158,56 @@ func (s *Server) applyCreatedTerminalSelection(
 	})
 }
 
-func (s *Server) v1GetTerminal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiGetTerminal(w http.ResponseWriter, r *http.Request) {
 	metadata, err := s.control.GetTerminal(r.PathValue("id"))
 	if err != nil {
 		writeTerminalControlError(w, err)
 		return
 	}
-	writeV1Result(w, http.StatusOK, map[string]any{"terminal": metadata})
+	writeAPIResult(w, http.StatusOK, map[string]any{"terminal": metadata})
 }
 
-func (s *Server) v1RenameTerminal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiRenameTerminal(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name string `json:"name"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "Provide one valid terminal rename object.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "Provide one valid terminal rename object.")
 		return
 	}
 	metadata, err := s.control.RenameTerminal(r.PathValue("id"), request.Name)
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "name"):
-			writeV1Error(w, http.StatusBadRequest, "invalid_name",
+			writeAPIError(w, http.StatusBadRequest, "invalid_name",
 				"Terminal names must contain 1 to 80 characters.", nil)
 		default:
 			writeTerminalControlError(w, err)
 		}
 		return
 	}
-	writeV1Result(w, http.StatusOK, map[string]any{"terminal": metadata})
+	writeAPIResult(w, http.StatusOK, map[string]any{"terminal": metadata})
 }
 
-func (s *Server) v1DeleteTerminal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiDeleteTerminal(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	selected, err := s.control.DeleteTerminal(id)
 	if err != nil {
 		writeTerminalControlError(w, err)
 		return
 	}
-	writeV1Result(w, http.StatusOK, map[string]any{
+	writeAPIResult(w, http.StatusOK, map[string]any{
 		"id":        id,
 		"selection": selected,
 	})
 }
 
-func (s *Server) v1ReadTerminal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiReadTerminal(w http.ResponseWriter, r *http.Request) {
 	maxBytes := control.DefaultTerminalReadBytes
 	if value := r.URL.Query().Get("maxBytes"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed < 1 || parsed > control.MaxTerminalReadBytes {
-			writeV1Error(w, http.StatusBadRequest, "invalid_max_bytes",
+			writeAPIError(w, http.StatusBadRequest, "invalid_max_bytes",
 				"maxBytes must be between 1 and 16777216.", nil)
 			return
 		}
@@ -218,17 +218,17 @@ func (s *Server) v1ReadTerminal(w http.ResponseWriter, r *http.Request) {
 		writeTerminalControlError(w, err)
 		return
 	}
-	writeV1Result(w, http.StatusOK, result)
+	writeAPIResult(w, http.StatusOK, result)
 }
 
-func (s *Server) v1SendTerminalInput(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiSendTerminalInput(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Text       *string  `json:"text"`
 		DataBase64 string   `json:"dataBase64"`
 		Keys       []string `json:"keys"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "Provide one valid terminal input object.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "Provide one valid terminal input object.")
 		return
 	}
 	err := s.control.SendTerminalInput(r.PathValue("id"), control.TerminalInput{
@@ -240,40 +240,40 @@ func (s *Server) v1SendTerminalInput(w http.ResponseWriter, r *http.Request) {
 		writeTerminalControlError(w, err)
 		return
 	}
-	writeV1Result(w, http.StatusOK, map[string]bool{"accepted": true})
+	writeAPIResult(w, http.StatusOK, map[string]bool{"accepted": true})
 }
 
-func (s *Server) v1RunTerminal(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiRunTerminal(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Command string `json:"command"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "Provide one valid terminal command object.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "Provide one valid terminal command object.")
 		return
 	}
 	if err := s.control.RunTerminal(r.PathValue("id"), request.Command); err != nil {
 		writeTerminalControlError(w, err)
 		return
 	}
-	writeV1Result(w, http.StatusOK, map[string]bool{"accepted": true})
+	writeAPIResult(w, http.StatusOK, map[string]bool{"accepted": true})
 }
 
-func (s *Server) v1WaitTerminalOutput(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiWaitTerminalOutput(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Match     string `json:"match"`
 		Regex     string `json:"regex"`
 		TimeoutMS int    `json:"timeoutMs"`
 		MaxBytes  *int   `json:"maxBytes"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "Provide one valid terminal output wait object.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "Provide one valid terminal output wait object.")
 		return
 	}
 	ctx := r.Context()
 	var cancel context.CancelFunc
 	if request.TimeoutMS < 0 ||
 		request.TimeoutMS > int((24*time.Hour).Milliseconds()) {
-		writeV1Error(w, http.StatusBadRequest, "invalid_timeout",
+		writeAPIError(w, http.StatusBadRequest, "invalid_timeout",
 			"timeoutMs must be between 0 and 86400000.", nil)
 		return
 	}
@@ -284,7 +284,7 @@ func (s *Server) v1WaitTerminalOutput(w http.ResponseWriter, r *http.Request) {
 	maxBytes := 0
 	if request.MaxBytes != nil {
 		if *request.MaxBytes < 1 || *request.MaxBytes > control.MaxTerminalReadBytes {
-			writeV1Error(w, http.StatusBadRequest, "invalid_max_bytes",
+			writeAPIError(w, http.StatusBadRequest, "invalid_max_bytes",
 				"maxBytes must be between 1 and 16777216.", nil)
 			return
 		}
@@ -299,19 +299,19 @@ func (s *Server) v1WaitTerminalOutput(w http.ResponseWriter, r *http.Request) {
 		writeTerminalControlError(w, err)
 		return
 	}
-	writeV1Result(w, http.StatusOK, result)
+	writeAPIResult(w, http.StatusOK, result)
 }
 
-func (s *Server) v1CreateTerminalTicket(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiCreateTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Mode string `json:"mode"`
 	}
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "Provide one valid terminal stream ticket object.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "Provide one valid terminal stream ticket object.")
 		return
 	}
 	if request.Mode != "observe" && request.Mode != "control" {
-		writeV1Error(w, http.StatusBadRequest, "invalid_stream_mode",
+		writeAPIError(w, http.StatusBadRequest, "invalid_stream_mode",
 			"mode must be observe or control.", nil)
 		return
 	}
@@ -322,11 +322,11 @@ func (s *Server) v1CreateTerminalTicket(w http.ResponseWriter, r *http.Request) 
 	}
 	ticket, err := s.tickets.createWithMode(id, request.Mode == "observe")
 	if err != nil {
-		writeV1Error(w, http.StatusInternalServerError, "ticket_failed",
+		writeAPIError(w, http.StatusInternalServerError, "ticket_failed",
 			"A terminal stream ticket could not be created.", nil)
 		return
 	}
-	writeV1Result(w, http.StatusCreated, map[string]string{
+	writeAPIResult(w, http.StatusCreated, map[string]string{
 		"ticket": ticket,
 		"mode":   request.Mode,
 	})
@@ -336,35 +336,35 @@ func writeTerminalControlError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, control.ErrTerminalNotFound),
 		errors.Is(err, session.ErrNotFound):
-		writeV1Error(w, http.StatusNotFound, "terminal_not_found",
+		writeAPIError(w, http.StatusNotFound, "terminal_not_found",
 			"The terminal does not exist.", nil)
 	case errors.Is(err, control.ErrTerminalBusy):
-		writeV1Error(w, http.StatusConflict, "terminal_busy",
+		writeAPIError(w, http.StatusConflict, "terminal_busy",
 			"The terminal foreground is not an available shell.", nil)
 	case errors.Is(err, control.ErrTerminalLocked):
-		writeV1Error(w, http.StatusConflict, "terminal_locked",
+		writeAPIError(w, http.StatusConflict, "terminal_locked",
 			"The terminal is being controlled by Inbox.", nil)
 	case errors.Is(err, control.ErrInvalidKey):
-		writeV1Error(w, http.StatusBadRequest, "invalid_key", err.Error(), nil)
+		writeAPIError(w, http.StatusBadRequest, "invalid_key", err.Error(), nil)
 	case errors.Is(err, control.ErrInvalidInput):
-		writeV1Error(w, http.StatusBadRequest, "invalid_input",
+		writeAPIError(w, http.StatusBadRequest, "invalid_input",
 			"Provide exactly one non-empty text, dataBase64, or keys input.", nil)
 	case errors.Is(err, control.ErrInvalidOutputMatch):
-		writeV1Error(w, http.StatusBadRequest, "invalid_output_match", err.Error(), nil)
+		writeAPIError(w, http.StatusBadRequest, "invalid_output_match", err.Error(), nil)
 	case errors.Is(err, context.DeadlineExceeded):
-		writeV1Error(w, http.StatusRequestTimeout, "timeout",
+		writeAPIError(w, http.StatusRequestTimeout, "timeout",
 			"Timed out waiting for terminal output.", nil)
 	case errors.Is(err, context.Canceled):
-		writeV1Error(w, http.StatusRequestTimeout, "request_canceled",
+		writeAPIError(w, http.StatusRequestTimeout, "request_canceled",
 			"The terminal output wait was canceled.", nil)
 	case errors.Is(err, control.ErrTerminalClosed):
-		writeV1Error(w, http.StatusConflict, "terminal_closed",
+		writeAPIError(w, http.StatusConflict, "terminal_closed",
 			"The terminal closed before output matched.", nil)
 	case errors.Is(err, control.ErrOutputSubscriberLagged):
-		writeV1Error(w, http.StatusConflict, "subscriber_lagged",
+		writeAPIError(w, http.StatusConflict, "subscriber_lagged",
 			"The terminal output subscriber fell behind.", nil)
 	default:
-		writeV1Error(w, http.StatusInternalServerError, "terminal_operation_failed",
+		writeAPIError(w, http.StatusInternalServerError, "terminal_operation_failed",
 			"The terminal operation failed.", nil)
 	}
 }

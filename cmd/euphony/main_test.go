@@ -81,6 +81,18 @@ func TestHTTPServerShutdownCancelsLongLivedRequests(t *testing.T) {
 	}
 }
 
+func TestRunRejectsRemovedAutomationCommands(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := run([]string{"status"}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("run(status) error = nil, want removed automation command rejection")
+	}
+	if got := err.Error(); got != "usage: euphony setup | euphony hook <agent> <status>" {
+		t.Fatalf("run(status) error = %q, want concise usage error", got)
+	}
+}
+
 func TestShutdownStepReportsTimeoutStage(t *testing.T) {
 	var messages strings.Builder
 	logf := func(format string, args ...any) {

@@ -24,10 +24,10 @@ type completeAnnotationRequest struct {
 	Comments []annotation.Comment `json:"comments"`
 }
 
-func (s *Server) v1CreateAnnotation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiCreateAnnotation(w http.ResponseWriter, r *http.Request) {
 	var request createAnnotationRequest
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "The annotation request must be valid JSON.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "The annotation request must be valid JSON.")
 		return
 	}
 	request.TerminalID = strings.TrimSpace(request.TerminalID)
@@ -36,17 +36,17 @@ func (s *Server) v1CreateAnnotation(w http.ResponseWriter, r *http.Request) {
 		(request.Format != annotation.FormatMarkdown && request.Format != annotation.FormatHTML) ||
 		request.Content == "" || !utf8.ValidString(request.Content) ||
 		len(request.Content) > maxAnnotationContentBytes {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
+		writeAPIError(w, http.StatusBadRequest, "invalid_request",
 			"Annotation terminal, filename, format, and UTF-8 content are required; content must not exceed 1048576 bytes.", nil)
 		return
 	}
 	if _, err := s.control.GetTerminal(request.TerminalID); err != nil {
 		if errors.Is(err, control.ErrTerminalNotFound) {
-			writeV1Error(w, http.StatusNotFound, "terminal_not_found",
+			writeAPIError(w, http.StatusNotFound, "terminal_not_found",
 				"The terminal does not exist.", nil)
 			return
 		}
-		writeV1Error(w, http.StatusInternalServerError, "internal_error",
+		writeAPIError(w, http.StatusInternalServerError, "internal_error",
 			"The terminal could not be read.", nil)
 		return
 	}
@@ -57,94 +57,94 @@ func (s *Server) v1CreateAnnotation(w http.ResponseWriter, r *http.Request) {
 		request.Content,
 	)
 	if errors.Is(err, annotation.ErrActive) {
-		writeV1Error(w, http.StatusConflict, "annotation_active",
+		writeAPIError(w, http.StatusConflict, "annotation_active",
 			"This terminal already has an active annotation.", nil)
 		return
 	}
 	if err != nil {
-		writeV1Error(w, http.StatusInternalServerError, "internal_error",
+		writeAPIError(w, http.StatusInternalServerError, "internal_error",
 			"The annotation could not be created.", nil)
 		return
 	}
 	s.publishAnnotationEvent("annotation.created", session)
-	writeV1Result(w, http.StatusCreated, map[string]any{"annotation": session})
+	writeAPIResult(w, http.StatusCreated, map[string]any{"annotation": session})
 }
 
-func (s *Server) v1CurrentAnnotation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiCurrentAnnotation(w http.ResponseWriter, r *http.Request) {
 	terminalID := r.PathValue("id")
 	if _, err := s.control.GetTerminal(terminalID); err != nil {
-		writeV1Error(w, http.StatusNotFound, "terminal_not_found",
+		writeAPIError(w, http.StatusNotFound, "terminal_not_found",
 			"The terminal does not exist.", nil)
 		return
 	}
 	session, found := s.annotations.Current(terminalID)
 	if !found {
-		writeV1Result(w, http.StatusOK, map[string]any{"annotation": nil})
+		writeAPIResult(w, http.StatusOK, map[string]any{"annotation": nil})
 		return
 	}
-	writeV1Result(w, http.StatusOK, map[string]any{"annotation": session})
+	writeAPIResult(w, http.StatusOK, map[string]any{"annotation": session})
 }
 
-func (s *Server) v1WaitAnnotation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiWaitAnnotation(w http.ResponseWriter, r *http.Request) {
 	result, err := s.annotations.Wait(r.Context(), r.PathValue("id"))
 	switch {
 	case err == nil:
-		writeV1Result(w, http.StatusOK, result)
+		writeAPIResult(w, http.StatusOK, result)
 	case errors.Is(err, annotation.ErrCanceled):
-		writeV1Error(w, http.StatusGone, "annotation_canceled",
+		writeAPIError(w, http.StatusGone, "annotation_canceled",
 			"The annotation was canceled.", nil)
 	case errors.Is(err, annotation.ErrNotFound):
-		writeV1Error(w, http.StatusNotFound, "annotation_not_found",
+		writeAPIError(w, http.StatusNotFound, "annotation_not_found",
 			"The annotation does not exist.", nil)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return
 	default:
-		writeV1Error(w, http.StatusInternalServerError, "internal_error",
+		writeAPIError(w, http.StatusInternalServerError, "internal_error",
 			"The annotation result could not be read.", nil)
 	}
 }
 
-func (s *Server) v1CompleteAnnotation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiCompleteAnnotation(w http.ResponseWriter, r *http.Request) {
 	var request completeAnnotationRequest
-	if err := decodeV1JSON(r, &request); err != nil {
-		writeV1DecodeError(w, err, "The annotation comments must be valid JSON.")
+	if err := decodeAPIJSON(r, &request); err != nil {
+		writeAPIDecodeError(w, err, "The annotation comments must be valid JSON.")
 		return
 	}
 	comments, valid := normalizeAnnotationComments(request.Comments)
 	if !valid {
-		writeV1Error(w, http.StatusBadRequest, "invalid_request",
+		writeAPIError(w, http.StatusBadRequest, "invalid_request",
 			"Each comment must have a valid kind and non-empty body; selection comments also require a quote and ordered offsets.", nil)
 		return
 	}
 	result, session, err := s.annotations.Complete(r.PathValue("id"), comments)
 	if errors.Is(err, annotation.ErrNotFound) {
-		writeV1Error(w, http.StatusNotFound, "annotation_not_found",
+		writeAPIError(w, http.StatusNotFound, "annotation_not_found",
 			"The annotation does not exist.", nil)
 		return
 	}
 	if err != nil {
-		writeV1Error(w, http.StatusInternalServerError, "internal_error",
+		writeAPIError(w, http.StatusInternalServerError, "internal_error",
 			"The annotation could not be completed.", nil)
 		return
 	}
 	s.publishAnnotationEvent("annotation.completed", session)
-	writeV1Result(w, http.StatusOK, result)
+	writeAPIResult(w, http.StatusOK, result)
 }
 
-func (s *Server) v1CancelAnnotation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiCancelAnnotation(w http.ResponseWriter, r *http.Request) {
 	session, err := s.annotations.Cancel(r.PathValue("id"))
 	if errors.Is(err, annotation.ErrNotFound) {
-		writeV1Error(w, http.StatusNotFound, "annotation_not_found",
+		writeAPIError(w, http.StatusNotFound, "annotation_not_found",
 			"The annotation does not exist.", nil)
 		return
 	}
 	if err != nil {
-		writeV1Error(w, http.StatusInternalServerError, "internal_error",
+		writeAPIError(w, http.StatusInternalServerError, "internal_error",
 			"The annotation could not be canceled.", nil)
 		return
 	}
 	s.publishAnnotationEvent("annotation.canceled", session)
-	writeV1Result(w, http.StatusOK, map[string]string{"id": session.ID})
+	writeAPIResult(w, http.StatusOK, map[string]string{"id": session.ID})
 }
 
 func normalizeAnnotationComments(comments []annotation.Comment) ([]annotation.Comment, bool) {

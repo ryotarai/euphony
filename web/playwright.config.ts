@@ -17,7 +17,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      `npm run build && cd .. && mkdir -p bin && go build -trimpath -o bin/euphony ./cmd/euphony && EUPHONY_DB=:memory: EUPHONY_TOKEN=test-token EUPHONY_ADDR=127.0.0.1:${port} EUPHONY_SOCKET=/tmp/euphony-e2e-${port}.sock CLAUDE_CONFIG_DIR=/tmp/euphony-e2e-${port}-claude CODEX_HOME=/tmp/euphony-e2e-${port}-codex bin/euphony`,
+      `npm run build && cd .. && mkdir -p bin && go build -trimpath -o bin/euphony ./cmd/euphony && EUPHONY_DB=:memory: EUPHONY_TOKEN=test-token EUPHONY_ADDR=127.0.0.1:${port} CLAUDE_CONFIG_DIR=/tmp/euphony-e2e-${port}-claude CODEX_HOME=/tmp/euphony-e2e-${port}-codex bin/euphony`,
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

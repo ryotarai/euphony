@@ -23,22 +23,17 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/ryotarai/euphony/internal/agenthook"
-	"github.com/ryotarai/euphony/internal/localapi"
 	"github.com/ryotarai/euphony/internal/server"
 	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		var exit *exitError
-		if errors.As(err, &exit) {
-			os.Exit(exit.code)
-		}
 		log.Fatal(err)
 	}
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func run(args []string, stdin io.Reader, stdout, _ io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "setup":
@@ -46,7 +41,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		case "hook":
 			return runHook(args[1:], stdin)
 		}
-		return runAutomation(args, stdin, stdout, stderr)
+		return errors.New("usage: euphony setup | euphony hook <agent> <status>")
 	}
 	return runServer(stdin, stdout)
 }
@@ -167,35 +162,18 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	socketPath, err := localapi.DefaultSocketPath()
-	if err != nil {
-		_ = srv.Close(context.Background())
-		return err
-	}
-	unixListener, cleanupSocket, err := localapi.Listen(socketPath)
-	if err != nil {
-		_ = srv.Close(context.Background())
-		return err
-	}
-	defer cleanupSocket()
-
-	log.Printf("Euphony listening on http://%s and unix://%s", actualAddress, socketPath)
+	log.Printf("Euphony listening on http://%s", actualAddress)
 	requestContext, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
 	httpServer := newHTTPServer(actualAddress, srv.Handler(), requestContext, cancelRequests)
-	unixServer := newHTTPServer("", srv.LocalHandler(), requestContext, cancelRequests)
-	result := make(chan error, 2)
+	result := make(chan error, 1)
 	go func() {
 		result <- httpServer.Serve(tcpListener)
-	}()
-	go func() {
-		result <- unixServer.Serve(unixListener)
 	}()
 	readyFile := os.Getenv("EUPHONY_READY_FILE")
 	if readyFile != "" {
 		if err := writeReadyFile(readyFile, "http://"+actualAddress); err != nil {
 			_ = httpServer.Close()
-			_ = unixServer.Close()
 			_ = srv.Close(context.Background())
 			return err
 		}
@@ -225,16 +203,12 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	shutdownErr := shutdownStep(ctx, "HTTP server", httpServer.Shutdown, log.Printf)
-	unixShutdownErr := shutdownStep(ctx, "Unix HTTP server", unixServer.Shutdown, log.Printf)
 	sessionErr := shutdownStep(ctx, "session manager", srv.Close, log.Printf)
 	if serveErr != nil {
 		return serveErr
 	}
 	if shutdownErr != nil {
 		return shutdownErr
-	}
-	if unixShutdownErr != nil {
-		return unixShutdownErr
 	}
 	return sessionErr
 }

@@ -74,7 +74,7 @@ async function createSession(page: Page, name: string): Promise<{ id: string }> 
     project = await projectResponse.json() as ProjectFixture;
   }
 
-  const response = await page.request.post("/api/v1/terminals", {
+  const response = await page.request.post("/api/terminals", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -82,9 +82,9 @@ async function createSession(page: Page, name: string): Promise<{ id: string }> 
     data: { name, projectId: project.id, selectionMode: "none" },
   });
   expect(response.ok()).toBe(true);
-  const envelope = await response.json() as { result: { terminal: { id: string; projectId?: string } } };
-  expect(envelope.result.terminal.projectId).toBe(project.id);
-  return envelope.result.terminal;
+	const result = await response.json() as { terminal: { id: string; projectId?: string } };
+	expect(result.terminal.projectId).toBe(project.id);
+	return result.terminal;
 }
 
 async function replaceSharedSelection(
@@ -93,14 +93,12 @@ async function replaceSharedSelection(
   focusedID?: string,
 ) {
   const ids = Array.isArray(terminalIDs) ? terminalIDs : [terminalIDs];
-  const currentResponse = await page.request.get("/api/v1/selection", {
+  const currentResponse = await page.request.get("/api/selection", {
     headers: { Authorization: "Bearer test-token" },
   });
   expect(currentResponse.ok()).toBe(true);
-  const current = await currentResponse.json() as {
-    result: { revision: number };
-  };
-  const response = await page.request.put("/api/v1/selection", {
+	const current = await currentResponse.json() as { revision: number };
+  const response = await page.request.put("/api/selection", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -111,7 +109,7 @@ async function replaceSharedSelection(
       focusedTerminalId: focusedID ?? ids[0],
       filters: { statuses: [], cwds: [] },
       pinnedFilters: { statuses: [], cwds: [] },
-      expectedRevision: current.result.revision,
+		expectedRevision: current.revision,
     },
   });
   expect(response.ok()).toBe(true);

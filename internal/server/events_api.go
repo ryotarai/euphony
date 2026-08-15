@@ -8,10 +8,10 @@ import (
 
 const eventHeartbeatInterval = 15 * time.Second
 
-func (s *Server) v1Events(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeV1Error(w, http.StatusInternalServerError, "streaming_unsupported",
+		writeAPIError(w, http.StatusInternalServerError, "streaming_unsupported",
 			"The HTTP response does not support streaming.", nil)
 		return
 	}

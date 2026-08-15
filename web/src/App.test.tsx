@@ -10,7 +10,6 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
-  Task,
 } from "./types";
 
 beforeEach(() => {
@@ -104,10 +103,10 @@ test("uses the server selection as authoritative and persists browser changes", 
       if (input === "/api/sessions") {
         return jsonResponse([runningSession, secondRunningSession]);
       }
-      if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
-        return jsonResponse({ ok: true, result: initialSelection });
+      if (input === "/api/selection" && (!init || init.method === undefined)) {
+        return jsonResponse(initialSelection);
       }
-      if (input === "/api/v1/selection" && init?.method === "PUT") {
+      if (input === "/api/selection" && init?.method === "PUT") {
         const request = JSON.parse(String(init.body)) as {
           manualTerminalIds: string[];
           pinnedTerminalIds: string[];
@@ -117,8 +116,6 @@ test("uses the server selection as authoritative and persists browser changes", 
           expectedRevision: number;
         };
         return jsonResponse({
-          ok: true,
-          result: {
             terminalIds: request.manualTerminalIds,
             manualTerminalIds: request.manualTerminalIds,
             pinnedTerminalIds: request.pinnedTerminalIds,
@@ -126,7 +123,6 @@ test("uses the server selection as authoritative and persists browser changes", 
             filters: request.filters,
             pinnedFilters: request.pinnedFilters,
             revision: 8,
-          },
         });
       }
       throw new Error(`Unexpected request: ${String(input)}`);
@@ -154,7 +150,7 @@ test("uses the server selection as authoritative and persists browser changes", 
   await waitFor(() => {
     const update = fetchMock.mock.calls.find(
       ([input, init]) =>
-        input === "/api/v1/selection" && init?.method === "PUT",
+        input === "/api/selection" && init?.method === "PUT",
     );
     expect(update).toBeDefined();
     expect(JSON.parse(String(update?.[1]?.body))).toEqual({
@@ -235,20 +231,17 @@ test("serializes rapid shared-selection writes and rebases the latest state", as
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: ["session-1"],
           manualTerminalIds: ["session-1"],
           pinnedTerminalIds: [],
           focusedTerminalId: "session-1",
           filters: { statuses: [], cwds: [] },
           revision: 7,
-        },
       });
     }
-    if (input === "/api/v1/selection" && init?.method === "PUT") {
+    if (input === "/api/selection" && init?.method === "PUT") {
       const request = JSON.parse(String(init.body)) as {
         manualTerminalIds: string[];
         focusedTerminalId: string;
@@ -257,15 +250,12 @@ test("serializes rapid shared-selection writes and rebases the latest state", as
       writes.push(request);
       if (writes.length === 1) await firstWriteGate;
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: request.manualTerminalIds,
           manualTerminalIds: request.manualTerminalIds,
           pinnedTerminalIds: [],
           focusedTerminalId: request.focusedTerminalId,
           filters: { statuses: [], cwds: [] },
           revision: 7 + writes.length,
-        },
       });
     }
     throw new Error(`Unexpected request: ${String(input)}`);
@@ -305,22 +295,19 @@ test("retries a conflicting shared-selection write against the latest revision",
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       selectionReads++;
       const revision = selectionReads === 1 ? 7 : 8;
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: ["session-1"],
           manualTerminalIds: ["session-1"],
           pinnedTerminalIds: [],
           focusedTerminalId: "session-1",
           filters: { statuses: [], cwds: [] },
           revision,
-        },
       });
     }
-    if (input === "/api/v1/selection" && init?.method === "PUT") {
+    if (input === "/api/selection" && init?.method === "PUT") {
       const request = JSON.parse(String(init.body)) as {
         manualTerminalIds: string[];
         expectedRevision: number;
@@ -329,26 +316,20 @@ test("retries a conflicting shared-selection write against the latest revision",
       if (writes.length === 1) {
         return jsonResponse(
           {
-            ok: false,
-            error: {
-              code: "selection_conflict",
-              message: "stale",
-              details: {},
-            },
+            code: "selection_conflict",
+            message: "stale",
+            details: {},
           },
           409,
         );
       }
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: request.manualTerminalIds,
           manualTerminalIds: request.manualTerminalIds,
           pinnedTerminalIds: [],
           focusedTerminalId: "session-2",
           filters: { statuses: [], cwds: [] },
           revision: 9,
-        },
       });
     }
     throw new Error(`Unexpected request: ${String(input)}`);
@@ -387,20 +368,17 @@ test("applies a remote selection event without writing it back", async () => {
       if (input === "/api/sessions") {
         return jsonResponse([runningSession, secondRunningSession]);
       }
-      if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+      if (input === "/api/selection" && (!init || init.method === undefined)) {
         return jsonResponse({
-          ok: true,
-          result: {
             terminalIds: ["session-1"],
             manualTerminalIds: ["session-1"],
             pinnedTerminalIds: [],
             focusedTerminalId: "session-1",
             filters: { statuses: [], cwds: [] },
             revision: 3,
-          },
         });
       }
-      if (input === "/api/v1/events") {
+      if (input === "/api/events") {
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) {
             eventController = controller;
@@ -443,7 +421,7 @@ test("applies a remote selection event without writing it back", async () => {
   await new Promise((resolve) => window.setTimeout(resolve, 0));
   expect(fetchMock.mock.calls.some(
     ([input, init]) =>
-      input === "/api/v1/selection" && init?.method === "PUT",
+      input === "/api/selection" && init?.method === "PUT",
   )).toBe(false);
   eventController?.close();
 });
@@ -454,24 +432,19 @@ test("rediscovers an annotation created before the event subscription starts", a
     if (input === "/api/sessions") {
       return jsonResponse([runningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: ["session-1"],
           manualTerminalIds: ["session-1"],
           pinnedTerminalIds: [],
           focusedTerminalId: "session-1",
           filters: { statuses: [], cwds: [] },
           revision: 3,
-        },
       });
     }
-    if (input === "/api/v1/terminals/session-1/annotation") {
+    if (input === "/api/terminals/session-1/annotation") {
       annotationReads++;
       return jsonResponse({
-        ok: true,
-        result: {
           annotation: annotationReads === 1
             ? null
             : {
@@ -482,10 +455,9 @@ test("rediscovers an annotation created before the event subscription starts", a
               content: "# Review",
               createdAt: "2026-07-30T00:00:00Z",
             },
-        },
       });
     }
-    if (input === "/api/v1/events") {
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>(), {
         headers: { "Content-Type": "application/x-ndjson" },
       });
@@ -866,20 +838,17 @@ test("moves a Done action back to Action required when the agent updates it", as
     if (input === "/api/agent-summaries") {
       return jsonResponse([doneSummary]);
     }
-    if (input === "/api/v1/selection") {
+    if (input === "/api/selection") {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: [runningSession.id],
           manualTerminalIds: [runningSession.id],
           pinnedTerminalIds: [],
           focusedTerminalId: runningSession.id,
           filters: { statuses: [], cwds: [] },
           revision: 3,
-        },
       });
     }
-    if (input === "/api/v1/events") {
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           eventController = controller;
@@ -926,7 +895,7 @@ test("moves a Done action back to Action required when the agent updates it", as
   );
 
   eventController?.close();
-  expect(fetchMock).toHaveBeenCalledWith("/api/v1/events", expect.anything());
+  expect(fetchMock).toHaveBeenCalledWith("/api/events", expect.anything());
 });
 
 test("keeps the Agents sidebar count lifecycle-based while the queue includes read summaries", async () => {
@@ -999,15 +968,12 @@ test("does not let the startup summary snapshot overwrite an earlier SSE update"
     unread: true,
   };
   const selection = {
-    ok: true,
-    result: {
-      terminalIds: [runningSession.id],
-      manualTerminalIds: [runningSession.id],
-      pinnedTerminalIds: [],
-      focusedTerminalId: runningSession.id,
-      filters: { statuses: [], cwds: [] },
-      revision: 3,
-    },
+    terminalIds: [runningSession.id],
+    manualTerminalIds: [runningSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: runningSession.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 3,
   };
   let summaryRequestCount = 0;
   let releaseSummary: (() => void) | undefined;
@@ -1018,8 +984,8 @@ test("does not let the startup summary snapshot overwrite an earlier SSE update"
   let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (input === "/api/sessions") return jsonResponse([runningSession, secondRunningSession]);
-    if (input === "/api/v1/selection") return jsonResponse(selection);
-    if (input === "/api/v1/events") {
+    if (input === "/api/selection") return jsonResponse(selection);
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           eventController = controller;
@@ -1186,20 +1152,17 @@ test("keeps an updated summary in Action required while changing its unread weig
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: [runningSession.id],
           manualTerminalIds: [runningSession.id],
           pinnedTerminalIds: [],
           focusedTerminalId: runningSession.id,
           filters: { statuses: [], cwds: [] },
           revision: 3,
-        },
       });
     }
-    if (input === "/api/v1/events") {
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           eventController = controller;
@@ -1264,20 +1227,17 @@ test("reloads agent summaries after an SSE reconnect", async () => {
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: [runningSession.id],
           manualTerminalIds: [runningSession.id],
           pinnedTerminalIds: [],
           focusedTerminalId: runningSession.id,
           filters: { statuses: [], cwds: [] },
           revision: 3,
-        },
       });
     }
-    if (input === "/api/v1/events") {
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           eventControllers.push(controller);
@@ -1334,20 +1294,17 @@ test("does not resurrect a deleted summary from a stale reconnect snapshot", asy
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: [runningSession.id],
           manualTerminalIds: [runningSession.id],
           pinnedTerminalIds: [],
           focusedTerminalId: runningSession.id,
           filters: { statuses: [], cwds: [] },
           revision: 3,
-        },
       });
     }
-    if (input === "/api/v1/events") {
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           eventControllers.push(controller);
@@ -1464,20 +1421,17 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
     if (input === "/api/sessions") {
       return jsonResponse([runningSession, secondRunningSession]);
     }
-    if (input === "/api/v1/selection" && (!init || init.method === undefined)) {
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse({
-        ok: true,
-        result: {
           terminalIds: [runningSession.id],
           manualTerminalIds: [runningSession.id],
           pinnedTerminalIds: [],
           focusedTerminalId: runningSession.id,
           filters: { statuses: [], cwds: [] },
           revision: 3,
-        },
       });
     }
-    if (input === "/api/v1/events") {
+    if (input === "/api/events") {
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
           eventController = controller;
@@ -1543,28 +1497,19 @@ test("does not let a stale read response overwrite a newer SSE summary", async (
   eventController?.close();
 });
 
-test("opens the Tasks workspace, loads a task, and opens its linked terminal", async () => {
-  const task: Task = {
-    id: "task-1",
-    title: "Implement task workflow",
-    description: "Connect tasks to agents.",
-    priority: "high",
-    status: "in_progress",
-    terminalId: runningSession.id,
-    agent: "codex",
-    createdAt: "2026-08-05T00:00:00Z",
-    updatedAt: "2026-08-05T00:01:00Z",
-    updates: [],
-  };
+test("does not render the removed dashboard or request its API", async () => {
+  history.replaceState(null, "", "/tasks");
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (input === "/api/sessions") return jsonResponse([runningSession]);
-    if (input === "/api/tasks") return jsonResponse([task]);
+    if (input === "/api/projects") return jsonResponse([]);
+    if (input === "/api/agent-summaries") return jsonResponse([]);
     throw new Error(`Unexpected request: ${String(input)}`);
   });
-  const user = userEvent.setup();
+
   render(
     <App
       syncSelection={false}
+      syncEvents={false}
       initialToken="valid-token"
       initialSettings={defaultSettings}
       renderTerminal={(session) => (
@@ -1574,14 +1519,8 @@ test("opens the Tasks workspace, loads a task, and opens its linked terminal", a
   );
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Tasks/ }));
-
-  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
-  expect(screen.getByText(task.title)).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledWith("/api/tasks", expect.anything());
-
-  await user.click(screen.getByRole("button", { name: "Open terminal" }));
-  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Tasks" })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/tasks"))).toBe(false);
 });
 
 test("restores a selected Inbox item from its URL", async () => {
@@ -1626,118 +1565,6 @@ test("restores a selected Inbox item from its URL", async () => {
   await user.click(screen.getByRole("button", { name: "Open Implement v0.2" }));
   expect(window.location.pathname).toBe("/inbox/session-1");
   expect(screen.getAllByText(firstSummary.summary).length).toBeGreaterThan(0);
-});
-
-test("restores and updates a selected Tasks item from its URL", async () => {
-  history.replaceState(null, "", "/tasks/task-2");
-  const firstTask: Task = {
-    id: "task-1",
-    title: "First task",
-    description: "Prepare the first change.",
-    priority: "medium",
-    status: "todo",
-    createdAt: "2026-08-05T00:00:00Z",
-    updatedAt: "2026-08-05T00:00:00Z",
-    updates: [],
-  };
-  const secondTask: Task = {
-    id: "task-2",
-    title: "Second task",
-    description: "Prepare the second change.",
-    priority: "high",
-    status: "in_progress",
-    createdAt: "2026-08-05T00:01:00Z",
-    updatedAt: "2026-08-05T00:01:00Z",
-    updates: [],
-  };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (input === "/api/sessions") return jsonResponse([runningSession]);
-    if (input === "/api/tasks") return jsonResponse([firstTask, secondTask]);
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-  render(
-    <App
-      syncSelection={false}
-      syncEvents={false}
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
-    />,
-  );
-
-  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
-  expect(await screen.findByDisplayValue(secondTask.title)).toBeVisible();
-  expect(window.location.pathname).toBe("/tasks/task-2");
-
-  await user.click(screen.getByRole("button", { name: "Open task First task" }));
-  expect(window.location.pathname).toBe("/tasks/task-1");
-  expect(screen.getByDisplayValue(firstTask.title)).toBeVisible();
-});
-
-test("switches from a selected workspace pane back to a terminal", async () => {
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (input === "/api/sessions") return jsonResponse([runningSession]);
-    if (input === "/api/tasks") return jsonResponse([]);
-    if (input === "/api/agent-summaries") return jsonResponse([]);
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-  render(
-    <App
-      syncSelection={false}
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      renderTerminal={(session) => (
-        <div aria-label={`${session.name} terminal pane`} />
-      )}
-    />,
-  );
-
-  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /Tasks/ }));
-  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
-  expect(screen.getByRole("checkbox", { name: "Include Tasks in split" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-
-  await user.click(screen.getByRole("button", { name: "Select Codex" }));
-  expect(screen.queryByRole("heading", { name: "Tasks" })).not.toBeInTheDocument();
-  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledWith("/api/agent-summaries", expect.anything());
-});
-
-test("includes a dashboard pane beside a terminal through its checkbox", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (input === "/api/sessions") return jsonResponse([runningSession]);
-    if (input === "/api/tasks") return jsonResponse([]);
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-  render(
-    <App
-      syncSelection={false}
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      renderTerminal={(session) => (
-        <div aria-label={`${session.name} terminal pane`} />
-      )}
-    />,
-  );
-
-  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
-  await user.click(screen.getByRole("checkbox", { name: "Include Tasks in split" }));
-  expect(await screen.findByRole("heading", { name: "Tasks" })).toBeVisible();
-  expect(screen.getByLabelText("Codex terminal pane")).toBeVisible();
-  expect(screen.getByRole("checkbox", { name: "Include Tasks in split" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-
-  await user.click(screen.getByRole("checkbox", { name: "Include Tasks in split" }));
-  expect(screen.queryByRole("heading", { name: "Tasks" })).not.toBeInTheDocument();
-  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
 });
 
 test("acknowledges a need-attention terminal when it receives focus", async () => {
@@ -2004,59 +1831,6 @@ test("does not create work while the initial project capability is loading", asy
   expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
 });
 
-test("does not let Tasks start an unassigned agent in project mode", async () => {
-  const task: Task = {
-    id: "task-project-boundary",
-    title: "Start only from a project",
-    description: "The task has no project-linked terminal yet.",
-    priority: "medium",
-    status: "todo",
-    createdAt: "2026-08-12T00:00:00Z",
-    updatedAt: "2026-08-12T00:00:00Z",
-  };
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (input === "/api/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse([]);
-    }
-    if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return jsonResponse([{
-        id: "project-1",
-        path: "/workspace/project",
-        createdAt: "2026-08-12T00:00:00Z",
-      } satisfies Project]);
-    }
-    if (input === "/api/agent-summaries") return jsonResponse([]);
-    if (input === "/api/tasks" && (!init || init.method === undefined)) {
-      return jsonResponse([task]);
-    }
-    if (input === "/api/tasks/task-project-boundary/start") {
-      throw new Error("Tasks must not start an unassigned agent in project mode.");
-    }
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-
-  render(
-    <App
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      syncSelection={false}
-      syncEvents={false}
-    />,
-  );
-
-  await user.click(await screen.findByRole("button", { name: "Tasks" }));
-  await user.click(await screen.findByRole("button", { name: `Open task ${task.title}` }));
-  await user.click(screen.getByRole("button", { name: "Start agent" }));
-
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Start new agents from a project in the sidebar.",
-  );
-  expect(fetchMock.mock.calls.some(
-    ([input, init]) => input === "/api/tasks/task-project-boundary/start" && init?.method === "POST",
-  )).toBe(false);
-});
-
 test("creates a project and renders its empty project section", async () => {
   const createdProject: Project = {
     id: "project-new",
@@ -2210,8 +1984,8 @@ test("creates a terminal with the selected project's id", async () => {
     if (input === "/api/projects" && (!init || init.method === undefined)) {
       return jsonResponse([project]);
     }
-    if (input === "/api/v1/terminals" && init?.method === "POST") {
-      return jsonResponse({ ok: true, result: { terminal: created, selection } }, 201);
+    if (input === "/api/terminals" && init?.method === "POST") {
+      return jsonResponse({ terminal: created, selection }, 201);
     }
     if (input === "/api/agent-summaries") return jsonResponse([]);
     throw new Error(`Unexpected request: ${String(input)}`);
@@ -2234,7 +2008,7 @@ test("creates a terminal with the selected project's id", async () => {
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/terminals",
+      "/api/terminals",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -2284,7 +2058,7 @@ test("starts an agent from a project section", async () => {
       return jsonResponse([project]);
     }
     if (input === "/api/agent-summaries") return jsonResponse([]);
-    if (input === "/api/v1/terminals" && init?.method === "POST") {
+    if (input === "/api/terminals" && init?.method === "POST") {
       expect(JSON.parse(String(init.body))).toEqual({
         name: "Terminal",
         selectionMode: "replace",
@@ -2292,7 +2066,7 @@ test("starts an agent from a project section", async () => {
         command: "claude",
       });
       listedSessions = [started];
-      return jsonResponse({ ok: true, result: { terminal: created, selection } }, 201);
+      return jsonResponse({ terminal: created, selection }, 201);
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -2315,7 +2089,7 @@ test("starts an agent from a project section", async () => {
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/terminals",
+      "/api/terminals",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -2337,14 +2111,11 @@ test("shows the project terminal startup cause when starting an agent fails", as
       return jsonResponse([project]);
     }
     if (input === "/api/agent-summaries") return jsonResponse([]);
-    if (input === "/api/v1/terminals" && init?.method === "POST") {
+    if (input === "/api/terminals" && init?.method === "POST") {
       return jsonResponse({
-        ok: false,
-        error: {
-          code: "terminal_create_failed",
-          message: "The terminal could not be created.",
-          details: { cause },
-        },
+        code: "terminal_create_failed",
+        message: "The terminal could not be created.",
+        details: { cause },
       }, 500);
     }
     throw new Error(`Unexpected request: ${String(input)}`);
@@ -2369,7 +2140,7 @@ test("shows the project terminal startup cause when starting an agent fails", as
     "The project terminal could not be created.",
   );
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/v1/terminals",
+    "/api/terminals",
     expect.objectContaining({ method: "POST" }),
   );
 });
@@ -2782,10 +2553,10 @@ test("renames the focused selected terminal from Quick Actions and updates the s
     }
     if (input === "/api/agent-summaries") return jsonResponse([]);
     if (input === "/api/settings") return jsonResponse(defaultSettings);
-    if (input === "/api/v1/terminals/session-2" && init?.method === "PATCH") {
+    if (input === "/api/terminals/session-2" && init?.method === "PATCH") {
       expect(JSON.parse(String(init.body))).toEqual({ name: "Renamed Claude" });
       serverSessions = [runningSession, renamed];
-      return jsonResponse({ ok: true, result: { terminal: renamed } });
+      return jsonResponse({ terminal: renamed });
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -2822,10 +2593,10 @@ test("renames the focused selected terminal from Quick Actions and updates the s
   expect(JSON.parse(localStorage.getItem("euphony.recentQuickActions:v1") ?? "[]"))
     .toContain("rename-terminal");
   expect(fetchMock.mock.calls.filter(
-    ([input, init]) => input === "/api/v1/terminals/session-2" && init?.method === "PATCH",
+    ([input, init]) => input === "/api/terminals/session-2" && init?.method === "PATCH",
   )).toHaveLength(1);
   expect(fetchMock.mock.calls.some(
-    ([input, init]) => input === "/api/v1/terminals/session-1" && init?.method === "PATCH",
+    ([input, init]) => input === "/api/terminals/session-1" && init?.method === "PATCH",
   )).toBe(false);
 });
 
@@ -2868,7 +2639,7 @@ test("keeps the rename dialog open with useful validation errors", async () => {
     "Terminal name must be 80 characters or fewer.",
   );
   expect(fetchMock.mock.calls.some(
-    ([input, init]) => typeof input === "string" && input.includes("/api/v1/terminals/") && init?.method === "PATCH",
+    ([input, init]) => typeof input === "string" && input.includes("/api/terminals/") && init?.method === "PATCH",
   )).toBe(false);
 });
 
@@ -2877,11 +2648,11 @@ test("keeps the rename dialog open when the API rejects the new name", async () 
     if (input === "/api/sessions") return jsonResponse([runningSession]);
     if (input === "/api/agent-summaries") return jsonResponse([]);
     if (input === "/api/settings") return jsonResponse(defaultSettings);
-    if (input === "/api/v1/terminals/session-1" && init?.method === "PATCH") {
+    if (input === "/api/terminals/session-1" && init?.method === "PATCH") {
       return jsonResponse(
         {
-          ok: false,
-          error: { code: "rename_failed", message: "That terminal name is unavailable." },
+          code: "rename_failed",
+          message: "That terminal name is unavailable.",
         },
         409,
       );
@@ -2913,7 +2684,7 @@ test("keeps the rename dialog open when the API rejects the new name", async () 
   );
   expect(screen.getByRole("dialog", { name: "Rename terminal" })).toBeVisible();
   expect(fetchMock.mock.calls.filter(
-    ([input, init]) => input === "/api/v1/terminals/session-1" && init?.method === "PATCH",
+    ([input, init]) => input === "/api/terminals/session-1" && init?.method === "PATCH",
   )).toHaveLength(1);
 });
 

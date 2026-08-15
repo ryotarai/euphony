@@ -14,7 +14,6 @@ import {
   CircleXIcon,
   Clock3Icon,
   ListIcon,
-  ListTodoIcon,
   PlusIcon,
   Settings2Icon,
   SquareTerminalIcon,
@@ -74,10 +73,7 @@ interface SessionNavigationProps {
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
   onOpenAllSessions?(): void;
-  tasksOpen?: boolean;
   focusedPaneID?: string | null;
-  taskCount?: number;
-  onOpenTasks?(multiple?: boolean): void;
   agentsOpen?: boolean;
   agentSummaryCount?: number;
   onOpenAgents?(multiple?: boolean): void;
@@ -323,9 +319,7 @@ function SessionNavigationContent({
         (props.selectedID ?? props.selectedIDs[0]) === session.id,
       )
     : props.sessions.find((session) => props.selectedIDs.includes(session.id));
-  const mobileTitle = props.focusedPaneID === "tasks"
-    ? "Tasks"
-    : props.focusedPaneID === "agents"
+  const mobileTitle = props.focusedPaneID === "agents"
       ? "Inbox"
       : selected
         ? sessionLabel(selected)
@@ -439,12 +433,6 @@ function SessionNavigationContent({
     props.onOpenAgents?.(multiple);
   };
 
-  const openTasks = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const multiple = event.metaKey || event.ctrlKey;
-    if (isMobile && !multiple) setOpenMobile(false);
-    props.onOpenTasks?.(multiple);
-  };
-
   const selectProjectSession = (sessionID: string) => {
     if (props.onSelectSession) props.onSelectSession(sessionID);
     else props.onSelect(sessionID, false);
@@ -476,38 +464,6 @@ function SessionNavigationContent({
           onScroll={updateTerminalTreeOverflow}
         >
           <SidebarMenu className="sidebar-primary-navigation">
-            <SidebarMenuItem className="workspace-channel">
-              {!projectSidebarEnabled && (
-                <Checkbox
-                  className="pane-checkbox workspace-pane-checkbox"
-                  aria-label="Include Tasks in split"
-                  checked={props.tasksOpen ?? false}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onOpenTasks?.(true);
-                  }}
-                />
-              )}
-              <SidebarMenuButton
-                className="workspace-select"
-                type="button"
-                tooltip="Tasks"
-                isActive={props.tasksOpen && props.focusedPaneID === "tasks"}
-                aria-current={
-                  props.tasksOpen && props.focusedPaneID === "tasks" ? "page" : undefined
-                }
-                aria-label="Tasks"
-                onClick={openTasks}
-              >
-                <ListTodoIcon aria-hidden="true" />
-                <span>Tasks</span>
-                {(props.taskCount ?? 0) > 0 && (
-                  <span className="sidebar-attention-count" aria-hidden="true">
-                    {props.taskCount}
-                  </span>
-                )}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
             {!projectSidebarEnabled && (
               <SidebarMenuItem className="workspace-channel">
                 <Checkbox

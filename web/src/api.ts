@@ -16,11 +16,6 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
-  Task,
-  TaskCreateInput,
-  TaskRefinement,
-  TaskStartInput,
-  TaskUpdateInput,
   GitChangesSnapshot,
   WorkspaceDirectory,
   WorkspaceFile,
@@ -30,15 +25,15 @@ import type {
 const allSessionsRequestTimeoutMs = 30_000;
 const allSessionsTimeoutMessage = "Loading all sessions timed out. Try again.";
 
-function v1ErrorCause(details: unknown): string | null {
+function errorCause(details: unknown): string | null {
   if (!details || typeof details !== "object" || Array.isArray(details)) return null;
   const cause = (details as { cause?: unknown }).cause;
   if (typeof cause !== "string" || cause.trim() === "") return null;
   return cause.trim();
 }
 
-function v1ErrorMessage(message: string, details: unknown): string {
-  const cause = v1ErrorCause(details);
+function errorMessage(message: string, details: unknown): string {
+  const cause = errorCause(details);
   return cause ? `${message} Details: ${cause}` : message;
 }
 
@@ -145,49 +140,6 @@ export class ApiClient {
     );
   }
 
-  listTasks(): Promise<Task[]> {
-    return this.request("/api/tasks");
-  }
-
-  createTask(input: TaskCreateInput): Promise<Task> {
-    return this.request("/api/tasks", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  }
-
-  updateTask(id: string, input: TaskUpdateInput): Promise<Task> {
-    return this.request(`/api/tasks/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  }
-
-  deleteTask(id: string): Promise<void> {
-    return this.request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
-  }
-
-  startTaskAgent(id: string, input: TaskStartInput): Promise<Task> {
-    return this.request(`/api/tasks/${encodeURIComponent(id)}/start`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  }
-
-  promptTaskAgent(id: string, prompt: string): Promise<Task> {
-    return this.request(`/api/tasks/${encodeURIComponent(id)}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ prompt }),
-    });
-  }
-
-  refineTask(id: string): Promise<TaskRefinement> {
-    return this.request(`/api/tasks/${encodeURIComponent(id)}/refine`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  }
-
   createSession(name: string, cwd?: string): Promise<Session> {
     return this.request("/api/sessions", {
       method: "POST",
@@ -202,7 +154,7 @@ export class ApiClient {
     projectId?: string,
     command?: CodingAgent,
   ): Promise<{ terminal: Session; selection: SelectionSnapshot }> {
-    return this.v1Request("/api/v1/terminals", {
+    return this.request("/api/terminals", {
       method: "POST",
       body: JSON.stringify({
         name,
@@ -220,7 +172,7 @@ export class ApiClient {
     args: string[] = [],
     timeoutMs = 30_000,
   ): Promise<unknown> {
-    return this.v1Request(`/api/v1/agents/${encodeURIComponent(terminalID)}/start`, {
+    return this.request(`/api/agents/${encodeURIComponent(terminalID)}/start`, {
       method: "POST",
       body: JSON.stringify({ kind, args, timeoutMs }),
     });
@@ -231,14 +183,14 @@ export class ApiClient {
   }
 
   deleteTerminal(id: string): Promise<{ id: string; selection: SelectionSnapshot }> {
-    return this.v1Request(`/api/v1/terminals/${encodeURIComponent(id)}`, {
+    return this.request(`/api/terminals/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
   }
 
   renameTerminal(id: string, name: string): Promise<Session> {
-    return this.v1Request<{ terminal: Session }>(
-      `/api/v1/terminals/${encodeURIComponent(id)}`,
+    return this.request<{ terminal: Session }>(
+      `/api/terminals/${encodeURIComponent(id)}`,
       {
         method: "PATCH",
         body: JSON.stringify({ name }),
@@ -247,8 +199,8 @@ export class ApiClient {
   }
 
   getCurrentAnnotation(terminalID: string): Promise<AnnotationSession | null> {
-    return this.v1Request<{ annotation: AnnotationSession | null }>(
-      `/api/v1/terminals/${encodeURIComponent(terminalID)}/annotation`,
+    return this.request<{ annotation: AnnotationSession | null }>(
+      `/api/terminals/${encodeURIComponent(terminalID)}/annotation`,
     ).then((result) => result.annotation);
   }
 
@@ -256,8 +208,8 @@ export class ApiClient {
     annotationID: string,
     comments: AnnotationComment[],
   ): Promise<AnnotationResult> {
-    return this.v1Request(
-      `/api/v1/annotations/${encodeURIComponent(annotationID)}/complete`,
+    return this.request(
+      `/api/annotations/${encodeURIComponent(annotationID)}/complete`,
       {
         method: "POST",
         body: JSON.stringify({ comments }),
@@ -266,11 +218,11 @@ export class ApiClient {
   }
 
   getSelection(): Promise<SelectionSnapshot> {
-    return this.v1Request("/api/v1/selection");
+    return this.request("/api/selection");
   }
 
   replaceSelection(request: ReplaceSelectionRequest): Promise<SelectionSnapshot> {
-    return this.v1Request("/api/v1/selection", {
+    return this.request("/api/selection", {
       method: "PUT",
       body: JSON.stringify(request),
     });
@@ -280,7 +232,7 @@ export class ApiClient {
     signal: AbortSignal,
     onEvent: (event: APIEvent) => void,
   ): Promise<void> {
-    const response = await fetch("/api/v1/events", {
+    const response = await fetch("/api/events", {
       signal,
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -288,7 +240,7 @@ export class ApiClient {
       },
     });
     if (!response.ok) {
-      throw await this.v1ApiError(response);
+      throw await this.apiError(response);
     }
     if (!response.body) {
       throw new ApiError(
@@ -422,61 +374,6 @@ export class ApiClient {
     return (await response.json()) as T;
   }
 
-  private async v1Request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(path, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-        ...init.headers,
-      },
-    });
-    if (!response.ok) {
-      throw await this.v1ApiError(response);
-    }
-    const envelope = await response.json() as {
-      ok: boolean;
-      result?: T;
-      error?: ApiErrorBody;
-    };
-    if (!response.ok || !envelope.ok || envelope.result === undefined) {
-      const error = envelope.error ?? {
-        code: "request_failed",
-        message: "The request failed.",
-      };
-      throw new ApiError(
-        response.status,
-        error.code,
-        v1ErrorMessage(error.message, error.details),
-        error.details,
-      );
-    }
-    return envelope.result;
-  }
-
-  private async v1ApiError(response: Response): Promise<ApiError> {
-    try {
-      const envelope = await response.json() as {
-        error?: ApiErrorBody;
-      };
-      if (envelope.error) {
-        return new ApiError(
-          response.status,
-          envelope.error.code,
-          v1ErrorMessage(envelope.error.message, envelope.error.details),
-          envelope.error.details,
-        );
-      }
-    } catch {
-      // Use the stable fallback for non-JSON proxies.
-    }
-    return new ApiError(
-      response.status,
-      "request_failed",
-      "The request failed.",
-    );
-  }
-
   private async apiError(response: Response): Promise<ApiError> {
     let body: ApiErrorBody = { code: "request_failed", message: "The request failed." };
     try {
@@ -484,6 +381,11 @@ export class ApiClient {
     } catch {
       // Keep the stable fallback for non-JSON proxy and network responses.
     }
-    return new ApiError(response.status, body.code, body.message, body.details);
+    return new ApiError(
+      response.status,
+      body.code,
+      errorMessage(body.message, body.details),
+      body.details,
+    );
   }
 }

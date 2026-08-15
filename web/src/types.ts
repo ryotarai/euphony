@@ -71,64 +71,6 @@ export interface AgentSummary {
   error?: string;
 }
 
-export type TaskPriority = "low" | "medium" | "high";
-export type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
-export type TaskUpdateKind =
-  | "user_instruction"
-  | "agent_status"
-  | "agent_summary"
-  | "system"
-  | "error";
-
-export interface TaskUpdate {
-  id: string;
-  taskId: string;
-  terminalId?: string;
-  kind: TaskUpdateKind;
-  body: string;
-  createdAt: string;
-}
-
-export interface Task {
-  id: string;
-  title: string;
-  description: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-  terminalId?: string;
-  agent?: "claude" | "codex";
-  createdAt: string;
-  updatedAt: string;
-  updates?: TaskUpdate[];
-}
-
-export interface TaskCreateInput {
-  title: string;
-  description: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-}
-
-export interface TaskUpdateInput {
-  title?: string;
-  description?: string;
-  priority?: TaskPriority;
-  status?: TaskStatus;
-}
-
-export interface TaskStartInput {
-  agent: "claude" | "codex";
-  cwd?: string;
-}
-
-export interface TaskRefinement {
-  title: string;
-  description: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-  rationale: string;
-}
-
 export interface ApiErrorBody {
   code: string;
   message: string;

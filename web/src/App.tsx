@@ -15,7 +15,6 @@ import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { SessionInfoPane } from "./components/SessionInfoPane";
 import { AgentsView } from "./components/AgentsView";
-import { TasksView } from "./components/TasksView";
 import {
   agentLaunchTransitions,
   attentionTransitions,
@@ -75,11 +74,6 @@ import type {
   SelectionSnapshot,
   Session,
   Settings,
-  Task,
-  TaskCreateInput,
-  TaskRefinement,
-  TaskStartInput,
-  TaskUpdateInput,
   TerminalCursorStyle,
 } from "./types";
 import {
@@ -108,10 +102,9 @@ const maxCachedTerminalViews = 4;
 const maxTerminalScreenSnapshotBytes = 128 * 1024;
 const minimumSessionInfoWidth = 220;
 const maximumSessionInfoWidth = 520;
-const tasksPaneID = "tasks" as const;
 const agentsPaneID = "agents" as const;
 
-type DashboardPaneID = typeof tasksPaneID | typeof agentsPaneID;
+type DashboardPaneID = typeof agentsPaneID;
 type AgentKind = "codex" | "claude";
 
 function normalizeSessionInfoWidth(width: number): number {
@@ -147,7 +140,7 @@ function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSumma
 }
 
 function isDashboardPaneID(id: string | null): id is DashboardPaneID {
-  return id === tasksPaneID || id === agentsPaneID;
+  return id === agentsPaneID;
 }
 
 function decodeDashboardItemID(value: string | undefined): string | null {
@@ -161,11 +154,7 @@ function decodeDashboardItemID(value: string | undefined): string | null {
 
 function dashboardRouteFromURL(): DashboardRoute {
   const segments = window.location.pathname.split("/").filter(Boolean);
-  const pane = segments[0] === "inbox"
-    ? agentsPaneID
-    : segments[0] === "tasks"
-      ? tasksPaneID
-      : null;
+  const pane = segments[0] === "inbox" ? agentsPaneID : null;
   return {
     pane,
     itemID: pane ? decodeDashboardItemID(segments[1]) : null,
@@ -173,7 +162,7 @@ function dashboardRouteFromURL(): DashboardRoute {
 }
 
 function dashboardPath(pane: DashboardPaneID, itemID: string | null = null): string {
-  const root = pane === agentsPaneID ? "/inbox" : "/tasks";
+  const root = pane === agentsPaneID ? "/inbox" : "/";
   return itemID ? `${root}/${encodeURIComponent(itemID)}` : root;
 }
 
@@ -590,14 +579,6 @@ export function App({
   const [focusedPaneID, setFocusedPaneID] = useState<string | null>(
     () => initialDashboardRoute.pane,
   );
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [tasksLoading, setTasksLoading] = useState(false);
-  const [tasksError, setTasksError] = useState("");
-  const [selectedTaskID, setSelectedTaskID] = useState<string | null>(
-    () => initialDashboardRoute.pane === tasksPaneID ? initialDashboardRoute.itemID : null,
-  );
-  const [taskRefinement, setTaskRefinement] = useState<TaskRefinement | null>(null);
-  const [taskRefining, setTaskRefining] = useState(false);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [agentSummariesLoading, setAgentSummariesLoading] = useState(false);
   const [agentSummariesError, setAgentSummariesError] = useState("");
@@ -749,7 +730,6 @@ export function App({
     if (getter) terminalScreenGettersRef.current.set(id, getter);
     else terminalScreenGettersRef.current.delete(id);
   }, []);
-  const tasksOpen = selectedDashboardIDs.includes(tasksPaneID);
   const agentsOpen = selectedDashboardIDs.includes(agentsPaneID);
   const commandInputRef = useRef<HTMLInputElement>(null);
   const commandListRef = useRef<HTMLDivElement>(null);
@@ -934,32 +914,6 @@ export function App({
     }
   }, [agentSummariesRefreshing, api]);
 
-  const loadTasks = useCallback(async () => {
-    if (!api) return;
-    setTasksLoading(true);
-    setTasksError("");
-    try {
-      const nextTasks = await api.listTasks();
-      setTasks(nextTasks);
-      setSelectedTaskID((current) =>
-        current && nextTasks.some((task) => task.id === current)
-          ? current
-          : nextTasks[0]?.id ?? null,
-      );
-    } catch (error) {
-      setTasksError(
-        error instanceof Error ? error.message : "Tasks could not be loaded.",
-      );
-    } finally {
-      setTasksLoading(false);
-    }
-  }, [api]);
-  const replaceTask = useCallback((next: Task) => {
-    setTasks((current) => [
-      ...current.filter((task) => task.id !== next.id),
-      next,
-    ]);
-  }, []);
   const cancelFilterDeselect = useCallback((id: string) => {
     const timer = filterDeselectTimersRef.current.get(id);
     if (timer !== undefined) {
@@ -1403,24 +1357,6 @@ export function App({
   }, [agentSummaries, agentsOpen, selectedAgentSummaryID, sessions]);
 
   useEffect(() => {
-    if (!tasksOpen || !api) return;
-    void loadTasks();
-  }, [tasksOpen, api, loadTasks]);
-
-  useEffect(() => {
-    if (!tasksOpen || tasks.length === 0) return;
-    const route = dashboardRouteFromURL();
-    if (route.pane !== tasksPaneID) return;
-    const nextTaskID = selectedTaskID && tasks.some((task) => task.id === selectedTaskID)
-      ? selectedTaskID
-      : tasks[0]?.id ?? null;
-    if (nextTaskID !== selectedTaskID) setSelectedTaskID(nextTaskID);
-    if (nextTaskID && route.itemID !== nextTaskID) {
-      writeDashboardURL(tasksPaneID, nextTaskID, "replace");
-    }
-  }, [selectedTaskID, tasks, tasksOpen]);
-
-  useEffect(() => {
     if (!api) {
       setSessions(null);
       setProjects(null);
@@ -1648,15 +1584,6 @@ export function App({
               }
               return;
             }
-            if (
-              event.type === "task.created" ||
-              event.type === "task.updated" ||
-              event.type === "task.deleted" ||
-              event.type === "task.update.created"
-            ) {
-              if (tasksOpen) void loadTasks();
-              return;
-            }
             if (event.type === "selection.changed") {
               const snapshot = event.data as SelectionSnapshot;
               if (typeof snapshot?.revision === "number") {
@@ -1716,11 +1643,9 @@ export function App({
     applyAgentSummarySnapshot,
     bumpAgentSummaryRevision,
     loadAgentSummaries,
-    loadTasks,
     sessions !== null,
     syncSelection,
     syncEvents,
-    tasksOpen,
   ]);
 
   useEffect(() => {
@@ -2139,9 +2064,7 @@ export function App({
       const route = dashboardRouteFromURL();
       setSelectedDashboardIDs(route.pane ? [route.pane] : []);
       setFocusedPaneID(route.pane);
-      setSelectedTaskID(route.pane === tasksPaneID ? route.itemID : null);
       setSelectedAgentSummaryID(route.pane === agentsPaneID ? route.itemID : null);
-      setTaskRefinement(null);
       if (syncSelection) {
         writeWorkspaceURL(
           selectedIDs,
@@ -2714,10 +2637,7 @@ export function App({
   function focusWorkspacePane(id: string) {
     if (isDashboardPaneID(id)) {
       setFocusedPaneID(id);
-      writeDashboardURL(
-        id,
-        id === tasksPaneID ? selectedTaskID : selectedAgentSummaryID,
-      );
+      writeDashboardURL(id, selectedAgentSummaryID);
       return;
     }
     focusPane(id);
@@ -3302,7 +3222,7 @@ export function App({
         pinnedCwdFilters,
         dashboardPath(
           id,
-          id === tasksPaneID ? selectedTaskID : selectedAgentSummaryID,
+          selectedAgentSummaryID,
         ),
       );
       return;
@@ -3329,7 +3249,7 @@ export function App({
     const nextPathname = isDashboardPaneID(nextFocus)
       ? dashboardPath(
         nextFocus,
-        nextFocus === tasksPaneID ? selectedTaskID : selectedAgentSummaryID,
+        selectedAgentSummaryID,
       )
       : "/";
     if (
@@ -3353,10 +3273,6 @@ export function App({
     }
     setSelectedDashboardIDs(nextDashboardIDs);
     setFocusedPaneID(isDashboardPaneID(nextFocus) ? nextFocus : null);
-  }
-
-  function openTasksWorkspace(multiple = false) {
-    selectDashboardPane(tasksPaneID, multiple);
   }
 
   function openAgentsWorkspace(multiple = false) {
@@ -3392,119 +3308,6 @@ export function App({
     setSelectedAgentSummaryID(id);
     writeDashboardURL(agentsPaneID, id, mode);
     void markAgentSummaryRead(id);
-  }
-
-  function selectTask(id: string, mode: "push" | "replace" = "push") {
-    setSelectedTaskID(id);
-    setTaskRefinement(null);
-    writeDashboardURL(tasksPaneID, id, mode);
-  }
-
-  async function createTask(input: TaskCreateInput) {
-    if (!api) return;
-    try {
-      const created = await api.createTask(input);
-      replaceTask(created);
-      selectTask(created.id);
-      setTasksError("");
-    } catch (error) {
-      setTasksError(error instanceof Error ? error.message : "Task could not be created.");
-    }
-  }
-
-  async function updateTask(id: string, input: TaskUpdateInput) {
-    if (!api) return;
-    try {
-      replaceTask(await api.updateTask(id, input));
-      setTasksError("");
-    } catch (error) {
-      setTasksError(error instanceof Error ? error.message : "Task could not be updated.");
-    }
-  }
-
-  async function deleteTask(id: string) {
-    if (!api) return;
-    try {
-      await api.deleteTask(id);
-      setTasks((current) => current.filter((task) => task.id !== id));
-      if (selectedTaskID === id) {
-        const nextTaskID = tasks.find((task) => task.id !== id)?.id ?? null;
-        setSelectedTaskID(nextTaskID);
-        if (dashboardRouteFromURL().pane === tasksPaneID) {
-          writeDashboardURL(tasksPaneID, nextTaskID, "replace");
-        }
-      }
-      setTaskRefinement(null);
-      setTasksError("");
-    } catch (error) {
-      setTasksError(error instanceof Error ? error.message : "Task could not be deleted.");
-    }
-  }
-
-  async function startTaskAgent(id: string, input: TaskStartInput) {
-    if (!api) return;
-    if (projectEndpointAvailableRef.current) {
-      const task = tasks.find((item) => item.id === id);
-      const linkedSession = task?.terminalId
-        ? sessions?.find((session) => session.id === task.terminalId)
-        : undefined;
-      const linkedProject = linkedSession?.projectId
-        ? projects?.some((project) => project.id === linkedSession.projectId)
-        : false;
-      if (!linkedProject) {
-        setTasksError("Start new agents from a project in the sidebar.");
-        return;
-      }
-    }
-    try {
-      const updated = await api.startTaskAgent(id, input);
-      replaceTask(updated);
-      setTasksError("");
-      if (updated.terminalId) {
-        const latestSessions = await api.listSessions();
-        applySessionSnapshot(latestSessions);
-      }
-    } catch (error) {
-      setTasksError(error instanceof Error ? error.message : "The agent could not be started.");
-    }
-  }
-
-  async function promptTaskAgent(id: string, prompt: string) {
-    if (!api) return;
-    try {
-      replaceTask(await api.promptTaskAgent(id, prompt));
-      setTasksError("");
-    } catch (error) {
-      setTasksError(error instanceof Error ? error.message : "The agent could not be reached.");
-    }
-  }
-
-  async function refineTask(id: string) {
-    if (!api) return;
-    setTaskRefining(true);
-    setTasksError("");
-    try {
-      setTaskRefinement(await api.refineTask(id));
-    } catch (error) {
-      setTasksError(error instanceof Error ? error.message : "The task could not be refined.");
-    } finally {
-      setTaskRefining(false);
-    }
-  }
-
-  async function applyTaskRefinement(id: string, refinement: TaskRefinement) {
-    await updateTask(id, {
-      title: refinement.title,
-      description: refinement.description,
-      priority: refinement.priority,
-      status: refinement.status,
-    });
-    setTaskRefinement(null);
-  }
-
-  function openTaskTerminal(id: string) {
-    setTaskRefinement(null);
-    selectSession(id, false);
   }
 
   async function openAgentTerminal(id: string) {
@@ -3617,32 +3420,6 @@ export function App({
   const mountedPanes = [...panes, ...cachedPanes];
   const activePaneID = focusedPaneID ?? focusedID;
   const dashboardPanes: PaneCarouselItem[] = [];
-  if (tasksOpen) {
-    dashboardPanes.push({
-      id: tasksPaneID,
-      label: "Tasks pane",
-      content: (
-        <TasksView
-          tasks={tasks}
-          sessions={sessions}
-          selectedTaskID={selectedTaskID}
-          loading={tasksLoading}
-          error={tasksError}
-          refinement={taskRefinement}
-          refining={taskRefining}
-          onSelectTask={selectTask}
-          onCreateTask={createTask}
-          onUpdateTask={updateTask}
-          onDeleteTask={deleteTask}
-          onStartAgent={startTaskAgent}
-          onOpenTerminal={openTaskTerminal}
-          onRefineTask={refineTask}
-          onApplyRefinement={applyTaskRefinement}
-          onPromptTask={promptTaskAgent}
-        />
-      ),
-    });
-  }
   if (!projectEndpointAvailableRef.current && agentsOpen) {
     dashboardPanes.push({
       id: agentsPaneID,
@@ -3732,7 +3509,6 @@ export function App({
     const status = summaryByTerminalID.get(session.id)?.status ?? session.agentStatus;
     return status === "blocked" || status === "waiting";
   }).length;
-  const taskCount = tasks.filter((task) => task.status !== "done").length;
   const disconnectedIDs = panes
     .filter((pane) => connectionStates[pane.id] === "disconnected")
     .map((pane) => pane.id);
@@ -3971,10 +3747,7 @@ export function App({
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
         onOpenAllSessions={openAllSessions}
-        tasksOpen={tasksOpen}
         focusedPaneID={focusedPaneID}
-        taskCount={taskCount}
-        onOpenTasks={openTasksWorkspace}
         agentsOpen={agentsOpen}
         agentSummaryCount={agentSummaryCount}
         onOpenAgents={openAgentsWorkspace}

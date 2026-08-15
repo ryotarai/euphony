@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,11 +13,10 @@ import (
 )
 
 type clientMessage struct {
-	Type       string `json:"type"`
-	Data       string `json:"data,omitempty"`
-	DataBase64 string `json:"dataBase64,omitempty"`
-	Cols       uint16 `json:"cols,omitempty"`
-	Rows       uint16 `json:"rows,omitempty"`
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
 }
 
 type serverMessage struct {
@@ -33,33 +31,19 @@ type serverMessage struct {
 const terminalResizeTimeout = 2 * time.Second
 
 func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
-	s.terminalStream(w, r, false)
+	s.terminalStream(w, r)
 }
 
-func (s *Server) v1TerminalStream(w http.ResponseWriter, r *http.Request) {
-	s.terminalStream(w, r, true)
-}
-
-func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool) {
+func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ticket, valid := s.tickets.consumeEntry(r.URL.Query().Get("ticket"), id)
 	if !valid {
-		if v1 {
-			writeV1Error(w, http.StatusUnauthorized, "invalid_ticket",
-				"The terminal connection ticket is invalid or expired.", nil)
-		} else {
-			writeError(w, http.StatusUnauthorized, "invalid_ticket", "The terminal connection ticket is invalid or expired.")
-		}
+		writeError(w, http.StatusUnauthorized, "invalid_ticket", "The terminal connection ticket is invalid or expired.")
 		return
 	}
 	terminal, ok := s.sessions.Get(id)
 	if !ok {
-		if v1 {
-			writeV1Error(w, http.StatusNotFound, "terminal_not_found",
-				"The terminal does not exist.", nil)
-		} else {
-			writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")
-		}
+		writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")
 		return
 	}
 
@@ -149,18 +133,18 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 				Type: "resize",
 				Cols: initialSize.Cols,
 				Rows: initialSize.Rows,
-			}, v1)
+			})
 			if err := writeFrame(payload); err != nil {
 				return
 			}
 		}
 		for _, chunk := range batchTerminalHistory(history, terminalOutputFrameBytes) {
-			payload := marshalTerminalFrame(serverMessage{Type: "history", Data: chunk}, v1)
+			payload := marshalTerminalFrame(serverMessage{Type: "history", Data: chunk})
 			if err := writeFrame(payload); err != nil {
 				return
 			}
 		}
-		payload := marshalTerminalFrame(serverMessage{Type: "history_end"}, v1)
+		payload := marshalTerminalFrame(serverMessage{Type: "history_end"})
 		if err := writeFrame(payload); err != nil {
 			return
 		}
@@ -179,7 +163,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 				default:
 				}
 				exitCode := s.sessionExitCode(id)
-				payload := marshalTerminalFrame(serverMessage{Type: "exit", ExitCode: exitCode}, v1)
+				payload := marshalTerminalFrame(serverMessage{Type: "exit", ExitCode: exitCode})
 				_ = writeFrame(payload)
 				return
 			}
@@ -191,7 +175,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 					Rows: event.Rows,
 				}
 			}
-			payload := marshalTerminalFrame(message, v1)
+			payload := marshalTerminalFrame(message)
 			if err := writeFrame(payload); err != nil {
 				return
 			}
@@ -220,10 +204,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 			switch message.Type {
 			case "input":
 				data := []byte(message.Data)
-				if v1 {
-					data, err = base64.RawStdEncoding.DecodeString(message.DataBase64)
-				}
-				if err != nil || len(data) == 0 {
+				if len(data) == 0 {
 					invalidMessages++
 				} else if err := s.control.SendTerminalBytes(id, data); err != nil {
 					if errors.Is(err, control.ErrTerminalLocked) {
@@ -271,26 +252,8 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request, v1 bool)
 	}
 }
 
-func marshalTerminalFrame(message serverMessage, v1 bool) []byte {
-	if !v1 {
-		payload, _ := json.Marshal(message)
-		return payload
-	}
-	payload, _ := json.Marshal(struct {
-		Type       string `json:"type"`
-		DataBase64 string `json:"dataBase64,omitempty"`
-		ExitCode   *int   `json:"exitCode,omitempty"`
-		Message    string `json:"message,omitempty"`
-		Cols       uint16 `json:"cols,omitempty"`
-		Rows       uint16 `json:"rows,omitempty"`
-	}{
-		Type:       message.Type,
-		DataBase64: base64.RawStdEncoding.EncodeToString(message.Data),
-		ExitCode:   message.ExitCode,
-		Message:    message.Message,
-		Cols:       message.Cols,
-		Rows:       message.Rows,
-	})
+func marshalTerminalFrame(message serverMessage) []byte {
+	payload, _ := json.Marshal(message)
 	return payload
 }
 

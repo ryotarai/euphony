@@ -30,7 +30,6 @@ func TestAssetsServeFilesAndSPAFallback(t *testing.T) {
 		{path: "/", wantStatus: 200, wantType: "text/html", wantContent: "Euphony app"},
 		{path: "/workspace/session", wantStatus: 200, wantType: "text/html", wantContent: "Euphony app"},
 		{path: "/inbox/terminal-1", wantStatus: 200, wantType: "text/html", wantContent: "Euphony app"},
-		{path: "/tasks/task-1", wantStatus: 200, wantType: "text/html", wantContent: "Euphony app"},
 		{path: "/assets/app.js", wantStatus: 200, wantType: "text/javascript", wantContent: "console.log"},
 		{path: "/assets/missing.js", wantStatus: 404},
 	}

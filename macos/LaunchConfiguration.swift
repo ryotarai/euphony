@@ -18,10 +18,6 @@ struct ServerLaunchConfiguration {
         environment["EUPHONY_ADDR"] = "127.0.0.1:0"
         environment["EUPHONY_TOKEN"] = token
         environment["EUPHONY_READY_FILE"] = readyFileURL.path
-        environment["EUPHONY_SOCKET"] = readyFileURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("euphony.sock")
-            .path
         self.environment = environment
     }
 }

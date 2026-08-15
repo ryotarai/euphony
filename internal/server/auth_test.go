@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -62,5 +63,30 @@ func TestAuthentication(t *testing.T) {
 				t.Fatalf("GET /api/sessions status = %d, want %d", response.Code, test.wantStatus)
 			}
 		})
+	}
+}
+
+func TestRemovedAutomationRoutesUseTheBrowserAPIError(t *testing.T) {
+	t.Parallel()
+
+	srv, err := New(Config{Token: "correct-token"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/removed-automation", nil)
+	request.Header.Set("Authorization", "Bearer correct-token")
+	response := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("GET removed automation route status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode removed automation route response: %v", err)
+	}
+	if body.Code != "api_not_found" {
+		t.Fatalf("removed automation route error code = %q, want api_not_found", body.Code)
 	}
 }

@@ -58,11 +58,6 @@ bin/euphony
 Euphony does not terminate TLS. When the server is reachable outside a trusted
 network, place it behind an HTTPS reverse proxy and restrict network access.
 
-The server also exposes the same automation API on a private Unix socket. Its
-path is resolved from `EUPHONY_SOCKET`, then
-`$XDG_RUNTIME_DIR/euphony/euphony.sock`, then
-`~/.local/euphony/euphony.sock`. The socket is created with mode `0600`.
-
 The token is stored in the browser's `sessionStorage`. Terminal WebSockets use
 single-use tickets instead of placing the long-lived token in their URLs.
 When the authenticated workspace has no terminals, Euphony starts and selects
@@ -92,50 +87,6 @@ adding duplicates, and enables Codex's lifecycle hook feature. It respects
 `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Agents started inside an Euphony terminal
 inherit the terminal identifier, hook endpoint, and authentication token used
 by the installed hooks.
-
-## Automation API and CLI
-
-The `euphony` executable includes a versioned JSON API and a scripting CLI for
-terminals, Codex and Claude sessions, and the browser's shared pane selection.
-The CLI uses the local Unix socket by default:
-
-```sh
-euphony status
-euphony terminal create --name Build --cwd "$PWD" --selection replace
-euphony terminal run TERMINAL_ID 'go test ./...'
-euphony terminal wait-output --match PASS --timeout 30000 TERMINAL_ID
-euphony agent prompt --wait --until waiting TERMINAL_ID 'Fix the failing test'
-euphony selection get
-euphony annotate ./proposal.md
-```
-
-Use `--url` and `--token` for TCP instead:
-
-```sh
-euphony --url http://127.0.0.1:8080 --token "$EUPHONY_TOKEN" terminal list
-```
-
-Finite commands return stable JSON success or error envelopes. Successful
-output is written to stdout with exit status 0. API errors are written to
-stderr with exit status 1; CLI usage errors use exit status 2. Event and
-terminal observation commands emit newline-delimited JSON.
-
-`euphony annotate` is available inside an Euphony terminal. It opens a
-Markdown or HTML file as the pane's third tab and waits while the user adds
-text-selection or document-wide comments. Sending comments closes the tab and
-returns the structured review as JSON on stdout, so a Codex or Claude process
-can apply the feedback before continuing.
-
-The OpenAPI 3.1 schema is bundled with the server:
-
-```sh
-euphony api schema
-curl -H "Authorization: Bearer $EUPHONY_TOKEN" \
-  http://127.0.0.1:8080/api/v1/schema
-```
-
-See [Automation API and CLI](docs/automation.md) for the complete command and
-transport reference.
 
 ## Development
 

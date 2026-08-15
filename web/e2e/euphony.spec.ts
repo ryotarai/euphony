@@ -64,33 +64,18 @@ async function clearSessions(page: Page) {
   await replaceSharedSelection(page, []);
 }
 
-async function clearTasks(page: Page) {
-  const response = await page.request.get("/api/tasks", {
-    headers: { Authorization: "Bearer test-token" },
-  });
-  expect(response.ok()).toBe(true);
-  const existing = (await response.json() as Array<{ id: string }> | null) ?? [];
-  for (const task of existing) {
-    await page.request.delete(`/api/tasks/${task.id}`, {
-      headers: { Authorization: "Bearer test-token" },
-    });
-  }
-}
-
 async function replaceSharedSelection(
   page: Page,
   terminalIDs: string[],
   focusedTerminalID?: string,
   statusFilters: string[] = [],
 ) {
-  const currentResponse = await page.request.get("/api/v1/selection", {
+  const currentResponse = await page.request.get("/api/selection", {
     headers: { Authorization: "Bearer test-token" },
   });
   expect(currentResponse.ok()).toBe(true);
-  const current = await currentResponse.json() as {
-    result: { revision: number };
-  };
-  const response = await page.request.put("/api/v1/selection", {
+  const current = await currentResponse.json() as { revision: number };
+  const response = await page.request.put("/api/selection", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -101,7 +86,7 @@ async function replaceSharedSelection(
       ...(focusedTerminalID ? { focusedTerminalId: focusedTerminalID } : {}),
       filters: { statuses: statusFilters, cwds: [] },
       pinnedFilters: { statuses: [], cwds: [] },
-      expectedRevision: current.result.revision,
+      expectedRevision: current.revision,
     },
   });
   expect(response.ok()).toBe(true);
@@ -140,7 +125,7 @@ async function createSession(
   cwd?: string,
 ): Promise<TerminalFixture> {
   const project = await getOrCreateProject(page, cwd ?? "/tmp");
-  const response = await page.request.post("/api/v1/terminals", {
+  const response = await page.request.post("/api/terminals", {
     headers: {
       Authorization: "Bearer test-token",
       "Content-Type": "application/json",
@@ -152,11 +137,9 @@ async function createSession(
     },
   });
   expect(response.ok()).toBe(true);
-  const envelope = await response.json() as {
-    result: { terminal: TerminalFixture };
-  };
-  expect(envelope.result.terminal.projectId).toBe(project.id);
-  return envelope.result.terminal;
+  const result = await response.json() as { terminal: TerminalFixture };
+  expect(result.terminal.projectId).toBe(project.id);
+  return result.terminal;
 }
 
 async function getOrCreateProject(page: Page, path: string): Promise<ProjectFixture> {
@@ -315,7 +298,7 @@ test("follows the previous terminal when the focused shell exits", async ({ page
 
   await expect(page.getByLabel("Last terminal", { exact: true })).toBeVisible();
   const runResponse = await page.request.post(
-    `/api/v1/terminals/${last.id}/run`,
+    `/api/terminals/${last.id}/run`,
     {
       headers: {
         Authorization: "Bearer test-token",
@@ -331,14 +314,12 @@ test("follows the previous terminal when the focused shell exits", async ({ page
   });
   await expect(page.getByLabel("Last terminal", { exact: true })).toHaveCount(0);
   await expect(page.getByText("No signal yet.", { exact: true })).toHaveCount(0);
-  const selectionResponse = await page.request.get("/api/v1/selection", {
+  const selectionResponse = await page.request.get("/api/selection", {
     headers: { Authorization: "Bearer test-token" },
   });
   expect(selectionResponse.ok()).toBe(true);
-  const selectionEnvelope = await selectionResponse.json() as {
-    result: { focusedTerminalId: string };
-  };
-  expect(selectionEnvelope.result.focusedTerminalId).toBe(second.id);
+  const selection = await selectionResponse.json() as { focusedTerminalId: string };
+  expect(selection.focusedTerminalId).toBe(second.id);
 });
 
 test("renders persisted projects and creates a terminal from a project action", async ({
@@ -374,13 +355,11 @@ test("renders persisted projects and creates a terminal from a project action", 
   const createdTerminal = page.getByRole("button", { name: "Select Terminal" });
   await expect(createdTerminal).toBeVisible();
   await expect.poll(async () => {
-    const response = await page.request.get("/api/v1/terminals", {
+    const response = await page.request.get("/api/terminals", {
       headers: { Authorization: "Bearer test-token" },
     });
-    const envelope = await response.json() as {
-      result: { terminals: TerminalFixture[] };
-    };
-    const terminal = envelope.result.terminals.find((session) => session.name === "Terminal");
+    const result = await response.json() as { terminals: TerminalFixture[] };
+    const terminal = result.terminals.find((session) => session.name === "Terminal");
     return terminal ? { cwd: terminal.cwd, projectId: terminal.projectId } : null;
   }).toEqual({ cwd: "/tmp", projectId: tmpProject.id });
 });
@@ -478,7 +457,7 @@ test("renders an agent summary inside its project and follows the row", async ({
   const agent = await createSession(page, "Needs approval", "/tmp");
   await replaceSharedSelection(page, [agent.id], agent.id);
   await reportAgent(page, agent.id, "claude", "Needs approval", "waiting");
-  await page.route("**/api/v1/events", async (route) => {
+  await page.route("**/api/events", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/x-ndjson",
@@ -567,7 +546,7 @@ test("starts an agent from a persisted project action", async ({ page }) => {
   await clearSessions(page);
   const project = await getOrCreateProject(page, "/tmp");
   let startRequest: { url: string; body: unknown } | null = null;
-  await page.route("**/api/v1/agents/*/start", async (route) => {
+  await page.route("**/api/agents/*/start", async (route) => {
     startRequest = {
       url: route.request().url(),
       body: route.request().postDataJSON(),
@@ -575,7 +554,7 @@ test("starts an agent from a persisted project action", async ({ page }) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ok: true, result: {} }),
+      body: JSON.stringify({}),
     });
   });
   await page.goto("/?token=test-token");
@@ -585,189 +564,17 @@ test("starts an agent from a persisted project action", async ({ page }) => {
 
   await expect(page.getByRole("button", { name: "Select Terminal" })).toBeVisible();
   await expect.poll(() => startRequest).toEqual({
-    url: expect.stringMatching(/\/api\/v1\/agents\/[^/]+\/start$/),
+    url: expect.stringMatching(/\/api\/agents\/[^/]+\/start$/),
     body: { kind: "codex", args: [], timeoutMs: 30_000 },
   });
   await expect.poll(async () => {
-    const response = await page.request.get("/api/v1/terminals", {
+    const response = await page.request.get("/api/terminals", {
       headers: { Authorization: "Bearer test-token" },
     });
-    const envelope = await response.json() as {
-      result: { terminals: TerminalFixture[] };
-    };
-    const terminal = envelope.result.terminals.find((item) => item.name === "Terminal");
+    const result = await response.json() as { terminals: TerminalFixture[] };
+    const terminal = result.terminals.find((item) => item.name === "Terminal");
     return terminal?.projectId;
   }).toBe(project.id);
-});
-
-test("keeps Tasks available without Inbox or project split checkboxes", async ({ page }) => {
-  await clearSessions(page);
-  await createSession(page, "Terminal", "/tmp");
-  await page.goto("/?token=test-token");
-
-  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: /Include .* in split/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Inbox" })).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: /Done/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "Tasks" }).click();
-  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Select Terminal" }).click();
-  await expect(page.getByRole("heading", { name: "Tasks" })).toHaveCount(0);
-  await expect(page.getByLabel("Terminal terminal", { exact: true })).toBeVisible();
-});
-
-test("creates and refines a task without bypassing project-first agent starts", async ({ page }) => {
-  await clearSessions(page);
-  await clearTasks(page);
-  const terminal = await createSession(page, "Task agent", "/tmp");
-  await replaceSharedSelection(page, [terminal.id], terminal.id);
-  await page.goto("/?token=test-token");
-
-  await page.getByRole("button", { name: "Tasks" }).click();
-  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-  await page.getByRole("button", { name: "New task" }).click();
-  const dialog = page.getByRole("dialog", { name: "New task" });
-  await dialog.getByLabel("Title").fill("Document the task workflow");
-  await dialog.getByLabel("Description").fill("Capture the create, refine, start, and communicate flow.");
-  await dialog.getByLabel("Priority").selectOption("high");
-  await dialog.getByRole("button", { name: "Create task" }).click();
-
-  await expect(page.getByText("Document the task workflow", { exact: true })).toBeVisible();
-  const taskResponse = await page.request.get("/api/tasks", {
-    headers: { Authorization: "Bearer test-token" },
-  });
-  expect(taskResponse.ok()).toBe(true);
-  const [createdTask] = await taskResponse.json() as Array<{
-    id: string;
-    title: string;
-    description: string;
-    priority: "low" | "medium" | "high";
-    status: "todo" | "in_progress" | "blocked" | "done";
-    updates: Array<unknown>;
-  }>;
-  expect(createdTask.title).toBe("Document the task workflow");
-  await expect(page).toHaveURL(new RegExp(`/tasks/${createdTask.id}`));
-
-  await page.route("**/api/tasks/*/refine", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        title: "Document the complete task workflow",
-        description: "Explain how a user creates, refines, starts, and communicates with an agent.",
-        priority: "high",
-        status: "todo",
-        rationale: "The outcome and workflow are now explicit.",
-      }),
-    });
-  });
-  await page.getByRole("button", { name: "Refine with AI" }).click();
-  await expect(page.getByRole("region", { name: "AI refinement proposal" })).toContainText(
-    "Document the complete task workflow",
-  );
-  await page.getByRole("button", { name: "Apply refinement" }).click();
-  await expect(page.getByLabel("Title")).toHaveValue("Document the complete task workflow");
-
-  let startRequested = false;
-  await page.route(`**/api/tasks/${createdTask.id}/start`, async (route) => {
-    startRequested = true;
-    await route.fulfill({
-      status: 500,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "project_boundary_bypassed" }),
-    });
-  });
-  await page.getByRole("button", { name: "Start agent", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Start new agents from a project in the sidebar.",
-  );
-  await expect(page.getByText("No agent terminal linked.", { exact: true })).toBeVisible();
-  expect(startRequested).toBe(false);
-});
-
-test("keeps the legacy Tasks agent workflow when the project API is unavailable", async ({
-  page,
-}) => {
-  await clearSessions(page);
-  await clearTasks(page);
-  const terminal = await createSession(page, "Legacy task agent", "/tmp");
-  await replaceSharedSelection(page, [terminal.id], terminal.id);
-  await page.route("**/api/projects", async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "projects_unavailable" }),
-    });
-  });
-  await page.goto("/?token=test-token");
-
-  await page.getByRole("button", { name: "Tasks" }).click();
-  await page.getByRole("button", { name: "New task" }).click();
-  const dialog = page.getByRole("dialog", { name: "New task" });
-  await dialog.getByLabel("Title").fill("Run the legacy task flow");
-  await dialog.getByLabel("Description").fill("Verify compatibility while projects are unavailable.");
-  await dialog.getByRole("button", { name: "Create task" }).click();
-
-  const taskResponse = await page.request.get("/api/tasks", {
-    headers: { Authorization: "Bearer test-token" },
-  });
-  const [createdTask] = await taskResponse.json() as Array<{
-    id: string;
-    title: string;
-    description: string;
-    priority: "low" | "medium" | "high";
-    status: "todo" | "in_progress" | "blocked" | "done";
-    updates: Array<unknown>;
-  }>;
-  const startedTask = {
-    ...createdTask,
-    terminalId: terminal.id,
-    agent: "codex",
-    status: "in_progress" as const,
-    updates: [{
-      id: "legacy-task-started",
-      taskId: createdTask.id,
-      terminalId: terminal.id,
-      kind: "system",
-      body: "Started codex agent.",
-      createdAt: "2026-08-05T00:01:00Z",
-    }],
-  };
-  await page.route(`**/api/tasks/${createdTask.id}/start`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(startedTask),
-    });
-  });
-  await page.getByRole("button", { name: "Start agent", exact: true }).click();
-  await expect(page.getByText("Started codex agent.", { exact: true })).toBeVisible();
-
-  const communicatedTask = {
-    ...startedTask,
-    updates: [...startedTask.updates, {
-      id: "legacy-task-instruction",
-      taskId: createdTask.id,
-      terminalId: terminal.id,
-      kind: "user_instruction",
-      body: "Run the compatibility tests.",
-      createdAt: "2026-08-05T00:02:00Z",
-    }],
-  };
-  await page.route(`**/api/tasks/${createdTask.id}/prompt`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(communicatedTask),
-    });
-  });
-  await page.getByLabel("Instruction for agent").fill("Run the compatibility tests.");
-  await page.getByRole("button", { name: "Send instruction" }).click();
-  await expect(page.getByText("Run the compatibility tests.", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "Open terminal" }).click();
-  await expect(page.getByLabel("Legacy task agent terminal", { exact: true })).toBeVisible();
 });
 
 test("keeps sidebar actions visible while the terminal tree scrolls", async ({
