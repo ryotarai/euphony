@@ -413,7 +413,9 @@ function SessionNavigationContent({
   const sessionInfoPendingIDRef = useRef<string | null>(null);
   const sessionInfoCardRef = useRef<HTMLElement | null>(null);
   const sessionsRef = useRef(props.sessions);
-  sessionsRef.current = props.sessions;
+  useLayoutEffect(() => {
+    sessionsRef.current = props.sessions;
+  }, [props.sessions]);
   const sessionSummaries = latestSessionSummaries(props.agentSummaries ?? []);
 
   const clearSessionInfoTimer = useCallback(() => {
@@ -499,18 +501,6 @@ function SessionNavigationContent({
       current.left === left && current.top === top ? current : { left, top },
     );
   }, [hoveredSession, hoveredSummary, sessionInfoHover]);
-
-  useEffect(() => {
-    const pendingID = sessionInfoPendingIDRef.current;
-    const hoveredID = sessionInfoHover?.sessionID;
-    const currentIDs = new Set(props.sessions.map((session) => session.id));
-    if (
-      (pendingID && !currentIDs.has(pendingID)) ||
-      (hoveredID && !currentIDs.has(hoveredID))
-    ) {
-      cancelSessionInfo();
-    }
-  }, [cancelSessionInfo, props.sessions, sessionInfoHover]);
 
   useEffect(() => {
     const cancelOnEscape = (event: KeyboardEvent) => {

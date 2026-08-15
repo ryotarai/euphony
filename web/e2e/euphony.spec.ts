@@ -364,27 +364,34 @@ test("renders persisted projects and creates a terminal from a project action", 
   }).toEqual({ cwd: "/tmp", projectId: tmpProject.id });
 });
 
-test("matches the session information background to the terminal sidebar", async ({ page }) => {
+test("shows session information in a delayed hover card without a permanent pane", async ({ page }) => {
   await clearSessions(page);
   const terminal = await createSession(page, "Session details", "/tmp");
-  await replaceSharedSelection(page, [terminal.id], terminal.id);
   await page.goto("/?token=test-token");
 
-  await expect(page.locator(".session-info-pane")).toBeVisible();
-  const colors = await page.evaluate(() => {
-    const sidebar = document.querySelector<HTMLElement>(".desktop-sidebar");
-    const infoPane = document.querySelector<HTMLElement>(".session-info-pane");
-    if (!sidebar || !infoPane) throw new Error("Expected sidebar and session information pane.");
-    return {
-      sidebar: getComputedStyle(sidebar).backgroundColor,
-      infoPane: getComputedStyle(infoPane).backgroundColor,
-    };
+  await expect(page.locator(".session-info-pane")).toHaveCount(0);
+  await expect(page.locator(".session-info-resizer")).toHaveCount(0);
+  const row = page.locator(".project-session-row").filter({
+    has: page.getByRole("button", { name: "Select Session details" }),
   });
+  await row.hover();
 
-  expect(colors.infoPane).toBe(colors.sidebar);
+  const card = page.getByRole("region", { name: "Session information" });
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute("data-session-id", terminal.id);
+  await expect(card).toContainText("No summary yet.");
+  await expect(card).toContainText("No action required.");
+  const cardBounds = await card.boundingBox();
+  const viewport = page.viewportSize();
+  expect(cardBounds).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(cardBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(cardBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(cardBounds!.x + cardBounds!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(cardBounds!.y + cardBounds!.height).toBeLessThanOrEqual(viewport!.height);
 });
 
-test("uses one gray line at the sidebar and session information boundaries", async ({ page }) => {
+test("keeps one gray line at the sidebar and terminal boundary", async ({ page }) => {
   await clearSessions(page);
   const terminal = await createSession(page, "Boundary details", "/tmp");
   await replaceSharedSelection(page, [terminal.id], terminal.id);
@@ -392,36 +399,28 @@ test("uses one gray line at the sidebar and session information boundaries", asy
 
   const boundaries = await page.evaluate(() => {
     const sidebar = document.querySelector<HTMLElement>(".desktop-sidebar");
-    const infoPane = document.querySelector<HTMLElement>(".session-info-pane");
     const sidebarResizer = document.querySelector<HTMLElement>(".sidebar-resizer");
-    const infoResizer = document.querySelector<HTMLElement>(".session-info-resizer");
-    if (!sidebar || !infoPane || !sidebarResizer || !infoResizer) {
+    if (!sidebar || !sidebarResizer) {
       throw new Error("Expected workspace boundary elements.");
     }
     return {
       sidebarBorderRight: getComputedStyle(sidebar).borderRightWidth,
-      infoBorderLeft: getComputedStyle(infoPane).borderLeftWidth,
-      infoBorderRight: getComputedStyle(infoPane).borderRightWidth,
       sidebarDivider: getComputedStyle(sidebarResizer, "::after").backgroundColor,
-      infoDivider: getComputedStyle(infoResizer, "::after").backgroundColor,
+      informationPaneCount: document.querySelectorAll(".session-info-pane").length,
+      informationResizerCount: document.querySelectorAll(".session-info-resizer").length,
     };
   });
 
   expect(boundaries).toEqual({
     sidebarBorderRight: "0px",
-    infoBorderLeft: "0px",
-    infoBorderRight: "0px",
     sidebarDivider: "rgb(38, 38, 38)",
-    infoDivider: "rgb(38, 38, 38)",
+    informationPaneCount: 0,
+    informationResizerCount: 0,
   });
 
   await page.locator(".sidebar-resizer").hover();
   await expect.poll(() => page.evaluate(() =>
     getComputedStyle(document.querySelector<HTMLElement>(".sidebar-resizer")!, "::after").backgroundColor,
-  )).toBe("rgb(115, 115, 115)");
-  await page.locator(".session-info-resizer").hover();
-  await expect.poll(() => page.evaluate(() =>
-    getComputedStyle(document.querySelector<HTMLElement>(".session-info-resizer")!, "::after").backgroundColor,
   )).toBe("rgb(115, 115, 115)");
 });
 
@@ -446,10 +445,6 @@ test("makes project terminal rows fully clickable", async ({ page }) => {
     buttonBox!.y + buttonBox!.height / 2,
   );
   await expect(button).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".session-info-pane")).toHaveAttribute(
-    "data-session-id",
-    terminal.id,
-  );
 });
 
 test("renders an agent summary inside its project and follows the row", async ({ page }) => {
@@ -513,21 +508,14 @@ test("renders an agent summary inside its project and follows the row", async ({
     name: /Select Claude.*Approve the requested change\./,
   });
   await expect(row).toHaveAttribute("data-unread", "true");
+  await row.hover();
   const info = page.getByRole("region", { name: "Session information" });
+  await expect(info).toBeVisible();
   await expect(info.getByRole("heading", { name: "Review the requested change.", exact: true })).toBeVisible();
   await expect(info.locator("dt", { hasText: "Purpose" })).toHaveCount(0);
   await expect(info).toContainText("Summary");
   await expect(info).toContainText("Action");
-  const divider = page.getByRole("separator", { name: "Resize session information" });
-  const dividerBounds = await divider.boundingBox();
-  expect(dividerBounds).not.toBeNull();
-  const initialInfoWidth = Number(await divider.getAttribute("aria-valuenow"));
-  const dividerX = dividerBounds!.x + dividerBounds!.width / 2;
-  await page.mouse.move(dividerX, dividerBounds!.y + 24);
-  await page.mouse.down();
-  await page.mouse.move(dividerX + 64, dividerBounds!.y + 24);
-  await page.mouse.up();
-  await expect(divider).toHaveAttribute("aria-valuenow", String(initialInfoWidth + 64));
+  await expect(page.locator(".session-info-resizer")).toHaveCount(0);
   await expect(page.getByRole("checkbox", { name: /Deselect/ })).toHaveCount(0);
   await row.click({ button: "right" });
   await expect(page.getByRole("menu", { name: "Actions for Claude" })).toBeVisible();
