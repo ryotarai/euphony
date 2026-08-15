@@ -39,7 +39,7 @@ function statusIcon(session: Session) {
 function purposeFor(session: Session, summary?: AgentSummary) {
   const generated = summary?.purpose?.trim();
   if (generated) return generated;
-  return session.agentTitle?.trim() || session.processName?.trim() || "No purpose yet.";
+  return session.agentTitle?.trim() || session.processName?.trim() || "New session";
 }
 
 export function SessionInfoPane({ session, summary }: SessionInfoPaneProps) {
