@@ -6,11 +6,13 @@ import {
   Clock3Icon,
   SquareTerminalIcon,
 } from "lucide-react";
+import { forwardRef, type CSSProperties } from "react";
 import type { AgentSummary, Session } from "../types";
 
-interface SessionInfoPaneProps {
+interface SessionInfoCardProps {
   session?: Session;
   summary?: AgentSummary;
+  style?: CSSProperties;
 }
 
 function statusIcon(session: Session) {
@@ -42,53 +44,59 @@ function purposeFor(session: Session, summary?: AgentSummary) {
   return session.agentTitle?.trim() || session.processName?.trim() || "New session";
 }
 
-export function SessionInfoPane({ session, summary }: SessionInfoPaneProps) {
-  if (!session) {
+export const SessionInfoCard = forwardRef<HTMLElement, SessionInfoCardProps>(
+  function SessionInfoCard({ session, summary, style }, ref) {
+    if (!session) {
+      return (
+        <aside
+          ref={ref}
+          className="session-info-card"
+          role="region"
+          aria-label="Session information"
+          data-card-name="session-info-card"
+          style={style}
+        >
+          <div className="session-info-empty">
+            <span className="session-info-kicker">Session information</span>
+            <p>Select a session to inspect its purpose, summary, and action.</p>
+          </div>
+        </aside>
+      );
+    }
+
+    const purpose = purposeFor(session, summary);
+    const latestSummary = summary?.summary?.trim() || "No summary yet.";
+    const action = summary?.action?.trim() || "No action required.";
+
     return (
       <aside
-        className="session-info-pane"
+        ref={ref}
+        className="session-info-card"
         role="region"
         aria-label="Session information"
-        data-pane-name="information-pane"
+        data-session-id={session.id}
+        data-card-name="session-info-card"
+        style={style}
       >
-        <div className="session-info-empty">
+        <header className="session-info-header">
           <span className="session-info-kicker">Session information</span>
-          <p>Select a session to inspect its purpose, summary, and action.</p>
-        </div>
+          <div className="session-info-identity">
+            {statusIcon(session)}
+            <h2>{purpose}</h2>
+          </div>
+          <p className="session-info-cwd" title={session.cwd}>{session.cwd}</p>
+        </header>
+        <dl className="session-info-fields">
+          <div>
+            <dt>Summary</dt>
+            <dd>{latestSummary}</dd>
+          </div>
+          <div>
+            <dt>Action</dt>
+            <dd className={summary?.action ? "session-info-action" : undefined}>{action}</dd>
+          </div>
+        </dl>
       </aside>
     );
-  }
-
-  const purpose = purposeFor(session, summary);
-  const latestSummary = summary?.summary?.trim() || "No summary yet.";
-  const action = summary?.action?.trim() || "No action required.";
-
-  return (
-    <aside
-      className="session-info-pane"
-      role="region"
-      aria-label="Session information"
-      data-session-id={session.id}
-      data-pane-name="information-pane"
-    >
-      <header className="session-info-header">
-        <span className="session-info-kicker">Session information</span>
-        <div className="session-info-identity">
-          {statusIcon(session)}
-          <h2>{purpose}</h2>
-        </div>
-        <p className="session-info-cwd" title={session.cwd}>{session.cwd}</p>
-      </header>
-      <dl className="session-info-fields">
-        <div>
-          <dt>Summary</dt>
-          <dd>{latestSummary}</dd>
-        </div>
-        <div>
-          <dt>Action</dt>
-          <dd className={summary?.action ? "session-info-action" : undefined}>{action}</dd>
-        </div>
-      </dl>
-    </aside>
-  );
-}
+  },
+);

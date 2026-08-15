@@ -1,8 +1,11 @@
 import {
   type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -35,8 +38,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { ProjectSidebar } from "./ProjectSidebar";
+import { ProjectSidebar, type SessionInfoInteractionHandlers } from "./ProjectSidebar";
 import { useSessionContextMenu } from "./SessionContextMenu";
+import { SessionInfoCard } from "./SessionInfoPane";
 import type { AgentSummary, Project, Session, Settings } from "../types";
 import {
   defaultTerminalCursorBlink,
@@ -50,6 +54,9 @@ import {
 const defaultSidebarWidth = 256;
 const minimumSidebarWidth = 180;
 const maximumSidebarWidth = 600;
+const sessionInfoHoverDelayMs = 500;
+const sessionInfoCardGap = 12;
+const sessionInfoViewportPadding = 12;
 
 function normalizeSidebarWidth(width: number): number {
   return Math.round(Math.min(maximumSidebarWidth, Math.max(minimumSidebarWidth, width)));
@@ -109,6 +116,27 @@ function compareTerminalRows(left: Session, right: Session) {
 
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function latestSessionSummaries(summaries: AgentSummary[]) {
+  const current = new Map<string, AgentSummary>();
+  for (const summary of summaries) {
+    if (summary.done) continue;
+    const previous = current.get(summary.terminalId);
+    if (!previous) {
+      current.set(summary.terminalId, summary);
+      continue;
+    }
+    const previousTime = Date.parse(previous.generatedAt);
+    const nextTime = Date.parse(summary.generatedAt);
+    if (
+      (!Number.isFinite(previousTime) && Number.isFinite(nextTime)) ||
+      (Number.isFinite(nextTime) && nextTime >= previousTime)
+    ) {
+      current.set(summary.terminalId, summary);
+    }
+  }
+  return current;
 }
 
 function canonicalPath(path: string) {
@@ -185,13 +213,17 @@ function SessionListItem({
   pinned,
   selectSession,
   onDelete,
+  onSessionPointerEnter,
+  onSessionPointerLeave,
+  onSessionFocus,
+  onSessionBlur,
 }: {
   session: Session;
   selected: boolean;
   pinned: boolean;
   selectSession(id: string, multiple: boolean, pin?: boolean): void;
   onDelete(session: Session): void;
-}) {
+} & SessionInfoInteractionHandlers) {
   const { onContextMenu, menu } = useSessionContextMenu(
     session.name,
     () => onDelete(session),
@@ -206,6 +238,8 @@ function SessionListItem({
       data-state={activity(session)}
       data-attention={session.needsAttention || undefined}
       onContextMenu={onContextMenu}
+      onPointerEnter={(event) => onSessionPointerEnter?.(session, event)}
+      onPointerLeave={() => onSessionPointerLeave?.(session.id)}
     >
       <Checkbox
         className="pane-checkbox"
@@ -224,6 +258,8 @@ function SessionListItem({
         aria-current={selected ? "true" : undefined}
         aria-describedby={attentionDescriptionID}
         title={displayPath(session.cwd)}
+        onFocus={(event) => onSessionFocus?.(session, event)}
+        onBlur={() => onSessionBlur?.(session.id)}
         onClick={(event) =>
           selectSession(session.id, event.metaKey || event.ctrlKey)
         }
@@ -246,7 +282,11 @@ function SessionListItem({
   );
 }
 
-function SessionList(props: SessionNavigationProps) {
+function SessionList(
+  props: SessionNavigationProps & {
+    sessionInfoHandlers: SessionInfoInteractionHandlers;
+  },
+) {
   const { isMobile, setOpenMobile } = useSidebar();
 
   const selectSession = (id: string, multiple: boolean, pin?: boolean) => {
@@ -287,6 +327,7 @@ function SessionList(props: SessionNavigationProps) {
                   pinned={pinnedIDSet.has(session.id)}
                   selectSession={selectSession}
                   onDelete={props.onDelete}
+                  {...props.sessionInfoHandlers}
                 />
               ))}
             </SidebarMenu>
@@ -358,6 +399,118 @@ function SessionNavigationContent({
     terminalTree,
     updateTerminalTreeOverflow,
   ]);
+
+  const [sessionInfoHover, setSessionInfoHover] = useState<{
+    sessionID: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [sessionInfoCardPosition, setSessionInfoCardPosition] = useState({
+    left: sessionInfoViewportPadding,
+    top: sessionInfoViewportPadding,
+  });
+  const sessionInfoTimerRef = useRef<number | null>(null);
+  const sessionInfoPendingIDRef = useRef<string | null>(null);
+  const sessionInfoCardRef = useRef<HTMLElement | null>(null);
+  const sessionsRef = useRef(props.sessions);
+  useLayoutEffect(() => {
+    sessionsRef.current = props.sessions;
+  }, [props.sessions]);
+  const sessionSummaries = latestSessionSummaries(props.agentSummaries ?? []);
+
+  const clearSessionInfoTimer = useCallback(() => {
+    if (sessionInfoTimerRef.current === null) return;
+    window.clearTimeout(sessionInfoTimerRef.current);
+    sessionInfoTimerRef.current = null;
+  }, []);
+
+  const cancelSessionInfo = useCallback(() => {
+    clearSessionInfoTimer();
+    sessionInfoPendingIDRef.current = null;
+    setSessionInfoHover(null);
+  }, [clearSessionInfoTimer]);
+
+  const scheduleSessionInfo = useCallback((
+    session: Session,
+    anchor: { x: number; y: number },
+  ) => {
+    clearSessionInfoTimer();
+    sessionInfoPendingIDRef.current = session.id;
+    setSessionInfoHover(null);
+    sessionInfoTimerRef.current = window.setTimeout(() => {
+      sessionInfoTimerRef.current = null;
+      if (sessionInfoPendingIDRef.current !== session.id) return;
+      if (!sessionsRef.current.some((current) => current.id === session.id)) {
+        sessionInfoPendingIDRef.current = null;
+        return;
+      }
+      setSessionInfoHover({ sessionID: session.id, ...anchor });
+    }, sessionInfoHoverDelayMs);
+  }, [clearSessionInfoTimer]);
+
+  const onSessionPointerEnter = useCallback((
+    session: Session,
+    event: ReactPointerEvent<HTMLElement>,
+  ) => {
+    scheduleSessionInfo(session, { x: event.clientX, y: event.clientY });
+  }, [scheduleSessionInfo]);
+
+  const onSessionFocus = useCallback((
+    session: Session,
+    event: ReactFocusEvent<HTMLElement>,
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    scheduleSessionInfo(session, { x: rect.right, y: rect.top });
+  }, [scheduleSessionInfo]);
+
+  const sessionInfoHandlers: SessionInfoInteractionHandlers = {
+    onSessionPointerEnter,
+    onSessionPointerLeave: cancelSessionInfo,
+    onSessionFocus,
+    onSessionBlur: cancelSessionInfo,
+  };
+  const hoveredSession = sessionInfoHover
+    ? props.sessions.find((session) => session.id === sessionInfoHover.sessionID)
+    : undefined;
+  const hoveredSummary = hoveredSession
+    ? sessionSummaries.get(hoveredSession.id)
+    : undefined;
+
+  useLayoutEffect(() => {
+    if (!sessionInfoHover || !hoveredSession) return;
+    const rect = sessionInfoCardRef.current?.getBoundingClientRect();
+    const width = rect?.width ?? 0;
+    const height = rect?.height ?? 0;
+    const maxLeft = Math.max(
+      sessionInfoViewportPadding,
+      window.innerWidth - width - sessionInfoViewportPadding,
+    );
+    const maxTop = Math.max(
+      sessionInfoViewportPadding,
+      window.innerHeight - height - sessionInfoViewportPadding,
+    );
+    const left = Math.min(
+      maxLeft,
+      Math.max(sessionInfoViewportPadding, sessionInfoHover.x + sessionInfoCardGap),
+    );
+    const top = Math.min(
+      maxTop,
+      Math.max(sessionInfoViewportPadding, sessionInfoHover.y + sessionInfoCardGap),
+    );
+    setSessionInfoCardPosition((current) =>
+      current.left === left && current.top === top ? current : { left, top },
+    );
+  }, [hoveredSession, hoveredSummary, sessionInfoHover]);
+
+  useEffect(() => {
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelSessionInfo();
+    };
+    window.addEventListener("keydown", cancelOnEscape, true);
+    return () => window.removeEventListener("keydown", cancelOnEscape, true);
+  }, [cancelSessionInfo]);
+
+  useEffect(() => cancelSessionInfo, [cancelSessionInfo]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -527,9 +680,14 @@ function SessionNavigationContent({
                 props.onDelete(session);
                 if (isMobile) setOpenMobile(false);
               }}
+              {...sessionInfoHandlers}
             />
           ) : (
-            <SessionList {...props} settings={settings} />
+            <SessionList
+              {...props}
+              settings={settings}
+              sessionInfoHandlers={sessionInfoHandlers}
+            />
           )}
         </SidebarContent>
         <SidebarFooter>
@@ -586,6 +744,19 @@ function SessionNavigationContent({
           />
         )}
       </Sidebar>
+
+      {hoveredSession && (
+        <SessionInfoCard
+          ref={sessionInfoCardRef}
+          session={hoveredSession}
+          summary={hoveredSummary}
+          style={{
+            position: "fixed",
+            left: `${sessionInfoCardPosition.left}px`,
+            top: `${sessionInfoCardPosition.top}px`,
+          }}
+        />
+      )}
 
       {!isMobile && collapsed && (
         <SidebarTrigger

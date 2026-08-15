@@ -102,6 +102,64 @@ test("renders normalized transcript as safe semantic HTML", async () => {
   expect(screen.getByText("3 tool calls").closest("details")).toBeInTheDocument();
 });
 
+test("renders Markdown lists with scoped markers, indentation, and readable spacing", async () => {
+  const listLog: AgentTranscript = {
+    ...initialLog,
+    sessionId: "session-lists",
+    entries: [
+      {
+        id: "lists-1",
+        kind: "message",
+        role: "assistant",
+        content: `- Top-level item
+  - Nested item
+    - Deeply nested item
+
+1. First ordered item
+2. Second ordered item
+   1. Nested ordered item`,
+      },
+    ],
+  };
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: listLog, etag: 'W/"lists"' }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  const firstItem = await screen.findByText("Top-level item");
+  const markdown = firstItem.closest<HTMLElement>(".agent-log-markdown");
+  expect(markdown).not.toBeNull();
+  if (!markdown) throw new Error("Markdown wrapper was not rendered");
+
+  const unordered = markdown.querySelector<HTMLElement>("ul");
+  const ordered = markdown.querySelector<HTMLElement>("ol");
+  expect(unordered).not.toBeNull();
+  expect(ordered).not.toBeNull();
+  if (!unordered || !ordered) throw new Error("Expected semantic Markdown lists");
+
+  expect(unordered).toHaveClass(
+    "agent-log-markdown-list",
+    "agent-log-markdown-list-unordered",
+  );
+  expect(ordered).toHaveClass("agent-log-markdown-list", "agent-log-markdown-list-ordered");
+  expect(unordered.querySelectorAll(":scope > li")).toHaveLength(1);
+  const nestedUnordered = unordered.querySelector<HTMLElement>("ul");
+  const nestedOrdered = ordered.querySelector<HTMLElement>("ol");
+  expect(nestedUnordered).not.toBeNull();
+  expect(nestedOrdered).not.toBeNull();
+  if (!nestedUnordered || !nestedOrdered) throw new Error("Expected nested Markdown lists");
+  expect(nestedUnordered).toHaveClass(
+    "agent-log-markdown-list",
+    "agent-log-markdown-list-unordered",
+  );
+  expect(nestedUnordered).toHaveTextContent("Nested item");
+  expect(unordered.querySelector("ul ul")).toHaveTextContent("Deeply nested item");
+  expect(ordered.querySelectorAll(":scope > li")).toHaveLength(2);
+  expect(nestedOrdered).toHaveClass("agent-log-markdown-list", "agent-log-markdown-list-ordered");
+  expect(nestedOrdered).toHaveTextContent("Nested ordered item");
+});
+
 test("renders normalized image and video entries with accessible media controls", async () => {
   const mediaLog = {
     agent: "codex",

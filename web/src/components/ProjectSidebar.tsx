@@ -9,10 +9,18 @@ import {
   FolderPlusIcon,
   SquareTerminalIcon,
 } from "lucide-react";
+import type { FocusEvent, PointerEvent } from "react";
 import type { AgentSummary, Project, Session } from "../types";
 import { useSessionContextMenu } from "./SessionContextMenu";
 
-export interface ProjectSidebarProps {
+export interface SessionInfoInteractionHandlers {
+  onSessionPointerEnter?(session: Session, event: PointerEvent<HTMLElement>): void;
+  onSessionPointerLeave?(sessionID: string): void;
+  onSessionFocus?(session: Session, event: FocusEvent<HTMLElement>): void;
+  onSessionBlur?(sessionID: string): void;
+}
+
+export interface ProjectSidebarProps extends SessionInfoInteractionHandlers {
   projects: Project[];
   sessions: Session[];
   agentSummaries: AgentSummary[];
@@ -219,13 +227,17 @@ function ProjectSessionRow({
   selected,
   onSelectSession,
   onDelete,
+  onSessionPointerEnter,
+  onSessionPointerLeave,
+  onSessionFocus,
+  onSessionBlur,
 }: {
   session: Session;
   summary: SessionSummary;
   selected: boolean;
   onSelectSession(sessionID: string): void;
   onDelete?: (session: Session) => void;
-}) {
+} & SessionInfoInteractionHandlers) {
   const status = activity(session, summary);
   const identity = sessionIdentity(session, summary);
   const purpose = sessionPurpose(session, summary);
@@ -258,6 +270,8 @@ function ProjectSessionRow({
       data-state={status}
       data-unread={unread ? "true" : "false"}
       onContextMenu={onContextMenu}
+      onPointerEnter={(event) => onSessionPointerEnter?.(session, event)}
+      onPointerLeave={() => onSessionPointerLeave?.(session.id)}
     >
       <button
         type="button"
@@ -267,6 +281,8 @@ function ProjectSessionRow({
         aria-pressed={selected}
         aria-current={selected ? "true" : undefined}
         data-unread={unread ? "true" : "false"}
+        onFocus={(event) => onSessionFocus?.(session, event)}
+        onBlur={() => onSessionBlur?.(session.id)}
         onClick={() => onSelectSession(session.id)}
       >
         {sessionStatusIcon(status)}
@@ -310,6 +326,10 @@ function ProjectGroup({
   onCreateTerminal,
   onCreateAgent,
   onDelete,
+  onSessionPointerEnter,
+  onSessionPointerLeave,
+  onSessionFocus,
+  onSessionBlur,
 }: {
   project?: Project;
   sessions: Session[];
@@ -319,7 +339,7 @@ function ProjectGroup({
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
   onDelete?: (session: Session) => void;
-}) {
+} & SessionInfoInteractionHandlers) {
   const groupID = project?.id ?? "unassigned";
   const headingID = `project-sidebar-heading-${groupID}`;
   const label = project?.path ?? "Unassigned";
@@ -351,6 +371,10 @@ function ProjectGroup({
               selected={selectedID === session.id}
               onSelectSession={onSelectSession}
               onDelete={onDelete}
+              onSessionPointerEnter={onSessionPointerEnter}
+              onSessionPointerLeave={onSessionPointerLeave}
+              onSessionFocus={onSessionFocus}
+              onSessionBlur={onSessionBlur}
             />
           ))}
         </ul>
@@ -371,6 +395,10 @@ export function ProjectSidebar({
   onCreateAgent,
   onAddProject,
   onDelete,
+  onSessionPointerEnter,
+  onSessionPointerLeave,
+  onSessionFocus,
+  onSessionBlur,
 }: ProjectSidebarProps) {
   const summaries = latestSummaries(agentSummaries);
   const { grouped, unassigned } = projectSessions(projects, sessions, summaries);
@@ -411,6 +439,10 @@ export function ProjectSidebar({
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
             onDelete={onDelete}
+            onSessionPointerEnter={onSessionPointerEnter}
+            onSessionPointerLeave={onSessionPointerLeave}
+            onSessionFocus={onSessionFocus}
+            onSessionBlur={onSessionBlur}
           />
         ))}
         {unassigned.length > 0 && (
@@ -422,6 +454,10 @@ export function ProjectSidebar({
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
             onDelete={onDelete}
+            onSessionPointerEnter={onSessionPointerEnter}
+            onSessionPointerLeave={onSessionPointerLeave}
+            onSessionFocus={onSessionFocus}
+            onSessionBlur={onSessionBlur}
           />
         )}
       </div>

@@ -2145,7 +2145,7 @@ test("shows the project terminal startup cause when starting an agent fails", as
   );
 });
 
-test("shows the selected session information beside the terminal", async () => {
+test("does not render a permanent session information pane beside the terminal", async () => {
   const project: Project = {
     id: "project-info",
     path: "/workspace/info-project",
@@ -2187,21 +2187,14 @@ test("shows the selected session information beside the terminal", async () => {
     />,
   );
 
-  const info = await screen.findByRole("region", { name: "Session information" });
-  await waitFor(() => {
-    expect(info).toHaveTextContent("Review the release changes");
-    expect(info).toHaveTextContent("The release branch is ready for final checks.");
-    expect(info).toHaveTextContent("Run the release test suite");
-  });
-  expect(screen.getByLabelText("Terminal terminal pane")).toBeVisible();
-  const divider = screen.getByRole("separator", { name: "Resize session information" });
-  expect(divider).toHaveAttribute("aria-valuenow", "320");
-
-  fireEvent.pointerDown(divider, { clientX: 320 });
-  fireEvent.pointerMove(document, { clientX: 400 });
-  fireEvent.pointerUp(document, { clientX: 400 });
-
-  await waitFor(() => expect(divider).toHaveAttribute("aria-valuenow", "400"));
+  expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Session information" }))
+    .not.toBeInTheDocument();
+  expect(screen.queryByRole("separator", { name: "Resize session information" }))
+    .not.toBeInTheDocument();
+  expect(document.querySelector(".session-info-pane")).not.toBeInTheDocument();
+  expect(document.querySelector(".workspace")?.getAttribute("style"))
+    .not.toContain("--session-info-width");
   expect(fetchMock).toHaveBeenCalled();
 });
 
