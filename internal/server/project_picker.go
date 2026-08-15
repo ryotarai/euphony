@@ -16,18 +16,23 @@ var (
 	errDirectoryPickerUnavailable = errors.New("directory picker unavailable")
 )
 
-const windowsFolderPickerScript = `$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Choose project directory'
-$dialog.ShowNewFolderButton = $false
-if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
-    exit 1
-}
-[Console]::Write($dialog.SelectedPath)`
-
 func pickDirectory(ctx context.Context) (string, error) {
+	return pickDirectoryForOS(runtime.GOOS, ctx, pickDirectoryNativeWindows)
+}
+
+func pickDirectoryForOS(
+	goos string,
+	ctx context.Context,
+	nativeWindows func(context.Context) (string, error),
+) (string, error) {
+	if goos == "windows" {
+		path, err := nativeWindows(ctx)
+		return normalizePickedDirectory(path, err)
+	}
+	return pickDirectoryWithCommand(ctx)
+}
+
+func pickDirectoryWithCommand(ctx context.Context) (string, error) {
 	command, args, err := directoryPickerCommand()
 	if err != nil {
 		return "", err
@@ -40,11 +45,18 @@ func pickDirectory(ctx context.Context) (string, error) {
 		}
 		return "", fmt.Errorf("run directory picker: %w", err)
 	}
-	path := strings.TrimSpace(string(output))
+	return normalizePickedDirectory(string(output), nil)
+}
+
+func normalizePickedDirectory(path string, pickErr error) (string, error) {
+	if pickErr != nil {
+		return "", pickErr
+	}
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", errDirectoryPickerCanceled
 	}
-	path, err = filepath.Abs(filepath.Clean(path))
+	path, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", fmt.Errorf("normalize picked directory: %w", err)
 	}
@@ -83,16 +95,6 @@ func directoryPickerCommandFor(goos string, lookPath func(string) (string, error
 			return command, []string{"--getexistingdirectory", "", "Choose project directory"}, nil
 		}
 		return "", nil, fmt.Errorf("%w: install zenity or kdialog", errDirectoryPickerUnavailable)
-	case "windows":
-		for _, executable := range []string{"powershell.exe", "pwsh.exe"} {
-			if command, err := lookPath(executable); err == nil {
-				return command, []string{
-					"-NoLogo", "-NoProfile", "-NonInteractive", "-STA",
-					"-Command", windowsFolderPickerScript,
-				}, nil
-			}
-		}
-		return "", nil, fmt.Errorf("%w: powershell.exe or pwsh.exe is unavailable", errDirectoryPickerUnavailable)
 	default:
 		return "", nil, fmt.Errorf("%w: unsupported operating system", errDirectoryPickerUnavailable)
 	}
