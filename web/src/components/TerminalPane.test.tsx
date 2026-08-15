@@ -67,6 +67,8 @@ test("switches pane sources while keeping the terminal mounted", async () => {
     />,
   );
 
+  expect(screen.getByRole("tablist", { name: "Terminal one sources" }).closest("[data-pane-name]"))
+    .toHaveAttribute("data-pane-name", "terminal-pane");
   expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("data-active");
   expect(screen.getByLabelText("live terminal")).toBeVisible();
 

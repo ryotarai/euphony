@@ -324,6 +324,7 @@ export function TerminalPane({
       }}
       data-agent={session.agent || "none"}
       data-automation-locked={automationLocked ? "true" : "false"}
+      data-pane-name="terminal-pane"
     >
       <div className="terminal-tab-rail">
         <TabsList variant="line" aria-label={`${session.name} sources`}>

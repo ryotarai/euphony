@@ -45,7 +45,12 @@ function purposeFor(session: Session, summary?: AgentSummary) {
 export function SessionInfoPane({ session, summary }: SessionInfoPaneProps) {
   if (!session) {
     return (
-      <aside className="session-info-pane" role="region" aria-label="Session information">
+      <aside
+        className="session-info-pane"
+        role="region"
+        aria-label="Session information"
+        data-pane-name="information-pane"
+      >
         <div className="session-info-empty">
           <span className="session-info-kicker">Session information</span>
           <p>Select a session to inspect its purpose, summary, and action.</p>
@@ -64,6 +69,7 @@ export function SessionInfoPane({ session, summary }: SessionInfoPaneProps) {
       role="region"
       aria-label="Session information"
       data-session-id={session.id}
+      data-pane-name="information-pane"
     >
       <header className="session-info-header">
         <span className="session-info-kicker">Session information</span>

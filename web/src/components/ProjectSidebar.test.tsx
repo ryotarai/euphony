@@ -75,6 +75,8 @@ function renderSidebar(
 test("renders persisted projects including an empty project", () => {
   renderSidebar({ projects: [project, emptyProject] });
 
+  expect(screen.getByRole("navigation", { name: "Projects and sessions" }))
+    .toHaveAttribute("data-pane-name", "agent-list");
   expect(screen.getByRole("heading", { name: project.path })).toBeVisible();
   expect(screen.getByRole("heading", { name: emptyProject.path })).toBeVisible();
 });

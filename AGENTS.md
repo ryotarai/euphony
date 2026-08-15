@@ -99,6 +99,10 @@
 
 ## Pane layout and source behavior
 
+- Refer to the primary workspace surfaces internally as `agent-list` (left
+  navigation), `information-pane` (session information), and `terminal-pane`
+  (terminal workspace). Keep these names out of visible and accessible UI copy.
+
 - When a dashboard pane is explicitly requested to fill its viewport, remove page-level whitespace and let a compact toolbar plus flexible content surface own the available pane dimensions.
 
 - Keep terminal panes flush by default: use only separators between panes, and

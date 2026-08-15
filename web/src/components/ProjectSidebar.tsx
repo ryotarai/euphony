@@ -376,7 +376,11 @@ export function ProjectSidebar({
   const { grouped, unassigned } = projectSessions(projects, sessions, summaries);
 
   return (
-    <nav className="project-sidebar" aria-label="Projects and sessions">
+    <nav
+      className="project-sidebar"
+      aria-label="Projects and sessions"
+      data-pane-name="agent-list"
+    >
       <header className="project-sidebar-toolbar">
         <h1 className="sr-only">Projects</h1>
         {onAddProject && (
