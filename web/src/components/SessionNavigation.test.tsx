@@ -104,7 +104,8 @@ test("composes terminal navigation from the shadcn sidebar without a monogram", 
   );
 
   const navigation = screen.getByLabelText("Terminal sessions");
-  expect(navigation.closest('[data-slot="sidebar"]')).toBeInTheDocument();
+  expect(navigation.closest("[data-pane-name]"))
+    .toHaveAttribute("data-pane-name", "agent-list");
   expect(screen.queryByText("EU")).not.toBeInTheDocument();
 });
 

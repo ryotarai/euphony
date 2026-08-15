@@ -443,6 +443,7 @@ function SessionNavigationContent({
     <>
       <Sidebar
         className="desktop-sidebar"
+        data-pane-name="agent-list"
         data-resizing={resizing}
         mobileTitle="Terminal menu"
         mobileDescription="Browse and select terminal sessions."

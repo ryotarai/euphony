@@ -33,8 +33,8 @@ open bin/Euphony.app
 The app bundles the Go server and opens the existing workspace in a native
 WebKit window. It starts a private loopback-only server on an automatically
 selected port and stops that server when the app quits. The app uses the same
-persistent database as the CLI by default; set `EUPHONY_DB` before launching
-the app when a different database is needed.
+persistent database as the server by default; set `EUPHONY_DB` before
+launching the app when a different database is needed.
 
 ## Run
 
