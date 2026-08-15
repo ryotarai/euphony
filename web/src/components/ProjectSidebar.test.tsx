@@ -116,6 +116,16 @@ test("renders the generated purpose and required action without status text", ()
   expect(row).toHaveTextContent("Approve the pending change");
 });
 
+test("labels a session with no purpose or summary as New session", () => {
+  renderSidebar({
+    sessions: [{ ...terminalSession, id: "new-session", name: "Shell" }],
+    agentSummaries: [],
+  });
+
+  expect(screen.getByRole("button", { name: "Select Shell" }))
+    .toHaveTextContent("New session");
+});
+
 test("announces row status, summary, action, and unread state", () => {
   renderSidebar();
 
