@@ -35,7 +35,7 @@
   changed, and every design requirement has a corresponding test or code
   task below.
 
-- [ ] **Step 3: Commit the documents.**
+- [x] **Step 3: Commit the documents.**
 
   Run:
 
@@ -51,25 +51,25 @@
 - Modify: `web/src/api.test.ts`
 - Modify: `web/src/App.test.tsx`
 
-- [ ] **Step 1: Test the HTTP error contract.**
+- [x] **Step 1: Test the HTTP error contract.**
 
   Configure a project test server with a missing shell, create a real
   project, and POST a project terminal. Assert the 500 response keeps code
   `terminal_create_failed`, keeps the stable message, and returns a non-empty
   `details.cause`.
 
-- [ ] **Step 2: Test Web API cause formatting.**
+- [x] **Step 2: Test Web API cause formatting.**
 
   Return a v1 error envelope containing
   `{ code: "terminal_create_failed", message: "The terminal could not be created.", details: { cause: "start ConPTY process: ..." } }` and assert the rejected `ApiError.message` includes both the stable message and cause.
 
-- [ ] **Step 3: Test the project-agent alert.**
+- [x] **Step 3: Test the project-agent alert.**
 
   Drive the existing project-agent dialog through its real button flow,
   return the v1 terminal error, and assert the workspace alert contains the
   cause rather than `The project terminal could not be created.`.
 
-- [ ] **Step 4: Run the focused tests and confirm RED.**
+- [x] **Step 4: Run the focused tests and confirm RED.**
 
   Run:
 
@@ -89,25 +89,25 @@
 - Modify: `web/src/api.ts`
 - Modify: `web/src/App.tsx`
 
-- [ ] **Step 1: Return the startup cause from the v1 endpoint.**
+- [x] **Step 1: Return the startup cause from the v1 endpoint.**
 
   In the default terminal-creation error branch, call
   `writeV1Error` with `map[string]string{"cause": err.Error()}` while
   retaining the existing status, code, and message.
 
-- [ ] **Step 2: Parse and format an optional cause in the API client.**
+- [x] **Step 2: Parse and format an optional cause in the API client.**
 
   Add optional `details` to `ApiErrorBody`, pass it into `ApiError`, and
   append a string `cause` detail to the v1 error message. Leave messages
   unchanged when `details` is absent or malformed.
 
-- [ ] **Step 3: Preserve the formatted project-agent error.**
+- [x] **Step 3: Preserve the formatted project-agent error.**
 
   In `startAgentInProject`, return after `createSession` fails without
   replacing the alert with a fixed generic message. Keep the fallback only
   for a null result that did not already set an error.
 
-- [ ] **Step 4: Run the focused tests and confirm GREEN.**
+- [x] **Step 4: Run the focused tests and confirm GREEN.**
 
   Re-run the commands from Task 2 and confirm all focused tests pass.
 
@@ -116,13 +116,13 @@
 **Files:**
 - No additional files.
 
-- [ ] **Step 1: Format changed Go files.**
+- [x] **Step 1: Format changed Go files.**
 
   Run `gofmt -w internal/server/v1_terminal.go internal/server/projects_test.go`.
 
-- [ ] **Step 2: Run repository tests and builds.**
+- [x] **Step 2: Run repository tests and builds.**
 
-  Run `go test ./...`, `GOOS=windows GOARCH=amd64 go test ./internal/server ./internal/session`, `cd web && npm test -- --run`, and `npm run build`.
+  Run `go test ./...`, `GOOS=windows GOARCH=amd64 go build ./...`, `cd web && npm test -- --run`, `npm run typecheck`, and `npm run build`. The Windows test command is not used because the repository's Unix-only test files are not build-tagged for cross-compilation.
 
 - [ ] **Step 3: Inspect the diff and commit the implementation.**
 

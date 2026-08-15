@@ -2914,7 +2914,7 @@ export function App({
     try {
       const created = await createSession(false, undefined, projectID, kind);
       if (!created) {
-        setRequestError("The project terminal could not be created.");
+        setRequestError((current) => current || "The project terminal could not be created.");
         return;
       }
       try {

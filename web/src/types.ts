@@ -132,6 +132,7 @@ export interface TaskRefinement {
 export interface ApiErrorBody {
   code: string;
   message: string;
+  details?: unknown;
 }
 
 export type TerminalCursorStyle = "bar" | "block" | "underline";

@@ -112,7 +112,9 @@ func (s *Server) v1CreateTerminal(w http.ResponseWriter, r *http.Request) {
 				"Terminal names must contain 1 to 80 characters.", nil)
 		default:
 			writeV1Error(w, http.StatusInternalServerError, "terminal_create_failed",
-				"The terminal could not be created.", nil)
+				"The terminal could not be created.", map[string]string{
+					"cause": err.Error(),
+				})
 		}
 		return
 	}

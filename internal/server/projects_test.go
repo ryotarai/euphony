@@ -166,6 +166,42 @@ func TestProjectTerminalCreationStartsRequestedAgentCommand(t *testing.T) {
 	}
 }
 
+func TestProjectTerminalCreationIncludesStartFailureDetails(t *testing.T) {
+	missingShell := filepath.Join(t.TempDir(), "missing-shell")
+	srv, err := New(Config{Token: "token", Shell: missingShell})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	directory := t.TempDir()
+	projectResponse := performRequest(t, srv, http.MethodPost, "/api/projects",
+		`{"path":`+strconv.Quote(directory)+`}`)
+	var createdProject project.Project
+	decodeResponse(t, projectResponse, &createdProject)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/v1/terminals",
+		`{"name":"Broken terminal","projectId":`+strconv.Quote(createdProject.ID)+`}`)
+	var envelope struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Details struct {
+				Cause string `json:"cause"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	decodeResponse(t, created, &envelope)
+	if created.Code != http.StatusInternalServerError || envelope.OK ||
+		envelope.Error.Code != "terminal_create_failed" ||
+		envelope.Error.Message != "The terminal could not be created." ||
+		strings.TrimSpace(envelope.Error.Details.Cause) == "" {
+		t.Fatalf("creation error = %d %#v; body = %s",
+			created.Code, envelope, created.Body.String())
+	}
+}
+
 func TestLegacyTerminalCreationKeepsLegacyCWDAndNoProjectID(t *testing.T) {
 	srv := newProjectTestServer(t)
 	directory := t.TempDir()

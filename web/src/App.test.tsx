@@ -2322,6 +2322,58 @@ test("starts an agent from a project section", async () => {
   expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
 });
 
+test("shows the project terminal startup cause when starting an agent fails", async () => {
+  const project: Project = {
+    id: "project-agent-error",
+    path: "/workspace/agent-error-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const cause = "start ConPTY process: The system cannot find the file specified.";
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/v1/terminals" && init?.method === "POST") {
+      return jsonResponse({
+        ok: false,
+        error: {
+          code: "terminal_create_failed",
+          message: "The terminal could not be created.",
+          details: { cause },
+        },
+      }, 500);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(cause);
+  expect(screen.getByRole("alert")).not.toHaveTextContent(
+    "The project terminal could not be created.",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/terminals",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
 test("shows the selected session information beside the terminal", async () => {
   const project: Project = {
     id: "project-info",
