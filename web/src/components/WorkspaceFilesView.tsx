@@ -321,6 +321,16 @@ function directoryEntriesFromDirectories(
   return entries;
 }
 
+function workspaceEntriesFromDirectories(
+  directories: Record<string, WorkspaceDirectory>,
+): Map<string, WorkspaceEntry> {
+  const entries = new Map<string, WorkspaceEntry>();
+  for (const directory of Object.values(directories)) {
+    for (const entry of directory.entries) entries.set(entry.path, entry);
+  }
+  return entries;
+}
+
 interface WorkspaceFileViewerProps {
   fileLoading: boolean;
   fileError: boolean;
@@ -743,6 +753,10 @@ function WorkspaceFilesViewContent({
     () => directoryEntriesFromDirectories(directories),
     [directories],
   );
+  const workspaceEntries = useMemo(
+    () => workspaceEntriesFromDirectories(directories),
+    [directories],
+  );
 
   useLayoutEffect(() => {
     sessionIDRef.current = session.id;
@@ -855,13 +869,21 @@ function WorkspaceFilesViewContent({
 
   useLayoutEffect(() => {
     treeSelectionRef.current = (paths) => {
-      const filePath = paths.find((path) => !path.endsWith("/"));
+      const filePath = paths.find((path) => {
+        if (path.endsWith("/")) return false;
+        return workspaceEntries.get(workspacePathFromTreePath(path))?.kind === "file";
+      });
       for (const path of paths) {
-        if (path.endsWith("/")) deselectTreePath(treeModel, path);
+        if (
+          path.endsWith("/") ||
+          workspaceEntries.get(workspacePathFromTreePath(path))?.kind !== "file"
+        ) {
+          deselectTreePath(treeModel, path);
+        }
       }
       if (filePath) openFile(workspacePathFromTreePath(filePath));
     };
-  }, [openFile, treeModel]);
+  }, [openFile, treeModel, workspaceEntries]);
 
   useLayoutEffect(() => {
     treeModel.resetPaths(treePaths, {

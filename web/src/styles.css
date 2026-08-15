@@ -4118,6 +4118,29 @@ input {
   scrollbar-width: thin;
 }
 
+.git-pierre-diff {
+  --diffs-dark-bg: #050505;
+  --diffs-dark: #dedede;
+  --diffs-bg-context-override: #080808;
+  --diffs-bg-context-gutter-override: #080808;
+  --diffs-bg-addition-override: rgb(46 160 67 / 14%);
+  --diffs-bg-deletion-override: rgb(248 81 73 / 14%);
+  --diffs-bg-addition-emphasis-override: rgb(46 160 67 / 24%);
+  --diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 24%);
+  --diffs-addition-color-override: #aff5b4;
+  --diffs-deletion-color-override: #ffdcd7;
+  --diffs-fg-number-override: #5e5e5e;
+  --diffs-font-family: "SFMono-Regular", Consolas, monospace;
+  --diffs-font-size: 0.68rem;
+  --diffs-line-height: 1.65;
+  --diffs-overflow-override: scroll;
+
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  color-scheme: dark;
+}
+
 .git-diff-table,
 .git-diff-hunk {
   min-width: 100%;
@@ -4448,6 +4471,8 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
   scrollbar-color: #404040 transparent;
   scrollbar-width: thin;
 }
@@ -4456,6 +4481,21 @@ input {
 .workspace-search-results {
   min-width: 100%;
   padding: 0.3rem 0;
+}
+
+.workspace-tree {
+  min-height: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.workspace-tree > file-tree-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
 }
 
 .workspace-tree-node {
@@ -4654,6 +4694,23 @@ input {
 
 .workspace-code-scroll {
   background: #050505;
+}
+
+.workspace-pierre-file {
+  --diffs-dark-bg: #050505;
+  --diffs-dark: #d8d8d8;
+  --diffs-bg-context-override: #050505;
+  --diffs-bg-context-gutter-override: #080808;
+  --diffs-fg-number-override: #515151;
+  --diffs-font-family: "SFMono-Regular", Consolas, monospace;
+  --diffs-font-size: 0.68rem;
+  --diffs-line-height: 1.65;
+  --diffs-overflow-override: scroll;
+
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  color-scheme: dark;
 }
 
 .workspace-code-table {

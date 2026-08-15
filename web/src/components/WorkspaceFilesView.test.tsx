@@ -101,7 +101,7 @@ test("loads the workspace only while active and shows its root", async () => {
   expect(screen.getByText("Open a file")).toBeVisible();
 });
 
-test("expands directories and renders a selected text file with line numbers", async () => {
+test("expands directories and renders a selected text file through Pierre", async () => {
   const user = userEvent.setup();
   const getWorkspaceDirectory = vi.fn()
     .mockResolvedValueOnce(rootDirectory)
@@ -512,6 +512,33 @@ test("renders loaded workspace entries with Pierre canonical paths", async () =>
   const tree = document.querySelector("file-tree-container");
   expect(tree?.shadowRoot?.querySelector('[data-item-path="docs"]'))
     .toBeNull();
+});
+
+test("does not request unsupported workspace entries as files", async () => {
+  const getWorkspaceFile = vi.fn();
+  const directory: WorkspaceDirectory = {
+    root: "/repo",
+    path: "",
+    entries: [
+      { name: "link", path: "link", kind: "symlink" },
+      { name: "socket", path: "socket", kind: "other" },
+    ],
+  };
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({
+        getWorkspaceDirectory: vi.fn().mockResolvedValue(directory),
+        getWorkspaceFile,
+      })}
+      active
+    />,
+  );
+
+  await clickTreeItem("link");
+  await clickTreeItem("socket");
+
+  expect(getWorkspaceFile).not.toHaveBeenCalled();
 });
 
 test("loads an unloaded directory when its Pierre tree row is clicked", async () => {
