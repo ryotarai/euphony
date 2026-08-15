@@ -3056,16 +3056,49 @@ input {
 }
 
 .agent-log-markdown p,
-.agent-log-markdown ul,
-.agent-log-markdown ol,
 .agent-log-markdown pre,
 .agent-log-markdown blockquote {
   margin: 0.7em 0;
 }
 
-.agent-log-markdown ul,
-.agent-log-markdown ol {
+.agent-log-markdown .agent-log-markdown-list {
+  margin: 0.7em 0;
   padding-left: 1.35rem;
+  list-style-position: outside;
+}
+
+.agent-log-markdown .agent-log-markdown-list-unordered {
+  list-style-type: disc;
+}
+
+.agent-log-markdown .agent-log-markdown-list-ordered {
+  list-style-type: decimal;
+}
+
+.agent-log-markdown .agent-log-markdown-list-unordered ul {
+  list-style-type: circle;
+}
+
+.agent-log-markdown .agent-log-markdown-list-unordered ul ul {
+  list-style-type: square;
+}
+
+.agent-log-markdown .agent-log-markdown-list-ordered ol {
+  list-style-type: lower-alpha;
+}
+
+.agent-log-markdown .agent-log-markdown-list-ordered ol ol {
+  list-style-type: lower-roman;
+}
+
+.agent-log-markdown .agent-log-markdown-list li + li {
+  margin-top: 0.3em;
+}
+
+.agent-log-markdown .agent-log-markdown-list li > ul,
+.agent-log-markdown .agent-log-markdown-list li > ol {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
 }
 
 .agent-log-markdown a {

@@ -48,6 +48,18 @@ function errorMessage(error: unknown): string {
 }
 
 const markdownComponents: Components = {
+  ul: ({ node: _node, ...props }) => (
+    <ul
+      {...props}
+      className="agent-log-markdown-list agent-log-markdown-list-unordered"
+    />
+  ),
+  ol: ({ node: _node, ...props }) => (
+    <ol
+      {...props}
+      className="agent-log-markdown-list agent-log-markdown-list-ordered"
+    />
+  ),
   pre: ({ node: _node, children, ...props }) => {
     const code = Array.isArray(children) ? children[0] : children;
     if (
