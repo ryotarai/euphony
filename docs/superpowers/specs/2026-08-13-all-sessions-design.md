@@ -3,11 +3,12 @@
 ## Goal
 
 Add an `All sessions` entry above `Settings` in the sidebar. It opens a large
-modal containing every Euphony terminal and discoverable Codex or Claude Code
-session, sorted by most recent activity. The modal supports incremental search
-over the session title, purpose, summary, working directory, project, and agent.
-Selecting an existing Euphony terminal focuses it; selecting a discovered
-agent session creates a terminal and resumes it with the matching CLI.
+modal containing the Codex or Claude Code sessions known to Euphony's database,
+including agent terminals whose processes have exited, sorted by most recent
+activity. The modal supports incremental search over the session title, purpose,
+summary, working directory, project, and agent. Selecting an open Euphony
+terminal focuses it; selecting an exited agent session creates a terminal and
+resumes it with the matching CLI.
 
 ## User experience
 
@@ -61,52 +62,48 @@ interface AllSession {
 }
 ```
 
-`GET /api/all-sessions` returns a snapshot. The server merges current
-Euphony terminals with agent transcript history. Current terminal metadata and
-the latest persisted Euphony agent summary win for matching agent/session
-records. Plain terminals are included even though they have no agent session
-ID.
+`GET /api/all-sessions` returns a snapshot from Euphony's persisted terminal
+metadata and persisted agent summaries. Only records with a supported agent and
+agent session ID are included; plain terminals and sessions that exist only in
+Codex or Claude transcript directories are excluded. The server merges an open
+and an exited database record for the same agent/session pair, preferring the
+open terminal.
 
-The history reader uses the configured Codex sessions root and Claude projects
-root. It reads bounded transcript windows, never loads a full large transcript
-just to render the list, and derives a useful fallback purpose from the first
-user message and a fallback summary from the newest assistant message. Codex
-titles and update times come from `session_index.jsonl` when available, with
-the transcript as a fallback. Claude titles use the existing custom-title over
-ai-title precedence. A missing or unreadable history file is skipped without
-breaking the current terminal list.
+When a terminal process exits, Euphony keeps its final metadata in the database
+with `state: "exited"`, exit information, and the agent/session identity. This
+record is not restored as a live terminal on startup, but remains available to
+the All sessions index and can be resumed.
 
 `POST /api/all-sessions/{agent}/{sessionID}/resume` accepts a selection mode
 (`none`, `add`, or `replace`; the UI uses `replace`). It reuses an already
-managed terminal when the agent/session pair is open. Otherwise it validates
-the agent and session record, chooses its recorded existing directory (or the
-user home directory when unavailable), starts the allow-listed command with
+managed terminal when the agent/session pair is open. Otherwise it validates a
+matching exited database record, chooses its recorded existing directory (or
+the user home directory when unavailable), starts the allow-listed command with
 arguments (`codex resume <id>` or `claude --resume <id>`), and returns the new
 terminal plus the resulting selection snapshot. It never interpolates the
 session ID into shell source.
 
 ## Failure handling
 
-- A history scan failure returns an API error only when both current metadata
-  and the history scan cannot be produced; individual malformed records are
-  ignored.
+- A database read or project lookup failure returns a clear API error without
+  attempting a transcript-directory scan.
 - A resume request for an unknown, unsafe, or unsupported session returns a
   clear 404/400 error and leaves the modal open.
 - Resume errors are shown in the modal and do not replace the existing terminal
   selection.
-- If a history entry disappears between listing and clicking, the user can
-  refresh the modal and the stale row is removed.
+- If a saved database record disappears between listing and clicking, the user
+  can refresh the modal and the stale row is removed.
 
 ## Testing
 
-- Agent-log tests cover Codex index/transcript discovery, Claude discovery,
-  bounded fallback text, malformed records, and update ordering.
-- Server tests cover the list endpoint, current/history merging, safe resume
+- Session tests cover retaining exited metadata in SQLite and keeping it out of
+  live terminal restoration.
+- Server tests cover the DB-only list endpoint, open/exited merging, safe resume
   command arguments, reuse of an already-open session, and selection handling.
 - API tests cover the browser client's list and resume requests.
 - Component tests cover the footer placement, modal sizing class, incremental
   search fields, newest-first ordering, empty states, and click callbacks.
-- App tests cover opening an existing terminal and resuming a history-only
+- App tests cover opening an existing terminal and resuming an exited database
   session into the focused pane.
 - The full Go suite, web typecheck/build, Vitest suite, and targeted Playwright
   coverage are run before merge.

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a searchable, newest-first All sessions modal that opens managed terminals and resumes history-only Codex/Claude sessions.
+**Goal:** Add a searchable, newest-first All sessions modal that opens managed terminals and resumes exited Codex/Claude sessions retained by Euphony.
 
-**Architecture:** Add a bounded transcript-history reader beside the existing agent-log resolver. The server exposes a snapshot endpoint and a validated resume endpoint that uses argument-based process creation. The React app owns modal state and uses a focused `AllSessionsDialog` component; managed sessions are selected locally while history-only items call the resume endpoint.
+**Architecture:** Use persisted Euphony terminal metadata and agent summaries as the only All sessions source. Retain exited terminal metadata without restoring it as a live process. The server exposes a snapshot endpoint and a validated resume endpoint that uses argument-based process creation. The React app owns modal state and uses a focused `AllSessionsDialog` component; managed sessions are selected locally while exited database records call the resume endpoint.
 
 **Tech Stack:** Go HTTP server, `internal/session` PTY manager, `internal/agentlog` JSONL readers, React 19, Vitest/Testing Library, Playwright.
 
@@ -16,21 +16,19 @@
 - Sort every response newest first by `updatedAt`, with a stable ID tie-breaker.
 - Reuse an existing managed terminal before creating a new one.
 - Resume only `codex` and `claude`; pass the session ID as an argument, never by shell interpolation.
-- Use bounded transcript reads and ignore malformed individual history records.
+- Do not scan Codex or Claude transcript roots for All sessions.
+- Retain exited terminal metadata in SQLite while excluding it from live terminal restoration.
 - Write tests before production code for each new behavior and verify the expected failing test.
 - Preserve unrelated dirty changes in the base checkout; all feature edits happen in `tmp/worktrees/all-sessions` or a dedicated child worktree.
 
 ## File map
 
-- Create `internal/agentlog/history.go`: bounded Codex/Claude history discovery and transcript preview extraction.
-- Create `internal/agentlog/history_test.go`: history discovery and ordering tests.
-- Modify `internal/agentlog/resolver.go`: expose the resolver roots to history discovery through the package API without weakening path confinement.
-- Modify `internal/session/manager.go`: add argument-based agent command creation while preserving existing command APIs.
+- Modify `internal/session/manager.go`: add argument-based agent command creation, retain exited metadata, and expose stored metadata while preserving existing command APIs.
 - Modify `internal/session/manager_test.go`: test argument-based process creation.
 - Modify `internal/control/terminal.go`: expose argument-based terminal creation and selection.
 - Modify `internal/control/terminal_test.go`: cover argument-based terminal creation.
-- Create `internal/server/all_sessions.go`: API types, current/history merge, list, and resume handlers.
-- Create `internal/server/all_sessions_test.go`: HTTP list/resume/reuse behavior.
+- Create `internal/server/all_sessions.go`: API types, DB-only agent merge, list, and resume handlers.
+- Create `internal/server/all_sessions_test.go`: HTTP DB-only list/resume/reuse behavior.
 - Modify `internal/server/server.go`: register the protected all-sessions routes and retain the Codex index path.
 - Modify `internal/server/server_test.go` or the new all-sessions test: route/auth coverage where needed.
 - Modify `web/src/types.ts`: add the `AllSession` and resume result types.
@@ -42,16 +40,14 @@
 - Modify `web/src/styles.css`: modal rows, activity rail, metadata, responsive layout, and focus states.
 - Add `web/e2e/all-sessions.spec.ts` only if the existing E2E harness can create isolated Codex/Claude transcript fixtures without external credentials.
 
-### Task 1: Build bounded agent-history discovery
+### Task 1: Retain exited database terminals
 
-**Files:** `internal/agentlog/history.go`, `internal/agentlog/history_test.go`, `internal/agentlog/resolver.go`.
+**Files:** `internal/session/manager.go`, `internal/session/manager_test.go`.
 
-- [ ] Write tests for a Codex index entry joined to a transcript, a Claude project transcript, malformed JSONL, and newest-first ordering.
-- [ ] Run `go test ./internal/agentlog -run 'AllSessions|History' -count=1` and verify the new tests fail because discovery does not exist.
-- [ ] Implement `HistorySession` and a resolver method that reads only bounded head/tail windows, extracts CWD/title/purpose/summary/update time, skips malformed files, and returns stable newest-first results.
-- [ ] Keep all paths confined below configured roots and accept only `codex`/`claude` session IDs.
-- [ ] Run the focused package tests, then `go test ./internal/agentlog`.
-- [ ] Commit with `feat: discover historical agent sessions`.
+- [ ] Write a failing test proving an exited terminal remains in SQLite with its agent/session metadata and is not restored as a live process.
+- [ ] Keep explicit terminal deletion destructive while process exit archives final metadata.
+- [ ] Expose current plus archived metadata for the All sessions endpoint.
+- [ ] Run `go test ./internal/session`.
 
 ### Task 2: Add argument-based terminal creation
 
@@ -68,10 +64,10 @@
 
 **Files:** `internal/server/all_sessions.go`, `internal/server/server.go`, `internal/server/all_sessions_test.go`, `web/src/types.ts`, `web/src/api.ts`, `web/src/api.test.ts`.
 
-- [ ] Write server tests for current/history merging, newest-first sorting, existing-terminal reuse, and Codex/Claude resume arguments before implementation.
+- [ ] Write server tests for DB-only filtering, open/exited merging, existing-terminal reuse, and Codex/Claude resume arguments before implementation.
 - [ ] Run the focused server tests and confirm the routes/types are missing.
-- [ ] Implement `GET /api/all-sessions` and `POST /api/all-sessions/{agent}/{sessionID}/resume`, including project-path matching, selection mode validation, safe agent allow-listing, and stale-history errors.
-- [ ] Reuse a matching live terminal by `(agent, sessionID)`; otherwise create it with `codex resume` or `claude --resume` and return `{terminal, selection}`.
+- [ ] Implement `GET /api/all-sessions` and `POST /api/all-sessions/{agent}/{sessionID}/resume`, including project-path matching, selection mode validation, safe agent allow-listing, and stale-database errors.
+- [ ] Reuse a matching live terminal by `(agent, sessionID)`; otherwise resume a matching exited database record with `codex resume` or `claude --resume` and return `{terminal, selection}`.
 - [ ] Add `ApiClient.listAllSessions()` and `ApiClient.resumeAllSession()` with request/response tests.
 - [ ] Run `go test ./internal/server ./internal/session ./internal/control` and the focused Vitest API test.
 - [ ] Commit with `feat: add all sessions API`.
@@ -91,9 +87,9 @@
 
 **Files:** `web/src/components/SessionNavigation.tsx`, `web/src/components/SessionNavigation.test.tsx`, `web/src/App.tsx`, `web/src/App.test.tsx`.
 
-- [ ] Write failing tests for the button order, opening the modal, selecting a managed terminal, and resuming a history-only item into the selected pane.
+- [ ] Write failing tests for the button order, opening the modal, selecting a managed terminal, and resuming an exited database item into the selected pane.
 - [ ] Run the focused Vitest tests and verify the expected missing callback/API behavior.
-- [ ] Add the footer callback above Settings, load the all-session snapshot on open, retain modal state while loading/errors occur, select existing terminal IDs, and call resume for history-only rows.
+- [ ] Add the footer callback above Settings, load the all-session snapshot on open, retain modal state while loading/errors occur, select existing terminal IDs, and call resume for exited database rows.
 - [ ] Update sessions and selection from the resume response before closing the modal; prevent duplicate resume requests while one is active.
 - [ ] Run focused App/navigation tests, the complete Vitest suite, and web typecheck/build.
 - [ ] Commit with `feat: connect all sessions navigation`.

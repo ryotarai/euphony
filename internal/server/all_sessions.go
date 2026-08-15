@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ryotarai/euphony/internal/agentlog"
 	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/project"
 	"github.com/ryotarai/euphony/internal/selection"
@@ -46,21 +45,14 @@ func (s *Server) listAllSessions(w http.ResponseWriter, r *http.Request) {
 	items, err := s.allSessions(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "all_sessions_list_failed",
-			"The session history could not be loaded.")
+			"The saved sessions could not be loaded.")
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) allSessions(ctx context.Context) ([]allSession, error) {
-	current := s.sessions.List()
-	history, err := s.agentLogs.DiscoverHistory()
-	if err != nil {
-		if len(current) == 0 {
-			return nil, err
-		}
-		history = nil
-	}
+	stored := s.sessions.ListPersisted()
 	projects, err := s.projects.List(ctx)
 	if err != nil {
 		return nil, err
@@ -70,34 +62,26 @@ func (s *Server) allSessions(ctx context.Context) ([]allSession, error) {
 		projectsByID[item.ID] = item
 	}
 
-	historyByKey := make(map[string]agentlog.HistorySession, len(history))
-	for _, item := range history {
-		historyByKey[allSessionAgentKey(item.Agent, item.SessionID)] = item
-	}
-	usedHistory := make(map[string]struct{}, len(history))
 	summaries := make(map[string]session.AgentSummary)
 	for _, item := range s.sessions.AgentSummaries() {
 		summaries[item.TerminalID] = item
 	}
 
-	items := make([]allSession, 0, len(current)+len(history))
-	for _, metadata := range current {
-		item := allSessionFromCurrent(metadata, projectsByID, summaries[metadata.ID])
-		if item.Agent != "" && item.SessionID != "" {
-			key := allSessionAgentKey(item.Agent, item.SessionID)
-			if saved, ok := historyByKey[key]; ok {
-				item = mergeCurrentAllSession(item, saved)
-				usedHistory[key] = struct{}{}
-			}
-		}
-		items = append(items, item)
-	}
-	for _, saved := range history {
-		key := allSessionAgentKey(saved.Agent, saved.SessionID)
-		if _, ok := usedHistory[key]; ok {
+	byKey := make(map[string]allSession, len(stored))
+	for _, metadata := range stored {
+		item := allSessionFromMetadata(metadata, projectsByID, summaries[metadata.ID])
+		if item.Agent == "" || item.SessionID == "" {
 			continue
 		}
-		items = append(items, allSessionFromHistory(saved))
+		key := allSessionAgentKey(item.Agent, item.SessionID)
+		previous, ok := byKey[key]
+		if !ok || preferAllSession(item, previous) {
+			byKey[key] = item
+		}
+	}
+	items := make([]allSession, 0, len(byKey))
+	for _, item := range byKey {
+		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if !items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
@@ -108,35 +92,39 @@ func (s *Server) allSessions(ctx context.Context) ([]allSession, error) {
 	return items, nil
 }
 
-func allSessionFromCurrent(
+func allSessionFromMetadata(
 	metadata session.Metadata,
 	projects map[string]project.Project,
 	summary session.AgentSummary,
 ) allSession {
-	item := allSession{
-		ID:         metadata.ID,
-		TerminalID: metadata.ID,
-		Title:      metadata.Name,
-		CWD:        metadata.CWD,
-		UpdatedAt:  metadata.UpdatedAt,
-		State:      allSessionOpen,
-	}
 	agent := metadata.Agent
 	if agent == "" {
 		agent = metadata.ResumeAgent
 	}
-	if agent == "codex" || agent == "claude" {
-		item.Agent = agent
-		item.SessionID = metadata.AgentSessionID
+	if agent != "codex" && agent != "claude" {
+		return allSession{}
+	}
+	state := allSessionResume
+	terminalID := ""
+	if metadata.State == session.StateStarting || metadata.State == session.StateRunning {
+		state = allSessionOpen
+		terminalID = metadata.ID
+	}
+	item := allSession{
+		ID:         metadata.ID,
+		TerminalID: terminalID,
+		Agent:      agent,
+		SessionID:  metadata.AgentSessionID,
+		Title:      metadata.Name,
+		CWD:        metadata.CWD,
+		UpdatedAt:  metadata.UpdatedAt,
+		State:      state,
 	}
 	if metadata.AgentTitle != "" {
 		item.Title = metadata.AgentTitle
 	}
-	if item.Agent == "" && metadata.RepoRoot != "" {
+	if metadata.RepoRoot != "" {
 		item.Project = metadata.RepoRoot
-	}
-	if item.Agent != "" && metadata.AgentSessionID == "" {
-		item.Agent = ""
 	}
 	if metadata.ProjectID != "" {
 		if project, ok := projects[metadata.ProjectID]; ok {
@@ -153,58 +141,21 @@ func allSessionFromCurrent(
 	return item
 }
 
-func allSessionFromHistory(saved agentlog.HistorySession) allSession {
-	title := strings.TrimSpace(saved.Title)
-	if title == "" {
-		title = strings.TrimSpace(saved.Purpose)
-	}
-	if title == "" {
-		title = strings.TrimSpace(saved.Agent + " session")
-	}
-	return allSession{
-		ID:        allSessionHistoryID(saved.Agent, saved.SessionID),
-		Agent:     saved.Agent,
-		SessionID: saved.SessionID,
-		Title:     title,
-		Purpose:   saved.Purpose,
-		Summary:   saved.Summary,
-		CWD:       saved.CWD,
-		Project:   saved.Project,
-		UpdatedAt: saved.UpdatedAt,
-		State:     allSessionResume,
-	}
-}
-
-func mergeCurrentAllSession(current allSession, saved agentlog.HistorySession) allSession {
-	if current.Title == "" || current.Title == "Terminal" {
-		if saved.Title != "" {
-			current.Title = saved.Title
-		}
-	}
-	if current.CWD == "" {
-		current.CWD = saved.CWD
-	}
-	if current.Project == "" {
-		current.Project = saved.Project
-	}
-	if current.Purpose == "" {
-		current.Purpose = saved.Purpose
-	}
-	if current.Summary == "" {
-		current.Summary = saved.Summary
-	}
-	if saved.UpdatedAt.After(current.UpdatedAt) {
-		current.UpdatedAt = saved.UpdatedAt
-	}
-	return current
-}
-
 func allSessionAgentKey(agent, sessionID string) string {
 	return agent + "\x00" + sessionID
 }
 
-func allSessionHistoryID(agent, sessionID string) string {
-	return agent + ":" + sessionID
+func preferAllSession(candidate, previous allSession) bool {
+	if candidate.State == allSessionOpen && previous.State != allSessionOpen {
+		return true
+	}
+	if candidate.State != allSessionOpen && previous.State == allSessionOpen {
+		return false
+	}
+	if !candidate.UpdatedAt.Equal(previous.UpdatedAt) {
+		return candidate.UpdatedAt.After(previous.UpdatedAt)
+	}
+	return candidate.ID < previous.ID
 }
 
 func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
@@ -224,46 +175,41 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, metadata := range s.sessions.ListCurrent() {
-		if metadata.AgentSessionID != sessionID ||
-			(metadata.Agent != agent && metadata.ResumeAgent != agent) ||
-			(metadata.State != session.StateStarting && metadata.State != session.StateRunning) {
+	var saved *session.Metadata
+	for _, metadata := range s.sessions.ListPersisted() {
+		metadataAgent := metadata.Agent
+		if metadataAgent == "" {
+			metadataAgent = metadata.ResumeAgent
+		}
+		if metadata.AgentSessionID != sessionID || metadataAgent != agent {
 			continue
 		}
-		selectionSnapshot, err := s.selectResumedTerminal(r.Context(), metadata.ID, selectionMode)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "selection_update_failed",
-				"The terminal selection could not be updated.")
+		if metadata.State == session.StateStarting || metadata.State == session.StateRunning {
+			selectionSnapshot, err := s.selectResumedTerminal(r.Context(), metadata.ID, selectionMode)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "selection_update_failed",
+					"The terminal selection could not be updated.")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"terminal":  metadata,
+				"selection": selectionSnapshot,
+			})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"terminal":  metadata,
-			"selection": selectionSnapshot,
-		})
-		return
-	}
-
-	history, err := s.agentLogs.DiscoverHistory()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "all_sessions_list_failed",
-			"The session history could not be loaded.")
-		return
-	}
-	var saved *agentlog.HistorySession
-	for index := range history {
-		if history[index].Agent == agent && history[index].SessionID == sessionID {
-			saved = &history[index]
-			break
+		if saved == nil || metadata.UpdatedAt.After(saved.UpdatedAt) {
+			copy := metadata
+			saved = &copy
 		}
 	}
 	if saved == nil {
 		writeError(w, http.StatusNotFound, "session_history_not_found",
-			"The agent session history no longer exists.")
+			"The saved agent session no longer exists.")
 		return
 	}
-	name := truncateAllSessionName(saved.Title)
+	name := truncateAllSessionName(saved.AgentTitle)
 	if name == "" {
-		name = truncateAllSessionName(saved.Purpose)
+		name = truncateAllSessionName(saved.Name)
 	}
 	if name == "" {
 		name = strings.ToUpper(agent[:1]) + agent[1:] + " session"

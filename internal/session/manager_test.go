@@ -3260,7 +3260,7 @@ func TestPersistentManagerRestoresTerminalAfterItsCWDWasRemoved(t *testing.T) {
 	}
 }
 
-func TestPersistentManagerDeletesExitedTerminalFromSQLite(t *testing.T) {
+func TestPersistentManagerPersistsExitedTerminalInSQLite(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
 	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, databasePath)
 	if err != nil {
@@ -3274,7 +3274,13 @@ func TestPersistentManagerDeletesExitedTerminalFromSQLite(t *testing.T) {
 	if !ok {
 		t.Fatal("created terminal is missing")
 	}
-	if _, err := terminal.Write([]byte("exit 0\n")); err != nil {
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", ResumeAgent: "codex", AgentSessionID: "closed-session",
+		Status: "waiting", Title: "Closed agent",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if _, err := terminal.Write([]byte("exit 7\n")); err != nil {
 		t.Fatalf("Write(exit) error = %v", err)
 	}
 	waitFor(t, 3*time.Second, func() bool {
@@ -3293,12 +3299,46 @@ func TestPersistentManagerDeletesExitedTerminalFromSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if len(items) != 0 {
-		t.Fatalf("persisted terminals = %#v, want none", items)
+	if len(items) != 1 || items[0].ID != metadata.ID || items[0].State != StateExited ||
+		items[0].Agent != "codex" || items[0].AgentSessionID != "closed-session" ||
+		items[0].ExitedAt == nil || items[0].ExitCode == nil || *items[0].ExitCode != 7 {
+		t.Fatalf("persisted terminals = %#v, want exited terminal with code 7", items)
 	}
 }
 
-func TestPersistentManagerPurgesPreviouslyExitedTerminal(t *testing.T) {
+func TestExitedMetadataRetriesAfterTransientSaveFailure(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Agent")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		Agent: "codex", ResumeAgent: "codex", AgentSessionID: "retry-session",
+		Status: "waiting", Title: "Retry agent",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	store := &failFirstSaveMetadataStore{err: errors.New("transient save failure")}
+	manager.store = store
+
+	terminal, ok := manager.Get(metadata.ID)
+	if !ok {
+		t.Fatal("created terminal is missing")
+	}
+	if _, err := terminal.Write([]byte("exit 0\n")); err != nil {
+		t.Fatalf("Write(exit) error = %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		items := manager.ListStored()
+		return len(items) == 1 && items[0].State == StateExited
+	})
+	if store.calls != 2 || store.SaveCount() != 1 {
+		t.Fatalf("save attempts = %d, saved record count = %d; want one retry and one saved record", store.calls, store.SaveCount())
+	}
+}
+
+func TestPersistentManagerKeepsPreviouslyExitedTerminal(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
 	store, err := OpenSQLiteStore(databasePath)
 	if err != nil {
@@ -3319,7 +3359,11 @@ func TestPersistentManagerPurgesPreviouslyExitedTerminal(t *testing.T) {
 		t.Fatalf("NewPersistentManager() error = %v", err)
 	}
 	if got := manager.List(); len(got) != 0 {
-		t.Fatalf("List() = %#v, want exited terminal purged", got)
+		t.Fatalf("List() = %#v, want no active terminal", got)
+	}
+	if got := manager.ListStored(); len(got) != 1 || got[0].ID != "exited-terminal" ||
+		got[0].State != StateExited {
+		t.Fatalf("ListStored() = %#v, want retained exited terminal", got)
 	}
 	if err := manager.Close(context.Background()); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -3331,8 +3375,9 @@ func TestPersistentManagerPurgesPreviouslyExitedTerminal(t *testing.T) {
 	}
 	defer store.Close()
 	items, err := store.Load(context.Background())
-	if err != nil || len(items) != 0 {
-		t.Fatalf("Load() = %#v, %v; want none", items, err)
+	if err != nil || len(items) != 1 || items[0].ID != "exited-terminal" ||
+		items[0].State != StateExited {
+		t.Fatalf("Load() = %#v, %v; want retained exited terminal", items, err)
 	}
 }
 

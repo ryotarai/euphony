@@ -329,7 +329,7 @@ func (s *Server) refreshCWDWhileCommandSettles(ctx context.Context, id string) {
 func (s *Server) sessionExitCode(id string) *int {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		for _, metadata := range s.sessions.List() {
+		for _, metadata := range s.sessions.ListStored() {
 			if metadata.ID == id && metadata.ExitCode != nil {
 				return metadata.ExitCode
 			}
