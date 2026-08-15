@@ -17,7 +17,7 @@ The component test will continue to assert semantic list roles and will also ass
 
 ## Hover session information
 
-Extract the existing session-information presentation into a reusable `SessionInfoCard`. `App` no longer renders `SessionInfoPane` or reserves a grid column/resizer for it. `SessionNavigation` owns the hover/focus interaction because it owns the session items:
+Extract the existing session-information presentation into a reusable `SessionInfoCard`. `App` no longer renders `SessionInfoPane` or reserves a grid column/resizer for it. The agent-list session-row components (`ProjectSidebar` for the current project UI and the legacy `SessionNavigation` list) own the hover/focus interaction because they own the session items:
 
 - Start a 500ms timer on pointer entry or keyboard focus.
 - Cancel the timer and hide the card when the item is left, blurred, replaced, or when Escape is pressed.

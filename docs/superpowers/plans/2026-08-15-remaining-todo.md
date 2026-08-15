@@ -4,7 +4,7 @@
 
 **Goal:** Finish the two unchecked active TODO items by fixing Agent Log list rendering and replacing the permanent session information pane with an accessible delayed hover card.
 
-**Architecture:** Keep Markdown parsing unchanged and scope list presentation to Agent Log message content. Move session information presentation into a reusable card rendered by `SessionNavigation`, whose item interaction state controls a single fixed-position card; remove the information-pane grid track and its resize state from `App`.
+**Architecture:** Keep Markdown parsing unchanged and scope list presentation to Agent Log message content. Move session information presentation into a reusable card rendered by the agent-list row components, whose item interaction state controls a single fixed-position card; remove the information-pane grid track and its resize state from `App`.
 
 **Tech Stack:** React 19, TypeScript, React Testing Library, Vitest, CSS, Playwright.
 
@@ -78,14 +78,16 @@ git commit -m "fix: restore agent log list styling"
 **Files:**
 - Modify: `web/src/App.tsx`
 - Modify: `web/src/components/SessionNavigation.tsx`
+- Modify: `web/src/components/ProjectSidebar.tsx`
 - Modify: `web/src/components/SessionInfoPane.tsx`
 - Modify: `web/src/components/SessionInfoPane.test.tsx`
+- Modify: `web/src/components/ProjectSidebar.test.tsx`
 - Modify: `web/src/App.test.tsx`
 - Modify: `web/src/styles.css`
 
 **Interfaces:**
 - Consumes: the existing session, summary, selection, and navigation props.
-- Produces: one `SessionInfoCard` rendered by `SessionNavigation`, positioned with fixed viewport coordinates and driven by pointer/focus lifecycle state.
+- Produces: one `SessionInfoCard` rendered by the current project/legacy agent-list row components, positioned with fixed viewport coordinates and driven by pointer/focus lifecycle state.
 
 - [ ] **Step 1: Write failing interaction tests**
 
