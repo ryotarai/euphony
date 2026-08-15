@@ -758,6 +758,10 @@ function WorkspaceFilesViewContent({
     [directories],
   );
 
+  useEffect(() => {
+    return () => treeModel.cleanUp();
+  }, [treeModel]);
+
   useLayoutEffect(() => {
     sessionIDRef.current = session.id;
     return () => {
