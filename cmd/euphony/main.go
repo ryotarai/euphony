@@ -463,9 +463,17 @@ func browserURL(address, token string) string {
 }
 
 func openBrowser(url string) error {
-	command := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		command = "open"
+	command, args := browserCommand(runtime.GOOS, url)
+	return exec.Command(command, args...).Start()
+}
+
+func browserCommand(goos, url string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{url}
+	case "windows":
+		return "rundll32.exe", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		return "xdg-open", []string{url}
 	}
-	return exec.Command(command, url).Start()
 }

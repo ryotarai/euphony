@@ -313,6 +313,18 @@ func TestBrowserURLIncludesEscapedToken(t *testing.T) {
 	}
 }
 
+func TestBrowserCommandUsesWindowsDefaultHandler(t *testing.T) {
+	const testURL = "http://127.0.0.1:8080?token=test-token"
+
+	command, args := browserCommand("windows", testURL)
+	if command != "rundll32.exe" {
+		t.Fatalf("browserCommand() command = %q, want rundll32.exe", command)
+	}
+	if len(args) != 2 || args[0] != "url.dll,FileProtocolHandler" || args[1] != testURL {
+		t.Fatalf("browserCommand() args = %#v, want URL file handler arguments", args)
+	}
+}
+
 func TestListenTCPResolvesEphemeralAddress(t *testing.T) {
 	listener, address, err := listenTCP("127.0.0.1:0")
 	if err != nil {
