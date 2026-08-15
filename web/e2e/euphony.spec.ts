@@ -1166,12 +1166,13 @@ test("browses workspace files inside a terminal pane", async ({ page }, testInfo
     await expect(pane.getByRole("navigation", {
       name: "Workspace files",
     })).toBeVisible();
-    await pane.getByRole("button", { name: "Expand docs" }).click();
-    await pane.getByRole("button", { name: "Open docs/User Guide.md" }).click();
+    await pane.getByRole("treeitem", { name: "docs", exact: true }).click();
+    await pane.getByRole("treeitem", {
+      name: "User Guide.md",
+      exact: true,
+    }).click();
     await expect(pane.getByRole("heading", { name: "User Guide.md" })).toBeVisible();
-    await expect(pane.getByRole("table", {
-      name: "Contents of docs/User Guide.md",
-    })).toContainText("second");
+    await expect(pane.getByText("second", { exact: true })).toBeVisible();
 
     await pane.getByRole("searchbox", { name: "Filter workspace files" })
       .fill("readme");

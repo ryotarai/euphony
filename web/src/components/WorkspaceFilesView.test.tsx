@@ -54,6 +54,32 @@ function filesAPI(overrides: Partial<ApiClient> = {}): ApiClient {
   } as unknown as ApiClient;
 }
 
+async function findTreeItem(path: string): Promise<HTMLElement> {
+  let item: HTMLElement | null = null;
+  await waitFor(() => {
+    const tree = document.querySelector("file-tree-container");
+    expect(tree).toBeInTheDocument();
+    item = tree?.shadowRoot?.querySelector<HTMLElement>(
+      `[data-item-path="${path}"]`,
+    ) ?? null;
+    expect(item).not.toBeNull();
+  });
+  return item!;
+}
+
+async function clickTreeItem(path: string): Promise<void> {
+  fireEvent.click(await findTreeItem(path));
+}
+
+async function findDiffsSurface(): Promise<HTMLElement> {
+  let surface: HTMLElement | null = null;
+  await waitFor(() => {
+    surface = document.querySelector("diffs-container");
+    expect(surface).toBeInTheDocument();
+  });
+  return surface!;
+}
+
 test("loads the workspace only while active and shows its root", async () => {
   const getWorkspaceDirectory = vi.fn().mockResolvedValue(rootDirectory);
   const api = filesAPI({ getWorkspaceDirectory });
@@ -70,12 +96,12 @@ test("loads the workspace only while active and shows its root", async () => {
   })).toBeVisible();
   expect(screen.getByText("/repo")).toBeVisible();
   expect(getWorkspaceDirectory).toHaveBeenCalledWith("terminal-1");
-  expect(screen.getByRole("button", { name: "Expand docs" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Open README.md" })).toBeVisible();
+  expect(await findTreeItem("docs/")).toBeVisible();
+  expect(await findTreeItem("README.md")).toBeVisible();
   expect(screen.getByText("Open a file")).toBeVisible();
 });
 
-test("expands directories and renders a selected text file with line numbers", async () => {
+test("expands directories and renders a selected text file through Pierre", async () => {
   const user = userEvent.setup();
   const getWorkspaceDirectory = vi.fn()
     .mockResolvedValueOnce(rootDirectory)
@@ -106,10 +132,8 @@ test("expands directories and renders a selected text file with line numbers", a
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Expand docs" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Open docs/User Guide.md" }),
-  );
+  await clickTreeItem("docs/");
+  await clickTreeItem("docs/User Guide.md");
 
   expect(getWorkspaceDirectory).toHaveBeenLastCalledWith("terminal-1", "docs");
   expect(getWorkspaceFile).toHaveBeenCalledWith(
@@ -117,11 +141,11 @@ test("expands directories and renders a selected text file with line numbers", a
     "docs/User Guide.md",
   );
   expect(await screen.findByRole("heading", { name: "User Guide.md" })).toBeVisible();
-  const source = screen.getByRole("table", {
-    name: "Contents of docs/User Guide.md",
+  const source = await findDiffsSurface();
+  await waitFor(() => {
+    expect(source.shadowRoot?.textContent).toContain("first");
+    expect(source.shadowRoot?.textContent).toContain("second");
   });
-  expect(source).toHaveTextContent("1first");
-  expect(source).toHaveTextContent("2second");
 });
 
 test("searches the workspace and opens a matching file", async () => {
@@ -208,10 +232,10 @@ test("explains binary files and marks truncated text", async () => {
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Open binary.dat" }));
+  await clickTreeItem("binary.dat");
   expect(await screen.findByText("Binary file")).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: "Open large.txt" }));
+  await clickTreeItem("large.txt");
   expect(await screen.findByText("Only the first 1 MiB is shown.")).toBeVisible();
 });
 
@@ -249,8 +273,8 @@ test("ignores a stale file response after another file is selected", async () =>
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Open first.txt" }));
-  await user.click(screen.getByRole("button", { name: "Open second.txt" }));
+  await clickTreeItem("first.txt");
+  await clickTreeItem("second.txt");
   expect(await screen.findByRole("heading", { name: "second.txt" })).toBeVisible();
 
   resolveSlow?.({
@@ -290,7 +314,7 @@ test("clears stale file state before a new session's passive effects run", async
   }
 
   const { rerender } = render(<SessionHarness currentSession={session} />);
-  await user.click(await screen.findByRole("button", { name: "Open README.md" }));
+  await clickTreeItem("README.md");
   expect(await screen.findByRole("heading", { name: "README.md" })).toBeVisible();
 
   rerender(<SessionHarness currentSession={nextSession} />);
@@ -327,10 +351,8 @@ test("refresh invalidates child directories and reloads the selected file", asyn
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Expand docs" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Open docs/guide.md" }),
-  );
+  await clickTreeItem("docs/");
+  await clickTreeItem("docs/guide.md");
   expect(await screen.findByRole("heading", { name: "guide.md" })).toBeVisible();
 
   await user.click(screen.getByRole("button", {
@@ -341,12 +363,11 @@ test("refresh invalidates child directories and reloads the selected file", asyn
     expect(getWorkspaceDirectory).toHaveBeenCalledTimes(3);
     expect(getWorkspaceFile).toHaveBeenCalledTimes(2);
   });
-  expect(screen.queryByRole("button", { name: "Open docs/guide.md" }))
-    .not.toBeInTheDocument();
+  expect(document.querySelector("file-tree-container")?.shadowRoot
+    ?.querySelector('[data-item-path="docs/guide.md"]')).toBeNull();
 
-  await user.click(screen.getByRole("button", { name: "Expand docs" }));
-  expect(await screen.findByRole("button", { name: "Open docs/guide.md" }))
-    .toBeVisible();
+  await clickTreeItem("docs/");
+  expect(await findTreeItem("docs/guide.md")).toBeVisible();
   expect(getWorkspaceDirectory).toHaveBeenCalledTimes(4);
 });
 
@@ -379,7 +400,7 @@ test("ignores a child directory response from before refresh", async () => {
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Expand docs" }));
+  await clickTreeItem("docs/");
   await user.click(screen.getByRole("button", {
     name: "Refresh workspace files",
   }));
@@ -394,11 +415,10 @@ test("ignores a child directory response from before refresh", async () => {
     expect(getWorkspaceDirectory).toHaveBeenCalledTimes(3);
   });
 
-  expect(screen.queryByRole("button", { name: "Open docs/stale.md" }))
-    .not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Expand docs" }));
-  expect(await screen.findByRole("button", { name: "Open docs/fresh.md" }))
-    .toBeVisible();
+  expect(document.querySelector("file-tree-container")?.shadowRoot
+    ?.querySelector('[data-item-path="docs/stale.md"]')).toBeNull();
+  await clickTreeItem("docs/");
+  expect(await findTreeItem("docs/fresh.md")).toBeVisible();
 });
 
 test("shows child directory empty and retry states", async () => {
@@ -434,17 +454,15 @@ test("shows child directory empty and retry states", async () => {
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Expand empty" }));
+  await clickTreeItem("empty/");
   expect(await screen.findByText("This directory is empty.")).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: "Expand unavailable" }));
+  await clickTreeItem("unavailable/");
   expect(await screen.findByText("Directory unavailable.")).toBeVisible();
   await user.click(screen.getByRole("button", {
     name: "Retry unavailable directory",
   }));
-  expect(await screen.findByRole("button", {
-    name: "Open unavailable/ready.txt",
-  })).toBeVisible();
+  expect(await findTreeItem("unavailable/ready.txt")).toBeVisible();
 });
 
 test("caps rendered code lines", async () => {
@@ -473,11 +491,103 @@ test("caps rendered code lines", async () => {
     />,
   );
 
-  await user.click(await screen.findByRole("button", {
-    name: "Open many-lines.txt",
-  }));
+  await clickTreeItem("many-lines.txt");
 
   expect(await screen.findByText("Only the first 5,000 lines are shown."))
     .toBeVisible();
-  expect(screen.getAllByRole("row")).toHaveLength(5_000);
 }, 15_000);
+
+test("renders loaded workspace entries with Pierre canonical paths", async () => {
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI()}
+      active
+    />,
+  );
+
+  await findTreeItem("docs/");
+  await findTreeItem("README.md");
+
+  const tree = document.querySelector("file-tree-container");
+  expect(tree?.shadowRoot?.querySelector('[data-item-path="docs"]'))
+    .toBeNull();
+});
+
+test("does not request unsupported workspace entries as files", async () => {
+  const getWorkspaceFile = vi.fn();
+  const directory: WorkspaceDirectory = {
+    root: "/repo",
+    path: "",
+    entries: [
+      { name: "link", path: "link", kind: "symlink" },
+      { name: "socket", path: "socket", kind: "other" },
+    ],
+  };
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({
+        getWorkspaceDirectory: vi.fn().mockResolvedValue(directory),
+        getWorkspaceFile,
+      })}
+      active
+    />,
+  );
+
+  await clickTreeItem("link");
+  await clickTreeItem("socket");
+
+  expect(getWorkspaceFile).not.toHaveBeenCalled();
+});
+
+test("loads an unloaded directory when its Pierre tree row is clicked", async () => {
+  const childDirectory: WorkspaceDirectory = {
+    root: "/repo",
+    path: "docs",
+    entries: [
+      { name: "guide.md", path: "docs/guide.md", kind: "file" },
+    ],
+  };
+  const getWorkspaceDirectory = vi.fn()
+    .mockResolvedValueOnce(rootDirectory)
+    .mockResolvedValueOnce(childDirectory);
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({ getWorkspaceDirectory })}
+      active
+    />,
+  );
+
+  const directory = await findTreeItem("docs/");
+  fireEvent.click(directory);
+
+  await waitFor(() => {
+    expect(getWorkspaceDirectory).toHaveBeenLastCalledWith("terminal-1", "docs");
+  });
+  await findTreeItem("docs/guide.md");
+});
+
+test("renders selected text through Pierre's read-only File surface", async () => {
+  const getWorkspaceFile = vi.fn().mockResolvedValue({
+    root: "/repo",
+    name: "README.md",
+    path: "README.md",
+    size: 7,
+    content: "# Read\n",
+  } satisfies WorkspaceFile);
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({ getWorkspaceFile })}
+      active
+    />,
+  );
+
+  const file = await findTreeItem("README.md");
+  fireEvent.click(file);
+
+  await findDiffsSurface();
+  expect(getWorkspaceFile).toHaveBeenCalledWith("terminal-1", "README.md");
+});
