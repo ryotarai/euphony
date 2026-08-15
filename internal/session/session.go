@@ -3,14 +3,11 @@ package session
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"golang.org/x/sys/unix"
 )
 
 // foregroundProcessName reduces a ps command line to the executable name
@@ -45,6 +42,7 @@ type Session struct {
 	command         *exec.Cmd
 	terminal        *os.File
 	terminalFD      int
+	backend         terminalBackend
 	waitDone        chan struct{}
 	pumpDone        chan struct{}
 	close           sync.Once
@@ -66,6 +64,29 @@ type Session struct {
 	outputClosed    bool
 	afterReadMu     sync.Mutex
 	afterRead       func([]byte)
+}
+
+type terminalBackend interface {
+	write(*Session, []byte) (int, error)
+	signalResize(*Session) error
+	processPendingResize(*Session)
+	pump(*Session)
+	terminate(*Session)
+	close(*Session)
+}
+
+type terminalStart struct {
+	terminal        *os.File
+	backend         terminalBackend
+	resizeWakeRead  int
+	resizeWakeWrite int
+}
+
+func (s *Session) signalResize() error {
+	if s.backend != nil {
+		return s.backend.signalResize(s)
+	}
+	return signalResizeUnix(s)
 }
 
 const (
@@ -275,71 +296,12 @@ func (s *Session) Write(data []byte) (int, error) {
 		s.fileMu.Unlock()
 		return 0, errors.New("terminal is closed")
 	}
-	fd, err := duplicateTerminalFD(s.terminalFD)
+	backend := s.backend
 	s.fileMu.Unlock()
-	if err != nil {
-		return 0, err
+	if backend != nil {
+		return backend.write(s, data)
 	}
-	defer unix.Close(fd)
-
-	written := 0
-	for written < len(data) {
-		n, writeErr := unix.Write(fd, data[written:])
-		if n > 0 {
-			written += n
-		}
-		if writeErr == nil {
-			if n == 0 {
-				return written, io.ErrShortWrite
-			}
-			continue
-		}
-		if errors.Is(writeErr, unix.EINTR) {
-			continue
-		}
-		if errors.Is(writeErr, unix.EAGAIN) || errors.Is(writeErr, unix.EWOULDBLOCK) {
-			if err := s.waitUntilWritable(fd); err != nil {
-				return written, err
-			}
-			continue
-		}
-		return written, writeErr
-	}
-	return written, nil
-}
-
-func duplicateTerminalFD(fd int) (int, error) {
-	return unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
-}
-
-func (s *Session) waitUntilWritable(fd int) error {
-	pollFDs := []unix.PollFd{{
-		Fd:     int32(fd),
-		Events: unix.POLLOUT | unix.POLLHUP | unix.POLLERR,
-	}}
-	for {
-		if s.pumpDone != nil {
-			select {
-			case <-s.pumpDone:
-				return io.ErrClosedPipe
-			default:
-			}
-		}
-		_, err := unix.Poll(pollFDs, 100)
-		if err != nil {
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-			return err
-		}
-		events := pollFDs[0].Revents
-		if events&(unix.POLLHUP|unix.POLLERR|unix.POLLNVAL) != 0 {
-			return io.ErrClosedPipe
-		}
-		if events&unix.POLLOUT != 0 {
-			return nil
-		}
-	}
+	return writeTerminalUnix(s, data)
 }
 
 func (s *Session) Resize(cols, rows uint16) error {
@@ -396,23 +358,17 @@ func (s *Session) ResizeWithNotificationContext(
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	for {
-		if _, err := unix.Write(s.resizeWakeWrite, []byte{1}); err != nil {
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-			select {
-			case <-s.resizeRequests:
-			default:
-			}
-			select {
-			case <-s.pumpDone:
-				return errors.New("terminal output loop is closed")
-			default:
-				return err
-			}
+	if err := s.signalResize(); err != nil {
+		select {
+		case <-s.resizeRequests:
+		default:
 		}
-		break
+		select {
+		case <-s.pumpDone:
+			return errors.New("terminal output loop is closed")
+		default:
+			return err
+		}
 	}
 	select {
 	case err := <-request.done:
@@ -515,127 +471,6 @@ func (s *Session) subscribe(subscriber *outputSubscriber) ([][]byte, func()) {
 	return history, unsubscribe
 }
 
-func (s *Session) pump() {
-	defer func() {
-		s.fileMu.Lock()
-		_ = s.terminal.Close()
-		s.fileMu.Unlock()
-		close(s.pumpDone)
-		s.resizeSubmitMu.Lock()
-		_ = unix.Close(s.resizeWakeRead)
-		_ = unix.Close(s.resizeWakeWrite)
-		s.resizeSubmitMu.Unlock()
-	}()
-	buffer := make([]byte, 32*1024)
-	pollFDs := []unix.PollFd{
-		{
-			Fd:     int32(s.terminalFD),
-			Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR,
-		},
-		{
-			Fd:     int32(s.resizeWakeRead),
-			Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR,
-		},
-	}
-	for {
-		_, err := unix.Poll(pollFDs, -1)
-		if err != nil {
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-			s.finishOutput()
-			return
-		}
-
-		terminalEvents := pollFDs[0].Revents
-		if terminalEvents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) != 0 {
-			closed, readErr := s.drainTerminalOutput(buffer)
-			if readErr != nil || closed {
-				s.finishOutput()
-				return
-			}
-		}
-
-		wakeEvents := pollFDs[1].Revents
-		if wakeEvents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) != 0 {
-			var wake [1]byte
-			_, _ = unix.Read(s.resizeWakeRead, wake[:])
-			s.processPendingResize()
-		}
-	}
-}
-
-func (s *Session) drainTerminalOutput(buffer []byte) (bool, error) {
-	for range maxPTYReadBatchChunks {
-		n, err := unix.Read(s.terminalFD, buffer)
-		if n > 0 {
-			s.afterReadMu.Lock()
-			afterRead := s.afterRead
-			s.afterReadMu.Unlock()
-			if afterRead != nil {
-				afterRead(buffer[:n])
-			}
-			s.publish(buffer[:n])
-		}
-		if err != nil {
-			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
-				return false, nil
-			}
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-			return false, err
-		}
-		if n == 0 {
-			return true, nil
-		}
-
-		readable := []unix.PollFd{{
-			Fd:     int32(s.terminalFD),
-			Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR,
-		}}
-		if _, err := unix.Poll(readable, 0); err != nil {
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-			return false, err
-		}
-		if readable[0].Revents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) == 0 {
-			return false, nil
-		}
-	}
-	return false, nil
-}
-
-func (s *Session) processPendingResize() {
-	select {
-	case request := <-s.resizeRequests:
-		if err := request.ctx.Err(); err != nil {
-			request.done <- err
-			return
-		}
-		err := unix.IoctlSetWinsize(s.terminalFD, unix.TIOCSWINSZ, &unix.Winsize{
-			Col: request.cols,
-			Row: request.rows,
-		})
-		if err == nil {
-			if request.ctx.Err() != nil {
-				request.done <- request.ctx.Err()
-				return
-			}
-			s.dimensionsMu.Lock()
-			s.cols = request.cols
-			s.rows = request.rows
-			s.dimensionsMu.Unlock()
-			if request.notify != nil {
-				request.notify()
-			}
-		}
-		request.done <- err
-	default:
-	}
-}
-
 func (s *Session) finishOutput() {
 	s.outputMu.Lock()
 	s.outputClosed = true
@@ -700,9 +535,14 @@ func (s *Session) trimHistoryLocked() {
 func (s *Session) terminate() {
 	s.close.Do(func() {
 		s.fileMu.Lock()
-		defer s.fileMu.Unlock()
-		if s.command.Process != nil {
-			_ = s.command.Process.Kill()
+		backend := s.backend
+		process := s.command.Process
+		s.fileMu.Unlock()
+		if process != nil {
+			_ = process.Kill()
+		}
+		if backend != nil {
+			backend.terminate(s)
 		}
 	})
 }

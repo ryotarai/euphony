@@ -18,10 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/creack/pty"
 	"github.com/ryotarai/euphony/internal/agentlog"
 	"github.com/ryotarai/euphony/internal/selection"
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -375,7 +373,7 @@ func NewManager(shell string, hookConfigs ...HookConfig) *Manager {
 		shell = os.Getenv("SHELL")
 	}
 	if shell == "" {
-		shell = "/bin/sh"
+		shell = defaultShell()
 	}
 	var hooks HookConfig
 	if len(hookConfigs) > 0 {
@@ -667,7 +665,7 @@ func (m *Manager) restore(metadata Metadata) error {
 
 func discardStartedSession(running *Session) {
 	running.terminate()
-	_ = running.command.Wait()
+	_ = waitCommand(running.command)
 	<-running.pumpDone
 }
 
@@ -700,22 +698,8 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 		"EUPHONY_HOOK_URL="+m.hooks.URL,
 		"EUPHONY_TOKEN="+m.hooks.Token,
 	)
-	terminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: 80, Rows: 24})
+	started, err := startTerminal(command, 80, 24)
 	if err != nil {
-		return nil, err
-	}
-	terminalFD := int(terminal.Fd())
-	if err := unix.SetNonblock(terminalFD, true); err != nil {
-		_ = command.Process.Kill()
-		_ = terminal.Close()
-		_ = command.Wait()
-		return nil, err
-	}
-	resizeWake := []int{0, 0}
-	if err := unix.Pipe(resizeWake); err != nil {
-		_ = command.Process.Kill()
-		_ = terminal.Close()
-		_ = command.Wait()
 		return nil, err
 	}
 	return &entry{
@@ -723,15 +707,16 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 		session: &Session{
 			id:              metadata.ID,
 			command:         command,
-			terminal:        terminal,
-			terminalFD:      terminalFD,
+			terminal:        started.terminal,
+			terminalFD:      int(started.terminal.Fd()),
+			backend:         started.backend,
 			cols:            80,
 			rows:            24,
 			waitDone:        make(chan struct{}),
 			pumpDone:        make(chan struct{}),
 			resizeRequests:  make(chan resizeRequest, 1),
-			resizeWakeRead:  resizeWake[0],
-			resizeWakeWrite: resizeWake[1],
+			resizeWakeRead:  started.resizeWakeRead,
+			resizeWakeWrite: started.resizeWakeWrite,
 			subscribers:     make(map[uint64]*outputSubscriber),
 		},
 	}, nil
@@ -1709,7 +1694,7 @@ func (m *Manager) statFile(path string) (os.FileInfo, error) {
 }
 
 func (m *Manager) watch(item *entry) {
-	_ = item.session.command.Wait()
+	_ = waitCommand(item.session.command)
 
 	var deleted *Change
 	var deleteOperation storeOperation
