@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { PatchDiff } from "@pierre/diffs/react";
 import {
   CircleSlash2Icon,
   FileDiffIcon,
@@ -9,9 +10,9 @@ import { ApiError, type ApiClient } from "../api";
 import type {
   GitChangedFile,
   GitChangesSnapshot,
-  GitDiffLine,
   Session,
 } from "../types";
+import { gitChangedFileToPatch } from "./gitChangesPatch";
 import {
   Empty,
   EmptyDescription,
@@ -50,13 +51,6 @@ function statusCode(file: GitChangedFile): string {
     default:
       return "M";
   }
-}
-
-function linePrefix(line: GitDiffLine): string {
-  if (line.kind === "addition") return "+";
-  if (line.kind === "deletion") return "-";
-  if (line.kind === "meta") return "\\";
-  return " ";
 }
 
 function errorCode(error: unknown): string {
@@ -263,38 +257,20 @@ export function GitChangesView({
                   ) : selectedFile.hunks.length === 0 ? (
                     <p className="git-diff-message">No textual changes.</p>
                   ) : (
-                    <div className="git-diff-table" role="table">
-                      {selectedFile.hunks.map((hunk, hunkIndex) => (
-                        <div className="git-diff-hunk" key={`${hunk.header}-${hunkIndex}`}>
-                          <div className="git-diff-hunk-header" role="row">
-                            <span aria-hidden="true" />
-                            <span aria-hidden="true" />
-                            <code>{hunk.header}</code>
-                          </div>
-                          {hunk.lines.map((line, lineIndex) => (
-                            <div
-                              className="git-diff-row"
-                              data-kind={line.kind}
-                              role="row"
-                              key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${lineIndex}`}
-                            >
-                              <span className="git-diff-old-line" role="cell">
-                                {line.oldLine || ""}
-                              </span>
-                              <span className="git-diff-new-line" role="cell">
-                                {line.newLine || ""}
-                              </span>
-                              <code role="cell">
-                                <span className="git-diff-prefix" aria-hidden="true">
-                                  {linePrefix(line)}
-                                </span>
-                                {line.content}
-                              </code>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
+                    <PatchDiff
+                      patch={gitChangedFileToPatch(selectedFile)}
+                      className="git-pierre-diff"
+                      style={{ display: "block", minHeight: "100%" }}
+                      options={{
+                        diffStyle: "unified",
+                        diffIndicators: "classic",
+                        hunkSeparators: "metadata",
+                        disableFileHeader: true,
+                        overflow: "scroll",
+                        themeType: "dark",
+                        theme: "pierre-dark",
+                      }}
+                    />
                   )}
                   {selectedFile.truncated && (
                     <p className="git-changes-note">Diff truncated after 1 MiB.</p>

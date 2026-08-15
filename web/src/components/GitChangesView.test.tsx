@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
 import { ApiError, type ApiClient } from "../api";
@@ -53,7 +53,7 @@ function detailed(path: string): GitChangesSnapshot {
             ...file,
             patchLoaded: true,
             hunks: [{
-              header: "@@ -1,2 +1,3 @@",
+              header: path === "src/app.ts" ? "@@ -1 +1 @@" : "@@ -0,0 +1 @@",
               oldStart: 1,
               newStart: 1,
               lines: path === "src/app.ts"
@@ -89,7 +89,7 @@ function changesAPI(
   } as unknown as ApiClient;
 }
 
-test("loads only while active and renders the selected numbered diff", async () => {
+test("loads only while active and renders the selected diff through Pierre", async () => {
   const api = changesAPI(async (path) => path ? detailed(path) : summary);
   const { rerender } = render(
     <GitChangesView session={session} api={api} active={false} />,
@@ -101,9 +101,13 @@ test("loads only while active and renders the selected numbered diff", async () 
 
   expect(await screen.findByRole("button", { name: /src\/app\.ts/ }))
     .toHaveAttribute("aria-current", "true");
-  expect(await screen.findByText("const state = 'after';")).toBeVisible();
-  expect(screen.getByText("1", { selector: ".git-diff-new-line" })).toBeVisible();
-  expect(screen.getByText("+", { selector: ".git-diff-prefix" })).toBeVisible();
+  await waitFor(() => {
+    const diff = screen
+      .getByLabelText("Diff for src/app.ts")
+      .querySelector("diffs-container");
+    expect(diff).toBeInTheDocument();
+    expect(diff?.shadowRoot?.textContent).toContain("const state = 'after';");
+  });
   expect(screen.getByText("main")).toBeVisible();
   expect(screen.getByText("origin/main")).toBeVisible();
   expect(screen.getByLabelText("2 commits ahead, 1 commit behind")).toBeVisible();
@@ -117,7 +121,12 @@ test("selects another changed file and retains it on refresh", async () => {
 
   const draft = await screen.findByRole("button", { name: /draft file\.md/ });
   await user.click(draft);
-  expect(await screen.findByText("# Draft")).toBeVisible();
+  await waitFor(() => {
+    const diff = screen
+      .getByLabelText("Diff for draft file.md")
+      .querySelector("diffs-container");
+    expect(diff?.shadowRoot?.textContent).toContain("# Draft");
+  });
   expect(draft).toHaveAttribute("aria-current", "true");
 
   await act(async () => {
