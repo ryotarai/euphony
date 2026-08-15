@@ -1,4 +1,4 @@
-.PHONY: build dev test test-cli test-e2e macos-app test-macos
+.PHONY: build dev test test-cli test-e2e macos-app test-macos windows-amd64
 
 dev:
 	./scripts/dev.sh
@@ -7,6 +7,11 @@ build:
 	cd web && npm ci && npm run build
 	mkdir -p bin
 	go build -trimpath -o bin/euphony ./cmd/euphony
+
+windows-amd64:
+	cd web && npm ci && npm run build
+	mkdir -p bin
+	GOOS=windows GOARCH=amd64 go build -trimpath -o bin/euphony-windows-amd64.exe ./cmd/euphony
 
 test:
 	bash scripts/dev_test.sh
