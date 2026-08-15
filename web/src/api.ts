@@ -30,11 +30,24 @@ import type {
 const allSessionsRequestTimeoutMs = 30_000;
 const allSessionsTimeoutMessage = "Loading all sessions timed out. Try again.";
 
+function v1ErrorCause(details: unknown): string | null {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  const cause = (details as { cause?: unknown }).cause;
+  if (typeof cause !== "string" || cause.trim() === "") return null;
+  return cause.trim();
+}
+
+function v1ErrorMessage(message: string, details: unknown): string {
+  const cause = v1ErrorCause(details);
+  return cause ? `${message} Details: ${cause}` : message;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: unknown = undefined,
   ) {
     super(message);
   }
@@ -431,7 +444,12 @@ export class ApiClient {
         code: "request_failed",
         message: "The request failed.",
       };
-      throw new ApiError(response.status, error.code, error.message);
+      throw new ApiError(
+        response.status,
+        error.code,
+        v1ErrorMessage(error.message, error.details),
+        error.details,
+      );
     }
     return envelope.result;
   }
@@ -445,7 +463,8 @@ export class ApiClient {
         return new ApiError(
           response.status,
           envelope.error.code,
-          envelope.error.message,
+          v1ErrorMessage(envelope.error.message, envelope.error.details),
+          envelope.error.details,
         );
       }
     } catch {
@@ -465,6 +484,6 @@ export class ApiClient {
     } catch {
       // Keep the stable fallback for non-JSON proxy and network responses.
     }
-    return new ApiError(response.status, body.code, body.message);
+    return new ApiError(response.status, body.code, body.message, body.details);
   }
 }

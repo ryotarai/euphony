@@ -170,6 +170,28 @@ test("turns a non-JSON v1 error response into an API error", async () => {
   });
 });
 
+test("includes a v1 error cause in the human-readable API error", async () => {
+  const cause = "start ConPTY process: The system cannot find the file specified.";
+  vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>
+    jsonResponse({
+      ok: false,
+      error: {
+        code: "terminal_create_failed",
+        message: "The terminal could not be created.",
+        details: { cause },
+      },
+    }, 500),
+  );
+  const api = new ApiClient("token");
+
+  await expect(api.createTerminal("Terminal", undefined, "replace", "project-1"))
+    .rejects.toMatchObject({
+      status: 500,
+      code: "terminal_create_failed",
+      message: `The terminal could not be created. Details: ${cause}`,
+    });
+});
+
 test("marks an agent summary as read and returns the normalized summary", async () => {
   const summary: AgentSummary = {
     terminalId: "terminal/one",
