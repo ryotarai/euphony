@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SessionNavigation } from "./SessionNavigation";
 import type { AgentSummary, Project, Session, Settings } from "../types";
@@ -173,6 +173,229 @@ test("renders the generated session purpose without provider or status text", ()
   expect(row?.querySelector(".project-session-status")).toBeNull();
   expect(screen.queryByText("Running")).not.toBeInTheDocument();
   expect(screen.getByText(projectSummary.summary)).toBeVisible();
+});
+
+test("shows one project session information card after exactly 500ms of pointer hover", () => {
+  vi.useFakeTimers();
+  try {
+    render(
+      <SessionNavigation
+        projects={[project]}
+        sessions={[projectAgent]}
+        agentSummaries={[projectSummary]}
+        selectedIDs={[projectAgent.id]}
+        selectedID={projectAgent.id}
+        onSelect={() => undefined}
+        onSelectSession={() => undefined}
+        onCreate={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    const select = screen.getByRole("button", { name: /Select Codex.*Sidebar fix/ });
+    const row = select.closest(".project-session-row");
+    expect(row).not.toBeNull();
+    fireEvent.pointerEnter(row!, { clientX: 120, clientY: 180 });
+
+    act(() => vi.advanceTimersByTime(499));
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(1));
+    const card = screen.getByRole("region", { name: "Session information" });
+    expect(card).toHaveAttribute("data-session-id", projectAgent.id);
+    expect(card).toHaveTextContent("Sidebar fix");
+    expect(card).toHaveTextContent(projectSummary.summary);
+    expect(card).toHaveTextContent("No action required.");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("cancels pending and visible cards when a project row is left or replaced", () => {
+  vi.useFakeTimers();
+  try {
+    const secondSession: Session = {
+      ...projectAgent,
+      id: "project-terminal",
+      name: "Terminal",
+      agent: undefined,
+      agentStatus: undefined,
+      agentTitle: undefined,
+    };
+    render(
+      <SessionNavigation
+        projects={[project]}
+        sessions={[projectAgent, secondSession]}
+        agentSummaries={[projectSummary]}
+        selectedIDs={[projectAgent.id]}
+        selectedID={projectAgent.id}
+        onSelect={() => undefined}
+        onSelectSession={() => undefined}
+        onCreate={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    const firstRow = screen
+      .getByRole("button", { name: /Select Codex.*Sidebar fix/ })
+      .closest(".project-session-row");
+    const secondRow = screen
+      .getByRole("button", { name: "Select Terminal" })
+      .closest(".project-session-row");
+    expect(firstRow).not.toBeNull();
+    expect(secondRow).not.toBeNull();
+
+    fireEvent.pointerEnter(firstRow!, { clientX: 120, clientY: 180 });
+    act(() => vi.advanceTimersByTime(499));
+    fireEvent.pointerLeave(firstRow!);
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+
+    fireEvent.pointerEnter(firstRow!, { clientX: 120, clientY: 180 });
+    act(() => vi.advanceTimersByTime(500));
+    expect(screen.getByRole("region", { name: "Session information" }))
+      .toHaveAttribute("data-session-id", projectAgent.id);
+
+    fireEvent.pointerEnter(secondRow!, { clientX: 220, clientY: 240 });
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(500));
+    expect(screen.getByRole("region", { name: "Session information" }))
+      .toHaveAttribute("data-session-id", secondSession.id);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("uses the same 500ms delay for focus and cancels on blur or Escape", () => {
+  vi.useFakeTimers();
+  try {
+    render(
+      <SessionNavigation
+        projects={[project]}
+        sessions={[projectAgent]}
+        agentSummaries={[projectSummary]}
+        selectedIDs={[projectAgent.id]}
+        selectedID={projectAgent.id}
+        onSelect={() => undefined}
+        onSelectSession={() => undefined}
+        onCreate={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    const select = screen.getByRole("button", { name: /Select Codex.*Sidebar fix/ });
+    fireEvent.focus(select);
+    act(() => vi.advanceTimersByTime(499));
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("region", { name: "Session information" })).toBeVisible();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+
+    fireEvent.focus(select);
+    act(() => vi.advanceTimersByTime(500));
+    expect(screen.getByRole("region", { name: "Session information" })).toBeVisible();
+    fireEvent.blur(select);
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("clamps the fixed card inside the viewport around the captured pointer", () => {
+  vi.useFakeTimers();
+  const previousWidth = window.innerWidth;
+  const previousHeight = window.innerHeight;
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("session-info-card")) {
+        return new DOMRect(0, 0, 240, 180);
+      }
+      return new DOMRect();
+    });
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+  try {
+    render(
+      <SessionNavigation
+        projects={[project]}
+        sessions={[projectAgent]}
+        agentSummaries={[projectSummary]}
+        selectedIDs={[projectAgent.id]}
+        selectedID={projectAgent.id}
+        onSelect={() => undefined}
+        onSelectSession={() => undefined}
+        onCreate={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    const select = screen.getByRole("button", { name: /Select Codex.*Sidebar fix/ });
+    const row = select.closest(".project-session-row");
+    fireEvent.pointerEnter(row!, { clientX: 790, clientY: 590 });
+    act(() => vi.advanceTimersByTime(500));
+
+    const card = screen.getByRole("region", { name: "Session information" });
+    expect(card).toHaveStyle({ position: "fixed", left: "548px", top: "408px" });
+    expect(Number.parseFloat(card.style.left) + 240).toBeLessThanOrEqual(window.innerWidth - 12);
+    expect(Number.parseFloat(card.style.top) + 180).toBeLessThanOrEqual(window.innerHeight - 12);
+  } finally {
+    rectSpy.mockRestore();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: previousHeight });
+    vi.useRealTimers();
+  }
+});
+
+test("removes a visible card when its session disappears from the current list", () => {
+  vi.useFakeTimers();
+  try {
+    const { rerender } = render(
+      <SessionNavigation
+        projects={[project]}
+        sessions={[projectAgent]}
+        agentSummaries={[projectSummary]}
+        selectedIDs={[projectAgent.id]}
+        selectedID={projectAgent.id}
+        onSelect={() => undefined}
+        onSelectSession={() => undefined}
+        onCreate={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+    const select = screen.getByRole("button", { name: /Select Codex.*Sidebar fix/ });
+    fireEvent.pointerEnter(select.closest(".project-session-row")!, {
+      clientX: 120,
+      clientY: 180,
+    });
+    act(() => vi.advanceTimersByTime(500));
+    expect(screen.getByRole("region", { name: "Session information" })).toBeVisible();
+
+    rerender(
+      <SessionNavigation
+        projects={[project]}
+        sessions={[]}
+        agentSummaries={[]}
+        selectedIDs={[]}
+        selectedID={null}
+        onSelect={() => undefined}
+        onSelectSession={() => undefined}
+        onCreate={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "Session information" }))
+      .not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("selecting a project session closes the mobile drawer", async () => {

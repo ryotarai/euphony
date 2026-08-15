@@ -13,7 +13,6 @@ import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
-import { SessionInfoPane } from "./components/SessionInfoPane";
 import { AgentsView } from "./components/AgentsView";
 import {
   agentLaunchTransitions,
@@ -100,18 +99,10 @@ const maxHistoryMiB = 4095;
 const filterDeselectDelayMs = 10_000;
 const maxCachedTerminalViews = 4;
 const maxTerminalScreenSnapshotBytes = 128 * 1024;
-const minimumSessionInfoWidth = 220;
-const maximumSessionInfoWidth = 520;
 const agentsPaneID = "agents" as const;
 
 type DashboardPaneID = typeof agentsPaneID;
 type AgentKind = "codex" | "claude";
-
-function normalizeSessionInfoWidth(width: number): number {
-  return Math.round(
-    Math.min(maximumSessionInfoWidth, Math.max(minimumSessionInfoWidth, width)),
-  );
-}
 
 interface DashboardRoute {
   pane: DashboardPaneID | null;
@@ -658,9 +649,6 @@ export function App({
   const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
   const [projectDirectoryPicking, setProjectDirectoryPicking] = useState(false);
   const agentStartSubmittingRef = useRef(false);
-  const [sessionInfoWidth, setSessionInfoWidth] = useState(320);
-  const [resizingSessionInfo, setResizingSessionInfo] = useState(false);
-  const sessionInfoDragRef = useRef({ startX: 0, startWidth: 320 });
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [pendingRename, setPendingRename] = useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -1301,25 +1289,6 @@ export function App({
       active = false;
     };
   }, [api, initialSettings]);
-
-  useEffect(() => {
-    if (!resizingSessionInfo) return;
-    const resize = (event: PointerEvent) => {
-      const { startX, startWidth } = sessionInfoDragRef.current;
-      setSessionInfoWidth(normalizeSessionInfoWidth(startWidth + event.clientX - startX));
-    };
-    const finish = (event: PointerEvent) => {
-      const { startX, startWidth } = sessionInfoDragRef.current;
-      setSessionInfoWidth(normalizeSessionInfoWidth(startWidth + event.clientX - startX));
-      setResizingSessionInfo(false);
-    };
-    document.addEventListener("pointermove", resize);
-    document.addEventListener("pointerup", finish);
-    return () => {
-      document.removeEventListener("pointermove", resize);
-      document.removeEventListener("pointerup", finish);
-    };
-  }, [resizingSessionInfo]);
 
   useEffect(() => {
     if (!api || !sessions || agentSummariesLoadedForApiRef.current === api) return;
@@ -3486,7 +3455,6 @@ export function App({
     }))
     : [];
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
-  const selected = sessionsByID.get(activePaneID ?? "") ?? panes[0];
   const projectList = projects ?? [];
   const projectNavigationProps = projectEndpointAvailableRef.current
     ? {
@@ -3674,32 +3642,6 @@ export function App({
       runQuickAction(selectedAction);
     }
   };
-
-
-  const beginSessionInfoResize = (event: React.PointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    sessionInfoDragRef.current = {
-      startX: event.clientX,
-      startWidth: sessionInfoWidth,
-    };
-    setResizingSessionInfo(true);
-  };
-
-  const resizeSessionInfoWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const delta = event.key === "ArrowRight"
-      ? 16
-      : event.key === "ArrowLeft"
-        ? -16
-        : event.key === "Home"
-          ? minimumSessionInfoWidth - sessionInfoWidth
-          : event.key === "End"
-            ? maximumSessionInfoWidth - sessionInfoWidth
-            : 0;
-    if (delta === 0) return;
-    event.preventDefault();
-    setSessionInfoWidth(normalizeSessionInfoWidth(sessionInfoWidth + delta));
-  };
-
   const emptyState = (
     <div className="empty-state">
       <div className="empty-state-card">
@@ -3730,7 +3672,6 @@ export function App({
       className="workspace"
       style={{
         "--interface-font-size": `${previewSettings.interfaceFontSize}px`,
-        "--session-info-width": `${sessionInfoWidth}px`,
       } as CSSProperties}
     >
       <SessionNavigation
@@ -3762,25 +3703,6 @@ export function App({
         onOpenChange={setAllSessionsOpen}
         onSelect={selectAllSession}
       />
-      <SessionInfoPane
-        session={selected}
-        summary={selected ? summaryByTerminalID.get(selected.id) : undefined}
-      />
-      <button
-        type="button"
-        className="session-info-resizer"
-        role="separator"
-        aria-label="Resize session information"
-        aria-orientation="vertical"
-        aria-valuemin={minimumSessionInfoWidth}
-        aria-valuemax={maximumSessionInfoWidth}
-        aria-valuenow={sessionInfoWidth}
-        data-resizing={resizingSessionInfo || undefined}
-        onPointerDown={beginSessionInfoResize}
-        onKeyDown={resizeSessionInfoWithKeyboard}
-      >
-        <span aria-hidden="true" />
-      </button>
       <section
         className="terminal-stage"
         data-multiple={workspacePanes.length > 1}

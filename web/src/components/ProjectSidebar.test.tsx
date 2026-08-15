@@ -140,6 +140,35 @@ test("announces row status, summary, action, and unread state", () => {
   );
 });
 
+test("forwards session hover and focus events from project rows", () => {
+  const onSessionPointerEnter = vi.fn();
+  const onSessionPointerLeave = vi.fn();
+  const onSessionFocus = vi.fn();
+  const onSessionBlur = vi.fn();
+  renderSidebar({
+    onSessionPointerEnter,
+    onSessionPointerLeave,
+    onSessionFocus,
+    onSessionBlur,
+  });
+
+  const select = screen.getByRole("button", {
+    name: /Select Codex.*Approve the pending change/i,
+  });
+  const row = select.closest(".project-session-row");
+  expect(row).not.toBeNull();
+
+  fireEvent.pointerEnter(row!, { clientX: 120, clientY: 180 });
+  fireEvent.pointerLeave(row!);
+  fireEvent.focus(select);
+  fireEvent.blur(select);
+
+  expect(onSessionPointerEnter).toHaveBeenCalledWith(agentSession, expect.any(Object));
+  expect(onSessionPointerLeave).toHaveBeenCalledWith(agentSession.id);
+  expect(onSessionFocus).toHaveBeenCalledWith(agentSession, expect.any(Object));
+  expect(onSessionBlur).toHaveBeenCalledWith(agentSession.id);
+});
+
 test("preserves attention state on project rows", () => {
   renderSidebar({
     sessions: [{ ...agentSession, needsAttention: true }],

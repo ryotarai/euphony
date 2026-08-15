@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { SessionInfoPane } from "./SessionInfoPane";
+import { SessionInfoCard } from "./SessionInfoPane";
 import type { AgentSummary, Session } from "../types";
 
 const session: Session = {
@@ -22,11 +22,11 @@ const summary: AgentSummary = {
   unread: false,
 };
 
-test("renders the purpose text in the session detail heading", () => {
-  render(<SessionInfoPane session={session} summary={summary} />);
+test("renders the purpose text in the session information card", () => {
+  render(<SessionInfoCard session={session} summary={summary} />);
 
   expect(screen.getByRole("region", { name: "Session information" }))
-    .toHaveAttribute("data-pane-name", "information-pane");
+    .toHaveAttribute("data-card-name", "session-info-card");
   expect(screen.getByRole("heading", { name: "Review the sidebar", level: 2 })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Codex", level: 2 })).not.toBeInTheDocument();
   expect(screen.queryByText("Purpose", { selector: "dt" })).not.toBeInTheDocument();
@@ -36,7 +36,7 @@ test("renders the purpose text in the session detail heading", () => {
 
 test("uses New session when the session has no purpose or summary", () => {
   render(
-    <SessionInfoPane
+    <SessionInfoCard
       session={{
         ...session,
         name: "Shell",
