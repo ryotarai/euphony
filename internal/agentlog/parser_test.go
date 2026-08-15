@@ -1,6 +1,8 @@
 package agentlog
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -53,6 +55,122 @@ func TestParseCodexTranscriptNormalizesMessagesAndTools(t *testing.T) {
 		{ID: "5-0", Kind: "tool_result", CallID: "call-1", Title: "exec_command", Content: "ok", Timestamp: "2026-07-30T01:02:06Z"},
 		{ID: "6-0", Kind: "message", Role: "assistant", Content: "Done.", Timestamp: "2026-07-30T01:02:07Z"},
 	}
+	if !entriesEqual(got, want) {
+		t.Fatalf("Parse() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseClaudeTranscriptNormalizesImageAndVideoSourceBlocks(t *testing.T) {
+	input := `{"type":"assistant","timestamp":"2026-07-30T01:02:04Z","message":{"role":"assistant","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="},"alt":"Screenshot"},{"type":"video","source":{"type":"url","url":"https://example.com/demo.mp4"},"alt":"Demo recording"}]}}`
+
+	got, err := Parse("claude", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	assertEntriesJSON(t, got, `[
+		{"id":"1-0","kind":"image","role":"assistant","url":"data:image/png;base64,aGVsbG8=","mimeType":"image/png","alt":"Screenshot","timestamp":"2026-07-30T01:02:04Z"},
+		{"id":"1-1","kind":"video","role":"assistant","url":"https://example.com/demo.mp4","alt":"Demo recording","timestamp":"2026-07-30T01:02:04Z"}
+	]`)
+}
+
+func TestParseCodexTranscriptNormalizesResponsesMediaBlocks(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"response_item","timestamp":"2026-07-30T01:02:03Z","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8=","alt":"Input screenshot"},{"type":"output_image","image_url":"https://example.com/output.png","alt":"Generated image"},{"type":"input_video","video_url":"https://example.com/input.mp4","alt":"Input clip"},{"type":"output_video","video_url":"data:video/mp4;base64,AAAA","alt":"Generated clip"}]}}`,
+	}, "\n")
+
+	got, err := Parse("codex", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	assertEntriesJSON(t, got, `[
+		{"id":"1-0","kind":"image","role":"user","url":"data:image/png;base64,aGVsbG8=","mimeType":"image/png","alt":"Input screenshot","timestamp":"2026-07-30T01:02:03Z"},
+		{"id":"1-1","kind":"image","role":"user","url":"https://example.com/output.png","alt":"Generated image","timestamp":"2026-07-30T01:02:03Z"},
+		{"id":"1-2","kind":"video","role":"user","url":"https://example.com/input.mp4","alt":"Input clip","timestamp":"2026-07-30T01:02:03Z"},
+		{"id":"1-3","kind":"video","role":"user","url":"data:video/mp4;base64,AAAA","mimeType":"video/mp4","alt":"Generated clip","timestamp":"2026-07-30T01:02:03Z"}
+	]`)
+}
+
+func TestParseCodexTranscriptNormalizesMediaInToolOutputArrays(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"response_item","timestamp":"2026-07-30T01:02:03Z","payload":{"type":"function_call","call_id":"call-1","name":"view_image","arguments":"{}"}}`,
+		`{"type":"response_item","timestamp":"2026-07-30T01:02:04Z","payload":{"type":"function_call_output","call_id":"call-1","output":[{"type":"input_text","text":"Screenshot and recording attached."},{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8=","detail":"original","alt":"Screenshot"},{"type":"input_video","video_url":"https://example.com/recording.mp4","alt":"Recording"}]}}`,
+	}, "\n")
+
+	got, err := Parse("codex", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	assertEntriesJSON(t, got, `[
+		{"id":"1-0","kind":"tool","callId":"call-1","title":"view_image","content":"{}","timestamp":"2026-07-30T01:02:03Z"},
+		{"id":"2-0","kind":"tool_result","callId":"call-1","title":"view_image","content":"Screenshot and recording attached.","timestamp":"2026-07-30T01:02:04Z"},
+		{"id":"2-1","kind":"image","url":"data:image/png;base64,aGVsbG8=","mimeType":"image/png","alt":"Screenshot","timestamp":"2026-07-30T01:02:04Z"},
+		{"id":"2-2","kind":"video","url":"https://example.com/recording.mp4","alt":"Recording","timestamp":"2026-07-30T01:02:04Z"}
+	]`)
+}
+
+func TestParseClaudeTranscriptExtractsMediaFromToolResultContent(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"assistant","timestamp":"2026-07-30T01:02:03Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"inspect","input":{}}]}}`,
+		`{"type":"user","timestamp":"2026-07-30T01:02:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"Screenshot and recording attached."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="},"alt":"Screenshot"},{"type":"video","source":{"type":"url","url":"https://example.com/recording.mp4"},"alt":"Recording"}]}]}}`,
+	}, "\n")
+
+	got, err := Parse("claude", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	assertEntriesJSON(t, got, `[
+		{"id":"1-0","kind":"tool","callId":"tool-1","title":"inspect","content":"{}","timestamp":"2026-07-30T01:02:03Z"},
+		{"id":"2-0","kind":"tool_result","callId":"tool-1","title":"inspect","content":"Screenshot and recording attached.","timestamp":"2026-07-30T01:02:04Z"},
+		{"id":"2-1","kind":"image","url":"data:image/png;base64,aGVsbG8=","mimeType":"image/png","alt":"Screenshot","timestamp":"2026-07-30T01:02:04Z"},
+		{"id":"2-2","kind":"video","url":"https://example.com/recording.mp4","alt":"Recording","timestamp":"2026-07-30T01:02:04Z"}
+	]`)
+}
+
+func TestParseCodexTranscriptFiltersCompleteEnvironmentContextPayload(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n<cwd>/repo</cwd>\n</environment_context>"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep this ordinary request"}]}}`,
+	}, "\n")
+
+	got, err := Parse("codex", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := []Entry{{ID: "2-0", Kind: "message", Role: "user", Content: "Keep this ordinary request"}}
+	if !entriesEqual(got, want) {
+		t.Fatalf("Parse() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseCodexTranscriptFiltersCompleteAGENTSInstructionsPayload(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nUse the repository rules.\n</INSTRUCTIONS>"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Visible user request"}]}}`,
+	}, "\n")
+
+	got, err := Parse("codex", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := []Entry{{ID: "2-0", Kind: "message", Role: "user", Content: "Visible user request"}}
+	if !entriesEqual(got, want) {
+		t.Fatalf("Parse() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseSkipsUnsafeUnsupportedAndOversizedMedia(t *testing.T) {
+	oversizedDataURL := "data:image/png;base64," + strings.Repeat("A", 1<<20)
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"image","source":{"type":"url","url":"javascript:alert(1)"}},{"type":"image","source":{"type":"base64","media_type":"text/plain","data":"aGVsbG8="}},{"type":"audio","source":{"type":"base64","media_type":"audio/wav","data":"aGVsbG8="}}]}}`,
+		fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"image","source":{"type":"url","url":%s}}]}}`, strconv.Quote(oversizedDataURL)),
+		`{"type":"assistant","message":{"role":"assistant","content":"Still readable"}}`,
+	}, "\n")
+
+	got, err := Parse("claude", strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := []Entry{{ID: "3-0", Kind: "message", Role: "assistant", Content: "Still readable"}}
 	if !entriesEqual(got, want) {
 		t.Fatalf("Parse() = %#v, want %#v", got, want)
 	}
@@ -255,4 +373,23 @@ func entriesEqual(left, right []Entry) bool {
 		}
 	}
 	return true
+}
+
+func assertEntriesJSON(t *testing.T, got []Entry, want string) {
+	t.Helper()
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var gotValue any
+	if err := json.Unmarshal(gotJSON, &gotValue); err != nil {
+		t.Fatalf("json.Unmarshal(got) error = %v", err)
+	}
+	var wantValue any
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("json.Unmarshal(want) error = %v", err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("entries JSON = %s, want %s", gotJSON, want)
+	}
 }

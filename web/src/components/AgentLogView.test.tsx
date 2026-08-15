@@ -102,6 +102,95 @@ test("renders normalized transcript as safe semantic HTML", async () => {
   expect(screen.getByText("3 tool calls").closest("details")).toBeInTheDocument();
 });
 
+test("renders normalized image and video entries with accessible media controls", async () => {
+  const mediaLog = {
+    agent: "codex",
+    sessionId: "session-media",
+    entries: [
+      {
+        id: "image-1",
+        kind: "image",
+        role: "user",
+        url: "https://example.com/screenshot.png",
+        mimeType: "image/png",
+        alt: "Build screenshot",
+      },
+      {
+        id: "video-1",
+        kind: "video",
+        role: "assistant",
+        url: "https://example.com/recording.mp4",
+        mimeType: "video/mp4",
+        alt: "Build recording",
+      },
+    ],
+  } as unknown as AgentTranscript;
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: mediaLog, etag: 'W/"media"' }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  const image = await screen.findByRole("img", { name: "Build screenshot" });
+  expect(image).toHaveAttribute("src", "https://example.com/screenshot.png");
+  expect(image).toHaveClass("agent-log-media");
+
+  const video = document.querySelector("video");
+  expect(video).toBeInTheDocument();
+  expect(video).toHaveAttribute("aria-label", "Build recording");
+  expect(video).toHaveAttribute("controls");
+  expect(video).toHaveAttribute("preload", "metadata");
+  expect(video).toHaveClass("agent-log-media");
+  expect(video?.querySelector("source")).toHaveAttribute(
+    "src",
+    "https://example.com/recording.mp4",
+  );
+  expect(video?.querySelector("source")).toHaveAttribute("type", "video/mp4");
+});
+
+test("omits Codex runtime-injected user entries while preserving ordinary and assistant content", async () => {
+  const filteredLog = {
+    agent: "codex",
+    sessionId: "session-filtered",
+    entries: [
+      {
+        id: "environment-context",
+        kind: "message",
+        role: "user",
+        content: "<environment_context>injected environment</environment_context>",
+      },
+      {
+        id: "agents-instructions",
+        kind: "message",
+        role: "user",
+        content: "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>injected instructions</INSTRUCTIONS>",
+      },
+      {
+        id: "ordinary-user",
+        kind: "message",
+        role: "user",
+        content: "Visible user request",
+      },
+      {
+        id: "assistant-content",
+        kind: "message",
+        role: "assistant",
+        content: "Assistant mentions <environment_context>ordinary content</environment_context>",
+      },
+    ],
+  } as unknown as AgentTranscript;
+  const api = {
+    getAgentLog: vi.fn().mockResolvedValue({ log: filteredLog, etag: 'W/"filtered"' }),
+  } as unknown as ApiClient;
+
+  render(<AgentLogView session={session} api={api} active />);
+
+  expect(await screen.findByText("Visible user request")).toBeInTheDocument();
+  expect(screen.getByText(/Assistant mentions/)).toBeInTheDocument();
+  expect(screen.queryByText(/injected environment/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/injected instructions/)).not.toBeInTheDocument();
+});
+
 test("reuses one time formatter for timestamped entries", async () => {
   const OriginalDateTimeFormat = Intl.DateTimeFormat;
   class CountingDateTimeFormat {

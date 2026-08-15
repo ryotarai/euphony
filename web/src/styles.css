@@ -3681,6 +3681,37 @@ input {
   font-weight: 620;
 }
 
+.agent-log-media-entry {
+  width: 100%;
+  max-width: 48rem;
+  margin: 1rem 0;
+}
+
+.agent-log-media {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: min(70vh, 40rem);
+  object-fit: contain;
+  background: #0b0d0f;
+  border: 1px solid #262626;
+}
+
+.agent-log-media:focus-visible {
+  outline: 1px solid #b8f34a;
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .agent-log-media-entry {
+    margin: 0.75rem 0;
+  }
+
+  .agent-log-media {
+    max-height: 52vh;
+  }
+}
+
 .agent-log-detail {
   padding: 0.75rem 0;
   color: var(--muted-foreground);

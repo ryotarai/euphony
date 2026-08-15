@@ -115,6 +115,35 @@ function MessageEntry({ entry }: { entry: AgentLogEntry }) {
   );
 }
 
+function MediaEntry({ entry }: { entry: AgentLogEntry }) {
+  const alt = entry.alt?.trim() || (entry.kind === "video" ? "Video attachment" : "Image attachment");
+  if (entry.kind === "video") {
+    return (
+      <figure className="agent-log-media-entry" data-kind={entry.kind} data-role={entry.role}>
+        <video
+          className="agent-log-media"
+          aria-label={alt}
+          controls
+          preload="metadata"
+        >
+          <source src={entry.url} type={entry.mimeType || undefined} />
+        </video>
+      </figure>
+    );
+  }
+  return (
+    <figure className="agent-log-media-entry" data-kind={entry.kind} data-role={entry.role}>
+      <img
+        className="agent-log-media"
+        src={entry.url}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+      />
+    </figure>
+  );
+}
+
 function DetailEntry({ entry }: { entry: AgentLogEntry }) {
   const isThinking = entry.kind === "thinking";
   const label = isThinking
@@ -130,6 +159,27 @@ function DetailEntry({ entry }: { entry: AgentLogEntry }) {
       </summary>
       {isThinking ? <Markdown>{entry.content ?? ""}</Markdown> : <pre>{entry.content}</pre>}
     </details>
+  );
+}
+
+function isCompletePayload(text: string, opening: string, closing: string): boolean {
+  const openingIndex = text.indexOf(opening);
+  return openingIndex >= 0 && text.indexOf(closing, openingIndex + opening.length) >= 0;
+}
+
+function isCodexRuntimeInjectedEntry(agent: AgentTranscript["agent"], entry: AgentLogEntry): boolean {
+  if (agent !== "codex" || entry.kind !== "message" || entry.role !== "user") return false;
+  const text = entry.content ?? "";
+  if (isCompletePayload(text, "<environment_context>", "</environment_context>")) {
+    return true;
+  }
+  const heading = "# AGENTS.md instructions for ";
+  const headingIndex = text.indexOf(heading);
+  if (headingIndex < 0) return false;
+  return isCompletePayload(
+    text.slice(headingIndex + heading.length),
+    "<INSTRUCTIONS>",
+    "</INSTRUCTIONS>",
   );
 }
 
@@ -249,7 +299,9 @@ function TranscriptView({
   onLoadMore,
   viewportRef,
 }: TranscriptViewProps) {
-  const entries = transcript.entries ?? [];
+  const entries = (transcript.entries ?? []).filter(
+    (entry) => !isCodexRuntimeInjectedEntry(transcript.agent, entry),
+  );
   if (entries.length === 0 && !transcript.nextCursor) {
     return (
       <Empty className="agent-log-empty">
@@ -287,6 +339,8 @@ function TranscriptView({
               >
                 {entry.kind === "message" ? (
                   <MessageEntry entry={entry} />
+                ) : entry.kind === "image" || entry.kind === "video" ? (
+                  <MediaEntry entry={entry} />
                 ) : entry.kind === "tool_group" ? (
                   <ToolGroupEntry entry={entry} />
                 ) : (

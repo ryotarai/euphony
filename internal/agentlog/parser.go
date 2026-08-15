@@ -3,14 +3,21 @@ package agentlog
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"net/url"
 	"strings"
 )
 
-const maxEntryContentBytes = 48 << 10
+const (
+	maxEntryContentBytes = 48 << 10
+	maxMediaURLBytes     = 1 << 20
+	maxMediaDataBytes    = 1 << 20
+)
 
 type parser struct {
 	agent     string
@@ -134,10 +141,16 @@ func (p *parser) parseClaude(record map[string]json.RawMessage) []Entry {
 			})
 		case "tool_result":
 			callID := rawString(block["tool_use_id"])
+			content, media := normalizeToolResultContent(block["content"], "", timestamp)
 			entries = append(entries, Entry{
 				Kind: "tool_result", CallID: callID, Title: p.toolNames[callID],
-				Content: textContent(block["content"]), Timestamp: timestamp,
+				Content: content, Timestamp: timestamp,
 			})
+			entries = append(entries, media...)
+		case "image", "video":
+			if entry, ok := normalizeClaudeMedia(block, rawString(block["type"]), message.Role, timestamp); ok {
+				entries = append(entries, entry)
+			}
 		}
 	}
 	return entries
@@ -162,16 +175,22 @@ func (p *parser) parseCodex(record map[string]json.RawMessage) []Entry {
 		if json.Unmarshal(payload["content"], &content) != nil {
 			return nil
 		}
+		if role == "user" && codexRuntimeInjectedContent(content) {
+			return nil
+		}
 		var entries []Entry
 		for _, block := range content {
-			blockType := rawString(block["type"])
-			if blockType != "input_text" && blockType != "output_text" {
-				continue
-			}
-			if text := rawString(block["text"]); strings.TrimSpace(text) != "" {
-				entries = append(entries, Entry{
-					Kind: "message", Role: role, Content: text, Timestamp: timestamp,
-				})
+			switch blockType := rawString(block["type"]); blockType {
+			case "input_text", "output_text":
+				if text := rawString(block["text"]); strings.TrimSpace(text) != "" {
+					entries = append(entries, Entry{
+						Kind: "message", Role: role, Content: text, Timestamp: timestamp,
+					})
+				}
+			case "input_image", "output_image", "input_video", "output_video":
+				if entry, ok := normalizeCodexMedia(block, blockType, role, timestamp); ok {
+					entries = append(entries, entry)
+				}
 			}
 		}
 		return entries
@@ -204,12 +223,240 @@ func (p *parser) parseCodex(record map[string]json.RawMessage) []Entry {
 		}}
 	case "function_call_output", "custom_tool_call_output":
 		callID := rawString(payload["call_id"])
-		return []Entry{{
+		content, media := normalizeToolResultContent(payload["output"], "", timestamp)
+		entries := []Entry{{
 			Kind: "tool_result", CallID: callID, Title: p.toolNames[callID],
-			Content: textContent(payload["output"]), Timestamp: timestamp,
+			Content: content, Timestamp: timestamp,
 		}}
+		return append(entries, media...)
 	}
 	return nil
+}
+
+func normalizeClaudeMedia(
+	block map[string]json.RawMessage,
+	kind string,
+	role string,
+	timestamp string,
+) (Entry, bool) {
+	var source map[string]json.RawMessage
+	if json.Unmarshal(block["source"], &source) != nil {
+		source = nil
+	}
+	mimeType := firstMediaRawString(
+		block["mime_type"], block["mimeType"],
+		source["media_type"], source["mime_type"], source["mimeType"],
+	)
+	mediaURL := firstMediaRawString(source["url"], block["url"])
+	if mediaURL == "" {
+		data := rawString(source["data"])
+		if data != "" {
+			if strings.HasPrefix(strings.TrimSpace(data), "data:") {
+				mediaURL = strings.TrimSpace(data)
+			} else if mimeType != "" && len(data) <= maxMediaURLBytes {
+				mediaURL = "data:" + mimeType + ";base64," + data
+			}
+		}
+	}
+	alt := mediaAlt(block, source, kind)
+	return newMediaEntry(kind, mediaURL, mimeType, alt, role, timestamp)
+}
+
+func normalizeCodexMedia(
+	block map[string]json.RawMessage,
+	blockType string,
+	role string,
+	timestamp string,
+) (Entry, bool) {
+	kind := "image"
+	if strings.HasSuffix(blockType, "_video") {
+		kind = "video"
+	}
+	mimeType := firstMediaRawString(block["mime_type"], block["mimeType"])
+	mediaURL := firstMediaRawString(
+		block["image_url"], block["video_url"], block["url"], block["result"],
+	)
+	alt := mediaAlt(block, nil, kind)
+	return newMediaEntry(kind, mediaURL, mimeType, alt, role, timestamp)
+}
+
+func normalizeToolResultContent(
+	raw json.RawMessage,
+	role string,
+	timestamp string,
+) (string, []Entry) {
+	if text := rawString(raw); text != "" {
+		return text, nil
+	}
+	var blocks []map[string]json.RawMessage
+	if json.Unmarshal(raw, &blocks) != nil {
+		return formatJSON(raw), nil
+	}
+	texts := make([]string, 0, len(blocks))
+	media := make([]Entry, 0)
+	for _, block := range blocks {
+		blockType := rawString(block["type"])
+		switch blockType {
+		case "image", "video":
+			if entry, ok := normalizeClaudeMedia(block, blockType, role, timestamp); ok {
+				media = append(media, entry)
+			}
+		case "input_image", "output_image", "input_video", "output_video":
+			if entry, ok := normalizeCodexMedia(block, blockType, role, timestamp); ok {
+				media = append(media, entry)
+			}
+		default:
+			if text := rawString(block["text"]); strings.TrimSpace(text) != "" {
+				texts = append(texts, text)
+			}
+		}
+	}
+	return strings.Join(texts, "\n"), media
+}
+
+func newMediaEntry(
+	kind string,
+	mediaURL string,
+	mimeType string,
+	alt string,
+	role string,
+	timestamp string,
+) (Entry, bool) {
+	mediaURL, mimeType, ok := validateMediaURL(mediaURL, kind, mimeType)
+	if !ok {
+		return Entry{}, false
+	}
+	return Entry{
+		Kind: kind, Role: role, URL: mediaURL, MimeType: mimeType,
+		Alt: alt, Timestamp: timestamp,
+	}, true
+}
+
+func validateMediaURL(mediaURL, kind, hintedMimeType string) (string, string, bool) {
+	mediaURL = strings.TrimSpace(mediaURL)
+	if mediaURL == "" || len(mediaURL) > maxMediaURLBytes {
+		return "", "", false
+	}
+	hintedMimeType, ok := validateMediaType(hintedMimeType, kind)
+	if !ok {
+		return "", "", false
+	}
+	if strings.HasPrefix(mediaURL, "data:") {
+		return validateDataMediaURL(mediaURL, kind, hintedMimeType)
+	}
+	parsed, err := url.Parse(mediaURL)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", "", false
+	}
+	return mediaURL, hintedMimeType, true
+}
+
+func validateDataMediaURL(mediaURL, kind, hintedMimeType string) (string, string, bool) {
+	metadataAndData := strings.TrimPrefix(mediaURL, "data:")
+	separator := strings.IndexByte(metadataAndData, ',')
+	if separator <= 0 {
+		return "", "", false
+	}
+	metadata := metadataAndData[:separator]
+	data := metadataAndData[separator+1:]
+	parts := strings.Split(metadata, ";")
+	if len(parts) < 2 || parts[len(parts)-1] != "base64" || data == "" {
+		return "", "", false
+	}
+	mediaType, ok := validateMediaType(parts[0], kind)
+	if !ok {
+		return "", "", false
+	}
+	if hintedMimeType != "" && !sameMediaFamily(hintedMimeType, mediaType) {
+		return "", "", false
+	}
+	if len(data) > maxMediaURLBytes {
+		return "", "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil || len(decoded) == 0 || len(decoded) > maxMediaDataBytes {
+		return "", "", false
+	}
+	return mediaURL, mediaType, true
+}
+
+func validateMediaType(value, kind string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", true
+	}
+	parsed, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return "", false
+	}
+	parsed = strings.ToLower(parsed)
+	if !strings.HasPrefix(parsed, kind+"/") {
+		return "", false
+	}
+	return parsed, true
+}
+
+func sameMediaFamily(left, right string) bool {
+	return strings.HasPrefix(left, "image/") && strings.HasPrefix(right, "image/") ||
+		strings.HasPrefix(left, "video/") && strings.HasPrefix(right, "video/")
+}
+
+func mediaAlt(
+	block map[string]json.RawMessage,
+	source map[string]json.RawMessage,
+	kind string,
+) string {
+	alt := firstMediaRawString(
+		block["alt"], block["description"], block["name"], block["filename"],
+		source["alt"], source["description"], source["name"], source["filename"],
+	)
+	if strings.TrimSpace(alt) != "" {
+		return strings.TrimSpace(alt)
+	}
+	if kind == "video" {
+		return "Video attachment"
+	}
+	return "Image attachment"
+}
+
+func firstMediaRawString(values ...json.RawMessage) string {
+	for _, value := range values {
+		if text := rawString(value); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func codexRuntimeInjectedContent(content []map[string]json.RawMessage) bool {
+	for _, block := range content {
+		if rawString(block["type"]) != "input_text" {
+			continue
+		}
+		if isCompletePayload(rawString(block["text"]), "<environment_context>", "</environment_context>") {
+			return true
+		}
+		text := rawString(block["text"])
+		heading := "# AGENTS.md instructions for "
+		start := strings.Index(text, heading)
+		if start < 0 {
+			continue
+		}
+		remainder := text[start+len(heading):]
+		if isCompletePayload(remainder, "<INSTRUCTIONS>", "</INSTRUCTIONS>") {
+			return true
+		}
+	}
+	return false
+}
+
+func isCompletePayload(text, opening, closing string) bool {
+	start := strings.Index(text, opening)
+	if start < 0 {
+		return false
+	}
+	return strings.Index(text[start+len(opening):], closing) >= 0
 }
 
 func rawString(raw json.RawMessage) string {

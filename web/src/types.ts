@@ -224,7 +224,9 @@ export type AgentLogEntryKind =
   | "thinking"
   | "tool"
   | "tool_result"
-  | "tool_group";
+  | "tool_group"
+  | "image"
+  | "video";
 
 export interface AgentLogEntry {
   id: string;
@@ -232,6 +234,9 @@ export interface AgentLogEntry {
   role?: "user" | "assistant";
   title?: string;
   content?: string;
+  url?: string;
+  mimeType?: string;
+  alt?: string;
   callId?: string;
   toolCalls?: number;
   entries?: AgentLogEntry[];

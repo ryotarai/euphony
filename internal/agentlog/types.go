@@ -6,6 +6,9 @@ type Entry struct {
 	Role      string  `json:"role,omitempty"`
 	Title     string  `json:"title,omitempty"`
 	Content   string  `json:"content,omitempty"`
+	URL       string  `json:"url,omitempty"`
+	MimeType  string  `json:"mimeType,omitempty"`
+	Alt       string  `json:"alt,omitempty"`
 	CallID    string  `json:"callId,omitempty"`
 	ToolCalls int     `json:"toolCalls,omitempty"`
 	Entries   []Entry `json:"entries,omitempty"`
