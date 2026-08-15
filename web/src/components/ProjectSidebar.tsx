@@ -232,7 +232,7 @@ function ProjectSessionRow({
   const action = summary?.action?.trim() || "";
   const unread = summary?.unread === true;
   const latestSummary = summary?.summary?.trim() || "";
-  const purposeText = purpose || latestSummary;
+  const purposeText = purpose || latestSummary || "New session";
   const showSummary = Boolean(latestSummary && purpose && latestSummary !== purpose);
   const requiredAction = action || "None";
   const accessibleDescriptionID = `project-session-details-${session.id}`;
