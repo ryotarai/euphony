@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -216,6 +217,138 @@ func TestAllSessionsResumeStartsPersistedCodexWithSeparateArgumentsAndSelection(
 		data, err := os.ReadFile(argsPath)
 		return err == nil && string(data) == "resume\nsession-resume\n"
 	})
+}
+
+func TestAllSessionsResumeStartsUnknownCodexFromQueryCWDAndReusesIt(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "euphony.sqlite3")
+	cwd := t.TempDir()
+	argsPath := filepath.Join(root, "codex-args.txt")
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(bin) error = %v", err)
+	}
+	codexCommand := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexCommand, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+argsPath+"\"\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(codex) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	srv, err := New(Config{
+		Token:        "token",
+		Shell:        "/bin/sh",
+		DatabasePath: databasePath,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	path := "/api/all-sessions/codex/query-codex-session/resume?cwd=" + url.QueryEscape(cwd)
+	response := performRequest(t, srv, http.MethodPost, path, `{"selectionMode":"replace"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("POST query-only Codex resume status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Terminal  session.Metadata   `json:"terminal"`
+		Selection selection.Snapshot `json:"selection"`
+	}
+	decodeResponse(t, response, &result)
+	if result.Terminal.ID == "" || result.Terminal.Agent != "codex" || result.Terminal.CWD != cwd ||
+		result.Terminal.State != session.StateRunning {
+		t.Fatalf("query-only Codex terminal = %#v", result.Terminal)
+	}
+	if !reflect.DeepEqual(result.Selection.TerminalIDs, []string{result.Terminal.ID}) ||
+		result.Selection.FocusedTerminalID != result.Terminal.ID {
+		t.Fatalf("query-only Codex selection = %#v", result.Selection)
+	}
+	persisted := srv.sessions.ListPersisted()
+	if len(persisted) != 1 || persisted[0].Agent != "codex" ||
+		persisted[0].ResumeAgent != "codex" || persisted[0].AgentSessionID != "query-codex-session" {
+		t.Fatalf("query-only Codex persisted metadata = %#v", persisted)
+	}
+
+	repeated := performRequest(t, srv, http.MethodPost, path, `{"selectionMode":"replace"}`)
+	if repeated.Code != http.StatusOK {
+		t.Fatalf("repeated query-only Codex resume status = %d, body = %s", repeated.Code, repeated.Body.String())
+	}
+	var repeatedResult struct {
+		Terminal session.Metadata `json:"terminal"`
+	}
+	decodeResponse(t, repeated, &repeatedResult)
+	if repeatedResult.Terminal.ID != result.Terminal.ID {
+		t.Fatalf("repeated query-only Codex terminal = %#v, want %q", repeatedResult.Terminal, result.Terminal.ID)
+	}
+	waitForServer(t, 3*time.Second, func() bool {
+		data, err := os.ReadFile(argsPath)
+		return err == nil && string(data) == "resume\nquery-codex-session\n"
+	})
+}
+
+func TestAllSessionsResumeStartsUnknownClaudeFromQueryCWDWithSeparateArguments(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "euphony.sqlite3")
+	cwd := t.TempDir()
+	argsPath := filepath.Join(root, "claude-args.txt")
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(bin) error = %v", err)
+	}
+	claudeCommand := filepath.Join(binDir, "claude")
+	if err := os.WriteFile(claudeCommand, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+argsPath+"\"\nsleep 30\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(claude) error = %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	srv, err := New(Config{
+		Token:        "token",
+		Shell:        "/bin/sh",
+		DatabasePath: databasePath,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/all-sessions/claude/query-claude-session/resume?cwd="+url.QueryEscape(cwd), "")
+	if response.Code != http.StatusCreated {
+		t.Fatalf("POST query-only Claude resume status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Terminal session.Metadata `json:"terminal"`
+	}
+	decodeResponse(t, response, &result)
+	if result.Terminal.ID == "" || result.Terminal.Agent != "claude" || result.Terminal.CWD != cwd ||
+		result.Terminal.State != session.StateRunning {
+		t.Fatalf("query-only Claude terminal = %#v", result.Terminal)
+	}
+	waitForServer(t, 3*time.Second, func() bool {
+		data, err := os.ReadFile(argsPath)
+		return err == nil && string(data) == "--resume\nquery-claude-session\n"
+	})
+}
+
+func TestAllSessionsResumeUnknownSessionRequiresQueryCWD(t *testing.T) {
+	root := t.TempDir()
+	srv, err := New(Config{
+		Token:        "token",
+		Shell:        "/bin/sh",
+		DatabasePath: filepath.Join(root, "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/all-sessions/codex/missing-from-db/resume", "")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("POST resume without query cwd status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if terminals := srv.sessions.List(); len(terminals) != 0 {
+		t.Fatalf("terminals after rejected query-only resume = %#v", terminals)
+	}
 }
 
 func TestAllSessionsResumeReusesOpenMatchingAgentTerminal(t *testing.T) {
