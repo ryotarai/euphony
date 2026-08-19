@@ -3538,14 +3538,21 @@ test.each(["/", "/resume"])(
 test.each([
   {
     name: "incomplete resume params",
+    pathname: "/",
     query: "agent=codex&session=external-session",
   },
   {
     name: "invalid resume agent",
+    pathname: "/",
     query: "agent=cursor&session=external-session&cwd=%2Fworkspace%2Fexternal",
   },
-])("does not resume with $name", async ({ query }) => {
-  history.replaceState(null, "", `/?${query}`);
+  {
+    name: "trailing slash resume path",
+    pathname: "/resume/",
+    query: "agent=codex&session=external-session&cwd=%2Fworkspace%2Fexternal",
+  },
+])("does not resume with $name", async ({ pathname, query }) => {
+  history.replaceState(null, "", `${pathname}?${query}`);
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (input === "/api/sessions" && (!init || init.method === undefined)) {
       return jsonResponse([runningSession]);

@@ -483,7 +483,7 @@ function clearResumeQueryFromURL(resumeQuery: ResumeQuery, resumeRoute = false) 
     parameters.append(key, value);
   }
   const query = parameters.toString();
-  const pathname = resumeRoute && /^\/resume\/?$/.test(window.location.pathname)
+  const pathname = resumeRoute && window.location.pathname === "/resume"
     ? "/"
     : window.location.pathname;
   const cleanURL = `${pathname}${query ? `?${query}` : ""}${window.location.hash}`;
@@ -626,14 +626,15 @@ export function App({
 }: AppProps) {
   const initialDashboardRoute = dashboardRouteFromURL();
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
-  const resumeRoute = /^\/resume\/?$/.test(window.location.pathname);
+  const resumeRoute = window.location.pathname === "/resume";
+  const resumeQueryPath = window.location.pathname === "/" || resumeRoute;
   const resumeQueryParameters = useMemo(
     () => new URLSearchParams(window.location.search),
     [],
   );
   const queryResumeRequest = useMemo(
-    () => resumeQueryFromParameters(resumeQueryParameters),
-    [resumeQueryParameters],
+    () => resumeQueryPath ? resumeQueryFromParameters(resumeQueryParameters) : null,
+    [resumeQueryParameters, resumeQueryPath],
   );
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
