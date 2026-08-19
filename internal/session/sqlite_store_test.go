@@ -52,6 +52,7 @@ func TestSQLiteStoreMigratesLegacyAttentionStatus(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if len(items) != 1 || items[0].AgentStatus != "waiting" || !items[0].NeedsAttention ||
+		items[0].Archived ||
 		items[0].ProjectID != "" ||
 		!items[0].UpdatedAt.Equal(createdAt) {
 		t.Fatalf("migrated metadata = %#v, want waiting with attention", items)
@@ -117,6 +118,7 @@ func TestSQLiteStorePersistsTerminalMetadata(t *testing.T) {
 		Agent: "codex", ResumeAgent: "codex", AgentStatus: "waiting", AgentTitle: "SQLite",
 		ProjectID:           "project-1",
 		CustomName:          true,
+		Archived:            true,
 		NeedsAttention:      true,
 		AgentSessionID:      "019c43d4-95d9-7af0-92c4-d9f670ccaa32",
 		AgentTranscriptPath: "/home/me/.codex/sessions/2026/07/30/rollout-session.jsonl",
@@ -298,8 +300,8 @@ func TestSQLiteStorePersistsSelection(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 16 {
-		t.Fatalf("user_version = %d, want 16", version)
+	if version != 17 {
+		t.Fatalf("user_version = %d, want 17", version)
 	}
 }
 
@@ -435,6 +437,7 @@ func metadataEqual(left, right Metadata) bool {
 		left.ResumeAgent == right.ResumeAgent &&
 		left.AgentStatus == right.AgentStatus && left.AgentTitle == right.AgentTitle &&
 		left.CustomName == right.CustomName &&
+		left.Archived == right.Archived &&
 		left.NeedsAttention == right.NeedsAttention &&
 		left.AgentSessionID == right.AgentSessionID &&
 		left.AgentTranscriptPath == right.AgentTranscriptPath &&

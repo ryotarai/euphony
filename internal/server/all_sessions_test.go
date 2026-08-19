@@ -43,6 +43,7 @@ func TestAllSessionsListsPersistedAgentSessionsOnly(t *testing.T) {
 		ID: "closed-agent", Name: "Closed DB agent", State: session.StateExited,
 		CWD: t.TempDir(), Agent: "claude", ResumeAgent: "claude",
 		AgentSessionID: "session-db-only", AgentTitle: "Closed DB agent",
+		Archived:  true,
 		CreatedAt: closedAt.Add(-time.Hour), UpdatedAt: closedAt, ExitedAt: &closedAt,
 	}); err != nil {
 		t.Fatalf("Save(exited agent) error = %v", err)
@@ -118,7 +119,7 @@ func TestAllSessionsListsPersistedAgentSessionsOnly(t *testing.T) {
 	}
 	if closedItem == nil || closedItem.ID != "closed-agent" ||
 		closedItem.Agent != "claude" || closedItem.State != allSessionResume ||
-		closedItem.Title != "Closed DB agent" {
+		closedItem.Title != "Closed DB agent" || !closedItem.Archived {
 		t.Fatalf("closed DB all session = %#v", closedItem)
 	}
 	if !items[0].UpdatedAt.After(items[1].UpdatedAt) {
@@ -168,7 +169,7 @@ func TestAllSessionsResumeStartsPersistedCodexWithSeparateArgumentsAndSelection(
 	if err := store.Save(t.Context(), session.Metadata{
 		ID: "persisted-resume", Name: "Resume rollout", State: session.StateExited,
 		CWD: cwd, Agent: "codex", ResumeAgent: "codex", AgentSessionID: "session-resume",
-		AgentTitle: "Resume rollout", CreatedAt: createdAt, UpdatedAt: createdAt,
+		AgentTitle: "Resume rollout", Archived: true, CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
 		t.Fatalf("Save(exited agent) error = %v", err)
 	}
@@ -194,6 +195,15 @@ func TestAllSessionsResumeStartsPersistedCodexWithSeparateArgumentsAndSelection(
 		t.Fatalf("New() error = %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	indexed := performRequest(t, srv, http.MethodGet, "/api/all-sessions", "")
+	if indexed.Code != http.StatusOK {
+		t.Fatalf("GET archived /api/all-sessions status = %d, body = %s", indexed.Code, indexed.Body.String())
+	}
+	var indexedItems []allSession
+	decodeResponse(t, indexed, &indexedItems)
+	if len(indexedItems) != 1 || !indexedItems[0].Archived || indexedItems[0].SessionID != "session-resume" {
+		t.Fatalf("archived all sessions = %#v, want archived resumable session", indexedItems)
+	}
 
 	response := performRequest(t, srv, http.MethodPost,
 		"/api/all-sessions/codex/session-resume/resume",

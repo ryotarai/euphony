@@ -48,6 +48,7 @@ type Metadata struct {
 	ID                  string     `json:"id"`
 	Name                string     `json:"name"`
 	CustomName          bool       `json:"customName,omitempty"`
+	Archived            bool       `json:"archived"`
 	State               State      `json:"state"`
 	CWD                 string     `json:"cwd"`
 	RepoRoot            string     `json:"repoRoot"`
@@ -1969,6 +1970,9 @@ func (m *Manager) ListCurrent() []Metadata {
 	m.mu.RLock()
 	result := make([]Metadata, 0, len(m.sessions))
 	for _, item := range m.sessions {
+		if item.metadata.Archived {
+			continue
+		}
 		result = append(result, item.metadata)
 	}
 	m.mu.RUnlock()
@@ -1979,12 +1983,16 @@ func (m *Manager) ListCurrent() []Metadata {
 }
 
 // ListStored returns current terminals and metadata retained for terminals
-// whose processes have exited. The latter is loaded from the persistent store
-// on startup and is intentionally excluded from ListCurrent so exited
-// terminals do not reappear as live panes.
+// whose processes have exited. User-archived current terminals are excluded
+// from ListCurrent but remain available here for the All sessions index.
 func (m *Manager) ListStored() []Metadata {
 	result := m.List()
 	m.mu.RLock()
+	for _, item := range m.sessions {
+		if item.metadata.Archived {
+			result = append(result, item.metadata)
+		}
+	}
 	for _, metadata := range m.archived {
 		result = append(result, metadata)
 	}
@@ -2617,6 +2625,113 @@ func (m *Manager) Metadata(id string) (Metadata, bool) {
 		return Metadata{}, false
 	}
 	return item.metadata, true
+}
+
+// SetAgentSessionArchived updates the user-managed archive flag for an agent
+// session identified by its Euphony terminal ID and agent session ID. Exited
+// sessions remain in m.archived, so the same identity works before and after a
+// terminal process exits.
+func (m *Manager) SetAgentSessionArchived(
+	terminalID, agentSessionID string, archived bool,
+) (Metadata, error) {
+	terminalID = strings.TrimSpace(terminalID)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if terminalID == "" || agentSessionID == "" {
+		return Metadata{}, ErrNotFound
+	}
+
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(terminalID)
+	if err == nil {
+		defer releaseMetadataSave()
+
+		m.mu.Lock()
+		if m.closing {
+			m.mu.Unlock()
+			return Metadata{}, ErrManagerClosing
+		}
+		current, ok := m.sessions[terminalID]
+		if !ok || current != item || current.metadata.AgentSessionID != agentSessionID {
+			m.mu.Unlock()
+			return Metadata{}, ErrNotFound
+		}
+		before := current.metadata
+		if before.Archived == archived {
+			m.mu.Unlock()
+			return before, nil
+		}
+		after := before
+		after.Archived = archived
+		current.metadata = after
+		change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		store := m.store
+		var operation storeOperation
+		if store != nil {
+			operation = m.reserveStoreOperation()
+		}
+		m.mu.Unlock()
+
+		if store != nil {
+			if err := m.runStoreOperation(operation, func() error {
+				return store.Save(context.Background(), after)
+			}); err != nil {
+				m.mu.Lock()
+				if current, exists := m.sessions[terminalID]; exists &&
+					current == item && current.metadata.Archived == after.Archived {
+					current.metadata = before
+				}
+				m.mu.Unlock()
+				m.skipChange(change)
+				return Metadata{}, err
+			}
+		}
+		m.emitChange(change)
+		return after, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Metadata{}, err
+	}
+
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return Metadata{}, ErrManagerClosing
+	}
+	before, ok := m.archived[terminalID]
+	if !ok || before.AgentSessionID != agentSessionID {
+		m.mu.Unlock()
+		return Metadata{}, ErrNotFound
+	}
+	if before.Archived == archived {
+		m.mu.Unlock()
+		return before, nil
+	}
+	after := before
+	after.Archived = archived
+	change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+	m.archived[terminalID] = after
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+
+	if store != nil {
+		if err := m.runStoreOperation(operation, func() error {
+			return store.Save(context.Background(), after)
+		}); err != nil {
+			m.mu.Lock()
+			if current, exists := m.archived[terminalID]; exists &&
+				current.Archived == after.Archived {
+				m.archived[terminalID] = before
+			}
+			m.mu.Unlock()
+			m.skipChange(change)
+			return Metadata{}, err
+		}
+	}
+	m.emitChange(change)
+	return after, nil
 }
 
 func (m *Manager) Delete(id string) error {

@@ -31,6 +31,8 @@ type allSession struct {
 	Title      string    `json:"title"`
 	Purpose    string    `json:"purpose,omitempty"`
 	Summary    string    `json:"summary,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	Archived   bool      `json:"archived"`
 	CWD        string    `json:"cwd"`
 	Project    string    `json:"project,omitempty"`
 	UpdatedAt  time.Time `json:"updatedAt"`
@@ -116,6 +118,8 @@ func allSessionFromMetadata(
 		Agent:      agent,
 		SessionID:  metadata.AgentSessionID,
 		Title:      metadata.Name,
+		Status:     metadata.AgentStatus,
+		Archived:   metadata.Archived,
 		CWD:        metadata.CWD,
 		UpdatedAt:  metadata.UpdatedAt,
 		State:      state,
@@ -134,6 +138,9 @@ func allSessionFromMetadata(
 	if summary.TerminalID != "" {
 		item.Purpose = summary.Purpose
 		item.Summary = summary.Summary
+		if item.Status == "" {
+			item.Status = summary.Status
+		}
 		if summary.GeneratedAt.After(item.UpdatedAt) {
 			item.UpdatedAt = summary.GeneratedAt
 		}

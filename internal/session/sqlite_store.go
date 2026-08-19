@@ -74,6 +74,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			custom_name INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL,
 			cwd TEXT NOT NULL,
 			project_id TEXT NOT NULL DEFAULT '',
@@ -163,6 +164,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE terminals ADD COLUMN custom_name INTEGER NOT NULL DEFAULT 0",
 		); err != nil {
 			return fmt.Errorf("add terminal custom name marker: %w", err)
+		}
+	}
+	hasArchived, err := s.hasColumn(ctx, "terminals", "archived")
+	if err != nil {
+		return err
+	}
+	if !hasArchived {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE terminals ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add terminal archived flag: %w", err)
 		}
 	}
 	hasNeedsAttention, err := s.hasColumn(ctx, "terminals", "needs_attention")
@@ -451,7 +463,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 16"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 17"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -650,7 +662,7 @@ func (s *SQLiteStore) SaveSelection(ctx context.Context, state selection.State) 
 }
 
 func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, custom_name, state, cwd, project_id, agent, resume_agent,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, custom_name, archived, state, cwd, project_id, agent, resume_agent,
 		agent_status, needs_attention, agent_title, agent_session_id, agent_transcript_path,
 		created_at, updated_at, exited_at, exit_code, message
 		FROM terminals ORDER BY created_at`)
@@ -666,14 +678,16 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 		var exitedAt sql.NullString
 		var exitCode sql.NullInt64
 		var customName int
+		var archived int
 		var needsAttention int
-		if err := rows.Scan(&item.ID, &item.Name, &customName, &item.State, &item.CWD, &item.ProjectID, &item.Agent,
+		if err := rows.Scan(&item.ID, &item.Name, &customName, &archived, &item.State, &item.CWD, &item.ProjectID, &item.Agent,
 			&item.ResumeAgent, &item.AgentStatus, &needsAttention,
 			&item.AgentTitle, &item.AgentSessionID, &item.AgentTranscriptPath,
 			&createdAt, &updatedAt, &exitedAt, &exitCode, &item.Message); err != nil {
 			return nil, fmt.Errorf("scan terminal: %w", err)
 		}
 		item.CustomName = customName != 0
+		item.Archived = archived != 0
 		item.NeedsAttention = needsAttention != 0
 		item.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
@@ -720,12 +734,13 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 		exitCode = *item.ExitCode
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO terminals (
-		id, name, custom_name, state, cwd, project_id, agent, resume_agent, agent_status, needs_attention,
+		id, name, custom_name, archived, state, cwd, project_id, agent, resume_agent, agent_status, needs_attention,
 		agent_title, agent_session_id, agent_transcript_path,
 		created_at, updated_at, exited_at, exit_code, message
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(id) DO UPDATE SET
-		name=excluded.name, custom_name=excluded.custom_name, state=excluded.state,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name, custom_name=excluded.custom_name, archived=excluded.archived,
+			state=excluded.state,
 		cwd=excluded.cwd, project_id=excluded.project_id, agent=excluded.agent,
 		resume_agent=excluded.resume_agent, agent_status=excluded.agent_status,
 		needs_attention=excluded.needs_attention,
@@ -734,7 +749,7 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 		created_at=excluded.created_at, updated_at=excluded.updated_at,
 		exited_at=excluded.exited_at,
 		exit_code=excluded.exit_code, message=excluded.message`,
-		item.ID, item.Name, item.CustomName, item.State, item.CWD, item.ProjectID, item.Agent, item.ResumeAgent,
+		item.ID, item.Name, item.CustomName, item.Archived, item.State, item.CWD, item.ProjectID, item.Agent, item.ResumeAgent,
 		item.AgentStatus, item.NeedsAttention, item.AgentTitle, item.AgentSessionID,
 		item.AgentTranscriptPath,
 		item.CreatedAt.Format(time.RFC3339Nano), updatedAt.Format(time.RFC3339Nano),
