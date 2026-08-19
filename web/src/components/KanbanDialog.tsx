@@ -92,6 +92,11 @@ function sessionStatus(
   restoredIDs: ReadonlySet<string>,
 ): KanbanStatus {
   if (archivedIDs.has(session.id)) return "archived";
+  if (session.archived) {
+    return restoredIDs.has(session.id)
+      ? session.status === "archived" ? "running" : session.status
+      : "archived";
+  }
   if (session.status === "archived") return restoredIDs.has(session.id) ? "running" : "archived";
   return session.status;
 }

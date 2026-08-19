@@ -48,6 +48,9 @@ func (s *Server) kanbanSessions(ctx context.Context, archivedOnly bool) ([]allSe
 	}
 	summaries := make(map[string]session.AgentSummary)
 	for _, item := range s.sessions.AgentSummaries() {
+		if item.Done {
+			continue
+		}
 		summaries[item.TerminalID] = item
 	}
 	metadata := s.sessions.List()
@@ -132,6 +135,9 @@ func (s *Server) allSessionForMetadata(ctx context.Context, metadata session.Met
 	}
 	summaries := make(map[string]session.AgentSummary)
 	for _, item := range s.sessions.AgentSummaries() {
+		if item.Done {
+			continue
+		}
 		summaries[item.TerminalID] = item
 	}
 	return allSessionFromMetadata(metadata, projectsByID, summaries[metadata.ID]), nil

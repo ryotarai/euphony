@@ -134,3 +134,18 @@ test("restores an archived card through its accessible fallback action", async (
   expect(screen.getByRole("region", { name: "Archived" }))
     .not.toHaveTextContent("Polish the onboarding copy");
 });
+
+test("preserves an archived session's waiting state when it is restored", async () => {
+  const user = userEvent.setup();
+  const onRestoreSession = vi.fn().mockResolvedValue(undefined);
+  const archivedWaiting = { ...sessions[1], id: "archived-waiting-1", archived: true };
+  renderModal({ sessions: [archivedWaiting], onRestoreSession });
+
+  await user.click(screen.getByRole("button", { name: "Restore Review the release notes" }));
+
+  await waitFor(() => expect(onRestoreSession).toHaveBeenCalledWith(archivedWaiting));
+  expect(screen.getByRole("region", { name: "Waiting" }))
+    .toHaveTextContent("Review the release notes");
+  expect(screen.getByRole("region", { name: "Running" }))
+    .not.toHaveTextContent("Review the release notes");
+});

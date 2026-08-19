@@ -96,3 +96,29 @@ func TestListCurrentExcludesArchivedWhileStoredAndPersistedRetainIt(t *testing.T
 		t.Fatalf("ListPersisted() = %#v, want archived open session retained", persisted)
 	}
 }
+
+func TestSetAgentSessionArchivedRejectsNonAgentIdentity(t *testing.T) {
+	manager, err := NewPersistentManager("/bin/sh", HookConfig{}, filepath.Join(t.TempDir(), "euphony.sqlite3"))
+	if err != nil {
+		t.Fatalf("NewPersistentManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	metadata, err := manager.Create(context.Background(), "Terminal with an unrelated session ID", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(metadata.ID, AgentUpdate{
+		AgentSessionID: "unrelated-session-id",
+		Status:         "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	if _, err := manager.SetAgentSessionArchived(metadata.ID, "unrelated-session-id", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SetAgentSessionArchived() error = %v, want ErrNotFound", err)
+	}
+	current, ok := manager.Metadata(metadata.ID)
+	if !ok || current.Archived {
+		t.Fatalf("metadata after rejected archive = %#v, want an unarchived terminal", current)
+	}
+}

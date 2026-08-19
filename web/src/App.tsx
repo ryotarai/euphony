@@ -344,8 +344,7 @@ function activityLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-function kanbanStatus(value: string | undefined, archived = false): KanbanStatus {
-  if (archived) return "archived";
+function kanbanStatus(value: string | undefined): KanbanStatus {
   if (value === "waiting" || value === "blocked" || value === "running") {
     return value;
   }
@@ -354,10 +353,11 @@ function kanbanStatus(value: string | undefined, archived = false): KanbanStatus
 
 function normalizeKanbanSession(item: KanbanSession): KanbanSession {
   const archived = item.archived === true || item.status === "archived";
+  const lifecycleStatus = item.status === "archived" ? undefined : item.status;
   return {
     ...item,
     archived,
-    status: kanbanStatus(item.status, archived),
+    status: kanbanStatus(lifecycleStatus),
   };
 }
 
@@ -935,6 +935,22 @@ export function App({
       };
     }));
   }, [agentSummaries, kanbanOpen, sessions]);
+
+  useEffect(() => {
+    if (!kanbanOpen || !api) return;
+    const timer = window.setInterval(() => {
+      if (kanbanMutationIDRef.current !== null) return;
+      fetchKanbanSnapshot().then((items) => {
+        setKanbanSessions(items);
+        setKanbanError("");
+      }).catch((error: unknown) => {
+        setKanbanError(
+          error instanceof Error ? error.message : "Kanban sessions could not be refreshed.",
+        );
+      });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [api, fetchKanbanSnapshot, kanbanOpen]);
 
   useEffect(() => {
     if (!allSessionsOpen || !api) return;
@@ -3251,8 +3267,16 @@ export function App({
       if (archived && (selectedIDs.includes(item.terminalId) || pinnedIDs.includes(item.terminalId))) {
         selectSession(item.terminalId, true, true, false);
       }
-      const nextSessions = await api.listSessions();
-      applySessionSnapshot(nextSessions);
+      try {
+        const nextSessions = await api.listSessions();
+        applySessionSnapshot(nextSessions);
+      } catch (error: unknown) {
+        setKanbanError(
+          error instanceof Error
+            ? `Archive state saved, but sessions could not be refreshed: ${error.message}`
+            : "Archive state saved, but sessions could not be refreshed.",
+        );
+      }
       try {
         setKanbanSessions(await fetchKanbanSnapshot());
       } catch (error: unknown) {

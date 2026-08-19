@@ -2627,6 +2627,14 @@ func (m *Manager) Metadata(id string) (Metadata, bool) {
 	return item.metadata, true
 }
 
+func isSupportedAgentSession(metadata Metadata) bool {
+	agent := strings.TrimSpace(metadata.Agent)
+	if agent == "" {
+		agent = strings.TrimSpace(metadata.ResumeAgent)
+	}
+	return agent == "codex" || agent == "claude"
+}
+
 // SetAgentSessionArchived updates the user-managed archive flag for an agent
 // session identified by its Euphony terminal ID and agent session ID. Exited
 // sessions remain in m.archived, so the same identity works before and after a
@@ -2650,7 +2658,8 @@ func (m *Manager) SetAgentSessionArchived(
 			return Metadata{}, ErrManagerClosing
 		}
 		current, ok := m.sessions[terminalID]
-		if !ok || current != item || current.metadata.AgentSessionID != agentSessionID {
+		if !ok || current != item || current.metadata.AgentSessionID != agentSessionID ||
+			!isSupportedAgentSession(current.metadata) {
 			m.mu.Unlock()
 			return Metadata{}, ErrNotFound
 		}
@@ -2697,7 +2706,7 @@ func (m *Manager) SetAgentSessionArchived(
 		return Metadata{}, ErrManagerClosing
 	}
 	before, ok := m.archived[terminalID]
-	if !ok || before.AgentSessionID != agentSessionID {
+	if !ok || before.AgentSessionID != agentSessionID || !isSupportedAgentSession(before) {
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
 	}
