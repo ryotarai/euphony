@@ -4,6 +4,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -592,6 +593,7 @@ export function App({
   );
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  const sessionsReady = sessions !== null;
   const queryResumeAttemptedRef = useRef(false);
   const queryResumePendingRef = useRef(queryResumeRequest !== null);
   const queryResumeSucceededRef = useRef(false);
@@ -1213,11 +1215,13 @@ export function App({
     );
   }
 
+  const applyServerSelectionEvent = useEffectEvent(applyServerSelection);
+
   useEffect(() => {
     queryResumeActiveRef.current = true;
     if (
       !api
-      || sessions === null
+      || !sessionsReady
       || !queryResumeRequest
       || queryResumeAttemptedRef.current
     ) {
@@ -1237,14 +1241,12 @@ export function App({
         if (!queryResumeActiveRef.current) return;
         queryResumePendingRef.current = false;
         queryResumeSucceededRef.current = true;
-        const currentSessions = previousSessionsRef.current.length > 0
-          ? previousSessionsRef.current
-          : sessions;
+        const currentSessions = previousSessionsRef.current;
         applySessionSnapshot([
           ...currentSessions.filter((session) => session.id !== result.terminal.id),
           result.terminal,
         ]);
-        applyServerSelection(result.selection);
+        applyServerSelectionEvent(result.selection);
         clearResumeQueryFromURL();
         setRequestError("");
       } catch (error) {
@@ -1259,7 +1261,7 @@ export function App({
     return () => {
       queryResumeActiveRef.current = false;
     };
-  }, [api, applySessionSnapshot, queryResumeRequest, sessions !== null]);
+  }, [api, applySessionSnapshot, queryResumeRequest, sessionsReady]);
 
   function recordServerSelection(snapshot: SelectionSnapshot) {
     selectionRevisionRef.current = snapshot.revision;
@@ -2138,7 +2140,7 @@ export function App({
       setFocusedPaneID(route.pane);
       setSelectedAgentSummaryID(route.pane === agentsPaneID ? route.itemID : null);
       if (syncSelection) {
-        writeWorkspaceToURL(
+        writeWorkspaceURL(
           selectedIDs,
           pinnedIDs,
           focusedID,
@@ -2147,6 +2149,8 @@ export function App({
           "replace",
           pinnedStatusFilters,
           pinnedCwdFilters,
+          window.location.pathname,
+          queryResumeRequest,
         );
         return;
       }
@@ -2183,7 +2187,7 @@ export function App({
     cwdFilters,
     pinnedStatusFilters,
     pinnedCwdFilters,
-    writeWorkspaceToURL,
+    queryResumeRequest,
   ]);
 
   useEffect(() => {
