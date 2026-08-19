@@ -442,7 +442,7 @@ function resumeQueryFromParameters(parameters: URLSearchParams): ResumeQuery | n
   return { agent, sessionID, cwd };
 }
 
-function clearResumeQueryFromURL(resumeQuery: ResumeQuery) {
+function clearResumeQueryFromURL(resumeQuery: ResumeQuery, resumeRoute = false) {
   const parameters = new URLSearchParams();
   let removedAgent = false;
   let removedSession = false;
@@ -463,7 +463,10 @@ function clearResumeQueryFromURL(resumeQuery: ResumeQuery) {
     parameters.append(key, value);
   }
   const query = parameters.toString();
-  const cleanURL = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  const pathname = resumeRoute && /^\/resume\/?$/.test(window.location.pathname)
+    ? "/"
+    : window.location.pathname;
+  const cleanURL = `${pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history.replaceState(window.history.state, "", cleanURL);
 }
 
@@ -603,6 +606,7 @@ export function App({
 }: AppProps) {
   const initialDashboardRoute = dashboardRouteFromURL();
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
+  const resumeRoute = /^\/resume\/?$/.test(window.location.pathname);
   const resumeQueryParameters = useMemo(
     () => new URLSearchParams(window.location.search),
     [],
@@ -1267,7 +1271,7 @@ export function App({
           result.terminal,
         ]);
         applyServerSelectionEvent(result.selection);
-        clearResumeQueryFromURL(queryResumeRequest);
+        clearResumeQueryFromURL(queryResumeRequest, resumeRoute);
         setRequestError("");
       } catch (error) {
         if (!queryResumeActiveRef.current) return;

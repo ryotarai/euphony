@@ -3259,11 +3259,13 @@ test("resumes a history session once, applies returned selection, and closes the
   );
 });
 
-test("automatically resumes an unknown URL session and cleans consumed params after success", async () => {
+test.each(["/", "/resume"])(
+  "automatically resumes an unknown URL session from %s and cleans consumed params after success",
+  async (entryPath) => {
   history.replaceState(
     null,
     "",
-    "/?agent=codex&session=external-session&cwd=/workspace/external&cwd=running%00%2Fworkspace%2Ffilter&view=resume#terminal",
+    `${entryPath}?agent=codex&session=external-session&cwd=/workspace/external&cwd=running%00%2Fworkspace%2Ffilter&view=resume#terminal`,
   );
   const resumedTerminal: Session = {
     ...runningSession,
@@ -3351,7 +3353,9 @@ test("automatically resumes an unknown URL session and cleans consumed params af
   act(() => window.dispatchEvent(new PopStateEvent("popstate")));
   expect(new URLSearchParams(window.location.search).get("agent")).toBeNull();
   expect(new URLSearchParams(window.location.search).get("session")).toBeNull();
-});
+  expect(window.location.pathname).toBe("/");
+  },
+);
 
 test.each([
   {

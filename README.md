@@ -158,11 +158,13 @@ To resume a Codex or Claude Code session from a link, pass its agent, session ID
 and working directory as query parameters:
 
 ```text
-/?agent=codex&session=<session-id>&cwd=<url-encoded-working-directory>
+/resume?agent=codex&session=<session-id>&cwd=<url-encoded-working-directory>
 ```
 
-This also works when Euphony has no saved terminal record for the session. After
-a successful resume, Euphony removes these parameters from the browser URL.
+This also works when Euphony has no saved terminal record for the session. The
+legacy `/?...` form remains supported. After a successful resume, Euphony
+redirects `/resume` to the workspace root and removes these parameters from the
+browser URL.
 
 Run all automated checks with:
 
