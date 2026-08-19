@@ -98,6 +98,7 @@ async function reportAgent(
   agent: "codex" | "claude",
   title: string,
   status = "waiting",
+  agentSessionID = "",
 ) {
   const response = await page.request.post("/api/hooks/terminal", {
     headers: {
@@ -107,6 +108,7 @@ async function reportAgent(
     data: {
       terminalId: terminalID,
       agent,
+      agentSessionId: agentSessionID,
       status,
       title,
       cwd: "/Users/ryotarai/work/euphony",
@@ -262,6 +264,57 @@ test("opens the All sessions index, searches it, and opens a current terminal", 
   await dialog.getByRole("button", { name: /Open terminal/ }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByLabel("All sessions terminal terminal", { exact: true })).toBeVisible();
+});
+
+test("opens Kanban, archives an agent, and restores it from All sessions", async ({ page }) => {
+  await clearSessions(page);
+  const agent = await createSession(page, "Kanban agent", "/tmp");
+  await reportAgent(
+    page,
+    agent.id,
+    "codex",
+    "Build the release",
+    "running",
+    "kanban-e2e-session",
+  );
+  await replaceSharedSelection(page, [agent.id], agent.id);
+  await page.goto("/?token=test-token");
+
+  const sidebarAgent = page.getByRole("button", { name: /Select Codex/ });
+  await expect(sidebarAgent).toBeVisible();
+  await page.getByRole("button", { name: "Kanban", exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Kanban" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("region", { name: "Running" })).toContainText(
+    "Build the release",
+  );
+  for (const column of ["Waiting", "Blocked", "Archived"]) {
+    await expect(dialog.getByRole("region", { name: column })).toBeVisible();
+  }
+  const bounds = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(bounds!.width / viewport!.width).toBeGreaterThan(0.75);
+  expect(bounds!.height / viewport!.height).toBeGreaterThan(0.75);
+
+  await dialog.getByRole("button", { name: "Archive Build the release" }).click();
+  await page.keyboard.press("Escape");
+  await expect(sidebarAgent).toHaveCount(0);
+
+  await page.getByRole("button", { name: "All sessions", exact: true }).click();
+  const allSessions = page.getByRole("dialog", { name: "All sessions" });
+  const archivedRow = allSessions.getByRole("button", {
+    name: /Build the release.*Restore terminal/,
+  });
+  await expect(archivedRow).toBeVisible();
+  await archivedRow.click();
+  await expect(allSessions).toHaveCount(0);
+  await expect(sidebarAgent).toBeVisible();
+
+  await page.keyboard.press("Meta+Shift+K");
+  await expect(page.getByRole("dialog", { name: "Kanban" })).toBeVisible();
 });
 
 test("renames the focused terminal from Quick Actions and updates the sidebar", async ({

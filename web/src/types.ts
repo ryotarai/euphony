@@ -13,6 +13,7 @@ export interface Session {
   cwd: string;
   projectId?: string;
   repoRoot?: string;
+  archived?: boolean;
   agent?: string;
   agentStatus?: string;
   needsAttention?: boolean;
@@ -34,6 +35,8 @@ export interface AllSession {
   title: string;
   purpose?: string;
   summary?: string;
+  status?: string;
+  archived?: boolean;
   cwd: string;
   project?: string;
   updatedAt: string;

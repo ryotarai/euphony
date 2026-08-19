@@ -4,7 +4,7 @@
 
 **Goal:** Add a low-cognitive-load Kanban modal for live agent sessions with a persisted Archived column, a sidebar entry, a keyboard shortcut, and restore access through All sessions.
 
-**Architecture:** Persist `archived` on terminal metadata and filter it out of the normal session list. Extend All sessions to identify archived records, then compose a Kanban view from live sessions, archived All-session records, and the latest agent summaries. Keep live status projection read-only; only archive/restore is user controlled.
+**Architecture:** Persist `archived` on terminal metadata and filter it out of the normal session list. Extend All sessions to identify archived records, then compose a Kanban view from live sessions, archived All-session records, and the latest agent summaries. Keep live status projection read-only; only archive/restore is user controlled. The implementation exposes dedicated Kanban list endpoints and a terminal/agent-session archive mutation so All sessions can remain the complete recovery index.
 
 **Tech Stack:** Go HTTP server, SQLite terminal metadata, React 19, Vitest/Testing Library, Playwright.
 
@@ -28,15 +28,14 @@
 **Files:**
 - Modify: `internal/session/manager.go`
 - Modify: `internal/session/sqlite_store.go`
-- Modify: `internal/session/manager_test.go`
-- Modify: `internal/server/sessions.go`
+- Modify: `internal/server/kanban.go`
+- Modify: `internal/server/all_sessions.go`
 - Modify: `internal/server/server.go`
-- Create/modify: `internal/server/sessions_test.go`
 
 **Interfaces:**
-- Produces `Metadata.Archived bool`, `Manager.SetArchived(id string, archived bool) (Metadata, error)`, and `POST /api/sessions/{id}/archive` accepting `{ "archived": boolean }`.
+- Produces `Metadata.Archived bool`, `Manager.SetAgentSessionArchived(terminalID, agentSessionID string, archived bool) (Metadata, error)`, and `PATCH /api/kanban/sessions/{terminalID}/{agentSessionID}` accepting `{ "archived": boolean }`.
 - `Manager.ListCurrent` excludes archived metadata; `ListStored` and `ListPersisted` retain it.
-- The endpoint returns updated session metadata and rejects non-agent sessions with a 400 response.
+- The endpoint returns updated agent-session metadata and rejects unknown or non-agent identities.
 
 - [ ] **Step 1: Write the failing persistence and endpoint tests**
 
@@ -78,9 +77,9 @@ Run `gofmt -w internal/session/manager.go internal/session/sqlite_store.go inter
 - Modify: `web/src/api.test.ts`
 
 **Interfaces:**
-- `AllSession.state` becomes `"open" | "resume" | "archived"`.
-- `GET /api/all-sessions` maps archived records to `state: "archived"` while retaining `terminalId` when available.
-- `ApiClient.setSessionArchived(id: string, archived: boolean): Promise<Session>` calls the archive mutation.
+- `AllSession` gains `archived: boolean` while retaining the existing `"open" | "resume"` state semantics.
+- `GET /api/all-sessions` includes archived records with `archived: true` and retains `terminalId` for managed records.
+- `ApiClient` exposes `listKanbanSessions`, `listKanbanArchives`, and `setKanbanSessionArchived`.
 
 - [ ] **Step 1: Add failing list/API tests**
 
@@ -120,8 +119,8 @@ Commit with `feat: expose archived sessions to all sessions`.
 - Modify: `web/src/styles.css`
 
 **Interfaces:**
-- `KanbanDialog` accepts `items`, `loading`, `error`, `onOpenChange`, `onSelect`, `onArchive`, and `onRestore` callbacks.
-- It renders `data-kanban-column="running|waiting|blocked|archived"` and fixed column headings with counts.
+- `KanbanDialog` accepts `sessions`, `loading`, `error`, `onOpenChange`, `onArchiveSession`, and `onRestoreSession` callbacks.
+- It renders fixed `Running`, `Waiting`, `Blocked`, and `Archived` headings with counts.
 - SessionNavigation accepts `onOpenKanban` and renders the Kanban button directly above All sessions with an `aria-keyshortcuts` hint.
 
 - [ ] **Step 1: Write failing component/navigation tests**
@@ -138,9 +137,9 @@ Expected: the new component/import/prop assertions fail before implementation.
 - [ ] **Step 3: Implement the modal and visual system**
 
 Use the existing dialog and button primitives. Keep all four columns mounted,
-give each column an independent scroll region, render cards as focusable
-buttons, accept native drops only on Archived, and expose equivalent action
-buttons. Use the existing graphite/pale-text/lime palette with a single
+give each column an independent scroll region, accept native drops only on
+Archived, and expose equivalent keyboard action buttons. Use the existing
+graphite/pale-text/lime palette with a single
 status accent per column; add reduced-motion and narrow-screen rules.
 
 - [ ] **Step 4: Run focused component tests and typecheck**
@@ -161,8 +160,8 @@ Commit with `feat: add kanban session board`.
 
 **Interfaces:**
 - App owns `kanbanOpen`, loading/error state, and the in-flight archive ID.
-- Live items use `Session` plus the latest non-done `AgentSummary`; archived items use All-session records with `state: "archived"`.
-- Opening Kanban loads the same All-session snapshot used by All sessions. Archive refreshes both snapshots before closing the mutation state. Restore refreshes the live snapshot and focuses the restored terminal.
+- Live items use Kanban agent-session records plus the latest non-done `AgentSummary`; archived items use the archive endpoint records.
+- Opening Kanban loads active and archived snapshots. Archive refreshes the normal session list and both board snapshots. Restore refreshes the live snapshot and focuses the restored terminal.
 
 - [ ] **Step 1: Write failing App tests**
 

@@ -78,6 +78,9 @@ function displayPath(path: string): string {
 }
 
 function sessionActionLabel(session: AllSession): string {
+  if (session.archived) {
+    return session.state === "open" ? "Restore terminal" : "Restore and resume";
+  }
   return session.state === "open" ? "Open terminal" : "Resume session";
 }
 

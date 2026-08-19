@@ -5982,6 +5982,14 @@ input {
   font-size: 0.75rem;
 }
 
+.kanban-loading {
+  margin: 0 0 0.75rem;
+  color: #b8f34a;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
 .kanban-columns {
   min-height: 0;
   flex: 1 1 auto;

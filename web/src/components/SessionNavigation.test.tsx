@@ -1003,7 +1003,7 @@ test("places Kanban above All sessions and exposes its keyboard shortcut", async
   const allSessions = screen.getByRole("button", { name: "All sessions" });
   expect(kanban.compareDocumentPosition(allSessions) & Node.DOCUMENT_POSITION_FOLLOWING)
     .toBeTruthy();
-  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+K");
+  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+K Control+Shift+K");
   expect(kanban).toHaveTextContent("⌘⇧K");
 
   await user.click(kanban);
@@ -1011,4 +1011,7 @@ test("places Kanban above All sessions and exposes its keyboard shortcut", async
 
   fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
   expect(onOpenKanban).toHaveBeenCalledTimes(2);
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
+  expect(onOpenKanban).toHaveBeenCalledTimes(3);
 });

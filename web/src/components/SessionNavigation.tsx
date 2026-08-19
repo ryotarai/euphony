@@ -593,9 +593,9 @@ function SessionNavigationContent({
       if (
         isEditableTarget(event.target) ||
         event.key.toLowerCase() !== "k" ||
-        !event.metaKey ||
+        (!event.metaKey && !event.ctrlKey) ||
         !event.shiftKey ||
-        event.ctrlKey ||
+        (event.metaKey && event.ctrlKey) ||
         event.altKey
       ) {
         return;
@@ -735,7 +735,7 @@ function SessionNavigationContent({
               <SidebarMenuButton
                 tooltip="Kanban (⌘⇧K)"
                 aria-label="Kanban"
-                aria-keyshortcuts="Meta+Shift+K"
+                aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
                 title="Kanban (⌘⇧K)"
                 onClick={openKanban}
               >

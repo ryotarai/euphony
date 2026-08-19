@@ -9,7 +9,7 @@ import {
   PauseCircleIcon,
   Undo2Icon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +50,8 @@ const kanbanColumns = [
 export interface KanbanDialogProps {
   open: boolean;
   sessions: KanbanSession[];
+  loading?: boolean;
+  error?: string;
   onOpenChange(open: boolean): void;
   onArchiveSession(session: KanbanSession): void | Promise<void>;
   onRestoreSession?(session: KanbanSession): void | Promise<void>;
@@ -94,19 +96,27 @@ function sessionStatus(
   return session.status;
 }
 
+function sessionIdentitySets(sessions: KanbanSession[]) {
+  const sessionIDs = new Set<string>();
+  const archivedIDs = new Set<string>();
+  for (const session of sessions) {
+    sessionIDs.add(session.id);
+    if (session.archived || session.status === "archived") archivedIDs.add(session.id);
+  }
+  return { sessionIDs, archivedIDs };
+}
+
 export function KanbanDialog({
   open,
   sessions,
+  loading = false,
+  error = "",
   onOpenChange,
   onArchiveSession,
   onRestoreSession,
 }: KanbanDialogProps) {
-  const [archivedIDs, setArchivedIDs] = useState<Set<string>>(
-    () => new Set(
-      sessions
-        .filter((session) => session.archived || session.status === "archived")
-        .map((session) => session.id),
-    ),
+  const [localArchivedIDs, setLocalArchivedIDs] = useState<Set<string>>(
+    () => new Set(),
   );
   const [restoredIDs, setRestoredIDs] = useState<Set<string>>(() => new Set());
   const [archivingIDs, setArchivingIDs] = useState<Set<string>>(() => new Set());
@@ -114,21 +124,15 @@ export function KanbanDialog({
   const [dropActive, setDropActive] = useState(false);
   const [archiveError, setArchiveError] = useState("");
 
-  useEffect(() => {
-    const sessionIDs = new Set(sessions.map((session) => session.id));
-    const persistedIDs = new Set(
-      sessions
-        .filter((session) => session.archived || session.status === "archived")
-        .map((session) => session.id),
-    );
-    setArchivedIDs((current) => {
-      const next = new Set(
-        [...current].filter((sessionID) => sessionIDs.has(sessionID)),
-      );
-      for (const sessionID of persistedIDs) next.add(sessionID);
-      return next;
-    });
-  }, [sessions]);
+  const persistedSessionIDs = useMemo(() => sessionIdentitySets(sessions), [sessions]);
+  const archivedIDs = useMemo(() => {
+    const next = new Set<string>();
+    for (const sessionID of localArchivedIDs) {
+      if (persistedSessionIDs.sessionIDs.has(sessionID)) next.add(sessionID);
+    }
+    for (const sessionID of persistedSessionIDs.archivedIDs) next.add(sessionID);
+    return next;
+  }, [localArchivedIDs, persistedSessionIDs]);
 
   const sessionsByID = useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
@@ -142,7 +146,7 @@ export function KanbanDialog({
     setArchivingIDs((current) => new Set(current).add(session.id));
     try {
       await onArchiveSession(session);
-      setArchivedIDs((current) => new Set(current).add(session.id));
+      setLocalArchivedIDs((current) => new Set(current).add(session.id));
       setRestoredIDs((current) => {
         const next = new Set(current);
         next.delete(session.id);
@@ -163,12 +167,13 @@ export function KanbanDialog({
 
   const restoreSession = useCallback(async (session: KanbanSession) => {
     if (!archivedIDs.has(session.id) && !session.archived && session.status !== "archived") return;
+    if (!onRestoreSession) return;
     if (archivingIDs.has(session.id)) return;
     setArchiveError("");
     setArchivingIDs((current) => new Set(current).add(session.id));
     try {
       await onRestoreSession?.(session);
-      setArchivedIDs((current) => {
+      setLocalArchivedIDs((current) => {
         const next = new Set(current);
         next.delete(session.id);
         return next;
@@ -245,13 +250,22 @@ export function KanbanDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {archiveError && (
+        {(error || archiveError) && (
           <div className="kanban-error" role="alert">
-            {archiveError}
+            {error || archiveError}
+          </div>
+        )}
+        {loading && (
+          <div className="kanban-loading" role="status">
+            Loading agent sessions…
           </div>
         )}
 
-        <div className="kanban-columns" aria-label="Agent session board">
+        <div
+          className="kanban-columns"
+          aria-label="Agent session board"
+          aria-busy={loading || undefined}
+        >
           {kanbanColumns.map((column) => {
             const columnSessions = sessions.filter(
               (session) => sessionStatus(session, archivedIDs, restoredIDs) === column.status,
