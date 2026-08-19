@@ -3437,7 +3437,7 @@ test("resumes a history session once, applies returned selection, and closes the
   );
 });
 
-test.each(["/", "/resume"])(
+test.each(["/resume"])(
   "automatically resumes an unknown URL session from %s and cleans consumed params after success",
   async (entryPath) => {
   history.replaceState(
@@ -3545,6 +3545,11 @@ test.each([
     name: "invalid resume agent",
     pathname: "/",
     query: "agent=cursor&session=external-session&cwd=%2Fworkspace%2Fexternal",
+  },
+  {
+    name: "workspace root",
+    pathname: "/",
+    query: "agent=codex&session=external-session&cwd=%2Fworkspace%2Fexternal",
   },
   {
     name: "trailing slash resume path",

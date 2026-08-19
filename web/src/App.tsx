@@ -627,14 +627,13 @@ export function App({
   const initialDashboardRoute = dashboardRouteFromURL();
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
   const resumeRoute = window.location.pathname === "/resume";
-  const resumeQueryPath = window.location.pathname === "/" || resumeRoute;
   const resumeQueryParameters = useMemo(
     () => new URLSearchParams(window.location.search),
     [],
   );
   const queryResumeRequest = useMemo(
-    () => resumeQueryPath ? resumeQueryFromParameters(resumeQueryParameters) : null,
-    [resumeQueryParameters, resumeQueryPath],
+    () => resumeRoute ? resumeQueryFromParameters(resumeQueryParameters) : null,
+    [resumeQueryParameters, resumeRoute],
   );
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
