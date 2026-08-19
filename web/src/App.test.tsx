@@ -6,6 +6,7 @@ import { attentionTransitions } from "./sessionUtils";
 import type {
   AgentSummary,
   AllSession,
+  KanbanSession,
   Project,
   SelectionSnapshot,
   Session,
@@ -77,6 +78,21 @@ const plainTerminalSession: Session = {
   state: "running",
   cwd: "/workspace/shell",
   createdAt: "2026-07-28T00:03:00Z",
+};
+
+const kanbanRunningSession: KanbanSession = {
+  id: "kanban-running",
+  terminalId: "session-1",
+  agent: "codex",
+  sessionId: "codex-kanban-running",
+  title: "Implement v0.2",
+  purpose: "Build the release surface",
+  summary: "The agent is implementing the next step.",
+  cwd: runningSession.cwd,
+  updatedAt: "2026-08-19T08:00:00Z",
+  state: "open",
+  status: "running",
+  archived: false,
 };
 
 function expectTerminalPaneHidden(label: string) {
@@ -1651,6 +1667,168 @@ function jsonResponse(body: unknown, status = 200) {
 function legacyProjectsResponse() {
   return jsonResponse({ code: "not_found", message: "Projects are unavailable." }, 404);
 }
+
+test("opens Kanban from the sidebar and its keyboard shortcut", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/kanban/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([kanbanRunningSession]);
+    }
+    if (input === "/api/kanban/archives" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+  expect(await screen.findByRole("dialog", { name: "Kanban" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Running" })).toHaveTextContent("Implement v0.2");
+  expect(screen.getByRole("region", { name: "Waiting" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Blocked" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Archived" })).toBeVisible();
+
+  await user.keyboard("{Escape}");
+  fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
+  expect(await screen.findByRole("dialog", { name: "Kanban" })).toBeVisible();
+  expect(fetchMock.mock.calls.some(([input]) => input === "/api/kanban/sessions")).toBe(true);
+});
+
+test("archives a Kanban agent session out of the sidebar and restores it", async () => {
+  let archived = false;
+  const archivedKanbanSession: KanbanSession = {
+    ...kanbanRunningSession,
+    archived: true,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse(archived ? [] : [runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/kanban/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse(archived ? [] : [kanbanRunningSession]);
+    }
+    if (input === "/api/kanban/archives" && (!init || init.method === undefined)) {
+      return jsonResponse(archived ? [archivedKanbanSession] : []);
+    }
+    if (
+      input === "/api/kanban/sessions/session-1/codex-kanban-running"
+      && init?.method === "PATCH"
+    ) {
+      archived = JSON.parse(String(init.body)).archived;
+      return jsonResponse(archived ? archivedKanbanSession : kanbanRunningSession);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByRole("button", { name: "Select Codex" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Kanban" }));
+  await user.click(await screen.findByRole("button", { name: "Archive Implement v0.2" }));
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Select Codex" })).not.toBeInTheDocument();
+  });
+  expect(fetchMock.mock.calls.some(([input, init]) =>
+    input === "/api/kanban/sessions/session-1/codex-kanban-running"
+    && init?.method === "PATCH"
+  )).toBe(true);
+
+  await user.click(screen.getByRole("button", { name: "Kanban" }));
+  await user.click(screen.getByRole("button", { name: "Restore Implement v0.2" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Codex" })).toBeVisible();
+  });
+});
+
+test("reopens an archived live agent session from All sessions", async () => {
+  let archived = true;
+  const archivedAllSession: AllSession = {
+    ...kanbanRunningSession,
+    archived: true,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse(archived ? [] : [runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/all-sessions" && (!init || init.method === undefined)) {
+      return jsonResponse(archived ? [archivedAllSession] : [kanbanRunningSession]);
+    }
+    if (
+      input === "/api/kanban/sessions/session-1/codex-kanban-running"
+      && init?.method === "PATCH"
+    ) {
+      archived = JSON.parse(String(init.body)).archived;
+      return jsonResponse(archived ? archivedAllSession : kanbanRunningSession);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "All sessions" }));
+  const row = await screen.findByRole("button", { name: /Implement v0\.2.*Restore terminal/ });
+  await user.click(row);
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Codex" })).toBeVisible();
+  });
+  expect(fetchMock.mock.calls.some(([input, init]) =>
+    input === "/api/kanban/sessions/session-1/codex-kanban-running"
+    && init?.method === "PATCH"
+  )).toBe(true);
+  expect(fetchMock.mock.calls.some(([input, init]) =>
+    typeof input === "string" && input.includes("/resume")
+    && init?.method === "POST"
+  )).toBe(false);
+});
 
 test("stores a valid token and shows project setup when the session list is empty", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");

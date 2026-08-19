@@ -60,6 +60,20 @@ test("keeps project session rows flush with the project list", () => {
   expect(rowRule).toContain("margin-left: 0;");
 });
 
+test("defines the Kanban modal surface and four-column responsive board", () => {
+  const modalRule = latestRule(".kanban-modal", "width: min(80vw, 96rem) !important;");
+  const columnRule = latestRule(
+    ".kanban-columns",
+    "grid-template-columns: repeat(4, minmax(0, 1fr));",
+  );
+
+  expect(modalRule).toContain("width: min(80vw, 96rem) !important;");
+  expect(modalRule).toContain("height: min(80dvh, 56rem);");
+  expect(columnRule).toContain("grid-template-columns: repeat(4, minmax(0, 1fr));");
+  expect(stylesheet).toContain(".kanban-column[data-drop-active=\"true\"]");
+  expect(stylesheet).toContain(".kanban-card:focus-within");
+});
+
 function latestRule(selector: string, requiredDeclaration?: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const rules = [

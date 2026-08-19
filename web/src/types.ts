@@ -13,6 +13,7 @@ export interface Session {
   cwd: string;
   projectId?: string;
   repoRoot?: string;
+  archived?: boolean;
   agent?: string;
   agentStatus?: string;
   needsAttention?: boolean;
@@ -34,6 +35,8 @@ export interface AllSession {
   title: string;
   purpose?: string;
   summary?: string;
+  status?: string;
+  archived?: boolean;
   cwd: string;
   project?: string;
   updatedAt: string;
@@ -43,6 +46,15 @@ export interface AllSession {
 export interface AllSessionResumeResult {
   terminal: Session;
   selection: SelectionSnapshot;
+}
+
+export type KanbanStatus = "running" | "waiting" | "blocked" | "archived";
+export type KanbanSessionStatus = KanbanStatus;
+
+export interface KanbanSession extends AllSession {
+  agent: "codex" | "claude";
+  status: KanbanStatus;
+  archived: boolean;
 }
 
 export type AgentSummaryProvider = "openai" | "codex" | "claude";

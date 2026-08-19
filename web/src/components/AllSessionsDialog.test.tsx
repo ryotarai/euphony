@@ -66,6 +66,19 @@ test("orders rows newest first and exposes open and resume actions", () => {
   );
 });
 
+test("marks archived rows as restorable", () => {
+  const archived: AllSession = {
+    ...newest,
+    id: "archived",
+    archived: true,
+  };
+  renderDialog([archived]);
+
+  const row = within(screen.getByRole("list", { name: "All sessions" })).getByRole("button");
+  expect(row).toHaveAccessibleName(/Restore terminal/);
+  expect(row).toHaveTextContent("Restore terminal");
+});
+
 test("filters incrementally across title, purpose, summary, cwd, project, and agent", async () => {
   const searchable: AllSession = {
     ...newest,
