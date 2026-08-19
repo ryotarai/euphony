@@ -4,6 +4,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -107,6 +108,12 @@ type AgentKind = "codex" | "claude";
 interface DashboardRoute {
   pane: DashboardPaneID | null;
   itemID: string | null;
+}
+
+interface ResumeQuery {
+  agent: AgentKind;
+  sessionID: string;
+  cwd: string;
 }
 
 function agentSummaryMatchesSnapshot(summary: AgentSummary, snapshot: AgentSummary) {
@@ -421,7 +428,46 @@ function resolveInitialToken(explicitToken?: string): string {
   return sessionStorage.getItem(tokenKey) ?? "";
 }
 
-function workspaceFromURL(sessions: Session[]): {
+function resumeQueryFromParameters(parameters: URLSearchParams): ResumeQuery | null {
+  const agent = parameters.get("agent");
+  const sessionID = parameters.get("session");
+  const cwd = parameters.getAll("cwd").find((value) => parseCwdFilter(value) === null);
+  if (
+    (agent !== "codex" && agent !== "claude")
+    || !sessionID?.trim()
+    || !cwd?.trim()
+  ) {
+    return null;
+  }
+  return { agent, sessionID, cwd };
+}
+
+function clearResumeQueryFromURL(resumeQuery: ResumeQuery) {
+  const parameters = new URLSearchParams();
+  let removedAgent = false;
+  let removedSession = false;
+  let removedCWD = false;
+  for (const [key, value] of new URLSearchParams(window.location.search)) {
+    if (key === "agent" && !removedAgent && value === resumeQuery.agent) {
+      removedAgent = true;
+      continue;
+    }
+    if (key === "session" && !removedSession && value === resumeQuery.sessionID) {
+      removedSession = true;
+      continue;
+    }
+    if (key === "cwd" && !removedCWD && value === resumeQuery.cwd) {
+      removedCWD = true;
+      continue;
+    }
+    parameters.append(key, value);
+  }
+  const query = parameters.toString();
+  const cleanURL = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  window.history.replaceState(window.history.state, "", cleanURL);
+}
+
+function workspaceFromURL(sessions: Session[], resumeQuery: ResumeQuery | null = null): {
   selectedIDs: string[];
   pinnedIDs: string[];
   focusedID: string | null;
@@ -432,12 +478,17 @@ function workspaceFromURL(sessions: Session[]): {
 } {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
+  const cwdParameters = parameters.getAll("cwd");
+  if (resumeQuery) {
+    const resumeCWDIndex = cwdParameters.indexOf(resumeQuery.cwd);
+    if (resumeCWDIndex >= 0) cwdParameters.splice(resumeCWDIndex, 1);
+  }
   let selectedIDs = parameters.getAll("terminal").filter((id) => available.has(id));
   const pinnedIDs = [
     ...new Set(parameters.getAll("pin").filter((id) => available.has(id))),
   ];
   if (selectedIDs.length === 0) {
-    selectedIDs = [parameters.get("session"), parameters.get("split")]
+    selectedIDs = [resumeQuery ? null : parameters.get("session"), parameters.get("split")]
       .filter((id): id is string => Boolean(id && available.has(id)));
   }
   selectedIDs = [
@@ -455,7 +506,10 @@ function workspaceFromURL(sessions: Session[]): {
       ...new Set([...parameters.getAll("status"), ...pinnedStatusFilters]),
     ],
     cwdFilters: [
-      ...new Set([...parameters.getAll("cwd"), ...pinnedCwdFilters]),
+      ...new Set([
+        ...cwdParameters,
+        ...pinnedCwdFilters,
+      ]),
     ],
     pinnedStatusFilters,
     pinnedCwdFilters,
@@ -472,6 +526,7 @@ function writeWorkspaceURL(
   pinnedStatusFilters: string[] = [],
   pinnedCwdFilters: string[] = [],
   pathname = window.location.pathname,
+  preservedResumeQuery: ResumeQuery | null = null,
 ) {
   const parameters = new URLSearchParams(window.location.search);
   parameters.delete("session");
@@ -482,6 +537,11 @@ function writeWorkspaceURL(
   parameters.delete("cwd");
   parameters.delete("pin-status");
   parameters.delete("pin-cwd");
+  if (preservedResumeQuery) {
+    parameters.set("agent", preservedResumeQuery.agent);
+    parameters.set("session", preservedResumeQuery.sessionID);
+    parameters.set("cwd", preservedResumeQuery.cwd);
+  }
   selectedIDs.forEach((id) => parameters.append("terminal", id));
   pinnedIDs.forEach((id) => parameters.append("pin", id));
   statusFilters.forEach((status) => parameters.append("status", status));
@@ -543,8 +603,21 @@ export function App({
 }: AppProps) {
   const initialDashboardRoute = dashboardRouteFromURL();
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
+  const resumeQueryParameters = useMemo(
+    () => new URLSearchParams(window.location.search),
+    [],
+  );
+  const queryResumeRequest = useMemo(
+    () => resumeQueryFromParameters(resumeQueryParameters),
+    [resumeQueryParameters],
+  );
   const [draftToken, setDraftToken] = useState("");
   const [sessions, setSessions] = useState<Session[] | null>(null);
+  const sessionsReady = sessions !== null;
+  const queryResumeAttemptedRef = useRef(false);
+  const queryResumePendingRef = useRef(queryResumeRequest !== null);
+  const queryResumeSucceededRef = useRef(false);
+  const queryResumeActiveRef = useRef(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const projectEndpointAvailableRef = useRef(false);
   const [annotationRevision, setAnnotationRevision] = useState(0);
@@ -940,6 +1013,7 @@ export function App({
       nextPinnedCwdFilters: string[] = pinnedCwdFilters,
       pathname = window.location.pathname,
     ) => {
+      if (queryResumeRequest && queryResumePendingRef.current) return;
       writeWorkspaceURL(
         nextSelectedIDs,
         nextPinnedIDs,
@@ -950,9 +1024,12 @@ export function App({
         nextPinnedStatusFilters,
         nextPinnedCwdFilters,
         pathname,
+        queryResumeRequest && !queryResumeSucceededRef.current
+          ? queryResumeRequest
+          : null,
       );
     },
-    [pinnedCwdFilters, pinnedStatusFilters],
+    [pinnedCwdFilters, pinnedStatusFilters, queryResumeRequest],
   );
   const previewSettings = useMemo(() => {
     if (!settingsOpen) return settings;
@@ -1157,6 +1234,54 @@ export function App({
       nextPinnedCwdFilters,
     );
   }
+
+  const applyServerSelectionEvent = useEffectEvent(applyServerSelection);
+
+  useEffect(() => {
+    queryResumeActiveRef.current = true;
+    if (
+      !api
+      || !sessionsReady
+      || !queryResumeRequest
+      || queryResumeAttemptedRef.current
+    ) {
+      return () => {
+        queryResumeActiveRef.current = false;
+      };
+    }
+    queryResumeAttemptedRef.current = true;
+    const resume = async () => {
+      try {
+        const result = await api.resumeAllSession(
+          queryResumeRequest.agent,
+          queryResumeRequest.sessionID,
+          "replace",
+          queryResumeRequest.cwd,
+        );
+        if (!queryResumeActiveRef.current) return;
+        queryResumePendingRef.current = false;
+        queryResumeSucceededRef.current = true;
+        const currentSessions = previousSessionsRef.current;
+        applySessionSnapshot([
+          ...currentSessions.filter((session) => session.id !== result.terminal.id),
+          result.terminal,
+        ]);
+        applyServerSelectionEvent(result.selection);
+        clearResumeQueryFromURL(queryResumeRequest);
+        setRequestError("");
+      } catch (error) {
+        if (!queryResumeActiveRef.current) return;
+        queryResumePendingRef.current = false;
+        setRequestError(
+          error instanceof Error ? error.message : "The session could not be resumed.",
+        );
+      }
+    };
+    void resume();
+    return () => {
+      queryResumeActiveRef.current = false;
+    };
+  }, [api, applySessionSnapshot, queryResumeRequest, sessionsReady]);
 
   function recordServerSelection(snapshot: SelectionSnapshot) {
     selectionRevisionRef.current = snapshot.revision;
@@ -1404,7 +1529,7 @@ export function App({
       previousSessionOrderRef.current = items;
       previousSessionsRef.current = items;
       if (syncSelection) return;
-      const workspace = workspaceFromURL(items);
+      const workspace = workspaceFromURL(items, queryResumeRequest);
       setSelectedIDs(workspace.selectedIDs);
       setPinnedIDs(workspace.pinnedIDs);
       setFocusedID(workspace.focusedID);
@@ -2044,10 +2169,17 @@ export function App({
           "replace",
           pinnedStatusFilters,
           pinnedCwdFilters,
+          window.location.pathname,
+          queryResumeRequest && !queryResumeSucceededRef.current
+            ? queryResumeRequest
+            : null,
         );
         return;
       }
-      const workspace = workspaceFromURL(sessions);
+      const currentResumeQuery = resumeQueryFromParameters(
+        new URLSearchParams(window.location.search),
+      );
+      const workspace = workspaceFromURL(sessions, currentResumeQuery);
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
       setSelectedIDs(workspace.selectedIDs);
@@ -2077,6 +2209,7 @@ export function App({
     cwdFilters,
     pinnedStatusFilters,
     pinnedCwdFilters,
+    queryResumeRequest,
   ]);
 
   useEffect(() => {

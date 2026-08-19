@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect, type ComponentProps } from "react";
+import { StrictMode, useEffect, type ComponentProps } from "react";
 import { App } from "./App";
 import { attentionTransitions } from "./sessionUtils";
 import type {
@@ -3257,6 +3257,139 @@ test("resumes a history session once, applies returned selection, and closes the
     "aria-current",
     "true",
   );
+});
+
+test("automatically resumes an unknown URL session and cleans consumed params after success", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/?agent=codex&session=external-session&cwd=/workspace/external&cwd=running%00%2Fworkspace%2Ffilter&view=resume#terminal",
+  );
+  const resumedTerminal: Session = {
+    ...runningSession,
+    id: "external-terminal",
+    name: "External Codex",
+    cwd: "/workspace/external",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [resumedTerminal.id],
+    manualTerminalIds: [resumedTerminal.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: resumedTerminal.id,
+    filters: {
+      statuses: [],
+      cwds: [{ status: "running", cwd: "/workspace/filter" }],
+    },
+    revision: 12,
+  };
+  const initialSelection: SelectionSnapshot = {
+    terminalIds: [runningSession.id],
+    manualTerminalIds: [runningSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: runningSession.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 11,
+  };
+  let releaseResume!: (response: Response) => void;
+  const resumeResponse = new Promise<Response>((resolve) => {
+    releaseResume = resolve;
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
+      return jsonResponse(initialSelection);
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([]);
+    }
+    if (input === "/api/all-sessions/codex/external-session/resume?cwd=%2Fworkspace%2Fexternal") {
+      return resumeResponse;
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(
+    <StrictMode>
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        syncEvents={false}
+        renderTerminal={(session) => (
+          <div aria-label={`${session.name} terminal pane`} />
+        )}
+      />
+    </StrictMode>,
+  );
+
+  await waitFor(() => {
+    expect(fetchMock.mock.calls.filter(([input]) =>
+      input === "/api/all-sessions/codex/external-session/resume?cwd=%2Fworkspace%2Fexternal",
+    ).length).toBe(1);
+  });
+  expect(new URLSearchParams(window.location.search).get("agent")).toBe("codex");
+  expect(new URLSearchParams(window.location.search).get("session")).toBe("external-session");
+  expect(new URLSearchParams(window.location.search).get("cwd")).toBe("/workspace/external");
+
+  releaseResume(await jsonResponse({ terminal: resumedTerminal, selection }));
+
+  expect(await screen.findByLabelText("External Codex terminal pane")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Select External Codex" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  const parameters = new URLSearchParams(window.location.search);
+  expect(parameters.get("agent")).toBeNull();
+  expect(parameters.get("session")).toBeNull();
+  expect(parameters.getAll("cwd")).toEqual(["running\0/workspace/filter"]);
+  expect(parameters.get("view")).toBe("resume");
+  expect(window.location.hash).toBe("#terminal");
+
+  act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+  expect(new URLSearchParams(window.location.search).get("agent")).toBeNull();
+  expect(new URLSearchParams(window.location.search).get("session")).toBeNull();
+});
+
+test.each([
+  {
+    name: "incomplete resume params",
+    query: "agent=codex&session=external-session",
+  },
+  {
+    name: "invalid resume agent",
+    query: "agent=cursor&session=external-session&cwd=%2Fworkspace%2Fexternal",
+  },
+])("does not resume with $name", async ({ query }) => {
+  history.replaceState(null, "", `/?${query}`);
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries") {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => (
+        <div aria-label={`${session.name} terminal pane`} />
+      )}
+    />,
+  );
+
+  await screen.findByLabelText("Codex terminal pane");
+  expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/resume"))).toBe(false);
 });
 
 test("keeps the All sessions dialog open when resume fails", async () => {

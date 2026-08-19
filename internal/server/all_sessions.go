@@ -176,6 +176,7 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var saved *session.Metadata
+	queryOnly := false
 	for _, metadata := range s.sessions.ListPersisted() {
 		metadataAgent := metadata.Agent
 		if metadataAgent == "" {
@@ -203,9 +204,19 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if saved == nil {
-		writeError(w, http.StatusNotFound, "session_history_not_found",
-			"The saved agent session no longer exists.")
-		return
+		requestedCWD := strings.TrimSpace(r.URL.Query().Get("cwd"))
+		if requestedCWD == "" {
+			writeError(w, http.StatusNotFound, "session_history_not_found",
+				"The saved agent session no longer exists.")
+			return
+		}
+		queryOnly = true
+		saved = &session.Metadata{
+			Agent:          agent,
+			ResumeAgent:    agent,
+			AgentSessionID: sessionID,
+			CWD:            requestedCWD,
+		}
 	}
 	name := truncateAllSessionName(saved.AgentTitle)
 	if name == "" {
@@ -219,8 +230,17 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 	if agent == "claude" {
 		args = []string{"--resume", sessionID}
 	}
-	cwd, err := resumeWorkingDirectory(saved.CWD)
+	var cwd string
+	if queryOnly {
+		cwd, err = queryResumeWorkingDirectory(saved.CWD)
+	} else {
+		cwd, err = resumeWorkingDirectory(saved.CWD)
+	}
 	if err != nil {
+		if queryOnly {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", "The query working directory must exist.")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "resume_failed",
 			"The working directory for the agent session could not be resolved.")
 		return
@@ -237,6 +257,19 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 			"The agent session could not be resumed.")
 		return
 	}
+	if queryOnly {
+		metadata, err = s.sessions.UpdateAgent(metadata.ID, session.AgentUpdate{
+			Agent:          agent,
+			ResumeAgent:    agent,
+			AgentSessionID: sessionID,
+		})
+		if err != nil {
+			_, _ = s.control.DeleteTerminal(metadata.ID)
+			writeError(w, http.StatusInternalServerError, "resume_failed",
+				"The agent session could not be resumed.")
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"terminal":  metadata,
 		"selection": selectionSnapshot,
@@ -251,6 +284,21 @@ func resumeWorkingDirectory(requested string) (string, error) {
 		}
 	}
 	return os.UserHomeDir()
+}
+
+func queryResumeWorkingDirectory(requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", errors.New("working directory is required")
+	}
+	info, err := os.Stat(requested)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("working directory is not a directory")
+	}
+	return requested, nil
 }
 
 func decodeAllSessionsSelectionMode(r *http.Request) (control.SelectionMode, error) {
