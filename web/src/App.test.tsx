@@ -3263,7 +3263,7 @@ test("automatically resumes an unknown URL session and cleans consumed params af
   history.replaceState(
     null,
     "",
-    "/?agent=codex&session=external-session&cwd=/workspace/external&view=resume#terminal",
+    "/?agent=codex&session=external-session&cwd=/workspace/external&cwd=running%00%2Fworkspace%2Ffilter&view=resume#terminal",
   );
   const resumedTerminal: Session = {
     ...runningSession,
@@ -3276,7 +3276,10 @@ test("automatically resumes an unknown URL session and cleans consumed params af
     manualTerminalIds: [resumedTerminal.id],
     pinnedTerminalIds: [],
     focusedTerminalId: resumedTerminal.id,
-    filters: { statuses: [], cwds: [] },
+    filters: {
+      statuses: [],
+      cwds: [{ status: "running", cwd: "/workspace/filter" }],
+    },
     revision: 12,
   };
   const initialSelection: SelectionSnapshot = {
@@ -3341,9 +3344,13 @@ test("automatically resumes an unknown URL session and cleans consumed params af
   const parameters = new URLSearchParams(window.location.search);
   expect(parameters.get("agent")).toBeNull();
   expect(parameters.get("session")).toBeNull();
-  expect(parameters.get("cwd")).toBeNull();
+  expect(parameters.getAll("cwd")).toEqual(["running\0/workspace/filter"]);
   expect(parameters.get("view")).toBe("resume");
   expect(window.location.hash).toBe("#terminal");
+
+  act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+  expect(new URLSearchParams(window.location.search).get("agent")).toBeNull();
+  expect(new URLSearchParams(window.location.search).get("session")).toBeNull();
 });
 
 test.each([

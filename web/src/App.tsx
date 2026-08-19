@@ -431,7 +431,7 @@ function resolveInitialToken(explicitToken?: string): string {
 function resumeQueryFromParameters(parameters: URLSearchParams): ResumeQuery | null {
   const agent = parameters.get("agent");
   const sessionID = parameters.get("session");
-  const cwd = parameters.get("cwd");
+  const cwd = parameters.getAll("cwd").find((value) => parseCwdFilter(value) === null);
   if (
     (agent !== "codex" && agent !== "claude")
     || !sessionID?.trim()
@@ -442,17 +442,32 @@ function resumeQueryFromParameters(parameters: URLSearchParams): ResumeQuery | n
   return { agent, sessionID, cwd };
 }
 
-function clearResumeQueryFromURL() {
-  const parameters = new URLSearchParams(window.location.search);
-  parameters.delete("agent");
-  parameters.delete("session");
-  parameters.delete("cwd");
+function clearResumeQueryFromURL(resumeQuery: ResumeQuery) {
+  const parameters = new URLSearchParams();
+  let removedAgent = false;
+  let removedSession = false;
+  let removedCWD = false;
+  for (const [key, value] of new URLSearchParams(window.location.search)) {
+    if (key === "agent" && !removedAgent && value === resumeQuery.agent) {
+      removedAgent = true;
+      continue;
+    }
+    if (key === "session" && !removedSession && value === resumeQuery.sessionID) {
+      removedSession = true;
+      continue;
+    }
+    if (key === "cwd" && !removedCWD && value === resumeQuery.cwd) {
+      removedCWD = true;
+      continue;
+    }
+    parameters.append(key, value);
+  }
   const query = parameters.toString();
   const cleanURL = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history.replaceState(window.history.state, "", cleanURL);
 }
 
-function workspaceFromURL(sessions: Session[], ignoreResumeQuery = false): {
+function workspaceFromURL(sessions: Session[], resumeQuery: ResumeQuery | null = null): {
   selectedIDs: string[];
   pinnedIDs: string[];
   focusedID: string | null;
@@ -463,12 +478,17 @@ function workspaceFromURL(sessions: Session[], ignoreResumeQuery = false): {
 } {
   const parameters = new URLSearchParams(window.location.search);
   const available = new Set(sessions.map((session) => session.id));
+  const cwdParameters = parameters.getAll("cwd");
+  if (resumeQuery) {
+    const resumeCWDIndex = cwdParameters.indexOf(resumeQuery.cwd);
+    if (resumeCWDIndex >= 0) cwdParameters.splice(resumeCWDIndex, 1);
+  }
   let selectedIDs = parameters.getAll("terminal").filter((id) => available.has(id));
   const pinnedIDs = [
     ...new Set(parameters.getAll("pin").filter((id) => available.has(id))),
   ];
   if (selectedIDs.length === 0) {
-    selectedIDs = [ignoreResumeQuery ? null : parameters.get("session"), parameters.get("split")]
+    selectedIDs = [resumeQuery ? null : parameters.get("session"), parameters.get("split")]
       .filter((id): id is string => Boolean(id && available.has(id)));
   }
   selectedIDs = [
@@ -487,7 +507,7 @@ function workspaceFromURL(sessions: Session[], ignoreResumeQuery = false): {
     ],
     cwdFilters: [
       ...new Set([
-        ...(ignoreResumeQuery ? [] : parameters.getAll("cwd")),
+        ...cwdParameters,
         ...pinnedCwdFilters,
       ]),
     ],
@@ -1247,7 +1267,7 @@ export function App({
           result.terminal,
         ]);
         applyServerSelectionEvent(result.selection);
-        clearResumeQueryFromURL();
+        clearResumeQueryFromURL(queryResumeRequest);
         setRequestError("");
       } catch (error) {
         if (!queryResumeActiveRef.current) return;
@@ -1509,7 +1529,7 @@ export function App({
       previousSessionOrderRef.current = items;
       previousSessionsRef.current = items;
       if (syncSelection) return;
-      const workspace = workspaceFromURL(items, queryResumeRequest !== null);
+      const workspace = workspaceFromURL(items, queryResumeRequest);
       setSelectedIDs(workspace.selectedIDs);
       setPinnedIDs(workspace.pinnedIDs);
       setFocusedID(workspace.focusedID);
@@ -2150,14 +2170,16 @@ export function App({
           pinnedStatusFilters,
           pinnedCwdFilters,
           window.location.pathname,
-          queryResumeRequest,
+          queryResumeRequest && !queryResumeSucceededRef.current
+            ? queryResumeRequest
+            : null,
         );
         return;
       }
       const currentResumeQuery = resumeQueryFromParameters(
         new URLSearchParams(window.location.search),
       );
-      const workspace = workspaceFromURL(sessions, currentResumeQuery !== null);
+      const workspace = workspaceFromURL(sessions, currentResumeQuery);
       filterSelectedIDsRef.current.clear();
       decomposedStatusFiltersRef.current.clear();
       setSelectedIDs(workspace.selectedIDs);

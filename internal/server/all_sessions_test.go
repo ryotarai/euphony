@@ -351,6 +351,29 @@ func TestAllSessionsResumeUnknownSessionRequiresQueryCWD(t *testing.T) {
 	}
 }
 
+func TestAllSessionsResumeUnknownSessionRejectsMissingQueryCWD(t *testing.T) {
+	root := t.TempDir()
+	srv, err := New(Config{
+		Token:        "token",
+		Shell:        "/bin/sh",
+		DatabasePath: filepath.Join(root, "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	missingCWD := filepath.Join(root, "does-not-exist")
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/all-sessions/codex/missing-from-db/resume?cwd="+url.QueryEscape(missingCWD), "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("POST resume with missing query cwd status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if terminals := srv.sessions.List(); len(terminals) != 0 {
+		t.Fatalf("terminals after rejected query-only resume = %#v", terminals)
+	}
+}
+
 func TestAllSessionsResumeReusesOpenMatchingAgentTerminal(t *testing.T) {
 	root := t.TempDir()
 	databasePath := filepath.Join(root, "euphony.sqlite3")

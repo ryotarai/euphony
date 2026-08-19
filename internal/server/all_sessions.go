@@ -230,8 +230,17 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 	if agent == "claude" {
 		args = []string{"--resume", sessionID}
 	}
-	cwd, err := resumeWorkingDirectory(saved.CWD)
+	var cwd string
+	if queryOnly {
+		cwd, err = queryResumeWorkingDirectory(saved.CWD)
+	} else {
+		cwd, err = resumeWorkingDirectory(saved.CWD)
+	}
 	if err != nil {
+		if queryOnly {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", "The query working directory must exist.")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "resume_failed",
 			"The working directory for the agent session could not be resolved.")
 		return
@@ -275,6 +284,21 @@ func resumeWorkingDirectory(requested string) (string, error) {
 		}
 	}
 	return os.UserHomeDir()
+}
+
+func queryResumeWorkingDirectory(requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", errors.New("working directory is required")
+	}
+	info, err := os.Stat(requested)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("working directory is not a directory")
+	}
+	return requested, nil
 }
 
 func decodeAllSessionsSelectionMode(r *http.Request) (control.SelectionMode, error) {
