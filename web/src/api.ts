@@ -72,9 +72,13 @@ export class ApiClient {
     agent: "codex" | "claude",
     sessionID: string,
     selectionMode: "none" | "add" | "replace" = "replace",
+    cwd?: string,
   ): Promise<AllSessionResumeResult> {
+    const query = cwd === undefined
+      ? ""
+      : `?${new URLSearchParams({ cwd }).toString()}`;
     return this.request(
-      `/api/all-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(sessionID)}/resume`,
+      `/api/all-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(sessionID)}/resume${query}`,
       {
         method: "POST",
         body: JSON.stringify({ selectionMode }),

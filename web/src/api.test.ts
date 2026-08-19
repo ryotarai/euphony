@@ -111,6 +111,43 @@ test("lists all sessions and resumes a history session with replacement selectio
   );
 });
 
+test("adds an encoded cwd query parameter when resuming a session", async () => {
+  const selection: SelectionSnapshot = {
+    terminalIds: ["terminal-1"],
+    manualTerminalIds: ["terminal-1"],
+    pinnedTerminalIds: [],
+    focusedTerminalId: "terminal-1",
+    filters: { statuses: [], cwds: [] },
+    revision: 6,
+  };
+  const terminal = {
+    id: "terminal-1",
+    name: "Codex",
+    state: "running" as const,
+    cwd: "/workspace/external path?and&query",
+    createdAt: "2026-08-13T00:00:01Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>
+    jsonResponse({ terminal, selection }),
+  );
+  const api = new ApiClient("token");
+
+  await api.resumeAllSession(
+    "codex",
+    "external-session",
+    "replace",
+    terminal.cwd,
+  );
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/all-sessions/codex/external-session/resume?cwd=%2Fworkspace%2Fexternal+path%3Fand%26query",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ selectionMode: "replace" }),
+    }),
+  );
+});
+
 test("times out when the all-sessions request never settles", async () => {
   vi.useFakeTimers();
   try {
