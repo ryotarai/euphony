@@ -45,6 +45,15 @@ export interface AllSessionResumeResult {
   selection: SelectionSnapshot;
 }
 
+export type KanbanStatus = "running" | "waiting" | "blocked" | "archived";
+export type KanbanSessionStatus = KanbanStatus;
+
+export interface KanbanSession extends AllSession {
+  agent: "codex" | "claude";
+  status: KanbanStatus;
+  archived: boolean;
+}
+
 export type AgentSummaryProvider = "openai" | "codex" | "claude";
 export type CodingAgent = "codex" | "claude";
 export type AgentSummaryOpenAIEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";

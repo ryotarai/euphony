@@ -17,6 +17,7 @@ import type {
   Session,
   Settings,
   GitChangesSnapshot,
+  KanbanSession,
   WorkspaceDirectory,
   WorkspaceFile,
   WorkspaceSearchResult,
@@ -50,6 +51,28 @@ export class ApiError extends Error {
 
 export class ApiClient {
   constructor(private readonly token: string) {}
+
+  listKanbanSessions(): Promise<KanbanSession[]> {
+    return this.request("/api/kanban/sessions");
+  }
+
+  listKanbanArchives(): Promise<KanbanSession[]> {
+    return this.request("/api/kanban/archives");
+  }
+
+  setKanbanSessionArchived(
+    terminalID: string,
+    sessionID: string,
+    archived: boolean,
+  ): Promise<KanbanSession> {
+    return this.request(
+      `/api/kanban/sessions/${encodeURIComponent(terminalID)}/${encodeURIComponent(sessionID)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ archived }),
+      },
+    );
+  }
 
   listSessions(): Promise<Session[]> {
     return this.request("/api/sessions");

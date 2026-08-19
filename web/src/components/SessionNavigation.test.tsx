@@ -984,3 +984,31 @@ test("places All sessions above Settings and closes the mobile drawer", async ()
   expect(onOpenAllSessions).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
 });
+
+test("places Kanban above All sessions and exposes its keyboard shortcut", async () => {
+  const onOpenKanban = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenKanban={onOpenKanban}
+    />,
+  );
+
+  const kanban = screen.getByRole("button", { name: "Kanban" });
+  const allSessions = screen.getByRole("button", { name: "All sessions" });
+  expect(kanban.compareDocumentPosition(allSessions) & Node.DOCUMENT_POSITION_FOLLOWING)
+    .toBeTruthy();
+  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+K");
+  expect(kanban).toHaveTextContent("⌘⇧K");
+
+  await user.click(kanban);
+  expect(onOpenKanban).toHaveBeenCalledOnce();
+
+  fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
+  expect(onOpenKanban).toHaveBeenCalledTimes(2);
+});

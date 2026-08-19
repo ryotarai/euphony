@@ -16,6 +16,7 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
+  Columns3Icon,
   ListIcon,
   PlusIcon,
   Settings2Icon,
@@ -42,6 +43,7 @@ import { ProjectSidebar, type SessionInfoInteractionHandlers } from "./ProjectSi
 import { useSessionContextMenu } from "./SessionContextMenu";
 import { SessionInfoCard } from "./SessionInfoPane";
 import type { AgentSummary, Project, Session, Settings } from "../types";
+import { isEditableTarget } from "../keybindings";
 import {
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
@@ -80,6 +82,7 @@ interface SessionNavigationProps {
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
   onOpenAllSessions?(): void;
+  onOpenKanban?(): void;
   focusedPaneID?: string | null;
   agentsOpen?: boolean;
   agentSummaryCount?: number;
@@ -580,6 +583,31 @@ function SessionNavigationContent({
     props.onOpenAllSessions?.();
   };
 
+  const openKanban = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenKanban?.();
+  }, [isMobile, props.onOpenKanban, setOpenMobile]);
+
+  useEffect(() => {
+    const openWithShortcut = (event: KeyboardEvent) => {
+      if (
+        isEditableTarget(event.target) ||
+        event.key.toLowerCase() !== "k" ||
+        !event.metaKey ||
+        !event.shiftKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openKanban();
+    };
+    window.addEventListener("keydown", openWithShortcut, { capture: true });
+    return () => window.removeEventListener("keydown", openWithShortcut, { capture: true });
+  }, [openKanban]);
+
   const openAgents = (event: React.MouseEvent<HTMLButtonElement>) => {
     const multiple = event.metaKey || event.ctrlKey;
     if (isMobile && !multiple) setOpenMobile(false);
@@ -703,6 +731,19 @@ function SessionNavigationContent({
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Kanban (⌘⇧K)"
+                aria-label="Kanban"
+                aria-keyshortcuts="Meta+Shift+K"
+                title="Kanban (⌘⇧K)"
+                onClick={openKanban}
+              >
+                <Columns3Icon aria-hidden="true" />
+                <span>Kanban</span>
+                <kbd className="sidebar-shortcut-hint" aria-hidden="true">⌘⇧K</kbd>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="All sessions"
