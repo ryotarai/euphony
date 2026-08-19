@@ -154,6 +154,16 @@ directories. Codex and Claude Code sessions are resumed automatically when
 their hooks have reported a session ID. Regular terminals reopen their shell in
 the saved working directory.
 
+To resume a Codex or Claude Code session from a link, pass its agent, session ID,
+and working directory as query parameters:
+
+```text
+/?agent=codex&session=<session-id>&cwd=<url-encoded-working-directory>
+```
+
+This also works when Euphony has no saved terminal record for the session. After
+a successful resume, Euphony removes these parameters from the browser URL.
+
 Run all automated checks with:
 
 ```sh
