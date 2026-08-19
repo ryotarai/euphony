@@ -130,9 +130,11 @@ export function KanbanDialog({
     for (const sessionID of localArchivedIDs) {
       if (persistedSessionIDs.sessionIDs.has(sessionID)) next.add(sessionID);
     }
-    for (const sessionID of persistedSessionIDs.archivedIDs) next.add(sessionID);
+    for (const sessionID of persistedSessionIDs.archivedIDs) {
+      if (!restoredIDs.has(sessionID)) next.add(sessionID);
+    }
     return next;
-  }, [localArchivedIDs, persistedSessionIDs]);
+  }, [localArchivedIDs, persistedSessionIDs, restoredIDs]);
 
   const sessionsByID = useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
