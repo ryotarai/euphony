@@ -5427,6 +5427,11 @@ input {
   margin-left: 0;
 }
 
+.project-session-row[data-state="waiting"][data-unread="false"]:not([data-attention="true"])
+  .project-session-select > * {
+  opacity: 0.78;
+}
+
 .project-session-select {
   display: grid;
   width: 100%;

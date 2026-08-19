@@ -530,6 +530,51 @@ test("renders an agent summary inside its project and follows the row", async ({
   await expect(page.getByLabel("Needs approval terminal", { exact: true })).toBeVisible();
 });
 
+test("dims read waiting project rows without attention", async ({ page }) => {
+  await clearSessions(page);
+  const waiting = await createSession(page, "Quiet waiting", "/tmp");
+  await reportAgent(page, waiting.id, "codex", "Quiet waiting", "waiting");
+  await page.route("**/api/events", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: "",
+    });
+  });
+  await page.route("**/api/agent-summaries", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        terminalId: waiting.id,
+        provider: "codex",
+        status: "waiting",
+        purpose: "Quiet waiting",
+        summary: "Waiting without new activity.",
+        action: "",
+        generatedAt: "2026-08-19T00:00:00Z",
+        unread: false,
+        done: false,
+      }]),
+    });
+  });
+  await page.goto("/?token=test-token");
+
+  const tmpGroup = await projectGroup(page, "/tmp");
+  const button = tmpGroup.getByRole("button", {
+    name: /Select Codex.*Quiet waiting/,
+  });
+  const row = button.locator("..");
+  await expect(row).toHaveAttribute("data-state", "waiting");
+  await expect(row).toHaveAttribute("data-unread", "false");
+  await expect(row).not.toHaveAttribute("data-attention", "true");
+  await expect(button).toHaveCSS("opacity", "1");
+  await expect(button.locator(".project-session-status-waiting")).toHaveCSS(
+    "opacity",
+    "0.78",
+  );
+});
+
 test("starts an agent from a persisted project action", async ({ page }) => {
   await clearSessions(page);
   const project = await getOrCreateProject(page, "/tmp");

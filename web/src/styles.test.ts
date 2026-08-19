@@ -35,6 +35,14 @@ test("defines project sidebar unread and action selectors", () => {
   expect(stylesheet).toContain("prefers-reduced-motion: reduce");
 });
 
+test("dims read waiting project sessions without attention", () => {
+  const waitingRule = stylesheet.match(
+    /\.project-session-row\[data-state=\"waiting\"\]\[data-unread=\"false\"\]:not\(\[data-attention=\"true\"\]\)\s+\.project-session-select > \*\s*\{([\s\S]*?)\}/,
+  )?.[1] ?? "";
+
+  expect(waitingRule).toContain("opacity: 0.78;");
+});
+
 test("keeps project paths aligned to the visible tail", () => {
   const headingRule = stylesheet.match(
     /\.project-sidebar-header h2\s*\{([\s\S]*?)\}/,
