@@ -179,6 +179,70 @@ async function terminalGrid(page: Page) {
   }));
 }
 
+test("delivers Escape to the focused terminal without blurring it", async ({ page }) => {
+  await clearSessions(page);
+  const session = await createSession(page, "Escape input");
+  await openSharedSelection(page, [session.id], session.id);
+
+  const terminal = page.getByLabel("Escape input terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute(
+    "data-connection",
+    "connected",
+  );
+
+  const helper = terminal.locator(".xterm-helper-textarea");
+  await terminal.click();
+  await expect(helper).toBeFocused();
+
+  const runResponse = await page.request.post(`/api/terminals/${session.id}/run`, {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: { command: "stty -icanon min 1 time 0; od -An -tx1 -N1; stty sane" },
+  });
+  expect(runResponse.ok()).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(helper).toBeFocused();
+
+  await expect.poll(() => readTerminalHistory(page, session.id), { timeout: 5_000 })
+    .toContain(" 1b");
+});
+
+test("delivers Escape after canceling the terminal prefix mode", async ({ page }) => {
+  await clearSessions(page);
+  const session = await createSession(page, "Escape prefix input");
+  await openSharedSelection(page, [session.id], session.id);
+
+  const terminal = page.getByLabel("Escape prefix input terminal", { exact: true });
+  await expect(terminal).toBeVisible();
+  await expect(page.locator(".terminal-view")).toHaveAttribute(
+    "data-connection",
+    "connected",
+  );
+  const helper = terminal.locator(".xterm-helper-textarea");
+  await terminal.click();
+  await expect(helper).toBeFocused();
+
+  await page.keyboard.press("Control+B");
+  await expect(page.getByRole("status", { name: "Prefix commands" })).toBeVisible();
+  const runResponse = await page.request.post(`/api/terminals/${session.id}/run`, {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: { command: "stty -icanon min 1 time 0; od -An -tx1 -N1; stty sane" },
+  });
+  expect(runResponse.ok()).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(helper).toBeFocused();
+  await expect.poll(() => readTerminalHistory(page, session.id), { timeout: 5_000 })
+    .toContain(" 1b");
+});
+
 test("keeps the WebGL renderer attached across source switches", async ({ page }) => {
   await clearSessions(page);
   const session = await createSession(page, "WebGL renderer");
