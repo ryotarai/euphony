@@ -95,6 +95,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			prefix TEXT NOT NULL,
 			pane_tab_shortcut TEXT NOT NULL DEFAULT 'Meta+L',
+			kanban_shortcut TEXT NOT NULL DEFAULT 'Meta+Alt+K',
 			sidebar_width INTEGER NOT NULL,
 			sidebar_collapsed INTEGER NOT NULL,
 			interface_font_size INTEGER NOT NULL DEFAULT 16,
@@ -230,6 +231,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE settings ADD COLUMN pane_tab_shortcut TEXT NOT NULL DEFAULT 'Meta+L'",
 		); err != nil {
 			return fmt.Errorf("add pane tab shortcut: %w", err)
+		}
+	}
+	hasKanbanShortcut, err := s.hasColumn(ctx, "settings", "kanban_shortcut")
+	if err != nil {
+		return err
+	}
+	if !hasKanbanShortcut {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE settings ADD COLUMN kanban_shortcut TEXT NOT NULL DEFAULT 'Meta+Alt+K'",
+		); err != nil {
+			return fmt.Errorf("add Kanban shortcut: %w", err)
 		}
 	}
 	hasTerminalHistoryLimit, err := s.hasColumn(ctx, "settings", "terminal_history_limit")
@@ -463,7 +475,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		WHERE agent_status = 'attention'`); err != nil {
 		return fmt.Errorf("migrate terminal attention status: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 17"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 18"); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
@@ -498,7 +510,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	var result Settings
 	var collapsed, terminalCursorBlink, terminalOptionAsAlt int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT prefix, pane_tab_shortcut, sidebar_width, sidebar_collapsed,
+		`SELECT prefix, pane_tab_shortcut, kanban_shortcut, sidebar_width, sidebar_collapsed,
 			interface_font_size, terminal_font_size, terminal_font_family, agent_log_font_size,
 			terminal_history_limit, terminal_line_height,
 			terminal_cursor_style, terminal_cursor_blink, terminal_scroll_sensitivity,
@@ -508,6 +520,7 @@ func (s *SQLiteStore) LoadSettings(ctx context.Context) (Settings, error) {
 	).Scan(
 		&result.Prefix,
 		&result.PaneTabShortcut,
+		&result.KanbanShortcut,
 		&result.SidebarWidth,
 		&collapsed,
 		&result.InterfaceFontSize,
@@ -548,14 +561,14 @@ func (s *SQLiteStore) SaveSettings(ctx context.Context, settings Settings) error
 		terminalOptionAsAlt = 1
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE settings
-		SET prefix = ?, pane_tab_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
+		SET prefix = ?, pane_tab_shortcut = ?, kanban_shortcut = ?, sidebar_width = ?, sidebar_collapsed = ?,
 			interface_font_size = ?, terminal_font_size = ?, terminal_font_family = ?, agent_log_font_size = ?,
 			terminal_history_limit = ?, terminal_line_height = ?,
 			terminal_cursor_style = ?, terminal_cursor_blink = ?, terminal_scroll_sensitivity = ?,
 			terminal_option_as_alt = ?, coding_agent = ?, agent_summary_provider = ?, agent_summary_prompt = ?
 			, agent_summary_openai_effort = ?
 		WHERE id = 1`,
-		settings.Prefix, settings.PaneTabShortcut, settings.SidebarWidth, collapsed,
+		settings.Prefix, settings.PaneTabShortcut, settings.KanbanShortcut, settings.SidebarWidth, collapsed,
 		settings.InterfaceFontSize, settings.TerminalFontSize, settings.TerminalFontFamily,
 		settings.AgentLogFontSize,
 		settings.TerminalHistoryLimit, settings.TerminalLineHeight,

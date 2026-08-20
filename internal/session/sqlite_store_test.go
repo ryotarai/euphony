@@ -165,6 +165,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
+		defaults.KanbanShortcut != DefaultKanbanShortcut ||
 		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed ||
 		defaults.InterfaceFontSize != 16 || defaults.TerminalFontSize != 14 ||
 		defaults.TerminalFontFamily != DefaultTerminalFontFamily ||
@@ -177,7 +178,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 	want := Settings{
-		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
+		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J", KanbanShortcut: "Ctrl+Alt+K",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 		TerminalFontFamily:   "JetBrains Mono, monospace",
@@ -300,8 +301,8 @@ func TestSQLiteStorePersistsSelection(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 17 {
-		t.Fatalf("user_version = %d, want 17", version)
+	if version != 18 {
+		t.Fatalf("user_version = %d, want 18", version)
 	}
 }
 
@@ -414,7 +415,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 	want := Settings{
-		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L",
+		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L", KanbanShortcut: "Meta+Alt+K",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
 		TerminalFontFamily:   DefaultTerminalFontFamily,

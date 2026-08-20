@@ -13,9 +13,9 @@
 ## Global Constraints
 
 - Keep the four fixed columns in the order Running, Waiting, Blocked, Archived.
-- Keep the modal at approximately 80vw by 80dvh with small-screen fallbacks.
+- Keep the modal fixed at 90vw by 90dvh.
 - Put Kanban immediately above All sessions in the sidebar footer.
-- Use Meta+Shift+K and Ctrl+Shift+K, ignoring editable targets.
+- Use configurable Meta+Alt+K by default, ignoring editable targets.
 - Let users drag only into Archived and provide Archive/Restore button fallbacks.
 - Preserve archived records in All sessions and keep existing resume behavior safe.
 - Write failing tests before production code and verify the red-green cycle.
@@ -125,7 +125,7 @@ Commit with `feat: expose archived sessions to all sessions`.
 
 - [ ] **Step 1: Write failing component/navigation tests**
 
-Cover fixed columns, status projection, concise card content, `80vw`/`80dvh`
+Cover fixed columns, status projection, concise card content, `90vw`/`90dvh`
 class hooks, Archive and Restore fallback buttons, `dragStart` + drop into
 Archived, and sidebar order/shortcut attributes.
 

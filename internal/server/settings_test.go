@@ -37,7 +37,7 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 	if _, ok := defaultJSON["codingAgent"]; !ok {
 		t.Fatal("GET /api/settings omits codingAgent setting")
 	}
-	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
+	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" || defaults.KanbanShortcut != "Meta+Alt+K" ||
 		defaults.SidebarWidth != 304 || defaults.InterfaceFontSize != 16 ||
 		defaults.TerminalFontSize != 14 || defaults.AgentLogFontSize != 14 ||
 		defaults.TerminalFontFamily != session.DefaultTerminalFontFamily ||
@@ -50,14 +50,14 @@ func TestSettingsAPIReadsAndPersistsSettings(t *testing.T) {
 	}
 
 	response = performRequest(t, srv, http.MethodPatch, "/api/settings",
-		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false,"agentSummaryProvider":"codex"}`)
+		`{"prefix":"Ctrl+A","paneTabShortcut":"Ctrl+J","kanbanShortcut":"Ctrl+Alt+K","sidebarWidth":420,"sidebarCollapsed":true,"interfaceFontSize":18,"terminalFontSize":17,"terminalFontFamily":"  JetBrains Mono, monospace  ","agentLogFontSize":16,"terminalHistoryLimit":0,"terminalLineHeight":1.5,"terminalCursorStyle":"underline","terminalCursorBlink":true,"terminalScrollSensitivity":5,"terminalOptionAsAlt":false,"agentSummaryProvider":"codex"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("PATCH /api/settings status = %d, body = %s", response.Code, response.Body.String())
 	}
 	var updated session.Settings
 	decodeResponse(t, response, &updated)
 	if updated != (session.Settings{
-		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
+		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J", KanbanShortcut: "Ctrl+Alt+K",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 		TerminalFontFamily:   "JetBrains Mono, monospace",

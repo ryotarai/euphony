@@ -200,6 +200,18 @@ test("starts terminal or agent work only through project callbacks", async () =>
   expect(props.onAddProject).toHaveBeenCalledOnce();
 });
 
+test("opens a project-filtered Kanban view from the project header", async () => {
+  const user = userEvent.setup();
+  const onOpenKanban = vi.fn();
+  renderSidebar({ onOpenKanban });
+
+  await user.click(screen.getByRole("button", {
+    name: `Open Kanban for ${project.path}`,
+  }));
+
+  expect(onOpenKanban).toHaveBeenCalledWith(project.path);
+});
+
 test("right-aligns project paths and truncates their left side", () => {
   const { container } = renderSidebar({
     projects: [{ ...project, path: "/Users/ryotarai/work/euphony/very-long-project" }],

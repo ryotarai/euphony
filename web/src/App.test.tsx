@@ -20,6 +20,7 @@ beforeEach(() => {
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
   paneTabShortcut: "Meta+L",
+  kanbanShortcut: "Meta+Alt+K",
   sidebarWidth: 304,
   sidebarCollapsed: false,
   interfaceFontSize: 16,
@@ -1705,9 +1706,61 @@ test("opens Kanban from the sidebar and its keyboard shortcut", async () => {
   expect(screen.getByRole("region", { name: "Blocked" })).toBeVisible();
   expect(screen.getByRole("region", { name: "Archived" })).toBeVisible();
 
+  await user.click(within(screen.getByRole("dialog", { name: "Kanban" })).getByText("Implement v0.2"));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "Kanban" })).not.toBeInTheDocument();
+  });
+
   await user.keyboard("{Escape}");
-  fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
+  fireEvent.keyDown(window, { key: "k", metaKey: true, altKey: true });
   expect(await screen.findByRole("dialog", { name: "Kanban" })).toBeVisible();
+  expect(fetchMock.mock.calls.some(([input]) => input === "/api/kanban/sessions")).toBe(true);
+});
+
+test("opens Kanban filtered to a project from its sidebar header", async () => {
+  const project: Project = {
+    id: "project-euphony",
+    path: "/workspace/euphony",
+    createdAt: "2026-08-01T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([runningSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/kanban/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([{ ...kanbanRunningSession, project: project.path }]);
+    }
+    if (input === "/api/kanban/archives" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Open Kanban for ${project.path}`,
+  }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Kanban" });
+  expect(within(dialog).getByRole("combobox", { name: "Filter by project" }))
+    .toHaveValue(project.path);
+  expect(within(dialog).getByRole("region", { name: "Running" }))
+    .toHaveTextContent("Implement v0.2");
   expect(fetchMock.mock.calls.some(([input]) => input === "/api/kanban/sessions")).toBe(true);
 });
 
@@ -4674,6 +4727,8 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const prefix = screen.getByLabelText("Prefix");
   expect(prefix).toHaveAttribute("data-slot", "input");
   expect(prefix).toHaveFocus();
+  const kanbanShortcut = within(dialog).getByLabelText("Kanban shortcut");
+  expect(kanbanShortcut).toHaveValue("Meta+Alt+K");
   const interfaceFontSize = within(dialog).getByLabelText("Interface");
   const terminalFontSize = within(dialog).getByLabelText("Terminal");
   const agentLogFontSize = within(dialog).getByLabelText("Agent log");
@@ -4715,6 +4770,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
   const reopenedPrefix = screen.getByLabelText("Prefix");
   const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
+  const reopenedKanbanShortcut = within(reopenedDialog).getByLabelText("Kanban shortcut");
   const historyBuffer = screen.getByLabelText("History buffer");
   expect(historyBuffer).toHaveValue(1);
   expect(screen.getByRole("checkbox", { name: "Unlimited history" })).not.toBeChecked();
@@ -4733,6 +4789,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   expect(reopenedSummaryPrompt).toHaveValue(defaultSettings.agentSummaryPrompt);
   fireEvent.change(reopenedPrefix, { target: { value: "Ctrl+A" } });
   fireEvent.change(paneTabShortcut, { target: { value: "control+j" } });
+  fireEvent.change(reopenedKanbanShortcut, { target: { value: "Ctrl+Alt+J" } });
   fireEvent.change(historyBuffer, { target: { value: "8" } });
   fireEvent.change(within(reopenedDialog).getByLabelText("Interface"), {
     target: { value: "18" },
@@ -4760,6 +4817,7 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         ...defaultSettings,
         prefix: "Ctrl+A",
         paneTabShortcut: "Ctrl+J",
+        kanbanShortcut: "Ctrl+Alt+J",
         interfaceFontSize: 18,
         terminalFontSize: 17,
         terminalFontFamily: "Iosevka, monospace",

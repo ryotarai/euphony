@@ -13,7 +13,7 @@ import {
 import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
-import { KanbanDialog } from "./components/KanbanDialog";
+import { KanbanDialog, kanbanAllProjectsFilter } from "./components/KanbanDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { AgentsView } from "./components/AgentsView";
 import {
@@ -80,6 +80,7 @@ import type {
   TerminalCursorStyle,
 } from "./types";
 import {
+  defaultKanbanShortcut,
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
@@ -209,6 +210,7 @@ interface AppProps {
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
   paneTabShortcut: "Meta+L",
+  kanbanShortcut: defaultKanbanShortcut,
   sidebarWidth: 256,
   sidebarCollapsed: false,
   interfaceFontSize: 16,
@@ -657,6 +659,7 @@ export function App({
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [kanbanOpen, setKanbanOpen] = useState(false);
+  const [kanbanProjectFilter, setKanbanProjectFilter] = useState(kanbanAllProjectsFilter);
   const [kanbanSessions, setKanbanSessions] = useState<KanbanSession[]>([]);
   const [kanbanLoading, setKanbanLoading] = useState(false);
   const [kanbanError, setKanbanError] = useState("");
@@ -684,6 +687,9 @@ export function App({
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
+  );
+  const [kanbanShortcutDraft, setKanbanShortcutDraft] = useState(
+    settings.kanbanShortcut ?? defaultKanbanShortcut,
   );
   const [terminalHistoryLimitDraft, setTerminalHistoryLimitDraft] = useState(
     () => historyLimitDraft(settings.terminalHistoryLimit),
@@ -728,6 +734,7 @@ export function App({
     field:
       | "prefix"
       | "paneTabShortcut"
+      | "kanbanShortcut"
       | "terminalHistoryLimit"
       | "terminalFontFamily"
       | "terminalLineHeight"
@@ -3225,6 +3232,7 @@ export function App({
   function openSettings() {
     setPrefixDraft(settings.prefix);
     setPaneTabShortcutDraft(settings.paneTabShortcut);
+    setKanbanShortcutDraft(settings.kanbanShortcut ?? defaultKanbanShortcut);
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setTerminalFontFamilyDraft(settings.terminalFontFamily);
@@ -3248,12 +3256,24 @@ export function App({
 
   function openKanban() {
     setAllSessionsOpen(false);
+    setKanbanProjectFilter(kanbanAllProjectsFilter);
     setKanbanOpen((current) => !current);
+  }
+
+  function openKanbanForProject(projectPath: string) {
+    setAllSessionsOpen(false);
+    setKanbanProjectFilter(projectPath);
+    setKanbanOpen(true);
   }
 
   function openAllSessions() {
     setKanbanOpen(false);
     setAllSessionsOpen(true);
+  }
+
+  async function openKanbanSession(item: KanbanSession) {
+    setKanbanOpen(false);
+    await selectAllSession(item);
   }
 
   async function updateKanbanArchive(item: KanbanSession, archived: boolean) {
@@ -3355,6 +3375,7 @@ export function App({
     event.preventDefault();
     const prefix = normalizePrefix(prefixDraft);
     const paneTabShortcut = normalizePrefix(paneTabShortcutDraft);
+    const kanbanShortcut = normalizePrefix(kanbanShortcutDraft);
     if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(prefix)) {
       setSettingsError({
         field: "prefix",
@@ -3369,10 +3390,24 @@ export function App({
       });
       return;
     }
+    if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(kanbanShortcut)) {
+      setSettingsError({
+        field: "kanbanShortcut",
+        message: "Use modifiers and one key, for example Meta+Alt+K.",
+      });
+      return;
+    }
     if (shortcutsEqual(prefix, paneTabShortcut)) {
       setSettingsError({
         field: "paneTabShortcut",
         message: "Choose a different shortcut from Prefix.",
+      });
+      return;
+    }
+    if (shortcutsEqual(prefix, kanbanShortcut) || shortcutsEqual(paneTabShortcut, kanbanShortcut)) {
+      setSettingsError({
+        field: "kanbanShortcut",
+        message: "Choose a different shortcut from Prefix and Pane tab toggle.",
       });
       return;
     }
@@ -3445,6 +3480,7 @@ export function App({
       ...settings,
       prefix,
       paneTabShortcut,
+      kanbanShortcut,
       interfaceFontSize: fontSizes.interfaceFontSize!,
       terminalFontSize: fontSizes.terminalFontSize!,
       terminalFontFamily,
@@ -3782,6 +3818,7 @@ export function App({
           void createSession(false, undefined, projectID);
         },
         onCreateAgent: startConfiguredAgent,
+        onOpenKanbanForProject: openKanbanForProject,
       }
     : {};
   const summaryByTerminalID = new Map(
@@ -4013,9 +4050,14 @@ export function App({
         key={`kanban-${kanbanOpen ? "open" : "closed"}`}
         open={kanbanOpen}
         sessions={kanbanSessions}
+        projects={projectList}
+        projectFilter={kanbanProjectFilter}
         loading={kanbanLoading}
         error={kanbanError}
+        shortcut={settings.kanbanShortcut ?? defaultKanbanShortcut}
         onOpenChange={setKanbanOpen}
+        onProjectFilterChange={setKanbanProjectFilter}
+        onOpenSession={openKanbanSession}
         onArchiveSession={archiveKanbanSession}
         onRestoreSession={restoreKanbanSession}
       />
@@ -4355,6 +4397,21 @@ export function App({
                   Cycle the focused pane through Terminal, Agent log, and Changes.
                 </FieldDescription>
                 {settingsError?.field === "paneTabShortcut" && (
+                  <FieldError>{settingsError.message}</FieldError>
+                )}
+              </Field>
+              <Field data-invalid={settingsError?.field === "kanbanShortcut"}>
+                <FieldLabel htmlFor="kanban-shortcut">Kanban shortcut</FieldLabel>
+                <Input
+                  id="kanban-shortcut"
+                  value={kanbanShortcutDraft}
+                  onChange={(event) => setKanbanShortcutDraft(event.target.value)}
+                  aria-invalid={settingsError?.field === "kanbanShortcut"}
+                />
+                <FieldDescription>
+                  Open Kanban. For example Meta+Alt+K or Ctrl+Alt+K.
+                </FieldDescription>
+                {settingsError?.field === "kanbanShortcut" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>

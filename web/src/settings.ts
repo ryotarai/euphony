@@ -8,3 +8,4 @@ export const defaultTerminalCursorStyle: TerminalCursorStyle = "bar";
 export const defaultTerminalCursorBlink = false;
 export const defaultTerminalScrollSensitivity = 3;
 export const defaultTerminalOptionAsAlt = true;
+export const defaultKanbanShortcut = "Meta+Alt+K";

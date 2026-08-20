@@ -22,6 +22,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Prefix                    string   `json:"prefix"`
 		PaneTabShortcut           string   `json:"paneTabShortcut"`
+		KanbanShortcut            *string  `json:"kanbanShortcut"`
 		SidebarWidth              float64  `json:"sidebarWidth"`
 		SidebarCollapsed          bool     `json:"sidebarCollapsed"`
 		InterfaceFontSize         float64  `json:"interfaceFontSize"`
@@ -58,6 +59,13 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if input.CodingAgent != nil {
 		codingAgent = *input.CodingAgent
 	}
+	kanbanShortcut := currentSettings.KanbanShortcut
+	if kanbanShortcut == "" {
+		kanbanShortcut = session.DefaultKanbanShortcut
+	}
+	if input.KanbanShortcut != nil {
+		kanbanShortcut = *input.KanbanShortcut
+	}
 	agentSummaryPrompt := currentSettings.AgentSummaryPrompt
 	if input.AgentSummaryPrompt != nil {
 		agentSummaryPrompt = *input.AgentSummaryPrompt
@@ -72,7 +80,10 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if decodeErr != nil || ensureJSONEnd(decoder) != nil ||
 		!prefixPattern.MatchString(input.Prefix) ||
 		!prefixPattern.MatchString(input.PaneTabShortcut) ||
+		!prefixPattern.MatchString(kanbanShortcut) ||
 		shortcutsEqual(input.Prefix, input.PaneTabShortcut) ||
+		shortcutsEqual(input.Prefix, kanbanShortcut) ||
+		shortcutsEqual(input.PaneTabShortcut, kanbanShortcut) ||
 		math.IsNaN(input.SidebarWidth) || math.IsInf(input.SidebarWidth, 0) ||
 		input.SidebarWidth < 180 || input.SidebarWidth > 600 ||
 		!validFontSize(input.InterfaceFontSize) ||
@@ -95,6 +106,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	settings := session.Settings{
 		Prefix:                    input.Prefix,
 		PaneTabShortcut:           input.PaneTabShortcut,
+		KanbanShortcut:            kanbanShortcut,
 		SidebarWidth:              int(math.Round(input.SidebarWidth)),
 		SidebarCollapsed:          input.SidebarCollapsed,
 		InterfaceFontSize:         int(input.InterfaceFontSize),
