@@ -2515,14 +2515,23 @@ test("creates a terminal in the cwd chosen from the sidebar", async () => {
   expect(within(selectedTerminal).getByText("sh", { exact: true })).toBeInTheDocument();
 });
 
-test("creates a terminal in the focused terminal cwd, selects it, and confirms deletion", async () => {
+test("creates a terminal in the focused terminal cwd, selects it, and archives an agent", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
     .mockImplementationOnce(() => jsonResponse([runningSession]))
     .mockImplementationOnce(legacyProjectsResponse)
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse(secondRunningSession, 201))
-    .mockImplementationOnce(() => Promise.resolve(new Response(null, { status: 204 })));
+    .mockImplementationOnce(() => jsonResponse({
+      id: secondRunningSession.id,
+      selection: {
+        terminalIds: [],
+        manualTerminalIds: [],
+        pinnedTerminalIds: [],
+        filters: { statuses: [], cwds: [] },
+        revision: 1,
+      },
+    }));
 
   const user = userEvent.setup();
   render(
@@ -2549,24 +2558,8 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   );
   expect(await screen.findByRole("button", { name: "Select Claude" })).toHaveAttribute("aria-current", "true");
   fireEvent.contextMenu(screen.getByRole("button", { name: "Select Claude" }));
-  let sessionMenu = screen.getByRole("menu", { name: "Actions for Claude" });
-  await user.click(within(sessionMenu).getByRole("menuitem", { name: "Delete" }));
-
-  expect(screen.getByRole("dialog", { name: "Delete terminal?" })).toBeVisible();
-  expect(screen.getByText(/“Claude” will be stopped/)).toBeVisible();
-  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-  expect(fetchMock).toHaveBeenCalledTimes(4);
-
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-  expect(screen.queryByRole("dialog", { name: "Delete terminal?" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Select Claude" })).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(4);
-
-  fireEvent.contextMenu(screen.getByRole("button", { name: "Select Claude" }));
-  sessionMenu = screen.getByRole("menu", { name: "Actions for Claude" });
-  await user.click(within(sessionMenu).getByRole("menuitem", { name: "Delete" }));
-  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+  const sessionMenu = screen.getByRole("menu", { name: "Actions for Claude" });
+  await user.click(within(sessionMenu).getByRole("menuitem", { name: "Archive" }));
 
   await waitFor(() => {
     expect(screen.queryByRole("button", { name: "Select Claude" })).not.toBeInTheDocument();
@@ -2574,8 +2567,8 @@ test("creates a terminal in the focused terminal cwd, selects it, and confirms d
   expect(fetchMock).toHaveBeenCalledTimes(5);
   expect(fetchMock).toHaveBeenNthCalledWith(
     5,
-    "/api/sessions/session-2",
-    expect.objectContaining({ method: "DELETE" }),
+    "/api/sessions/session-2/archive",
+    expect.objectContaining({ method: "POST" }),
   );
 });
 

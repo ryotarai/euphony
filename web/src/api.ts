@@ -209,6 +209,12 @@ export class ApiClient {
     await this.request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
+  archiveSession(id: string): Promise<{ id: string; selection: SelectionSnapshot }> {
+    return this.request(`/api/sessions/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+    });
+  }
+
   deleteTerminal(id: string): Promise<{ id: string; selection: SelectionSnapshot }> {
     return this.request(`/api/terminals/${encodeURIComponent(id)}`, {
       method: "DELETE",

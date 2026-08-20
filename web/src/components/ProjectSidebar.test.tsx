@@ -239,20 +239,28 @@ test("does not render project controls when their callbacks are missing", () => 
   ).not.toBeInTheDocument();
 });
 
-test("opens deletion from a session context menu", async () => {
+test("archives agent sessions and deletes bare terminals from context menus", async () => {
   const user = userEvent.setup();
   const onSelectSession = vi.fn();
+  const onArchive = vi.fn();
   const onDelete = vi.fn();
-  renderSidebar({ onSelectSession, onDelete });
+  renderSidebar({ onSelectSession, onArchive, onDelete });
 
   const row = screen.getByRole("button", { name: /Select Codex/ });
   expect(screen.queryByRole("button", { name: "Delete Codex" })).not.toBeInTheDocument();
   fireEvent.contextMenu(row);
   const menu = screen.getByRole("menu", { name: "Actions for Codex" });
-  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(within(menu).getByRole("menuitem", { name: "Archive" }));
 
-  expect(onDelete).toHaveBeenCalledWith(agentSession);
+  expect(onArchive).toHaveBeenCalledWith(agentSession);
+  expect(onDelete).not.toHaveBeenCalled();
   expect(onSelectSession).not.toHaveBeenCalled();
+
+  const terminalRow = screen.getByRole("button", { name: "Select Shell" });
+  fireEvent.contextMenu(terminalRow);
+  const terminalMenu = screen.getByRole("menu", { name: "Actions for Shell" });
+  await user.click(within(terminalMenu).getByRole("menuitem", { name: "Delete" }));
+  expect(onDelete).toHaveBeenCalledWith(terminalSession);
 
   await user.click(row);
   expect(onSelectSession).toHaveBeenCalledWith(agentSession.id);

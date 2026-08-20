@@ -3208,6 +3208,23 @@ export function App({
     setRequestError("");
   }
 
+  async function archiveSession(item: Session) {
+    if (!api) return;
+    try {
+      const archived = await api.archiveSession(item.id);
+      cancelFilterDeselect(item.id);
+      setSessions((current) =>
+        current?.filter((session) => session.id !== item.id) ?? current,
+      );
+      if (syncSelection) applyServerSelection(archived.selection, "push");
+      setRequestError("");
+    } catch (error) {
+      setRequestError(
+        error instanceof Error ? error.message : "The agent session could not be archived.",
+      );
+    }
+  }
+
   function confirmDelete() {
     if (!pendingDelete) return;
     const items = pendingDelete;
@@ -4035,6 +4052,7 @@ export function App({
           selectSession(id, multiple, false, pin)
         }
         onCreate={(cwd) => void createSession(false, cwd)}
+        onArchive={(session) => void archiveSession(session)}
         onDelete={(session) => setPendingDelete([session])}
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +46,9 @@ type Server struct {
 	projects        *project.Service
 	projectRepo     project.Repository
 	directoryPicker func(context.Context) (string, error)
+	archiveStop     chan struct{}
+	archiveDone     chan struct{}
+	archiveStopOnce sync.Once
 }
 
 func New(config Config) (*Server, error) {
@@ -182,6 +186,7 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("POST /api/projects/pick-directory", server.pickProjectDirectory)
 	protected.HandleFunc("POST /api/sessions", server.createSession)
 	protected.HandleFunc("DELETE /api/sessions/{id}", server.deleteSession)
+	protected.HandleFunc("POST /api/sessions/{id}/archive", server.archiveSession)
 	protected.HandleFunc("POST /api/sessions/{id}/acknowledge-attention", server.acknowledgeAttention)
 	protected.HandleFunc("POST /api/sessions/{id}/tickets", server.createTicket)
 	protected.HandleFunc("GET /api/sessions/{id}/agent-log", server.agentLog)
@@ -212,6 +217,7 @@ func New(config Config) (*Server, error) {
 	public.Handle("/", static)
 
 	server.handler = public
+	server.startStaleAgentArchiver()
 	return server, nil
 }
 
@@ -221,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) Close(ctx context.Context) error {
 	var firstErr error
+	s.stopStaleAgentArchiver()
 	if s.summaries != nil {
 		if err := s.summaries.Close(ctx); err != nil {
 			if firstErr == nil {

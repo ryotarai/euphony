@@ -78,6 +78,7 @@ interface SessionNavigationProps {
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
   onAddProject?(): void;
+  onArchive?(session: Session): void;
   onDelete(session: Session): void;
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
@@ -217,6 +218,7 @@ function SessionListItem({
   selected,
   pinned,
   selectSession,
+  onArchive,
   onDelete,
   onSessionPointerEnter,
   onSessionPointerLeave,
@@ -227,11 +229,17 @@ function SessionListItem({
   selected: boolean;
   pinned: boolean;
   selectSession(id: string, multiple: boolean, pin?: boolean): void;
+  onArchive?(session: Session): void;
   onDelete(session: Session): void;
 } & SessionInfoInteractionHandlers) {
   const { onContextMenu, menu } = useSessionContextMenu(
     session.name,
-    () => onDelete(session),
+    session.agent
+      ? onArchive
+        ? () => onArchive(session)
+        : undefined
+      : () => onDelete(session),
+    session.agent ? "Archive" : "Delete",
   );
   const attentionDescriptionID = session.needsAttention
     ? `attention-${session.id}`
@@ -331,6 +339,7 @@ function SessionList(
                   selected={selectedIDSet.has(session.id)}
                   pinned={pinnedIDSet.has(session.id)}
                   selectSession={selectSession}
+                  onArchive={props.onArchive}
                   onDelete={props.onDelete}
                   {...props.sessionInfoHandlers}
                 />
@@ -708,6 +717,10 @@ function SessionNavigationContent({
                 : undefined}
               onDelete={(session) => {
                 props.onDelete(session);
+                if (isMobile) setOpenMobile(false);
+              }}
+              onArchive={(session) => {
+                props.onArchive?.(session);
                 if (isMobile) setOpenMobile(false);
               }}
               {...sessionInfoHandlers}

@@ -54,6 +54,65 @@ func TestSessionAPI(t *testing.T) {
 	}
 }
 
+func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
+	srv, err := New(Config{
+		Token:        "token",
+		Shell:        "/bin/sh",
+		DatabasePath: filepath.Join(t.TempDir(), "euphony.sqlite3"),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Archive me"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST /api/sessions status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	hook := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":`+jsonString(metadata.ID)+`,"agent":"codex",`+
+			`"agentSessionId":"archive-session","status":"waiting"}`)
+	if hook.Code != http.StatusOK {
+		t.Fatalf("POST /api/hooks/terminal status = %d, body = %s", hook.Code, hook.Body.String())
+	}
+
+	archived := performRequest(t, srv, http.MethodPost,
+		"/api/sessions/"+metadata.ID+"/archive", "")
+	if archived.Code != http.StatusOK {
+		t.Fatalf("POST archive status = %d, body = %s", archived.Code, archived.Body.String())
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	decodeResponse(t, archived, &result)
+	if result.ID != metadata.ID {
+		t.Fatalf("archive response = %#v, want terminal ID %q", result, metadata.ID)
+	}
+
+	listed := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("GET /api/sessions status = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	var current []session.Metadata
+	decodeResponse(t, listed, &current)
+	if len(current) != 0 {
+		t.Fatalf("current sessions = %#v, want archived agent hidden", current)
+	}
+
+	all := performRequest(t, srv, http.MethodGet, "/api/all-sessions", "")
+	if all.Code != http.StatusOK {
+		t.Fatalf("GET /api/all-sessions status = %d, body = %s", all.Code, all.Body.String())
+	}
+	var stored []allSession
+	decodeResponse(t, all, &stored)
+	if len(stored) != 1 || stored[0].ID != metadata.ID || !stored[0].Archived ||
+		stored[0].State != allSessionResume || stored[0].SessionID != "archive-session" {
+		t.Fatalf("all sessions = %#v, want one archived resumable agent", stored)
+	}
+}
+
 func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

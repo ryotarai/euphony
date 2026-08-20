@@ -178,6 +178,19 @@ func (s *Service) DeleteTerminal(id string) (selection.Snapshot, error) {
 	return s.Selection(), nil
 }
 
+// ArchiveAgentSession stops an agent terminal while keeping its persisted
+// agent identity available to All sessions for a later resume.
+func (s *Service) ArchiveAgentSession(id string) (selection.Snapshot, error) {
+	if _, err := s.sessions.ArchiveAgentSession(id); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return selection.Snapshot{}, ErrTerminalNotFound
+		}
+		return selection.Snapshot{}, err
+	}
+	s.cleanupTerminalAutomationGate(id)
+	return s.Selection(), nil
+}
+
 func (s *Service) ReadTerminal(id string, maxBytes int) (TerminalRead, error) {
 	terminal, ok := s.sessions.Get(id)
 	if !ok {

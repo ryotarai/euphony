@@ -148,6 +148,33 @@ test("renders the project tree without Inbox or split controls", () => {
   expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
 });
 
+test("uses Archive for agent rows in the legacy sidebar", async () => {
+  const user = userEvent.setup();
+  const onArchive = vi.fn();
+  const onDelete = vi.fn();
+  render(
+    <SessionNavigation
+      sessions={[sessions[0], sessions[2]]}
+      selectedIDs={[sessions[0].id]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onArchive={onArchive}
+      onDelete={onDelete}
+    />,
+  );
+
+  fireEvent.contextMenu(screen.getByRole("button", { name: "Select Codex" }));
+  const agentMenu = screen.getByRole("menu", { name: "Actions for Codex" });
+  await user.click(within(agentMenu).getByRole("menuitem", { name: "Archive" }));
+  expect(onArchive).toHaveBeenCalledWith(sessions[0]);
+  expect(onDelete).not.toHaveBeenCalled();
+
+  fireEvent.contextMenu(screen.getByRole("button", { name: "Select Terminal" }));
+  const terminalMenu = screen.getByRole("menu", { name: "Actions for Terminal" });
+  await user.click(within(terminalMenu).getByRole("menuitem", { name: "Delete" }));
+  expect(onDelete).toHaveBeenCalledWith(sessions[2]);
+});
+
 test("renders the generated session purpose without provider or status text", () => {
   const { container } = render(
     <SessionNavigation

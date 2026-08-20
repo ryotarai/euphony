@@ -268,6 +268,8 @@ const defaultBlockedStatusGracePeriod = 10 * time.Second
 // sample tails a file that grows to tens of megabytes, so the reads are spaced.
 const defaultClaudeTitleSampleInterval = 2 * time.Second
 
+const staleWaitingAgentAge = 24 * time.Hour
+
 type Manager struct {
 	mu                              sync.RWMutex
 	refreshMu                       sync.Mutex
@@ -1774,6 +1776,10 @@ func commandExitCode(command *exec.Cmd) *int {
 }
 
 func (m *Manager) List() []Metadata {
+	// List is also the manager's persistence-facing refresh point. Run the
+	// lifecycle rule before returning a snapshot so stale waiting agents are
+	// archived before they can be presented as current sessions.
+	m.ArchiveStaleWaitingAgents(time.Now().UTC())
 	done, started := m.beginMetadataRefresh()
 	var changes []Change
 	if started {
@@ -2636,6 +2642,134 @@ func isSupportedAgentSession(metadata Metadata) bool {
 		agent = strings.TrimSpace(metadata.ResumeAgent)
 	}
 	return agent == "codex" || agent == "claude"
+}
+
+// ArchiveAgentSession stops an active agent terminal while retaining its
+// metadata as an exited, restorable record. Bare terminals and sessions that
+// are already archived are intentionally rejected here; their context-menu
+// action remains Delete or they are already absent from the current sidebar.
+func (m *Manager) ArchiveAgentSession(id string) (Metadata, error) {
+	return m.archiveAgentSession(id, time.Now().UTC(), time.Time{})
+}
+
+// ArchiveStaleWaitingAgents archives agent sessions whose latest metadata
+// update is at least 24 hours old and whose agent is waiting. The timestamp is
+// supplied by the caller so the lifecycle rule can be tested without waiting
+// in real time.
+func (m *Manager) ArchiveStaleWaitingAgents(now time.Time) []Metadata {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	cutoff := now.Add(-staleWaitingAgentAge)
+
+	m.mu.RLock()
+	ids := make([]string, 0)
+	for id, item := range m.sessions {
+		metadata := item.metadata
+		if metadata.Archived || metadata.AgentStatus != "waiting" ||
+			!isSupportedAgentSession(metadata) {
+			continue
+		}
+		lastUpdate := metadata.UpdatedAt
+		if lastUpdate.IsZero() {
+			lastUpdate = metadata.CreatedAt
+		}
+		if lastUpdate.After(cutoff) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	m.mu.RUnlock()
+	sort.Strings(ids)
+
+	archived := make([]Metadata, 0, len(ids))
+	for _, id := range ids {
+		metadata, err := m.archiveAgentSession(id, now, cutoff)
+		if err == nil {
+			archived = append(archived, metadata)
+		}
+	}
+	return archived
+}
+
+func (m *Manager) archiveAgentSession(
+	id string,
+	now time.Time,
+	staleCutoff time.Time,
+) (Metadata, error) {
+	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer releaseMetadataSave()
+
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return Metadata{}, ErrManagerClosing
+	}
+	current, ok := m.sessions[id]
+	if !ok || current != item || current.metadata.Archived ||
+		!isSupportedAgentSession(current.metadata) {
+		m.mu.Unlock()
+		return Metadata{}, ErrNotFound
+	}
+	if !staleCutoff.IsZero() {
+		if current.metadata.AgentStatus != "waiting" {
+			m.mu.Unlock()
+			return Metadata{}, ErrNotFound
+		}
+		lastUpdate := current.metadata.UpdatedAt
+		if lastUpdate.IsZero() {
+			lastUpdate = current.metadata.CreatedAt
+		}
+		if lastUpdate.After(staleCutoff) {
+			m.mu.Unlock()
+			return Metadata{}, ErrNotFound
+		}
+	}
+
+	before := current.metadata
+	m.cancelAgentInterruptLocked(item)
+	m.cancelCodexActivityLocked(item)
+	m.cancelBlockedStatusLocked(item)
+	delete(m.sessions, id)
+	archived := before
+	archived.Archived = true
+	archived.State = StateExited
+	exitedAt := now
+	archived.ExitedAt = &exitedAt
+	archived.ExitCode = nil
+	change := m.nextChangeLocked(ChangeDeleted, &before, nil)
+	m.mu.Unlock()
+
+	// Remove the process before publishing the deletion. The normal watcher
+	// owns waitDone, so this also covers a process that exits concurrently.
+	item.session.terminate()
+	<-item.session.waitDone
+	archived.ExitCode = commandExitCode(item.session.command)
+
+	m.mu.Lock()
+	m.archived[id] = archived
+	store := m.store
+	m.mu.Unlock()
+
+	var persistErr error
+	if store != nil {
+		for attempt := 0; attempt < exitedMetadataSaveAttempts; attempt++ {
+			operation := m.reserveStoreOperation()
+			persistErr = m.runStoreOperation(operation, func() error {
+				return store.Save(context.Background(), archived)
+			})
+			if persistErr == nil || attempt+1 == exitedMetadataSaveAttempts {
+				break
+			}
+		}
+	}
+	m.emitChange(change)
+	return archived, persistErr
 }
 
 // SetAgentSessionArchived updates the user-managed archive flag for an agent

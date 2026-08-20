@@ -8,16 +8,17 @@ interface ContextMenuPosition {
 
 export function useSessionContextMenu(
   identity: string,
-  onDelete?: () => void,
+  onAction?: () => void,
+  actionLabel = "Delete",
 ) {
   const [position, setPosition] = useState<ContextMenuPosition | null>(null);
 
   const close = useCallback(() => setPosition(null), []);
   const onContextMenu = useCallback((event: MouseEvent<HTMLElement>) => {
-    if (!onDelete) return;
+    if (!onAction) return;
     event.preventDefault();
     setPosition({ x: event.clientX, y: event.clientY });
-  }, [onDelete]);
+  }, [onAction]);
 
   useEffect(() => {
     if (!position) return;
@@ -33,7 +34,7 @@ export function useSessionContextMenu(
     };
   }, [close, position]);
 
-  const menu = position && onDelete
+  const menu = position && onAction
     ? createPortal(
         <div
           className="session-context-menu"
@@ -49,10 +50,10 @@ export function useSessionContextMenu(
             autoFocus
             onClick={() => {
               close();
-              onDelete();
+              onAction();
             }}
           >
-            Delete
+            {actionLabel}
           </button>
         </div>,
         document.body,

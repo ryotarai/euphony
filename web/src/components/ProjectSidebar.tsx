@@ -31,6 +31,7 @@ export interface ProjectSidebarProps extends SessionInfoInteractionHandlers {
   onCreateAgent?(projectID: string): void;
   onOpenKanban?(projectPath: string): void;
   onAddProject?(): void;
+  onArchive?(session: Session): void;
   onDelete?(session: Session): void;
 }
 
@@ -228,6 +229,7 @@ function ProjectSessionRow({
   summary,
   selected,
   onSelectSession,
+  onArchive,
   onDelete,
   onSessionPointerEnter,
   onSessionPointerLeave,
@@ -238,6 +240,7 @@ function ProjectSessionRow({
   summary: SessionSummary;
   selected: boolean;
   onSelectSession(sessionID: string): void;
+  onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
   const status = activity(session, summary);
@@ -249,6 +252,7 @@ function ProjectSessionRow({
   const purposeText = purpose || latestSummary || "New session";
   const showSummary = Boolean(latestSummary && purpose && latestSummary !== purpose);
   const requiredAction = action || "None";
+  const isAgentSession = Boolean(session.agent || summary?.provider);
   const accessibleDescriptionID = `project-session-details-${session.id}`;
   const accessibleDescription = [
     `Status: ${statusLabel(status)}.`,
@@ -261,7 +265,14 @@ function ProjectSessionRow({
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
   const { onContextMenu, menu } = useSessionContextMenu(
     identity,
-    onDelete ? () => onDelete(session) : undefined,
+    isAgentSession
+      ? onArchive
+        ? () => onArchive(session)
+        : undefined
+      : onDelete
+        ? () => onDelete(session)
+        : undefined,
+    isAgentSession ? "Archive" : "Delete",
   );
 
   return (
@@ -328,6 +339,7 @@ function ProjectGroup({
   onCreateTerminal,
   onCreateAgent,
   onOpenKanban,
+  onArchive,
   onDelete,
   onSessionPointerEnter,
   onSessionPointerLeave,
@@ -342,6 +354,7 @@ function ProjectGroup({
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
   onOpenKanban?(projectPath: string): void;
+  onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
   const groupID = project?.id ?? "unassigned";
@@ -389,6 +402,7 @@ function ProjectGroup({
               summary={summaries.get(session.id)}
               selected={selectedID === session.id}
               onSelectSession={onSelectSession}
+              onArchive={onArchive}
               onDelete={onDelete}
               onSessionPointerEnter={onSessionPointerEnter}
               onSessionPointerLeave={onSessionPointerLeave}
@@ -414,6 +428,7 @@ export function ProjectSidebar({
   onCreateAgent,
   onOpenKanban,
   onAddProject,
+  onArchive,
   onDelete,
   onSessionPointerEnter,
   onSessionPointerLeave,
@@ -459,6 +474,7 @@ export function ProjectSidebar({
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
             onOpenKanban={onOpenKanban}
+            onArchive={onArchive}
             onDelete={onDelete}
             onSessionPointerEnter={onSessionPointerEnter}
             onSessionPointerLeave={onSessionPointerLeave}
@@ -474,6 +490,7 @@ export function ProjectSidebar({
             onSelectSession={onSelectSession}
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
+            onArchive={onArchive}
             onDelete={onDelete}
             onSessionPointerEnter={onSessionPointerEnter}
             onSessionPointerLeave={onSessionPointerLeave}

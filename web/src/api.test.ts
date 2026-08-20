@@ -448,6 +448,33 @@ test("starts an agent through the browser API endpoint", async () => {
   );
 });
 
+test("archives a session through the browser API endpoint", async () => {
+  const selection: SelectionSnapshot = {
+    terminalIds: [],
+    manualTerminalIds: [],
+    pinnedTerminalIds: [],
+    focusedTerminalId: undefined,
+    filters: { statuses: [], cwds: [] },
+    revision: 8,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementationOnce(() =>
+    jsonResponse({ id: "agent/one", selection }),
+  );
+  const api = new ApiClient("token");
+
+  await expect(api.archiveSession("agent/one")).resolves.toEqual({
+    id: "agent/one",
+    selection,
+  });
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/agent%2Fone/archive",
+    expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("creates and deletes terminals with returned selection", async () => {
   const selection: SelectionSnapshot = {
     terminalIds: ["terminal-1"],

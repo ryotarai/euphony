@@ -6,11 +6,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/ryotarai/euphony/internal/control"
 	"github.com/ryotarai/euphony/internal/session"
 )
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
+	s.sessions.ArchiveStaleWaitingAgents(time.Now().UTC())
 	writeJSON(w, http.StatusOK, s.sessions.ListCurrent())
 	s.sessions.RefreshMetadata()
 }
@@ -57,6 +60,23 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) archiveSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	selectionSnapshot, err := s.control.ArchiveAgentSession(id)
+	if errors.Is(err, control.ErrTerminalNotFound) {
+		writeError(w, http.StatusNotFound, "session_not_found", "The agent session does not exist.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "session_archive_failed", "The agent session could not be archived.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":        id,
+		"selection": selectionSnapshot,
+	})
 }
 
 func (s *Server) acknowledgeAttention(w http.ResponseWriter, r *http.Request) {
