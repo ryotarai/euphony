@@ -4565,7 +4565,7 @@ test("keeps prefix mode active without a timeout", async () => {
   vi.useRealTimers();
 });
 
-test("Escape cancels prefix mode without reaching the focused terminal", async () => {
+test("Escape cancels prefix mode while reaching the focused terminal", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     jsonResponse([runningSession]),
   );
@@ -4592,7 +4592,9 @@ test("Escape cancels prefix mode without reaching the focused terminal", async (
   fireEvent.keyDown(terminalInput, { key: "Escape" });
 
   expect(screen.queryByRole("status", { name: "Prefix commands" })).not.toBeInTheDocument();
-  expect(terminalKeyDown).not.toHaveBeenCalled();
+  expect(terminalKeyDown).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "Escape" }),
+  );
 });
 
 test("tmux split keys are not delivered to the focused terminal", async () => {
