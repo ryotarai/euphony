@@ -27,24 +27,27 @@ Attention remains a small card indicator rather than a fifth column, and
 ## User experience
 
 The sidebar footer order is New terminal (when available), Kanban, All
-sessions, Settings. Kanban has a visible `⌘⇧K` hint and the global shortcut
-also accepts `Ctrl+Shift+K` on non-macOS platforms. The shortcut is ignored
-while typing in an editable control and toggles the modal when the board is
-already open.
+sessions, Settings. Kanban has a visible shortcut hint; the default is
+`⌘⌥K` (`Meta+Alt+K`) and it can be changed from Settings. The shortcut is
+ignored while typing in an editable control and toggles the modal when the
+board is already open.
 
-Kanban opens a responsive modal sized to `80vw` by `80dvh` (with small-screen
-fallbacks). Its header contains the title, a short explanation, and the
-shortcut hint. The board keeps all four columns mounted and scrolls
-horizontally when needed; each column has its own vertical card list. Cards
-contain only the agent, title, purpose/summary text, working-directory
-metadata, update time, and one status signal.
+Kanban opens a modal fixed at `90vw` by `90dvh`. Its header contains the title,
+a project filter, a short explanation, and the shortcut hint. The board keeps
+all four columns mounted and scrolls horizontally when needed; each column has
+its own vertical card list. Cards contain only the agent, title,
+purpose/summary text, working-directory metadata, update time, and one status
+signal. Hovering a card reuses the sidebar session-information card; clicking
+the card closes Kanban and opens that agent terminal.
 
 Active cards are draggable to Archived. The Archived column is the only valid
 drop target and provides a visible empty-state drop hint. Every drag action
-has an equivalent button labelled Archive, so keyboard and assistive
-technology users do not depend on native drag-and-drop. Archived cards expose
-Restore; restoring makes the terminal visible in the sidebar again and keeps
-the board open. The same restore action is available from All sessions.
+has an icon-only Archive button in the card's top-right corner, with an
+accessible label for keyboard and assistive technology users. Archived cards
+expose Restore; restoring makes the terminal visible in the sidebar again and
+keeps the board open. The same restore action is available from All sessions.
+Each project header in the sidebar also provides a Kanban icon that opens the
+board with that project selected.
 
 ## Data and API
 

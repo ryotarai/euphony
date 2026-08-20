@@ -94,6 +94,7 @@ export type TerminalCursorStyle = "bar" | "block" | "underline";
 export interface Settings {
   prefix: string;
   paneTabShortcut: string;
+  kanbanShortcut?: string;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   interfaceFontSize: number;

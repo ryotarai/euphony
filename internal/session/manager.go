@@ -128,6 +128,7 @@ type AgentUpdate struct {
 type Settings struct {
 	Prefix                    string  `json:"prefix"`
 	PaneTabShortcut           string  `json:"paneTabShortcut"`
+	KanbanShortcut            string  `json:"kanbanShortcut"`
 	SidebarWidth              int     `json:"sidebarWidth"`
 	SidebarCollapsed          bool    `json:"sidebarCollapsed"`
 	InterfaceFontSize         int     `json:"interfaceFontSize"`
@@ -156,6 +157,7 @@ const (
 	DefaultTerminalCursorBlink       = false
 	DefaultTerminalScrollSensitivity = 3
 	DefaultTerminalOptionAsAlt       = true
+	DefaultKanbanShortcut            = "Meta+Alt+K"
 	DefaultAgentSummaryProvider      = "codex"
 	DefaultCodingAgent               = "codex"
 	DefaultAgentSummaryPrompt        = ""
@@ -166,6 +168,7 @@ func DefaultSettings() Settings {
 	return Settings{
 		Prefix:                    "Ctrl+B",
 		PaneTabShortcut:           "Meta+L",
+		KanbanShortcut:            DefaultKanbanShortcut,
 		SidebarWidth:              304,
 		InterfaceFontSize:         16,
 		TerminalFontSize:          14,

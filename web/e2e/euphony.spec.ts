@@ -293,11 +293,18 @@ test("opens Kanban, archives an agent, and restores it from All sessions", async
     await expect(dialog.getByRole("region", { name: column })).toBeVisible();
   }
   const bounds = await dialog.boundingBox();
-  const viewport = page.viewportSize();
+  const dimensions = await dialog.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      width: Number.parseFloat(style.width),
+      height: Number.parseFloat(style.height),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
   expect(bounds).not.toBeNull();
-  expect(viewport).not.toBeNull();
-  expect(bounds!.width / viewport!.width).toBeGreaterThan(0.75);
-  expect(bounds!.height / viewport!.height).toBeGreaterThan(0.75);
+  expect(dimensions.width / dimensions.viewportWidth).toBeCloseTo(0.9, 2);
+  expect(dimensions.height / dimensions.viewportHeight).toBeCloseTo(0.9, 2);
 
   await dialog.getByRole("button", { name: "Archive Build the release" }).click();
   await page.keyboard.press("Escape");
@@ -313,7 +320,7 @@ test("opens Kanban, archives an agent, and restores it from All sessions", async
   await expect(allSessions).toHaveCount(0);
   await expect(sidebarAgent).toBeVisible();
 
-  await page.keyboard.press("Meta+Shift+K");
+  await page.keyboard.press("Meta+Alt+K");
   await expect(page.getByRole("dialog", { name: "Kanban" })).toBeVisible();
 });
 

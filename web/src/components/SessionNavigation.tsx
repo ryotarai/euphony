@@ -43,8 +43,9 @@ import { ProjectSidebar, type SessionInfoInteractionHandlers } from "./ProjectSi
 import { useSessionContextMenu } from "./SessionContextMenu";
 import { SessionInfoCard } from "./SessionInfoPane";
 import type { AgentSummary, Project, Session, Settings } from "../types";
-import { isEditableTarget } from "../keybindings";
+import { formatShortcut, isEditableTarget, matchesPrefix } from "../keybindings";
 import {
+  defaultKanbanShortcut,
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
@@ -83,6 +84,7 @@ interface SessionNavigationProps {
   onOpenSettings?(): void;
   onOpenAllSessions?(): void;
   onOpenKanban?(): void;
+  onOpenKanbanForProject?(projectPath: string): void;
   focusedPaneID?: string | null;
   agentsOpen?: boolean;
   agentSummaryCount?: number;
@@ -589,15 +591,9 @@ function SessionNavigationContent({
   }, [isMobile, props.onOpenKanban, setOpenMobile]);
 
   useEffect(() => {
+    const kanbanShortcut = settings.kanbanShortcut ?? defaultKanbanShortcut;
     const openWithShortcut = (event: KeyboardEvent) => {
-      if (
-        isEditableTarget(event.target) ||
-        event.key.toLowerCase() !== "k" ||
-        (!event.metaKey && !event.ctrlKey) ||
-        !event.shiftKey ||
-        (event.metaKey && event.ctrlKey) ||
-        event.altKey
-      ) {
+      if (isEditableTarget(event.target) || !matchesPrefix(event, kanbanShortcut)) {
         return;
       }
       event.preventDefault();
@@ -606,7 +602,7 @@ function SessionNavigationContent({
     };
     window.addEventListener("keydown", openWithShortcut, { capture: true });
     return () => window.removeEventListener("keydown", openWithShortcut, { capture: true });
-  }, [openKanban]);
+  }, [openKanban, settings.kanbanShortcut]);
 
   const openAgents = (event: React.MouseEvent<HTMLButtonElement>) => {
     const multiple = event.metaKey || event.ctrlKey;
@@ -618,6 +614,11 @@ function SessionNavigationContent({
     if (props.onSelectSession) props.onSelectSession(sessionID);
     else props.onSelect(sessionID, false);
     if (isMobile) setOpenMobile(false);
+  };
+
+  const openProjectKanban = (projectPath: string) => {
+    if (isMobile) setOpenMobile(false);
+    props.onOpenKanbanForProject?.(projectPath);
   };
 
   return (
@@ -686,6 +687,7 @@ function SessionNavigationContent({
               agentSummaries={props.agentSummaries ?? []}
               selectedID={props.selectedID ?? props.selectedIDs[0] ?? null}
               onSelectSession={selectProjectSession}
+              onOpenKanban={props.onOpenKanbanForProject ? openProjectKanban : undefined}
               onCreateTerminal={props.onCreateTerminal
                 ? (projectID) => {
                   props.onCreateTerminal?.(projectID);
@@ -733,15 +735,17 @@ function SessionNavigationContent({
             )}
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip="Kanban (⌘⇧K)"
+                tooltip={`Kanban (${formatShortcut(settings.kanbanShortcut ?? defaultKanbanShortcut)})`}
                 aria-label="Kanban"
-                aria-keyshortcuts="Meta+Shift+K Control+Shift+K"
-                title="Kanban (⌘⇧K)"
+                aria-keyshortcuts={settings.kanbanShortcut ?? defaultKanbanShortcut}
+                title={`Kanban (${formatShortcut(settings.kanbanShortcut ?? defaultKanbanShortcut)})`}
                 onClick={openKanban}
               >
                 <Columns3Icon aria-hidden="true" />
                 <span>Kanban</span>
-                <kbd className="sidebar-shortcut-hint" aria-hidden="true">⌘⇧K</kbd>
+                <kbd className="sidebar-shortcut-hint" aria-hidden="true">
+                  {formatShortcut(settings.kanbanShortcut ?? defaultKanbanShortcut)}
+                </kbd>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
@@ -824,6 +828,7 @@ export function SessionNavigation(props: SessionNavigationProps) {
   const settings = props.settings ?? {
     prefix: "Ctrl+B",
     paneTabShortcut: "Meta+L",
+    kanbanShortcut: defaultKanbanShortcut,
     sidebarWidth: defaultSidebarWidth,
     sidebarCollapsed: false,
     interfaceFontSize: 16,

@@ -84,6 +84,56 @@ test("renders four predictable status columns with compact agent cards", () => {
   expect(screen.getByRole("button", { name: "Archive Build the relay" })).toBeVisible();
 });
 
+test("opens the selected agent session when a card is clicked", async () => {
+  const user = userEvent.setup();
+  const onOpenSession = vi.fn();
+  renderModal({ onOpenSession });
+
+  await user.click(screen.getByText("Build the relay"));
+
+  expect(onOpenSession).toHaveBeenCalledWith(sessions[0]);
+});
+
+test("shows the session information card while an agent card is hovered", async () => {
+  renderModal();
+
+  const card = screen.getByTestId("kanban-card-running-1");
+  fireEvent.pointerEnter(card, { clientX: 120, clientY: 180 });
+
+  const info = await screen.findByRole("region", { name: "Session information" });
+  expect(info).toHaveAttribute("data-session-id", "running-1");
+  expect(within(info).getByRole("heading", { name: "Connect the event stream", level: 2 })).toBeVisible();
+  expect(within(info).getByText("Implementing the next transport step.")).toBeVisible();
+
+  fireEvent.pointerLeave(card);
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Session information" })).not.toBeInTheDocument());
+});
+
+test("filters cards by project without changing their status columns", async () => {
+  const user = userEvent.setup();
+  const projectSessions = sessions.map((session, index) => ({
+    ...session,
+    project: index % 2 === 0 ? "/workspace/euphony" : "/workspace/release",
+  }));
+  renderModal({
+    sessions: projectSessions,
+    projects: [
+      { id: "euphony", path: "/workspace/euphony", createdAt: "2026-08-01T00:00:00Z" },
+      { id: "release", path: "/workspace/release", createdAt: "2026-08-02T00:00:00Z" },
+    ],
+  });
+
+  const filter = screen.getByRole("combobox", { name: "Filter by project" });
+  await user.selectOptions(filter, "/workspace/release");
+
+  expect(screen.getByRole("region", { name: "Waiting" })).toHaveTextContent(
+    "Review the release notes",
+  );
+  expect(screen.getByRole("region", { name: "Running" })).not.toHaveTextContent(
+    "Build the relay",
+  );
+});
+
 test("archives a card through the accessible fallback action", async () => {
   const user = userEvent.setup();
   const { onArchiveSession } = renderModal();

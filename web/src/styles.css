@@ -5294,7 +5294,8 @@ input {
 
 .project-add-project,
 .project-create-terminal,
-.project-create-agent {
+.project-create-agent,
+.project-open-kanban {
   color: var(--muted-foreground);
   transition: color 120ms ease, background-color 120ms ease;
 }
@@ -5315,7 +5316,8 @@ input {
 
 .project-add-project svg,
 .project-create-terminal svg,
-.project-create-agent svg {
+.project-create-agent svg,
+.project-open-kanban svg {
   width: 0.9rem;
   height: 0.9rem;
 }
@@ -5323,9 +5325,11 @@ input {
 .project-add-project:hover,
 .project-create-terminal:hover,
 .project-create-agent:hover,
+.project-open-kanban:hover,
 .project-add-project:focus-visible,
 .project-create-terminal:focus-visible,
-.project-create-agent:focus-visible {
+.project-create-agent:focus-visible,
+.project-open-kanban:focus-visible {
   color: var(--foreground);
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
@@ -5349,12 +5353,13 @@ input {
   display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.35rem;
   padding: 0.2rem 0.35rem 0.35rem;
 }
 
 .project-sidebar-header h2 {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -5373,10 +5378,12 @@ input {
   display: inline-flex;
   flex: 0 0 auto;
   gap: 0.15rem;
+  margin-left: auto;
 }
 
 .project-create-terminal,
-.project-create-agent {
+.project-create-agent,
+.project-open-kanban {
   display: inline-grid;
   min-width: 2rem;
   min-height: 2rem;
@@ -5529,7 +5536,8 @@ input {
   }
 
   .project-create-terminal,
-  .project-create-agent {
+  .project-create-agent,
+  .project-open-kanban {
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
@@ -5542,7 +5550,8 @@ input {
 @media (prefers-reduced-motion: reduce) {
   .project-add-project,
   .project-create-terminal,
-  .project-create-agent {
+  .project-create-agent,
+  .project-open-kanban {
     transition: none;
   }
 }
@@ -5911,14 +5920,14 @@ input {
 }
 
 .kanban-modal {
-  width: min(80vw, 96rem) !important;
-  max-width: calc(100vw - 2rem) !important;
-  height: min(80dvh, 56rem);
-  max-height: calc(100dvh - 2rem);
+  width: 90vw !important;
+  max-width: none !important;
+  height: 90dvh;
+  max-height: none !important;
   display: flex;
   flex-direction: column;
   gap: 0;
-  overflow: hidden;
+  overflow: visible;
   padding: 1.35rem;
   color: #dce5e8;
   background: #171c21;
@@ -5937,6 +5946,40 @@ input {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.kanban-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.kanban-project-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #829099;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.kanban-project-filter select {
+  max-width: min(22rem, 30vw);
+  min-height: 1.8rem;
+  padding: 0.2rem 1.7rem 0.2rem 0.45rem;
+  color: #dce5e8;
+  background: #111417;
+  border: 1px solid #394149;
+  border-radius: 0.2rem;
+  font: inherit;
+  letter-spacing: normal;
+}
+
+.kanban-project-filter select:hover,
+.kanban-project-filter select:focus-visible {
+  border-color: #819c41;
+  outline: none;
 }
 
 .kanban-eyebrow {
@@ -6241,12 +6284,19 @@ input {
 }
 
 .kanban-card-action {
-  width: 100%;
-  justify-content: flex-start;
-  margin-top: 0.15rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  justify-content: center;
+  margin: 0;
   color: #b8f34a;
   border-color: #394149;
-  font-size: 0.65rem;
+  padding: 0;
+}
+
+.kanban-card-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 
 .kanban-card-action:hover,
@@ -6301,10 +6351,17 @@ input {
 
 @media (max-width: 700px) {
   .kanban-modal {
-    width: calc(100vw - 1rem) !important;
-    height: calc(100dvh - 1rem);
-    max-height: calc(100dvh - 1rem);
     padding: 1rem;
+  }
+
+  .kanban-header-controls {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .kanban-project-filter select {
+    max-width: 48vw;
   }
 
   .kanban-header {

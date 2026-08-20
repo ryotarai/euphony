@@ -1003,15 +1003,36 @@ test("places Kanban above All sessions and exposes its keyboard shortcut", async
   const allSessions = screen.getByRole("button", { name: "All sessions" });
   expect(kanban.compareDocumentPosition(allSessions) & Node.DOCUMENT_POSITION_FOLLOWING)
     .toBeTruthy();
-  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+K Control+Shift+K");
-  expect(kanban).toHaveTextContent("⌘⇧K");
+  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+Alt+K");
+  expect(kanban).toHaveTextContent("⌘⌥K");
 
   await user.click(kanban);
   expect(onOpenKanban).toHaveBeenCalledOnce();
 
-  fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
+  fireEvent.keyDown(window, { key: "k", metaKey: true, altKey: true });
   expect(onOpenKanban).toHaveBeenCalledTimes(2);
 
-  fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
-  expect(onOpenKanban).toHaveBeenCalledTimes(3);
+  fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
+  expect(onOpenKanban).toHaveBeenCalledTimes(2);
+});
+
+test("uses the configured Kanban shortcut", () => {
+  const onOpenKanban = vi.fn();
+  render(
+    <SessionNavigation
+      sessions={sessions}
+      selectedIDs={["one"]}
+      onSelect={() => undefined}
+      onCreate={() => undefined}
+      onDelete={() => undefined}
+      onOpenKanban={onOpenKanban}
+      settings={{ ...settings, kanbanShortcut: "Ctrl+Alt+J" }}
+    />,
+  );
+
+  const kanban = screen.getByRole("button", { name: "Kanban" });
+  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Ctrl+Alt+J");
+  expect(kanban).toHaveTextContent("⌃⌥J");
+  fireEvent.keyDown(window, { key: "j", ctrlKey: true, altKey: true });
+  expect(onOpenKanban).toHaveBeenCalledOnce();
 });

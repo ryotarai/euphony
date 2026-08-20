@@ -6,6 +6,7 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
+  Columns3Icon,
   FolderPlusIcon,
   SquareTerminalIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ export interface ProjectSidebarProps extends SessionInfoInteractionHandlers {
   onSelectSession(sessionID: string): void;
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
+  onOpenKanban?(projectPath: string): void;
   onAddProject?(): void;
   onDelete?(session: Session): void;
 }
@@ -325,6 +327,7 @@ function ProjectGroup({
   onSelectSession,
   onCreateTerminal,
   onCreateAgent,
+  onOpenKanban,
   onDelete,
   onSessionPointerEnter,
   onSessionPointerLeave,
@@ -338,6 +341,7 @@ function ProjectGroup({
   onSelectSession(sessionID: string): void;
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
+  onOpenKanban?(projectPath: string): void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
   const groupID = project?.id ?? "unassigned";
@@ -352,6 +356,21 @@ function ProjectGroup({
       aria-labelledby={headingID}
     >
       <header className="project-sidebar-header">
+        {project && onOpenKanban && (
+          <button
+            type="button"
+            className="project-open-kanban"
+            aria-label={`Open Kanban for ${project.path}`}
+            title={`Open Kanban for ${project.path}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenKanban(project.path);
+            }}
+          >
+            <Columns3Icon aria-hidden="true" />
+            <span className="sr-only">Open Kanban for {project.path}</span>
+          </button>
+        )}
         <h2 className="project-sidebar-path" id={headingID} title={label}>{label}</h2>
         {project && (onCreateTerminal || onCreateAgent) && (
           <ProjectActions
@@ -393,6 +412,7 @@ export function ProjectSidebar({
   onSelectSession,
   onCreateTerminal,
   onCreateAgent,
+  onOpenKanban,
   onAddProject,
   onDelete,
   onSessionPointerEnter,
@@ -438,6 +458,7 @@ export function ProjectSidebar({
             onSelectSession={onSelectSession}
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
+            onOpenKanban={onOpenKanban}
             onDelete={onDelete}
             onSessionPointerEnter={onSessionPointerEnter}
             onSessionPointerLeave={onSessionPointerLeave}

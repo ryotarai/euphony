@@ -9,6 +9,13 @@ const modifierNames = new Map([
   ["command", "Meta"],
 ]);
 
+const shortcutSymbols: Record<string, string> = {
+  Meta: "⌘",
+  Ctrl: "⌃",
+  Alt: "⌥",
+  Shift: "⇧",
+};
+
 export function normalizePrefix(value: string): string {
   const parts = value
     .split("+")
@@ -22,6 +29,13 @@ export function normalizePrefix(value: string): string {
       return part.length === 1 ? part.toUpperCase() : part;
     })
     .join("+");
+}
+
+export function formatShortcut(value: string): string {
+  return normalizePrefix(value)
+    .split("+")
+    .map((part) => shortcutSymbols[part] ?? part)
+    .join("");
 }
 
 export function matchesPrefix(event: KeyboardEvent, prefix: string): boolean {
