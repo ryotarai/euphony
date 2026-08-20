@@ -193,6 +193,10 @@ type entry struct {
 	session            *Session
 	interruptWatch     *agentInterruptWatch
 	codexActivityWatch *codexActivityWatch
+	// lifecycleMu serializes destructive lifecycle changes for this terminal.
+	// It is acquired before metadataSaveMu so Delete can reserve its store
+	// operation while an unrelated metadata save is in flight.
+	lifecycleMu        contextMutex
 	blockedStatusWatch *blockedStatusWatch
 	// archiveInProgress prevents the process watcher from treating an exit
 	// during archive preparation as an ordinary terminal exit. archiveReady is
@@ -200,9 +204,10 @@ type entry struct {
 	archiveInProgress bool
 	archiveSucceeded  bool
 	archiveReady      chan struct{}
+	deleteInProgress  bool
 	// metadataSaveMu keeps a terminal's in-memory mutation, persistence, and
 	// rollback as one transaction without holding the manager lock during I/O.
-	metadataSaveMu sync.Mutex
+	metadataSaveMu contextMutex
 	// cwdFromAgent records that an agent hook named this terminal's working
 	// directory. An agent knows its project directory where its process only
 	// knows where it happens to stand — a worktree it entered, say — so without
@@ -220,6 +225,38 @@ type entry struct {
 	// codexTitleHeaderScanned records the one-time bounded header recovery for
 	// Codex sessions whose automatic name predates the tail polling window.
 	codexTitleHeaderScanned bool
+}
+
+// contextMutex is a per-entry mutex whose acquisition can be cancelled. The
+// zero value is ready for use so test-created entries retain the same safety
+// as entries created by Manager.start.
+type contextMutex struct {
+	once  sync.Once
+	token chan struct{}
+}
+
+func (m *contextMutex) init() {
+	m.once.Do(func() {
+		m.token = make(chan struct{}, 1)
+		m.token <- struct{}{}
+	})
+}
+
+func (m *contextMutex) lock(ctx context.Context) error {
+	m.init()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-m.token:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *contextMutex) unlock() {
+	m.token <- struct{}{}
 }
 
 type pendingAgentStart struct {
@@ -892,6 +929,10 @@ func (m *Manager) WriteTerminalIfAgentSummaryCurrent(
 }
 
 func (m *Manager) lockMetadataSaveEntry(id string) (*entry, func(), error) {
+	return m.lockMetadataSaveEntryContext(context.Background(), id)
+}
+
+func (m *Manager) lockMetadataSaveEntryContext(ctx context.Context, id string) (*entry, func(), error) {
 	m.mu.RLock()
 	closing := m.closing
 	item := m.sessions[id]
@@ -902,15 +943,28 @@ func (m *Manager) lockMetadataSaveEntry(id string) (*entry, func(), error) {
 	if item == nil {
 		return nil, nil, ErrNotFound
 	}
-	item.metadataSaveMu.Lock()
+	if err := item.metadataSaveMu.lock(ctx); err != nil {
+		return nil, nil, err
+	}
 	locked := true
 	release := func() {
 		if locked {
-			item.metadataSaveMu.Unlock()
+			item.metadataSaveMu.unlock()
 			locked = false
 		}
 	}
 	return item, release, nil
+}
+
+func (m *Manager) clearArchivePreparation(item *entry, ready chan struct{}) {
+	m.mu.Lock()
+	if item.archiveInProgress && item.archiveReady == ready {
+		item.archiveInProgress = false
+		item.archiveSucceeded = false
+		close(ready)
+		item.archiveReady = nil
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) UpdateAgent(id string, update AgentUpdate) (Metadata, error) {
@@ -1707,62 +1761,72 @@ func (m *Manager) statFile(path string) (os.FileInfo, error) {
 
 func (m *Manager) watch(item *entry) {
 	_ = waitCommand(item.session.command)
-	m.mu.Lock()
-	if item.archiveInProgress {
-		ready := item.archiveReady
-		m.mu.Unlock()
-		if ready != nil {
-			<-ready
-		}
+	for {
 		m.mu.Lock()
-		if item.archiveSucceeded {
+		if item.archiveInProgress {
+			ready := item.archiveReady
+			m.mu.Unlock()
+			if ready != nil {
+				<-ready
+			}
+			m.mu.RLock()
+			succeeded := item.archiveSucceeded
+			m.mu.RUnlock()
+			if succeeded {
+				close(item.session.waitDone)
+				return
+			}
+			continue
+		}
+		if item.deleteInProgress {
 			m.mu.Unlock()
 			close(item.session.waitDone)
 			return
 		}
-	}
-	m.mu.Unlock()
 
-	var deleted *Change
-	var archived Metadata
-	var archiveOperation storeOperation
-	var shouldArchive bool
-	var store metadataStore
-	m.mu.Lock()
-	if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
-		m.cancelAgentInterruptLocked(item)
-		m.cancelCodexActivityLocked(item)
-		m.cancelBlockedStatusLocked(item)
-		if !m.closing {
-			delete(m.sessions, item.metadata.ID)
-			archived = item.metadata
-			archived.State = StateExited
-			exitedAt := time.Now().UTC()
-			archived.ExitedAt = &exitedAt
-			archived.ExitCode = commandExitCode(item.session.command)
-			store = m.store
-			if store != nil {
-				archiveOperation = m.reserveStoreOperation()
-				shouldArchive = true
+		// Keep the archive flag check and ordinary exit removal under the same
+		// manager lock. Archive can only begin before or after this whole block.
+		var deleted *Change
+		var archived Metadata
+		var archiveOperation storeOperation
+		var shouldArchive bool
+		var store metadataStore
+		if current, ok := m.sessions[item.metadata.ID]; ok && current == item {
+			m.cancelAgentInterruptLocked(item)
+			m.cancelCodexActivityLocked(item)
+			m.cancelBlockedStatusLocked(item)
+			if !m.closing {
+				delete(m.sessions, item.metadata.ID)
+				archived = item.metadata
+				archived.State = StateExited
+				exitedAt := time.Now().UTC()
+				archived.ExitedAt = &exitedAt
+				archived.ExitCode = commandExitCode(item.session.command)
+				store = m.store
+				if store != nil {
+					archiveOperation = m.reserveStoreOperation()
+					shouldArchive = true
+				}
+				before := item.metadata
+				change := m.nextChangeLocked(ChangeDeleted, &before, nil)
+				deleted = &change
 			}
-			before := item.metadata
-			change := m.nextChangeLocked(ChangeDeleted, &before, nil)
-			deleted = &change
 		}
-	}
-	m.mu.Unlock()
-	if shouldArchive {
-		// Keep the record available in this process even if the first database
-		// write is transiently unavailable; persistExitedMetadata retries once.
-		_ = m.persistExitedMetadata(store, archived, archiveOperation)
-		m.mu.Lock()
-		m.archived[archived.ID] = archived
 		m.mu.Unlock()
+		if shouldArchive {
+			// Keep the record available in this process even if the first database
+			// write is transiently unavailable; persistExitedMetadata retries once.
+			_ = m.persistExitedMetadata(store, archived, archiveOperation)
+			m.mu.Lock()
+			m.archived[archived.ID] = archived
+			m.mu.Unlock()
+		}
+		if deleted != nil {
+			m.emitChange(*deleted)
+		}
+		close(item.session.waitDone)
+		return
 	}
-	if deleted != nil {
-		m.emitChange(*deleted)
-	}
-	close(item.session.waitDone)
 }
 
 const exitedMetadataSaveAttempts = 2
@@ -1997,7 +2061,7 @@ func (m *Manager) ListCurrent() []Metadata {
 	m.mu.RLock()
 	result := make([]Metadata, 0, len(m.sessions))
 	for _, item := range m.sessions {
-		if item.metadata.Archived {
+		if item.metadata.Archived || item.archiveInProgress {
 			continue
 		}
 		result = append(result, item.metadata)
@@ -2747,11 +2811,20 @@ func (m *Manager) archiveAgentSession(
 	if err := ctx.Err(); err != nil {
 		return Metadata{}, err
 	}
-	item, releaseMetadataSave, err := m.lockMetadataSaveEntry(id)
-	if err != nil {
+	m.mu.RLock()
+	item := m.sessions[id]
+	closing := m.closing
+	m.mu.RUnlock()
+	if closing {
+		return Metadata{}, ErrManagerClosing
+	}
+	if item == nil {
+		return Metadata{}, ErrNotFound
+	}
+	if err := item.lifecycleMu.lock(ctx); err != nil {
 		return Metadata{}, err
 	}
-	defer releaseMetadataSave()
+	defer item.lifecycleMu.unlock()
 
 	m.mu.Lock()
 	if m.closing {
@@ -2785,7 +2858,49 @@ func (m *Manager) archiveAgentSession(
 			return Metadata{}, ErrNotFound
 		}
 	}
+	item.archiveInProgress = true
+	item.archiveSucceeded = false
+	item.archiveReady = make(chan struct{})
+	ready := item.archiveReady
+	m.mu.Unlock()
 
+	lockedItem, releaseMetadataSave, err := m.lockMetadataSaveEntryContext(ctx, id)
+	if err != nil {
+		m.clearArchivePreparation(item, ready)
+		return Metadata{}, err
+	}
+	if lockedItem != item {
+		releaseMetadataSave()
+		m.clearArchivePreparation(item, ready)
+		return Metadata{}, ErrNotFound
+	}
+	defer releaseMetadataSave()
+
+	m.mu.Lock()
+	current, ok = m.sessions[id]
+	if m.closing || !ok || current != item || !item.archiveInProgress ||
+		current.metadata.Archived || !isSupportedAgentSession(current.metadata) ||
+		strings.TrimSpace(current.metadata.AgentSessionID) == "" {
+		m.mu.Unlock()
+		m.clearArchivePreparation(item, ready)
+		return Metadata{}, ErrNotFound
+	}
+	if !staleCutoff.IsZero() {
+		if current.metadata.AgentStatus != "waiting" {
+			m.mu.Unlock()
+			m.clearArchivePreparation(item, ready)
+			return Metadata{}, ErrNotFound
+		}
+		lastUpdate := current.metadata.UpdatedAt
+		if lastUpdate.IsZero() {
+			lastUpdate = current.metadata.CreatedAt
+		}
+		if lastUpdate.After(staleCutoff) {
+			m.mu.Unlock()
+			m.clearArchivePreparation(item, ready)
+			return Metadata{}, ErrNotFound
+		}
+	}
 	before := current.metadata
 	archived := before
 	archived.Archived = true
@@ -2793,9 +2908,6 @@ func (m *Manager) archiveAgentSession(
 	exitedAt := now
 	archived.ExitedAt = &exitedAt
 	archived.ExitCode = nil
-	item.archiveInProgress = true
-	item.archiveSucceeded = false
-	item.archiveReady = make(chan struct{})
 	store := m.store
 	m.mu.Unlock()
 
@@ -2804,13 +2916,7 @@ func (m *Manager) archiveAgentSession(
 		if err := m.runStoreOperationContext(ctx, operation, func() error {
 			return store.Save(ctx, archived)
 		}); err != nil {
-			m.mu.Lock()
-			if item.archiveInProgress {
-				item.archiveInProgress = false
-				item.archiveSucceeded = false
-				close(item.archiveReady)
-			}
-			m.mu.Unlock()
+			m.clearArchivePreparation(item, ready)
 			return Metadata{}, err
 		}
 	}
@@ -2821,7 +2927,8 @@ func (m *Manager) archiveAgentSession(
 		if item.archiveInProgress {
 			item.archiveInProgress = false
 			item.archiveSucceeded = false
-			close(item.archiveReady)
+			close(ready)
+			item.archiveReady = nil
 		}
 		m.mu.Unlock()
 		return Metadata{}, ErrNotFound
@@ -2967,27 +3074,78 @@ func (m *Manager) SetAgentSessionArchived(
 }
 
 func (m *Manager) Delete(id string) error {
+	m.mu.RLock()
+	item := m.sessions[id]
+	closing := m.closing
+	m.mu.RUnlock()
+	if closing {
+		return ErrManagerClosing
+	}
+	if item == nil {
+		return ErrNotFound
+	}
+	if err := item.lifecycleMu.lock(context.Background()); err != nil {
+		return err
+	}
+
+	finishLifecycle := func() {
+		m.mu.Lock()
+		item.deleteInProgress = false
+		m.mu.Unlock()
+		item.lifecycleMu.unlock()
+	}
+	completeReservedOperation := func(operation storeOperation) {
+		if operation.done != nil {
+			_ = m.runStoreOperation(operation, func() error { return nil })
+		}
+	}
+
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
+		finishLifecycle()
 		return ErrManagerClosing
 	}
-	item, ok := m.sessions[id]
-	var change Change
-	store := m.store
-	var operation storeOperation
-	if ok {
-		delete(m.sessions, id)
-		before := item.metadata
-		change = m.nextChangeLocked(ChangeDeleted, &before, nil)
-		if store != nil {
-			operation = m.reserveStoreOperation()
-		}
-	}
-	m.mu.Unlock()
-	if !ok {
+	current, ok := m.sessions[id]
+	if !ok || current != item {
+		m.mu.Unlock()
+		finishLifecycle()
 		return ErrNotFound
 	}
+	if item.archiveInProgress {
+		m.mu.Unlock()
+		finishLifecycle()
+		return ErrNotFound
+	}
+	item.deleteInProgress = true
+	store := m.store
+	var operation storeOperation
+	if store != nil {
+		// Reserve before persistence I/O. Other metadata writes must keep their
+		// existing persistence order even when Delete is queued.
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		completeReservedOperation(operation)
+		finishLifecycle()
+		return ErrManagerClosing
+	}
+	current, ok = m.sessions[id]
+	if !ok || current != item {
+		m.mu.Unlock()
+		completeReservedOperation(operation)
+		finishLifecycle()
+		return ErrNotFound
+	}
+	var change Change
+	delete(m.sessions, id)
+	before := item.metadata
+	change = m.nextChangeLocked(ChangeDeleted, &before, nil)
+	m.mu.Unlock()
 	m.mu.Lock()
 	m.cancelAgentInterruptLocked(item)
 	m.cancelCodexActivityLocked(item)
@@ -2998,12 +3156,14 @@ func (m *Manager) Delete(id string) error {
 			persistErr := store.Delete(context.Background(), id)
 			return m.completeDelete(item, id, persistErr)
 		}); err != nil {
+			finishLifecycle()
 			m.skipChange(change)
 			return err
 		}
 	} else {
 		_ = m.completeDelete(item, id, nil)
 	}
+	finishLifecycle()
 	m.emitChange(change)
 	return nil
 }

@@ -198,3 +198,56 @@ func TestArchiveAgentSessionKeepsLiveSessionWhenPersistenceFails(t *testing.T) {
 		t.Fatalf("metadata after failed archive = %#v, want live unarchived session", metadata)
 	}
 }
+
+func TestArchiveAgentSessionSerializesWithDelete(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.CreateWithCommandArgs(
+		context.Background(), "Archive versus delete", t.TempDir(), "/bin/sh", "-c", "sleep 30",
+	)
+	if err != nil {
+		t.Fatalf("CreateWithCommandArgs() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "archive-delete-session", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	store := &gatedResultMetadataStore{
+		recordingMetadataStore: recordingMetadataStore{},
+		entered:                make(chan int, 1),
+		releaseFirst:           make(chan struct{}),
+	}
+	manager.store = store
+
+	archiveDone := make(chan error, 1)
+	go func() {
+		_, archiveErr := manager.ArchiveAgentSession(created.ID)
+		archiveDone <- archiveErr
+	}()
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("archive did not enter persistence")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() { deleteDone <- manager.Delete(created.ID) }()
+	select {
+	case err := <-deleteDone:
+		t.Fatalf("Delete() returned while archive persistence was gated: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(store.releaseFirst)
+
+	if err := <-archiveDone; err != nil {
+		t.Fatalf("ArchiveAgentSession() error = %v", err)
+	}
+	if err := <-deleteDone; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrNotFound after archive wins", err)
+	}
+	saved := store.Saves()
+	if len(saved) != 1 || !saved[0].Archived || saved[0].State != StateExited {
+		t.Fatalf("saved metadata = %#v, want one archived record", saved)
+	}
+}

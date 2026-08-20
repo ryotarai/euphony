@@ -3211,11 +3211,40 @@ export function App({
     if (!api) return;
     try {
       const archived = await api.archiveSession(item.id);
+      const previousSessions = sessions ?? [];
       cancelFilterDeselect(item.id);
       setSessions((current) =>
         current?.filter((session) => session.id !== item.id) ?? current,
       );
       if (syncSelection) applyServerSelection(archived.selection, "push");
+      else {
+        const remaining = previousSessions.filter((session) => session.id !== item.id);
+        const replacement = replacementSession(previousSessions, item.id, remaining);
+        let nextIDs = selectedIDs.filter((id) => id !== item.id);
+        if (
+          nextIDs.length === 0 &&
+          statusFilters.length === 0 &&
+          cwdFilters.length === 0 &&
+          replacement
+        ) {
+          nextIDs = [replacement.id];
+        }
+        const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
+        const nextFocus = focusedID && nextIDs.includes(focusedID)
+          ? focusedID
+          : nextIDs[0] ?? null;
+        filterSelectedIDsRef.current.delete(item.id);
+        setSelectedIDs(nextIDs);
+        setPinnedIDs(nextPinnedIDs);
+        setFocusedID(nextFocus);
+        writeWorkspaceToURL(
+          nextIDs,
+          nextPinnedIDs,
+          nextFocus,
+          statusFilters,
+          cwdFilters,
+        );
+      }
       setRequestError("");
     } catch (error) {
       setRequestError(

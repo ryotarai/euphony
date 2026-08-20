@@ -37,6 +37,10 @@ export interface ProjectSidebarProps extends SessionInfoInteractionHandlers {
 
 type SessionSummary = AgentSummary | undefined;
 
+function isAgentSession(session: Session) {
+  return session.agent === "codex" || session.agent === "claude";
+}
+
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
@@ -98,7 +102,7 @@ function terminalUpdatedAt(session: Session) {
 
 function sessionPriority(session: Session, summary: SessionSummary) {
   if (session.needsAttention) return 0;
-  switch (activity(session, summary)) {
+  switch (activity(session, isAgentSession(session) ? summary : undefined)) {
     case "blocked":
       return 1;
     case "running":
@@ -243,8 +247,8 @@ function ProjectSessionRow({
   onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
-  const isAgentSession = session.agent === "codex" || session.agent === "claude";
-  const effectiveSummary = isAgentSession ? summary : undefined;
+  const agentSession = isAgentSession(session);
+  const effectiveSummary = agentSession ? summary : undefined;
   const status = activity(session, effectiveSummary);
   const identity = sessionIdentity(session, effectiveSummary);
   const purpose = sessionPurpose(session, effectiveSummary);
@@ -266,20 +270,20 @@ function ProjectSessionRow({
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
   const { onContextMenu, menu } = useSessionContextMenu(
     identity,
-    isAgentSession
+    agentSession
       ? onArchive
         ? () => onArchive(session)
         : undefined
       : onDelete
         ? () => onDelete(session)
         : undefined,
-    isAgentSession ? "Archive" : "Delete",
+    agentSession ? "Archive" : "Delete",
   );
 
   return (
     <li
       className="project-session-row"
-      data-agent={isAgentSession ? "true" : undefined}
+      data-agent={agentSession ? "true" : undefined}
       data-attention={session.needsAttention ? "true" : undefined}
       data-state={status}
       data-unread={unread ? "true" : "false"}
