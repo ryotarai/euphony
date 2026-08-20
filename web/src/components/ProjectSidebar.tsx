@@ -243,16 +243,17 @@ function ProjectSessionRow({
   onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
-  const status = activity(session, summary);
-  const identity = sessionIdentity(session, summary);
-  const purpose = sessionPurpose(session, summary);
-  const action = summary?.action?.trim() || "";
-  const unread = summary?.unread === true;
-  const latestSummary = summary?.summary?.trim() || "";
+  const isAgentSession = session.agent === "codex" || session.agent === "claude";
+  const effectiveSummary = isAgentSession ? summary : undefined;
+  const status = activity(session, effectiveSummary);
+  const identity = sessionIdentity(session, effectiveSummary);
+  const purpose = sessionPurpose(session, effectiveSummary);
+  const action = effectiveSummary?.action?.trim() || "";
+  const unread = effectiveSummary?.unread === true;
+  const latestSummary = effectiveSummary?.summary?.trim() || "";
   const purposeText = purpose || latestSummary || "New session";
   const showSummary = Boolean(latestSummary && purpose && latestSummary !== purpose);
   const requiredAction = action || "None";
-  const isAgentSession = Boolean(session.agent || summary?.provider);
   const accessibleDescriptionID = `project-session-details-${session.id}`;
   const accessibleDescription = [
     `Status: ${statusLabel(status)}.`,
@@ -278,7 +279,7 @@ function ProjectSessionRow({
   return (
     <li
       className="project-session-row"
-      data-agent={summary || session.agent ? "true" : undefined}
+      data-agent={isAgentSession ? "true" : undefined}
       data-attention={session.needsAttention ? "true" : undefined}
       data-state={status}
       data-unread={unread ? "true" : "false"}

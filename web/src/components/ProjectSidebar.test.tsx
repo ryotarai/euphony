@@ -266,6 +266,27 @@ test("archives agent sessions and deletes bare terminals from context menus", as
   expect(onSelectSession).toHaveBeenCalledWith(agentSession.id);
 });
 
+test("keeps Delete for a bare terminal even when a stale summary is present", async () => {
+  const user = userEvent.setup();
+  const onArchive = vi.fn();
+  const onDelete = vi.fn();
+  renderSidebar({
+    sessions: [terminalSession],
+    agentSummaries: [{ ...unreadSummary, terminalId: terminalSession.id }],
+    selectedID: terminalSession.id,
+    onArchive,
+    onDelete,
+  });
+
+  const row = within(screen.getByRole("listitem")).getByRole("button");
+  fireEvent.contextMenu(row);
+  const menu = screen.getByRole("menu", { name: "Actions for Shell" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+
+  expect(onDelete).toHaveBeenCalledWith(terminalSession);
+  expect(onArchive).not.toHaveBeenCalled();
+});
+
 test("does not render split checkboxes or an Inbox dashboard button", () => {
   renderSidebar();
 

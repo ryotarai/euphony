@@ -181,7 +181,13 @@ func (s *Service) DeleteTerminal(id string) (selection.Snapshot, error) {
 // ArchiveAgentSession stops an agent terminal while keeping its persisted
 // agent identity available to All sessions for a later resume.
 func (s *Service) ArchiveAgentSession(id string) (selection.Snapshot, error) {
-	if _, err := s.sessions.ArchiveAgentSession(id); err != nil {
+	return s.ArchiveAgentSessionContext(context.Background(), id)
+}
+
+// ArchiveAgentSessionContext preserves request cancellation while preparing
+// the archived metadata in the session store.
+func (s *Service) ArchiveAgentSessionContext(ctx context.Context, id string) (selection.Snapshot, error) {
+	if _, err := s.sessions.ArchiveAgentSessionContext(ctx, id); err != nil {
 		if errors.Is(err, session.ErrNotFound) {
 			return selection.Snapshot{}, ErrTerminalNotFound
 		}

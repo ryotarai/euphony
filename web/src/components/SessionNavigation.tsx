@@ -232,14 +232,15 @@ function SessionListItem({
   onArchive?(session: Session): void;
   onDelete(session: Session): void;
 } & SessionInfoInteractionHandlers) {
+  const isAgentSession = session.agent === "codex" || session.agent === "claude";
   const { onContextMenu, menu } = useSessionContextMenu(
     session.name,
-    session.agent
+    isAgentSession
       ? onArchive
         ? () => onArchive(session)
         : undefined
       : () => onDelete(session),
-    session.agent ? "Archive" : "Delete",
+    isAgentSession ? "Archive" : "Delete",
   );
   const attentionDescriptionID = session.needsAttention
     ? `attention-${session.id}`

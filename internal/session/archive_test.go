@@ -66,6 +66,21 @@ func TestArchiveStaleWaitingAgentsStopsOnlyEligibleAgentsAndPersistsThem(t *test
 		t.Fatalf("ArchiveAgentSession(bare) error = %v, want ErrNotFound", err)
 	}
 
+	unidentified, err := manager.CreateWithCommandArgs(
+		context.Background(), "Unidentified agent", t.TempDir(), "/bin/sh", "-c", "sleep 30",
+	)
+	if err != nil {
+		t.Fatalf("CreateWithCommandArgs(unidentified) error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(unidentified.ID, AgentUpdate{
+		Agent: "codex", Status: "waiting",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(unidentified) error = %v", err)
+	}
+	if _, err := manager.ArchiveAgentSession(unidentified.ID); !errors.Is(err, ErrAgentSessionNotReady) {
+		t.Fatalf("ArchiveAgentSession(unidentified) error = %v, want ErrAgentSessionNotReady", err)
+	}
+
 	archived := manager.ArchiveStaleWaitingAgents(stale.UpdatedAt.Add(24 * time.Hour))
 	if len(archived) != 1 || archived[0].ID != stale.ID {
 		t.Fatalf("archived = %#v, want only stale agent", archived)
@@ -79,8 +94,8 @@ func TestArchiveStaleWaitingAgentsStopsOnlyEligibleAgentsAndPersistsThem(t *test
 	}
 
 	current := manager.ListCurrent()
-	if len(current) != 3 {
-		t.Fatalf("current sessions = %#v, want recent, running, and bare terminals", current)
+	if len(current) != 4 {
+		t.Fatalf("current sessions = %#v, want recent, running, bare, and unidentified terminals", current)
 	}
 	for _, item := range current {
 		if item.ID == stale.ID {
@@ -95,6 +110,9 @@ func TestArchiveStaleWaitingAgentsStopsOnlyEligibleAgentsAndPersistsThem(t *test
 	}
 	if _, ok := manager.Get(bare.ID); !ok {
 		t.Fatal("bare terminal was archived")
+	}
+	if _, ok := manager.Get(unidentified.ID); !ok {
+		t.Fatal("unidentified agent was archived")
 	}
 
 	persisted := manager.ListPersisted()
@@ -146,5 +164,37 @@ func TestArchiveAgentSessionStopsAnAgentAndKeepsItRestorable(t *testing.T) {
 	stored := manager.ListPersisted()
 	if len(stored) != 1 || stored[0].ID != created.ID || !stored[0].Archived {
 		t.Fatalf("stored sessions = %#v, want one archived session", stored)
+	}
+}
+
+func TestArchiveAgentSessionKeepsLiveSessionWhenPersistenceFails(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	created, err := manager.CreateWithCommandArgs(
+		context.Background(), "Archive persistence failure", t.TempDir(), "/bin/sh", "-c", "sleep 30",
+	)
+	if err != nil {
+		t.Fatalf("CreateWithCommandArgs() error = %v", err)
+	}
+	if _, err := manager.UpdateAgent(created.ID, AgentUpdate{
+		Agent: "codex", AgentSessionID: "persist-failure-session", Status: "running",
+	}); err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	persistenceErr := errors.New("archive save failed")
+	manager.store = &failSaveMetadataStore{
+		metadataStore: &recordingMetadataStore{},
+		err:           persistenceErr,
+	}
+
+	if _, err := manager.ArchiveAgentSession(created.ID); !errors.Is(err, persistenceErr) {
+		t.Fatalf("ArchiveAgentSession() error = %v, want %v", err, persistenceErr)
+	}
+	if _, ok := manager.Get(created.ID); !ok {
+		t.Fatal("session disappeared after archive persistence failed")
+	}
+	metadata, ok := manager.Metadata(created.ID)
+	if !ok || metadata.Archived || metadata.State == StateExited {
+		t.Fatalf("metadata after failed archive = %#v, want live unarchived session", metadata)
 	}
 }

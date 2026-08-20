@@ -113,6 +113,33 @@ func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
 	}
 }
 
+func TestArchiveSessionAPIWaitsForAgentSessionIdentity(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Agent starting"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+	hook := performRequest(t, srv, http.MethodPost, "/api/hooks/terminal",
+		`{"terminalId":`+jsonString(metadata.ID)+`,"agent":"codex","status":"waiting"}`)
+	if hook.Code != http.StatusOK {
+		t.Fatalf("POST /api/hooks/terminal status = %d, body = %s", hook.Code, hook.Body.String())
+	}
+
+	response := performRequest(t, srv, http.MethodPost,
+		"/api/sessions/"+metadata.ID+"/archive", "")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("POST archive status = %d, body = %s, want 409", response.Code, response.Body.String())
+	}
+	current := srv.sessions.ListCurrent()
+	if len(current) != 1 || current[0].ID != metadata.ID {
+		t.Fatalf("current sessions after rejected archive = %#v, want live session", current)
+	}
+}
+
 func TestListSessionsDoesNotWaitForMetadataRefresh(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

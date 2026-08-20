@@ -48,6 +48,7 @@ type Server struct {
 	directoryPicker func(context.Context) (string, error)
 	archiveStop     chan struct{}
 	archiveDone     chan struct{}
+	archiveCancel   context.CancelFunc
 	archiveStopOnce sync.Once
 }
 
@@ -227,7 +228,9 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) Close(ctx context.Context) error {
 	var firstErr error
-	s.stopStaleAgentArchiver()
+	if err := s.stopStaleAgentArchiver(ctx); err != nil {
+		firstErr = err
+	}
 	if s.summaries != nil {
 		if err := s.summaries.Close(ctx); err != nil {
 			if firstErr == nil {
