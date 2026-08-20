@@ -20,6 +20,27 @@ make build
 The command produces `bin/euphony`. The executable contains the complete
 frontend; Node.js is not needed at runtime.
 
+### Releases
+
+Push any Git tag to build and publish four compressed release assets through
+GitHub Actions:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The GitHub Release contains these archives:
+
+- `euphony-linux-amd64.tar.gz`
+- `euphony-linux-arm64.tar.gz`
+- `euphony-macos-amd64.tar.gz`
+- `euphony-macos-arm64.tar.gz`
+
+Each archive contains one `euphony` executable. To reproduce the release
+build locally, run `make release-build`; the archives are written to
+`dist/release`.
+
 ### macOS app
 
 On macOS, Xcode Command Line Tools are also required to build the native app

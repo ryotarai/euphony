@@ -1,4 +1,4 @@
-.PHONY: build dev test test-e2e macos-app test-macos windows-amd64
+.PHONY: build dev test test-e2e macos-app test-macos windows-amd64 release-build release-test
 
 dev:
 	./scripts/dev.sh
@@ -15,6 +15,7 @@ windows-amd64:
 
 test:
 	bash scripts/dev_test.sh
+	bash scripts/build_release_test.sh
 	go test ./...
 	cd web && npm test -- --run && npm run typecheck
 	$(MAKE) test-e2e
@@ -27,3 +28,9 @@ macos-app:
 
 test-macos:
 	./scripts/test_macos_app.sh
+
+release-build:
+	./scripts/build_release.sh
+
+release-test:
+	bash scripts/build_release_test.sh
