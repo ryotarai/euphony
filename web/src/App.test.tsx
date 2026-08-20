@@ -1701,12 +1701,12 @@ test("opens Kanban from the sidebar and its keyboard shortcut", async () => {
 
   await user.click(await screen.findByRole("button", { name: "Kanban" }));
   expect(await screen.findByRole("dialog", { name: "Kanban" })).toBeVisible();
-  expect(screen.getByRole("region", { name: "Running" })).toHaveTextContent("Implement v0.2");
+  expect(screen.getByRole("region", { name: "Running" })).toHaveTextContent("Build the release surface");
   expect(screen.getByRole("region", { name: "Waiting" })).toBeVisible();
   expect(screen.getByRole("region", { name: "Blocked" })).toBeVisible();
   expect(screen.getByRole("region", { name: "Archived" })).toBeVisible();
 
-  await user.click(within(screen.getByRole("dialog", { name: "Kanban" })).getByText("Implement v0.2"));
+  await user.click(within(screen.getByRole("dialog", { name: "Kanban" })).getByText("Build the release surface"));
   await waitFor(() => {
     expect(screen.queryByRole("dialog", { name: "Kanban" })).not.toBeInTheDocument();
   });
@@ -1760,7 +1760,7 @@ test("opens Kanban filtered to a project from its sidebar header", async () => {
   expect(within(dialog).getByRole("combobox", { name: "Filter by project" }))
     .toHaveValue(project.path);
   expect(within(dialog).getByRole("region", { name: "Running" }))
-    .toHaveTextContent("Implement v0.2");
+    .toHaveTextContent("Build the release surface");
   expect(fetchMock.mock.calls.some(([input]) => input === "/api/kanban/sessions")).toBe(true);
 });
 
@@ -1808,7 +1808,7 @@ test("archives a Kanban agent session out of the sidebar and restores it", async
 
   expect(await screen.findByRole("button", { name: "Select Codex" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Kanban" }));
-  await user.click(await screen.findByRole("button", { name: "Archive Implement v0.2" }));
+  await user.click(await screen.findByRole("button", { name: "Archive Build the release surface" }));
 
   await user.keyboard("{Escape}");
   await waitFor(() => {
@@ -1820,7 +1820,7 @@ test("archives a Kanban agent session out of the sidebar and restores it", async
   )).toBe(true);
 
   await user.click(screen.getByRole("button", { name: "Kanban" }));
-  await user.click(screen.getByRole("button", { name: "Restore Implement v0.2" }));
+  await user.click(screen.getByRole("button", { name: "Restore Build the release surface" }));
   await user.keyboard("{Escape}");
   await waitFor(() => {
     expect(screen.getByRole("button", { name: "Select Codex" })).toBeVisible();

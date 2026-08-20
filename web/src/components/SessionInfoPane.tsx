@@ -38,10 +38,11 @@ function statusIcon(session: Session) {
   }
 }
 
-function purposeFor(session: Session, summary?: AgentSummary) {
+function sessionDisplayTitle(session: Session, summary?: AgentSummary) {
+  if (!session.agent) return session.name.trim() || "New session";
   const generated = summary?.purpose?.trim();
   if (generated) return generated;
-  return session.agentTitle?.trim() || session.processName?.trim() || "New session";
+  return session.agentTitle?.trim() || session.processName?.trim() || session.name.trim() || "New session";
 }
 
 export const SessionInfoCard = forwardRef<HTMLElement, SessionInfoCardProps>(
@@ -64,7 +65,7 @@ export const SessionInfoCard = forwardRef<HTMLElement, SessionInfoCardProps>(
       );
     }
 
-    const purpose = purposeFor(session, summary);
+    const purpose = sessionDisplayTitle(session, summary);
     const latestSummary = summary?.summary?.trim() || "No summary yet.";
     const action = summary?.action?.trim() || "No action required.";
 

@@ -34,7 +34,20 @@ test("renders the purpose text in the session information card", () => {
   expect(screen.getByText("Action", { selector: "dt" })).toBeVisible();
 });
 
-test("uses New session when the session has no purpose or summary", () => {
+test("keeps the bare terminal name instead of applying an agent purpose", () => {
+  render(
+    <SessionInfoCard
+      session={{ ...session, name: "Terminal", agent: undefined }}
+      summary={summary}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { name: "Terminal", level: 2 })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Review the sidebar", level: 2 }))
+    .not.toBeInTheDocument();
+});
+
+test("uses the bare terminal name when the session has no purpose or summary", () => {
   render(
     <SessionInfoCard
       session={{
@@ -47,6 +60,6 @@ test("uses New session when the session has no purpose or summary", () => {
     />,
   );
 
-  expect(screen.getByRole("heading", { name: "New session", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Shell", level: 2 })).toBeVisible();
   expect(screen.getByText("No summary yet.")).toBeVisible();
 });
