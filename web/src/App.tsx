@@ -2353,8 +2353,7 @@ export function App({
       }
       clearPrefix();
       if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
+        // Cancel the prefix without swallowing Escape from the focused terminal.
         return;
       }
       const command = event.key.toLowerCase();
