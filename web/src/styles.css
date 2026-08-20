@@ -6237,18 +6237,12 @@ input {
   white-space: nowrap;
 }
 
-.kanban-card-purpose,
 .kanban-card-summary {
   min-width: 0;
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.kanban-card-purpose {
-  color: #c3cdd1;
-  font-size: 0.69rem;
 }
 
 .kanban-card-summary {

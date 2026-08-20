@@ -78,10 +78,24 @@ test("renders four predictable status columns with compact agent cards", () => {
   for (const column of ["Running", "Waiting", "Blocked", "Archived"]) {
     expect(screen.getByRole("region", { name: column })).toBeVisible();
   }
-  expect(screen.getByText("Build the relay")).toBeVisible();
   expect(screen.getByText("Connect the event stream")).toBeVisible();
   expect(screen.getByText("Polish the onboarding copy")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Archive Build the relay" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Archive Connect the event stream" })).toBeVisible();
+});
+
+test("uses an agent purpose as the card title instead of a generic terminal title", () => {
+  renderModal({
+    sessions: [{
+      ...sessions[0],
+      title: "Terminal",
+      purpose: "Kanbanビュー実装",
+    }],
+  });
+
+  expect(screen.getByRole("heading", { name: "Kanbanビュー実装", level: 3 })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Terminal", level: 3 })).not.toBeInTheDocument();
+  expect(screen.queryByText("Kanbanビュー実装", { selector: "p.kanban-card-purpose" }))
+    .not.toBeInTheDocument();
 });
 
 test("opens the selected agent session when a card is clicked", async () => {
@@ -89,7 +103,7 @@ test("opens the selected agent session when a card is clicked", async () => {
   const onOpenSession = vi.fn();
   renderModal({ onOpenSession });
 
-  await user.click(screen.getByText("Build the relay"));
+  await user.click(screen.getByText("Connect the event stream"));
 
   expect(onOpenSession).toHaveBeenCalledWith(sessions[0]);
 });
@@ -127,7 +141,7 @@ test("filters cards by project without changing their status columns", async () 
   await user.selectOptions(filter, "/workspace/release");
 
   expect(screen.getByRole("region", { name: "Waiting" })).toHaveTextContent(
-    "Review the release notes",
+    "Waiting for a decision",
   );
   expect(screen.getByRole("region", { name: "Running" })).not.toHaveTextContent(
     "Build the relay",
@@ -138,17 +152,20 @@ test("archives a card through the accessible fallback action", async () => {
   const user = userEvent.setup();
   const { onArchiveSession } = renderModal();
 
-  const archiveButton = screen.getByRole("button", { name: "Archive Build the relay" });
+  const archiveButton = screen.getByRole("button", { name: "Archive Connect the event stream" });
+  await waitFor(() => {
+    expect(screen.getByRole("combobox", { name: "Filter by project" })).toHaveFocus();
+  });
   archiveButton.focus();
   await user.keyboard("{Enter}");
 
   await waitFor(() => expect(onArchiveSession).toHaveBeenCalledWith(sessions[0]));
   await waitFor(() => {
     expect(screen.getByRole("region", { name: "Archived" }))
-      .toHaveTextContent("Build the relay");
+      .toHaveTextContent("Connect the event stream");
   });
   expect(screen.getByRole("region", { name: "Running" }))
-    .not.toHaveTextContent("Build the relay");
+    .not.toHaveTextContent("Connect the event stream");
 });
 
 test("archives a card when it is dropped into the Archived column", async () => {
@@ -191,11 +208,11 @@ test("preserves an archived session's waiting state when it is restored", async 
   const archivedWaiting = { ...sessions[1], id: "archived-waiting-1", archived: true };
   renderModal({ sessions: [archivedWaiting], onRestoreSession });
 
-  await user.click(screen.getByRole("button", { name: "Restore Review the release notes" }));
+  await user.click(screen.getByRole("button", { name: "Restore Waiting for a decision" }));
 
   await waitFor(() => expect(onRestoreSession).toHaveBeenCalledWith(archivedWaiting));
   expect(screen.getByRole("region", { name: "Waiting" }))
-    .toHaveTextContent("Review the release notes");
+    .toHaveTextContent("Waiting for a decision");
   expect(screen.getByRole("region", { name: "Running" }))
-    .not.toHaveTextContent("Review the release notes");
+    .not.toHaveTextContent("Waiting for a decision");
 });

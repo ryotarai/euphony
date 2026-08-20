@@ -89,6 +89,10 @@ function displayAgent(agent: KanbanSession["agent"]): string {
   return agent[0].toUpperCase() + agent.slice(1);
 }
 
+function displayTitle(session: KanbanSession): string {
+  return session.purpose?.trim() || session.title;
+}
+
 function displayPath(path: string): string {
   return path
     .replace(/^\/Users\/[^/]+(?=\/|$)/, "~")
@@ -367,6 +371,7 @@ function KanbanCard({
   onDragEnd,
 }: KanbanCardProps) {
   const canArchive = status !== "archived";
+  const title = displayTitle(session);
 
   return (
     <article
@@ -376,7 +381,7 @@ function KanbanCard({
       role={onOpenSession ? "button" : undefined}
       tabIndex={onOpenSession ? 0 : undefined}
       draggable={canArchive && !isArchiving}
-      aria-label={`${session.title}, ${displayAgent(session.agent)} session`}
+      aria-label={`${title}, ${displayAgent(session.agent)} session`}
       onClick={onOpenSession ? () => void onOpenSession(session) : undefined}
       onKeyDown={onOpenSession ? (event) => {
         if ((event.target as HTMLElement).closest("button")) return;
@@ -408,8 +413,8 @@ function KanbanCard({
               variant="outline"
               size="icon-sm"
               className="kanban-card-action"
-              aria-label={`Archive ${session.title}`}
-              title={`Archive ${session.title}`}
+              aria-label={`Archive ${title}`}
+              title={`Archive ${title}`}
               onClick={(event) => {
                 event.stopPropagation();
                 void onArchiveSession(session);
@@ -424,8 +429,8 @@ function KanbanCard({
               variant="outline"
               size="icon-sm"
               className="kanban-card-action"
-              aria-label={`Restore ${session.title}`}
-              title={`Restore ${session.title}`}
+              aria-label={`Restore ${title}`}
+              title={`Restore ${title}`}
               onClick={(event) => {
                 event.stopPropagation();
                 void onRestoreSession(session);
@@ -437,8 +442,7 @@ function KanbanCard({
           )}
         </div>
       </div>
-      <h3>{session.title}</h3>
-      {session.purpose && <p className="kanban-card-purpose">{session.purpose}</p>}
+      <h3>{title}</h3>
       {session.summary && <p className="kanban-card-summary">{session.summary}</p>}
       <div className="kanban-card-metadata">
         <span title={session.cwd}>{displayPath(session.cwd)}</span>
