@@ -4,23 +4,30 @@
 
 - When planning or implementing anything, always follow these steps:
   1. Run `LAST_OUTPUT=$(mktemp)`.
-  2. Call the following command to create a detailed implementation plan.
-     Think through the task deeply enough that the handoff agent can implement
-     it by following the instructions alone.
+  2. Call the following command as an initial, read-only planning pass before
+     implementation. Its prompt must require investigation of the existing
+     code, tests, and relevant recent history; requirements and edge-case
+     analysis; and a detailed implementation and verification plan that a
+     handoff agent can follow without further repository investigation. The
+     planning pass must not create worktrees or edit repository files.
 
      ```bash
      codex exec --model gpt-5.6-sol -c 'model_reasoning_effort="medium"' -c 'service_tier="default"' -o "$LAST_OUTPUT" --ephemeral "ここに指示を書く" >/dev/null 2>&1
      ```
 
-  3. Start an agent (`gpt-5.6-luna`, max) to implement the work based on the
+  3. If `codex exec` fails in the sandbox because of permissions, rerun only
+     the minimal diagnostic or planning command with escalation.
+  4. Set up the implementation worktree outside `codex exec`, after the
+     read-only planning pass has completed.
+  5. Start an agent (`gpt-5.6-luna`, max) to implement the work based on the
      received plan.
 - Do not pause to ask for design or plan approval. Make reasonable assumptions
   and continue through implementation and verification unless the user
   explicitly asks to pause, requests only a plan, or a decision would
   materially expand the requested scope.
-- Improve these instructions continuously: when user feedback reveals a
-  reusable workflow preference or lesson, add a concise rule to this file
-  during the current task.
+- Improve these instructions continuously: when a user gives a reusable
+  workflow improvement or feedback reveals a reusable workflow preference or
+  lesson, update `AGENTS.md` autonomously during the current task.
 - Remove repetitive manual steps from development workflows when they can be
   automated safely.
 - After implementing and verifying changes in a task worktree, commit and merge

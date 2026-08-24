@@ -128,6 +128,33 @@ function compareSessions(
   return terminalUpdatedAt(right) - terminalUpdatedAt(left);
 }
 
+function latestProjectSessionUpdatedAt(sessions: Session[]) {
+  if (sessions.length === 0) return 0;
+  return sessions.reduce(
+    (latest, session) => Math.max(latest, terminalUpdatedAt(session)),
+    Number.NEGATIVE_INFINITY,
+  );
+}
+
+function orderProjectsByLatestSession(
+  projects: Project[],
+  grouped: Map<string, Session[]>,
+) {
+  return projects
+    .map((project, index) => ({
+      index,
+      latestUpdatedAt: latestProjectSessionUpdatedAt(
+        grouped.get(project.id) ?? [],
+      ),
+      project,
+    }))
+    .sort(
+      (left, right) =>
+        right.latestUpdatedAt - left.latestUpdatedAt || left.index - right.index,
+    )
+    .map(({ project }) => project);
+}
+
 function sessionStatusIcon(status: string) {
   const props = {
     "aria-label": statusLabel(status),
@@ -178,7 +205,8 @@ function projectSessions(
     group.sort((left, right) => compareSessions(summaries, left, right));
   }
   unassigned.sort((left, right) => compareSessions(summaries, left, right));
-  return { grouped, unassigned };
+  const orderedProjects = orderProjectsByLatestSession(projects, grouped);
+  return { grouped, orderedProjects, unassigned };
 }
 
 function ProjectActions({
@@ -441,7 +469,11 @@ export function ProjectSidebar({
   onSessionBlur,
 }: ProjectSidebarProps) {
   const summaries = latestSummaries(agentSummaries);
-  const { grouped, unassigned } = projectSessions(projects, sessions, summaries);
+  const { grouped, orderedProjects, unassigned } = projectSessions(
+    projects,
+    sessions,
+    summaries,
+  );
 
   return (
     <nav
@@ -468,7 +500,7 @@ export function ProjectSidebar({
         )}
       </header>
       <div className="project-sidebar-groups">
-        {projects.map((project) => (
+        {orderedProjects.map((project) => (
           <ProjectGroup
             key={project.id}
             project={project}

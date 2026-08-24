@@ -239,6 +239,226 @@ test("does not render project controls when their callbacks are missing", () => 
   ).not.toBeInTheDocument();
 });
 
+test("orders projects by the newest session update", () => {
+  const recentProject: Project = {
+    id: "project-recent",
+    path: "/workspace/recent",
+    createdAt: "2026-08-10T00:00:00Z",
+  };
+  const createdAtFallbackProject: Project = {
+    id: "project-created-at-fallback",
+    path: "/workspace/created-at-fallback",
+    createdAt: "2026-08-11T00:00:00Z",
+  };
+  const olderProject: Project = {
+    id: "project-older",
+    path: "/workspace/older",
+    createdAt: "2026-08-09T00:00:00Z",
+  };
+  const attentionSession: Session = {
+    id: "recent-attention",
+    name: "Attention session",
+    state: "running",
+    cwd: recentProject.path,
+    projectId: recentProject.id,
+    needsAttention: true,
+    createdAt: "2026-08-20T00:00:00Z",
+    updatedAt: "2026-08-20T01:00:00Z",
+  };
+  const newestSession: Session = {
+    id: "recent-newest",
+    name: "Newest session",
+    state: "exited",
+    cwd: recentProject.path,
+    projectId: recentProject.id,
+    createdAt: "2026-08-21T00:00:00Z",
+    updatedAt: "2026-08-25T00:00:00Z",
+  };
+  const fallbackSession: Session = {
+    id: "created-at-fallback-session",
+    name: "Created at fallback",
+    state: "exited",
+    cwd: createdAtFallbackProject.path,
+    projectId: createdAtFallbackProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+  };
+  const olderSession: Session = {
+    id: "older-session",
+    name: "Older session",
+    state: "exited",
+    cwd: olderProject.path,
+    projectId: olderProject.id,
+    createdAt: "2026-08-18T00:00:00Z",
+    updatedAt: "2026-08-23T00:00:00Z",
+  };
+  const onSelectSession = vi.fn();
+
+  renderSidebar({
+    projects: [olderProject, createdAtFallbackProject, recentProject],
+    sessions: [attentionSession, newestSession, fallbackSession, olderSession],
+    agentSummaries: [],
+    selectedID: newestSession.id,
+    onSelectSession,
+  });
+
+  const navigation = screen.getByRole("navigation", {
+    name: "Projects and sessions",
+  });
+  expect(
+    within(navigation)
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent),
+  ).toEqual([
+    recentProject.path,
+    createdAtFallbackProject.path,
+    olderProject.path,
+  ]);
+
+  const recentSection = screen
+    .getByRole("heading", { name: recentProject.path })
+    .closest("section") as HTMLElement;
+  expect(
+    Array.from(recentSection.querySelectorAll(".project-session-select")).map(
+      (button) => button.getAttribute("aria-label"),
+    ),
+  ).toEqual(["Select Attention session", "Select Newest session"]);
+
+  const selectedButton = within(recentSection).getByRole("button", {
+    name: "Select Newest session",
+  });
+  expect(selectedButton).toHaveAttribute("aria-pressed", "true");
+  expect(selectedButton).toHaveAttribute("aria-current", "true");
+  fireEvent.click(selectedButton);
+  expect(onSelectSession).toHaveBeenCalledWith(newestSession.id);
+});
+
+test("preserves project input order for equal or missing updates and keeps Unassigned last", () => {
+  const emptyProjectInOrder: Project = {
+    id: "project-empty-in-order",
+    path: "/workspace/empty-in-order",
+    createdAt: "2026-08-01T00:00:00Z",
+  };
+  const tieSecondProject: Project = {
+    id: "project-tie-second",
+    path: "/workspace/tie-second",
+    createdAt: "2026-08-02T00:00:00Z",
+  };
+  const invalidProject: Project = {
+    id: "project-invalid",
+    path: "/workspace/invalid",
+    createdAt: "2026-08-03T00:00:00Z",
+  };
+  const validProject: Project = {
+    id: "project-valid",
+    path: "/workspace/valid",
+    createdAt: "2026-08-04T00:00:00Z",
+  };
+  const tieFirstProject: Project = {
+    id: "project-tie-first",
+    path: "/workspace/tie-first",
+    createdAt: "2026-08-05T00:00:00Z",
+  };
+  const sessionFor = (
+    id: string,
+    name: string,
+    projectId: string,
+    updatedAt: string,
+  ): Session => ({
+    id,
+    name,
+    state: "exited",
+    cwd: `/workspace/${id}`,
+    projectId,
+    createdAt: "2026-08-01T00:00:00Z",
+    updatedAt,
+  });
+  const unassignedAttention: Session = {
+    id: "unassigned-attention",
+    name: "Unassigned attention",
+    state: "running",
+    cwd: "/workspace/unassigned",
+    projectId: "unknown-project",
+    needsAttention: true,
+    createdAt: "2026-08-20T00:00:00Z",
+    updatedAt: "2026-08-20T00:00:00Z",
+  };
+  const unassignedNewest: Session = {
+    id: "unassigned-newest",
+    name: "Unassigned newest",
+    state: "exited",
+    cwd: "/workspace/unassigned",
+    projectId: "another-unknown-project",
+    createdAt: "2026-08-21T00:00:00Z",
+    updatedAt: "2026-08-26T00:00:00Z",
+  };
+
+  renderSidebar({
+    projects: [
+      emptyProjectInOrder,
+      tieSecondProject,
+      invalidProject,
+      validProject,
+      tieFirstProject,
+    ],
+    sessions: [
+      sessionFor(
+        "tie-second-session",
+        "Tie second session",
+        tieSecondProject.id,
+        "2026-08-24T00:00:00Z",
+      ),
+      sessionFor(
+        "invalid-session",
+        "Invalid session",
+        invalidProject.id,
+        "not-a-date",
+      ),
+      sessionFor(
+        "valid-session",
+        "Valid session",
+        validProject.id,
+        "2026-08-25T00:00:00Z",
+      ),
+      sessionFor(
+        "tie-first-session",
+        "Tie first session",
+        tieFirstProject.id,
+        "2026-08-24T00:00:00Z",
+      ),
+      unassignedAttention,
+      unassignedNewest,
+    ],
+    agentSummaries: [],
+  });
+
+  const navigation = screen.getByRole("navigation", {
+    name: "Projects and sessions",
+  });
+  expect(
+    within(navigation)
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent),
+  ).toEqual([
+    validProject.path,
+    tieSecondProject.path,
+    tieFirstProject.path,
+    emptyProjectInOrder.path,
+    invalidProject.path,
+    "Unassigned",
+  ]);
+
+  const groups = Array.from(
+    navigation.querySelectorAll(".project-sidebar-group"),
+  );
+  const unassignedSection = groups.at(-1) as HTMLElement;
+  expect(unassignedSection).toHaveAttribute("data-project-id", "unassigned");
+  expect(
+    Array.from(
+      unassignedSection.querySelectorAll(".project-session-select"),
+    ).map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Select Unassigned attention", "Select Unassigned newest"]);
+});
+
 test("archives agent sessions and deletes bare terminals from context menus", async () => {
   const user = userEvent.setup();
   const onSelectSession = vi.fn();
