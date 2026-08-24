@@ -2,6 +2,18 @@
 
 ## Workflow
 
+- When planning or implementing anything, always follow these steps:
+  1. Run `LAST_OUTPUT=$(mktemp)`.
+  2. Call the following command to create a detailed implementation plan.
+     Think through the task deeply enough that the handoff agent can implement
+     it by following the instructions alone.
+
+     ```bash
+     codex exec --model gpt-5.6-sol -c 'model_reasoning_effort="medium"' -c 'service_tier="default"' -o "$LAST_OUTPUT" --ephemeral "ここに指示を書く" >/dev/null 2>&1
+     ```
+
+  3. Start an agent (`gpt-5.6-luna`, max) to implement the work based on the
+     received plan.
 - Do not pause to ask for design or plan approval. Make reasonable assumptions
   and continue through implementation and verification unless the user
   explicitly asks to pause, requests only a plan, or a decision would
