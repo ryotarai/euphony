@@ -3,23 +3,37 @@
 ## Workflow
 
 - When planning or implementing anything, always follow these steps:
-  1. Run `LAST_OUTPUT=$(mktemp)`.
+  1. Create temporary files for the planning output and the command log:
+     ```bash
+     LAST_OUTPUT=$(mktemp)
+     CODEX_EXEC_LOG=$(mktemp)
+     ```
   2. Call the following command as an initial, read-only planning pass before
      implementation. Its prompt must require investigation of the existing
      code, tests, and relevant recent history; requirements and edge-case
      analysis; and a detailed implementation and verification plan that a
      handoff agent can follow without further repository investigation. The
-     planning pass must not create worktrees or edit repository files.
+     planning pass must remain read-only: it must not create worktrees or edit
+     repository files. Set up any implementation worktree outside `codex exec`
+     only after this planning pass has completed.
+     Redirect both standard output and standard error to `CODEX_EXEC_LOG`.
 
      ```bash
-     codex exec --model gpt-5.6-sol -c 'model_reasoning_effort="medium"' -c 'service_tier="default"' -o "$LAST_OUTPUT" --ephemeral "ここに指示を書く" >/dev/null 2>&1
+     codex exec --model gpt-5.6-sol -c 'model_reasoning_effort="medium"' -c 'service_tier="default"' -o "$LAST_OUTPUT" --ephemeral "write your prompt here" >"$CODEX_EXEC_LOG" 2>&1
+     CODEX_EXEC_EXIT_CODE=$?
      ```
 
-  3. If `codex exec` fails in the sandbox because of permissions, rerun only
+  3. While a long-running `codex exec` is running, use another shell to
+     periodically inspect its latest output with
+     `tail -n 100 "$CODEX_EXEC_LOG"`. Silence or slowness is not by itself
+     evidence of failure; wait up to one hour before concluding that the
+     command failed. After it completes, check its exit code, `CODEX_EXEC_LOG`,
+     and `LAST_OUTPUT`.
+  4. If `codex exec` fails in the sandbox because of permissions, rerun only
      the minimal diagnostic or planning command with escalation.
-  4. Set up the implementation worktree outside `codex exec`, after the
+  5. Set up the implementation worktree outside `codex exec`, after the
      read-only planning pass has completed.
-  5. Start an agent (`gpt-5.6-luna`, max) to implement the work based on the
+  6. Start an agent (`gpt-5.6-luna`, max) to implement the work based on the
      received plan.
 - Do not pause to ask for design or plan approval. Make reasonable assumptions
   and continue through implementation and verification unless the user
