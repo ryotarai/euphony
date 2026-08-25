@@ -46,10 +46,27 @@ export function replacementSession(
   previous: Session[],
   removedID: string,
   remaining: Session[],
+  options: { fallbackToFirst?: boolean } = {},
 ): Session | undefined {
+  const fallbackToFirst = options.fallbackToFirst !== false;
   const previousIndex = previous.findIndex((session) => session.id === removedID);
-  if (previousIndex < 0) return remaining[0];
-  return remaining[previousIndex] ?? remaining[previousIndex - 1] ?? remaining[0];
+  if (previousIndex < 0) return fallbackToFirst ? remaining[0] : undefined;
+  const remainingIDs = new Set(remaining.map((session) => session.id));
+  return (
+    previous.slice(previousIndex + 1).find((session) => remainingIDs.has(session.id)) ??
+    previous.slice(0, previousIndex).reverse().find((session) => remainingIDs.has(session.id)) ??
+    (fallbackToFirst ? remaining[0] : undefined)
+  );
+}
+
+export function replacementSessionForClose(
+  previous: Session[],
+  removedID: string,
+  remaining: Session[],
+): Session | undefined {
+  return replacementSession(previous, removedID, remaining, {
+    fallbackToFirst: false,
+  });
 }
 
 function sessionActivity(session: Session) {

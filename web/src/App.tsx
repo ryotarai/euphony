@@ -15,12 +15,15 @@ import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { KanbanDialog, kanbanAllProjectsFilter } from "./components/KanbanDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
+import { flattenProjectSidebarSessions } from "./components/ProjectSidebar";
 import { AgentsView } from "./components/AgentsView";
+import { flattenLegacySidebarSessions } from "./legacySidebarUtils";
 import {
   agentLaunchTransitions,
   attentionTransitions,
   cwdFilterKey,
   replacementSession,
+  replacementSessionForClose,
   sessionsEqual,
 } from "./sessionUtils";
 import {
@@ -410,6 +413,168 @@ function selectionSourceSignature(
     pinnedStatuses,
     pinnedCwds,
   });
+}
+
+type SelectionIntent = {
+  selectedIDs: string[];
+  pinnedIDs: string[];
+  focusedID: string | null;
+  statusFilters: string[];
+  cwdFilters: string[];
+  pinnedStatusFilters: string[];
+  pinnedCwdFilters: string[];
+};
+
+function stringArraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function selectionIntentsEqual(left: SelectionIntent, right: SelectionIntent) {
+  return (
+    left.focusedID === right.focusedID &&
+    stringArraysEqual(left.selectedIDs, right.selectedIDs) &&
+    stringArraysEqual(left.pinnedIDs, right.pinnedIDs) &&
+    stringArraysEqual(left.statusFilters, right.statusFilters) &&
+    stringArraysEqual(left.cwdFilters, right.cwdFilters) &&
+    stringArraysEqual(left.pinnedStatusFilters, right.pinnedStatusFilters) &&
+    stringArraysEqual(left.pinnedCwdFilters, right.pinnedCwdFilters)
+  );
+}
+
+function selectionSnapshotsEqual(left: SelectionSnapshot, right: SelectionSnapshot) {
+  return JSON.stringify({
+    terminalIds: left.terminalIds,
+    manualTerminalIds: left.manualTerminalIds,
+    pinnedTerminalIds: left.pinnedTerminalIds,
+    focusedTerminalId: left.focusedTerminalId ?? "",
+    filters: left.filters,
+    pinnedFilters: left.pinnedFilters ?? { statuses: [], cwds: [] },
+    revision: left.revision,
+  }) === JSON.stringify({
+    terminalIds: right.terminalIds,
+    manualTerminalIds: right.manualTerminalIds,
+    pinnedTerminalIds: right.pinnedTerminalIds,
+    focusedTerminalId: right.focusedTerminalId ?? "",
+    filters: right.filters,
+    pinnedFilters: right.pinnedFilters ?? { statuses: [], cwds: [] },
+    revision: right.revision,
+  });
+}
+
+function isSingleTargetCloseIntent(intent: SelectionIntent, removedID: string) {
+  return (
+    intent.selectedIDs.length === 1 &&
+    intent.selectedIDs[0] === removedID &&
+    intent.focusedID === removedID &&
+    intent.pinnedIDs.every((id) => id === removedID) &&
+    intent.statusFilters.length === 0 &&
+    intent.cwdFilters.length === 0 &&
+    intent.pinnedStatusFilters.length === 0 &&
+    intent.pinnedCwdFilters.length === 0
+  );
+}
+
+function sessionCreatedAt(session: Session) {
+  const timestamp = Date.parse(session.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function serverDeletionReplacementID(
+  previousSessions: Session[],
+  removedID: string,
+  remaining: Session[],
+) {
+  const removed = previousSessions.find((session) => session.id === removedID);
+  if (!removed || remaining.length === 0) return undefined;
+  const ordered = [...remaining].sort(
+    (left, right) => sessionCreatedAt(left) - sessionCreatedAt(right),
+  );
+  return ordered.find(
+    (session) => sessionCreatedAt(session) >= sessionCreatedAt(removed),
+  )?.id ?? ordered.at(-1)?.id;
+}
+
+function sharedCloseSelectionRequest({
+  snapshot,
+  previousRevision,
+  previousSessions,
+  removedID,
+  remaining,
+  renderedOrder,
+  selectedIDs,
+  pinnedIDs,
+  focusedID,
+  statusFilters,
+  cwdFilters,
+  pinnedStatusFilters,
+  pinnedCwdFilters,
+}: {
+  snapshot: SelectionSnapshot;
+  previousRevision: number | null;
+  previousSessions: Session[];
+  removedID: string;
+  remaining: Session[];
+  renderedOrder: Session[];
+  selectedIDs: string[];
+  pinnedIDs: string[];
+  focusedID: string | null;
+  statusFilters: string[];
+  cwdFilters: string[];
+  pinnedStatusFilters: string[];
+  pinnedCwdFilters: string[];
+}): ReplaceSelectionRequest | undefined {
+  if (
+    previousRevision === null ||
+    snapshot.revision !== previousRevision + 1 ||
+    selectedIDs.length !== 1 ||
+    selectedIDs[0] !== removedID ||
+    focusedID !== removedID ||
+    pinnedIDs.some((id) => id !== removedID) ||
+    statusFilters.length > 0 ||
+    cwdFilters.length > 0 ||
+    pinnedStatusFilters.length > 0 ||
+    pinnedCwdFilters.length > 0
+  ) {
+    return undefined;
+  }
+
+  const replacement = replacementSessionForClose(
+    renderedOrder,
+    removedID,
+    remaining,
+  );
+  const serverReplacementID = serverDeletionReplacementID(
+    previousSessions,
+    removedID,
+    remaining,
+  );
+  const snapshotPinnedFilters = snapshot.pinnedFilters ?? { statuses: [], cwds: [] };
+  if (
+    !replacement ||
+    !serverReplacementID ||
+    serverReplacementID === replacement.id ||
+    snapshot.terminalIds.length !== 1 ||
+    snapshot.manualTerminalIds.length !== 1 ||
+    snapshot.manualTerminalIds[0] !== serverReplacementID ||
+    snapshot.terminalIds[0] !== serverReplacementID ||
+    snapshot.focusedTerminalId !== serverReplacementID ||
+    snapshot.pinnedTerminalIds.length > 0 ||
+    snapshot.filters.statuses.length > 0 ||
+    snapshot.filters.cwds.length > 0 ||
+    snapshotPinnedFilters.statuses.length > 0 ||
+    snapshotPinnedFilters.cwds.length > 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    manualTerminalIds: [replacement.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: replacement.id,
+    filters: snapshot.filters,
+    pinnedFilters: snapshotPinnedFilters,
+    expectedRevision: snapshot.revision,
+  };
 }
 
 function playAttentionTone() {
@@ -869,18 +1034,36 @@ export function App({
   const currentSelectionStateRef = useRef({
     selectedIDs,
     pinnedIDs,
+    focusedID,
     statusFilters,
     cwdFilters,
+    pinnedStatusFilters,
+    pinnedCwdFilters,
   });
   useLayoutEffect(() => {
     currentSelectionStateRef.current = {
       selectedIDs,
       pinnedIDs,
+      focusedID,
       statusFilters,
       cwdFilters,
+      pinnedStatusFilters,
+      pinnedCwdFilters,
     };
-  }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
+  }, [
+    cwdFilters,
+    focusedID,
+    pinnedCwdFilters,
+    pinnedIDs,
+    pinnedStatusFilters,
+    selectedIDs,
+    statusFilters,
+  ]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const renderedSessionOrder = useCallback((items: Session[]) => {
+    if (!projectEndpointAvailableRef.current) return flattenLegacySidebarSessions(items);
+    return flattenProjectSidebarSessions(projects ?? [], items, agentSummaries);
+  }, [agentSummaries, projects]);
   const fetchKanbanSnapshot = useCallback(async (): Promise<KanbanSession[]> => {
     if (!api) return [];
     const [active, archived] = await Promise.all([
@@ -1933,7 +2116,11 @@ export function App({
       ? focusedID
       : selectedIDs.find((id) => !available.has(id));
     const replacement = removedID
-      ? replacementSession(previousSessionOrderRef.current, removedID, sessions)
+      ? replacementSession(
+        renderedSessionOrder(previousSessionOrderRef.current),
+        removedID,
+        sessions,
+      )
       : undefined;
     if (
       nextIDs.length === 0 &&
@@ -1967,6 +2154,7 @@ export function App({
     focusedID,
     statusFilters,
     cwdFilters,
+    renderedSessionOrder,
     writeWorkspaceToURL,
   ]);
 
@@ -3132,13 +3320,108 @@ export function App({
     }
   }
 
+  async function applySharedCloseSelection(
+    snapshot: SelectionSnapshot,
+    previousRevision: number | null,
+    previousSessions: Session[],
+    removedID: string,
+    remaining: Session[],
+    selectionBeforeClose: SelectionIntent,
+  ) {
+    if (!isSingleTargetCloseIntent(selectionBeforeClose, removedID)) {
+      acceptServerSelection(snapshot);
+      return;
+    }
+    const currentSelection = currentSelectionStateRef.current;
+    const currentRevision = selectionRevisionRef.current;
+    if (
+      previousRevision === null ||
+      currentRevision !== previousRevision ||
+      snapshot.revision !== previousRevision + 1 ||
+      !selectionIntentsEqual(currentSelection, selectionBeforeClose)
+    ) {
+      if (!api) return;
+      try {
+        acceptServerSelection(await api.getSelection());
+      } catch {
+        setRequestError("The shared selection could not be refreshed.");
+      }
+      return;
+    }
+    if (!api) return;
+    let currentSnapshot: SelectionSnapshot;
+    try {
+      currentSnapshot = await api.getSelection();
+    } catch {
+      setRequestError("The shared selection could not be refreshed.");
+      return;
+    }
+    if (
+      !selectionSnapshotsEqual(currentSnapshot, snapshot) ||
+      selectionRevisionRef.current !== previousRevision ||
+      !selectionIntentsEqual(currentSelectionStateRef.current, selectionBeforeClose)
+    ) {
+      acceptServerSelection(currentSnapshot);
+      return;
+    }
+    const correction = sharedCloseSelectionRequest({
+      snapshot: currentSnapshot,
+      previousRevision,
+      previousSessions,
+      removedID,
+      remaining,
+      renderedOrder: renderedSessionOrder(previousSessions),
+      ...selectionBeforeClose,
+    });
+    acceptServerSelection(currentSnapshot);
+    if (!correction || selectionRevisionRef.current !== currentSnapshot.revision) {
+      return;
+    }
+    try {
+      const corrected = await api.replaceSelection(correction);
+      acceptServerSelection(corrected);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "selection_conflict") {
+        try {
+          acceptServerSelection(await api.getSelection());
+        } catch {
+          setRequestError("The shared selection could not be refreshed.");
+        }
+        return;
+      }
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The shared selection could not be updated.",
+      );
+    }
+  }
+
   async function deleteSessions(items: Session[]) {
     if (!api || items.length === 0) return;
+    setRequestError("");
     const previousSessions = sessions ?? [];
+    const previousRevision = selectionRevisionRef.current;
+    const selectionBeforeClose = {
+      selectedIDs,
+      pinnedIDs,
+      focusedID,
+      statusFilters,
+      cwdFilters,
+      pinnedStatusFilters,
+      pinnedCwdFilters,
+    };
     const deletedIDs = new Set<string>();
     let latestSelection: SelectionSnapshot | null = null;
 
     const reconcileLocalDeletion = () => {
+      const currentSelection = currentSelectionStateRef.current;
+      if (!selectionIntentsEqual(currentSelection, selectionBeforeClose)) {
+        filterSelectedIDsRef.current = new Set(
+          [...filterSelectedIDsRef.current].filter((id) => !deletedIDs.has(id)),
+        );
+        return;
+      }
       const remaining = previousSessions.filter(
         (candidate) => !deletedIDs.has(candidate.id),
       );
@@ -3146,20 +3429,24 @@ export function App({
         .reverse()
         .find((item) => deletedIDs.has(item.id))?.id;
       const replacement = lastDeletedID
-        ? replacementSession(previousSessions, lastDeletedID, remaining)
+        ? replacementSessionForClose(
+          renderedSessionOrder(previousSessions),
+          lastDeletedID,
+          remaining,
+        )
         : undefined;
-      let nextIDs = selectedIDs.filter((id) => !deletedIDs.has(id));
+      let nextIDs = currentSelection.selectedIDs.filter((id) => !deletedIDs.has(id));
       if (
         nextIDs.length === 0 &&
-        statusFilters.length === 0 &&
-        cwdFilters.length === 0 &&
+        currentSelection.statusFilters.length === 0 &&
+        currentSelection.cwdFilters.length === 0 &&
         replacement
       ) {
         nextIDs = [replacement.id];
       }
-      const nextPinnedIDs = pinnedIDs.filter((id) => !deletedIDs.has(id));
-      const nextFocus = focusedID && nextIDs.includes(focusedID)
-        ? focusedID
+      const nextPinnedIDs = currentSelection.pinnedIDs.filter((id) => !deletedIDs.has(id));
+      const nextFocus = currentSelection.focusedID && nextIDs.includes(currentSelection.focusedID)
+        ? currentSelection.focusedID
         : nextIDs[0] ?? null;
       filterSelectedIDsRef.current = new Set(
         [...filterSelectedIDsRef.current].filter((id) => !deletedIDs.has(id)),
@@ -3171,8 +3458,8 @@ export function App({
         nextIDs,
         nextPinnedIDs,
         nextFocus,
-        statusFilters,
-        cwdFilters,
+        currentSelection.statusFilters,
+        currentSelection.cwdFilters,
       );
     };
 
@@ -3193,7 +3480,7 @@ export function App({
       }
     } catch (error) {
       if (deletedIDs.size > 0) {
-        if (latestSelection) applyServerSelection(latestSelection, "push");
+        if (latestSelection) acceptServerSelection(latestSelection);
         else reconcileLocalDeletion();
       }
       setRequestError(
@@ -3202,36 +3489,80 @@ export function App({
       return;
     }
 
-    if (latestSelection) applyServerSelection(latestSelection, "push");
-    else reconcileLocalDeletion();
-    setRequestError("");
+    if (latestSelection) {
+      if (items.length === 1) {
+        const remaining = previousSessions.filter(
+          (candidate) => !deletedIDs.has(candidate.id),
+        );
+        await applySharedCloseSelection(
+          latestSelection,
+          previousRevision,
+          previousSessions,
+          items[0].id,
+          remaining,
+          selectionBeforeClose,
+        );
+      } else {
+        acceptServerSelection(latestSelection);
+      }
+    } else reconcileLocalDeletion();
   }
 
   async function archiveSession(item: Session) {
     if (!api) return;
+    setRequestError("");
+    const previousSessions = sessions ?? [];
+    const previousRevision = selectionRevisionRef.current;
+    const selectionBeforeClose = {
+      selectedIDs,
+      pinnedIDs,
+      focusedID,
+      statusFilters,
+      cwdFilters,
+      pinnedStatusFilters,
+      pinnedCwdFilters,
+    };
     try {
       const archived = await api.archiveSession(item.id);
-      const previousSessions = sessions ?? [];
       cancelFilterDeselect(item.id);
       setSessions((current) =>
         current?.filter((session) => session.id !== item.id) ?? current,
       );
-      if (syncSelection) applyServerSelection(archived.selection, "push");
-      else {
+      if (syncSelection) {
         const remaining = previousSessions.filter((session) => session.id !== item.id);
-        const replacement = replacementSession(previousSessions, item.id, remaining);
-        let nextIDs = selectedIDs.filter((id) => id !== item.id);
+        await applySharedCloseSelection(
+          archived.selection,
+          previousRevision,
+          previousSessions,
+          item.id,
+          remaining,
+          selectionBeforeClose,
+        );
+      }
+      else {
+        const currentSelection = currentSelectionStateRef.current;
+        if (!selectionIntentsEqual(currentSelection, selectionBeforeClose)) {
+          filterSelectedIDsRef.current.delete(item.id);
+          return;
+        }
+        const remaining = previousSessions.filter((session) => session.id !== item.id);
+        const replacement = replacementSessionForClose(
+          renderedSessionOrder(previousSessions),
+          item.id,
+          remaining,
+        );
+        let nextIDs = currentSelection.selectedIDs.filter((id) => id !== item.id);
         if (
           nextIDs.length === 0 &&
-          statusFilters.length === 0 &&
-          cwdFilters.length === 0 &&
+          currentSelection.statusFilters.length === 0 &&
+          currentSelection.cwdFilters.length === 0 &&
           replacement
         ) {
           nextIDs = [replacement.id];
         }
-        const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
-        const nextFocus = focusedID && nextIDs.includes(focusedID)
-          ? focusedID
+        const nextPinnedIDs = currentSelection.pinnedIDs.filter((id) => id !== item.id);
+        const nextFocus = currentSelection.focusedID && nextIDs.includes(currentSelection.focusedID)
+          ? currentSelection.focusedID
           : nextIDs[0] ?? null;
         filterSelectedIDsRef.current.delete(item.id);
         setSelectedIDs(nextIDs);
@@ -3241,11 +3572,10 @@ export function App({
           nextIDs,
           nextPinnedIDs,
           nextFocus,
-          statusFilters,
-          cwdFilters,
+          currentSelection.statusFilters,
+          currentSelection.cwdFilters,
         );
       }
-      setRequestError("");
     } catch (error) {
       setRequestError(
         error instanceof Error ? error.message : "The agent session could not be archived.",
