@@ -3415,6 +3415,13 @@ export function App({
     let latestSelection: SelectionSnapshot | null = null;
 
     const reconcileLocalDeletion = () => {
+      const currentSelection = currentSelectionStateRef.current;
+      if (!selectionIntentsEqual(currentSelection, selectionBeforeClose)) {
+        filterSelectedIDsRef.current = new Set(
+          [...filterSelectedIDsRef.current].filter((id) => !deletedIDs.has(id)),
+        );
+        return;
+      }
       const remaining = previousSessions.filter(
         (candidate) => !deletedIDs.has(candidate.id),
       );
@@ -3428,18 +3435,18 @@ export function App({
           remaining,
         )
         : undefined;
-      let nextIDs = selectedIDs.filter((id) => !deletedIDs.has(id));
+      let nextIDs = currentSelection.selectedIDs.filter((id) => !deletedIDs.has(id));
       if (
         nextIDs.length === 0 &&
-        statusFilters.length === 0 &&
-        cwdFilters.length === 0 &&
+        currentSelection.statusFilters.length === 0 &&
+        currentSelection.cwdFilters.length === 0 &&
         replacement
       ) {
         nextIDs = [replacement.id];
       }
-      const nextPinnedIDs = pinnedIDs.filter((id) => !deletedIDs.has(id));
-      const nextFocus = focusedID && nextIDs.includes(focusedID)
-        ? focusedID
+      const nextPinnedIDs = currentSelection.pinnedIDs.filter((id) => !deletedIDs.has(id));
+      const nextFocus = currentSelection.focusedID && nextIDs.includes(currentSelection.focusedID)
+        ? currentSelection.focusedID
         : nextIDs[0] ?? null;
       filterSelectedIDsRef.current = new Set(
         [...filterSelectedIDsRef.current].filter((id) => !deletedIDs.has(id)),
@@ -3451,8 +3458,8 @@ export function App({
         nextIDs,
         nextPinnedIDs,
         nextFocus,
-        statusFilters,
-        cwdFilters,
+        currentSelection.statusFilters,
+        currentSelection.cwdFilters,
       );
     };
 
@@ -3533,24 +3540,29 @@ export function App({
         );
       }
       else {
+        const currentSelection = currentSelectionStateRef.current;
+        if (!selectionIntentsEqual(currentSelection, selectionBeforeClose)) {
+          filterSelectedIDsRef.current.delete(item.id);
+          return;
+        }
         const remaining = previousSessions.filter((session) => session.id !== item.id);
         const replacement = replacementSessionForClose(
           renderedSessionOrder(previousSessions),
           item.id,
           remaining,
         );
-        let nextIDs = selectedIDs.filter((id) => id !== item.id);
+        let nextIDs = currentSelection.selectedIDs.filter((id) => id !== item.id);
         if (
           nextIDs.length === 0 &&
-          statusFilters.length === 0 &&
-          cwdFilters.length === 0 &&
+          currentSelection.statusFilters.length === 0 &&
+          currentSelection.cwdFilters.length === 0 &&
           replacement
         ) {
           nextIDs = [replacement.id];
         }
-        const nextPinnedIDs = pinnedIDs.filter((id) => id !== item.id);
-        const nextFocus = focusedID && nextIDs.includes(focusedID)
-          ? focusedID
+        const nextPinnedIDs = currentSelection.pinnedIDs.filter((id) => id !== item.id);
+        const nextFocus = currentSelection.focusedID && nextIDs.includes(currentSelection.focusedID)
+          ? currentSelection.focusedID
           : nextIDs[0] ?? null;
         filterSelectedIDsRef.current.delete(item.id);
         setSelectedIDs(nextIDs);
@@ -3560,8 +3572,8 @@ export function App({
           nextIDs,
           nextPinnedIDs,
           nextFocus,
-          statusFilters,
-          cwdFilters,
+          currentSelection.statusFilters,
+          currentSelection.cwdFilters,
         );
       }
     } catch (error) {

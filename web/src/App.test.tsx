@@ -2808,6 +2808,220 @@ test("opens the next rendered sidebar session after archiving across a project b
   );
 });
 
+test("preserves a newer local selection after a delayed delete", async () => {
+  history.replaceState(null, "", "/?terminal=local-race-removed");
+  const removedProject: Project = {
+    id: "project-local-race-removed",
+    path: "/workspace/local-race-removed",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-local-race-below",
+    path: "/workspace/local-race-below",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "local-race-removed",
+    name: "Local race removed",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "local-race-below",
+    name: "Local race below",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const otherSession: Session = {
+    ...plainTerminalSession,
+    id: "local-race-other",
+    name: "Local race other",
+    cwd: "/workspace/local-race-other",
+    createdAt: "2026-08-23T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  let deleteStarted = false;
+  let releaseDelete: (() => void) | undefined;
+  const deleteResponse = new Promise<Response>((resolve) => {
+    releaseDelete = () => resolve(new Response(null, { status: 204 }));
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([belowSession, removedSession, otherSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/sessions/local-race-removed" && init?.method === "DELETE") {
+      deleteStarted = true;
+      return deleteResponse;
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Local race removed" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Local race removed" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+  await waitFor(() => expect(deleteStarted).toBe(true));
+
+  await user.click(screen.getByRole("button", { name: "Select Local race other" }));
+  expect(screen.getByRole("button", { name: "Select Local race other" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  releaseDelete?.();
+
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Select Local race removed" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("button", { name: "Select Local race other" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Select Local race below" })).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/local-race-removed",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
+
+test("preserves a newer local selection after a delayed archive", async () => {
+  history.replaceState(null, "", "/?terminal=local-archive-race-removed");
+  const removedProject: Project = {
+    id: "project-local-archive-race-removed",
+    path: "/workspace/local-archive-race-removed",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-local-archive-race-below",
+    path: "/workspace/local-archive-race-below",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "local-archive-race-removed",
+    name: "Local archive race removed",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    agent: "codex",
+    agentStatus: "waiting",
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "local-archive-race-below",
+    name: "Local archive race below",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const otherSession: Session = {
+    ...plainTerminalSession,
+    id: "local-archive-race-other",
+    name: "Local archive race other",
+    cwd: "/workspace/local-archive-race-other",
+    createdAt: "2026-08-23T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  let archiveStarted = false;
+  let releaseArchive: (() => void) | undefined;
+  const archiveResponse = new Promise<Response>((resolve) => {
+    releaseArchive = () => resolve(new Response(JSON.stringify({
+      id: removedSession.id,
+      selection: {
+        terminalIds: [],
+        manualTerminalIds: [],
+        pinnedTerminalIds: [],
+        filters: { statuses: [], cwds: [] },
+        revision: 1,
+      },
+    }), {
+      headers: { "Content-Type": "application/json" },
+    }));
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([belowSession, removedSession, otherSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/sessions/local-archive-race-removed/archive" && init?.method === "POST") {
+      archiveStarted = true;
+      return archiveResponse;
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Codex" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Codex" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Archive" }));
+  await waitFor(() => expect(archiveStarted).toBe(true));
+
+  await user.click(screen.getByRole("button", { name: "Select Local archive race other" }));
+  expect(screen.getByRole("button", { name: "Select Local archive race other" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  releaseArchive?.();
+
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Select Codex" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("button", { name: "Select Local archive race other" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Select Local archive race below" })).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/local-archive-race-removed/archive",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
 test("corrects shared deletion to the next rendered sidebar session", async () => {
   history.replaceState(null, "", "/?terminal=removed-shared");
   const removedProject: Project = {
