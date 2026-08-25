@@ -1,4 +1,7 @@
-import { replacementSession } from "./sessionUtils";
+import {
+  replacementSession,
+  replacementSessionForClose,
+} from "./sessionUtils";
 import type { Session } from "./types";
 
 function session(id: string): Session {
@@ -11,8 +14,18 @@ function session(id: string): Session {
   };
 }
 
-test("does not choose an arbitrary first session when the removed target is stale", () => {
+test("keeps the first fallback when asynchronous disappearance has no prior survivor", () => {
   const remaining = [session("first"), session("second")];
 
-  expect(replacementSession([session("previous")], "removed", remaining)).toBeUndefined();
+  expect(replacementSession([session("previous")], "removed", remaining)).toBe(
+    remaining[0],
+  );
+});
+
+test("does not choose an arbitrary first session for a stale explicit close", () => {
+  const remaining = [session("first"), session("second")];
+
+  expect(
+    replacementSessionForClose([session("previous")], "removed", remaining),
+  ).toBeUndefined();
 });

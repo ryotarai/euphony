@@ -17,11 +17,13 @@ import { KanbanDialog, kanbanAllProjectsFilter } from "./components/KanbanDialog
 import { SessionNavigation } from "./components/SessionNavigation";
 import { flattenProjectSidebarSessions } from "./components/ProjectSidebar";
 import { AgentsView } from "./components/AgentsView";
+import { flattenLegacySidebarSessions } from "./legacySidebarUtils";
 import {
   agentLaunchTransitions,
   attentionTransitions,
   cwdFilterKey,
   replacementSession,
+  replacementSessionForClose,
   sessionsEqual,
 } from "./sessionUtils";
 import {
@@ -411,6 +413,109 @@ function selectionSourceSignature(
     pinnedStatuses,
     pinnedCwds,
   });
+}
+
+function sessionCreatedAt(session: Session) {
+  const timestamp = Date.parse(session.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function serverDeletionReplacementID(
+  previousSessions: Session[],
+  removedID: string,
+  remaining: Session[],
+) {
+  const removed = previousSessions.find((session) => session.id === removedID);
+  if (!removed || remaining.length === 0) return undefined;
+  const ordered = [...remaining].sort(
+    (left, right) => sessionCreatedAt(left) - sessionCreatedAt(right),
+  );
+  return ordered.find(
+    (session) => sessionCreatedAt(session) >= sessionCreatedAt(removed),
+  )?.id ?? ordered.at(-1)?.id;
+}
+
+function sharedCloseSelectionRequest({
+  snapshot,
+  previousRevision,
+  previousSessions,
+  removedID,
+  remaining,
+  renderedOrder,
+  selectedIDs,
+  pinnedIDs,
+  focusedID,
+  statusFilters,
+  cwdFilters,
+  pinnedStatusFilters,
+  pinnedCwdFilters,
+}: {
+  snapshot: SelectionSnapshot;
+  previousRevision: number | null;
+  previousSessions: Session[];
+  removedID: string;
+  remaining: Session[];
+  renderedOrder: Session[];
+  selectedIDs: string[];
+  pinnedIDs: string[];
+  focusedID: string | null;
+  statusFilters: string[];
+  cwdFilters: string[];
+  pinnedStatusFilters: string[];
+  pinnedCwdFilters: string[];
+}): ReplaceSelectionRequest | undefined {
+  if (
+    previousRevision === null ||
+    snapshot.revision !== previousRevision + 1 ||
+    selectedIDs.length !== 1 ||
+    selectedIDs[0] !== removedID ||
+    focusedID !== removedID ||
+    pinnedIDs.some((id) => id !== removedID) ||
+    statusFilters.length > 0 ||
+    cwdFilters.length > 0 ||
+    pinnedStatusFilters.length > 0 ||
+    pinnedCwdFilters.length > 0
+  ) {
+    return undefined;
+  }
+
+  const replacement = replacementSessionForClose(
+    renderedOrder,
+    removedID,
+    remaining,
+  );
+  const serverReplacementID = serverDeletionReplacementID(
+    previousSessions,
+    removedID,
+    remaining,
+  );
+  const snapshotPinnedFilters = snapshot.pinnedFilters ?? { statuses: [], cwds: [] };
+  if (
+    !replacement ||
+    !serverReplacementID ||
+    serverReplacementID === replacement.id ||
+    snapshot.terminalIds.length !== 1 ||
+    snapshot.manualTerminalIds.length !== 1 ||
+    snapshot.manualTerminalIds[0] !== serverReplacementID ||
+    snapshot.terminalIds[0] !== serverReplacementID ||
+    snapshot.focusedTerminalId !== serverReplacementID ||
+    snapshot.pinnedTerminalIds.length > 0 ||
+    snapshot.filters.statuses.length > 0 ||
+    snapshot.filters.cwds.length > 0 ||
+    snapshotPinnedFilters.statuses.length > 0 ||
+    snapshotPinnedFilters.cwds.length > 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    manualTerminalIds: [replacement.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: replacement.id,
+    filters: snapshot.filters,
+    pinnedFilters: snapshotPinnedFilters,
+    expectedRevision: snapshot.revision,
+  };
 }
 
 function playAttentionTone() {
@@ -883,7 +988,7 @@ export function App({
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const renderedSessionOrder = useCallback((items: Session[]) => {
-    if (!projectEndpointAvailableRef.current) return items;
+    if (!projectEndpointAvailableRef.current) return flattenLegacySidebarSessions(items);
     return flattenProjectSidebarSessions(projects ?? [], items, agentSummaries);
   }, [agentSummaries, projects]);
   const fetchKanbanSnapshot = useCallback(async (): Promise<KanbanSession[]> => {
@@ -3142,9 +3247,68 @@ export function App({
     }
   }
 
+  async function applySharedCloseSelection(
+    snapshot: SelectionSnapshot,
+    previousRevision: number | null,
+    previousSessions: Session[],
+    removedID: string,
+    remaining: Session[],
+    selectionBeforeClose: {
+      selectedIDs: string[];
+      pinnedIDs: string[];
+      focusedID: string | null;
+      statusFilters: string[];
+      cwdFilters: string[];
+      pinnedStatusFilters: string[];
+      pinnedCwdFilters: string[];
+    },
+  ) {
+    const correction = sharedCloseSelectionRequest({
+      snapshot,
+      previousRevision,
+      previousSessions,
+      removedID,
+      remaining,
+      renderedOrder: renderedSessionOrder(previousSessions),
+      ...selectionBeforeClose,
+    });
+    acceptServerSelection(snapshot);
+    if (!api || !correction || selectionRevisionRef.current !== snapshot.revision) {
+      return;
+    }
+    try {
+      const corrected = await api.replaceSelection(correction);
+      acceptServerSelection(corrected);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "selection_conflict") {
+        try {
+          acceptServerSelection(await api.getSelection());
+        } catch {
+          setRequestError("The shared selection could not be refreshed.");
+        }
+        return;
+      }
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The shared selection could not be updated.",
+      );
+    }
+  }
+
   async function deleteSessions(items: Session[]) {
     if (!api || items.length === 0) return;
     const previousSessions = sessions ?? [];
+    const previousRevision = selectionRevisionRef.current;
+    const selectionBeforeClose = {
+      selectedIDs,
+      pinnedIDs,
+      focusedID,
+      statusFilters,
+      cwdFilters,
+      pinnedStatusFilters,
+      pinnedCwdFilters,
+    };
     const deletedIDs = new Set<string>();
     let latestSelection: SelectionSnapshot | null = null;
 
@@ -3156,7 +3320,7 @@ export function App({
         .reverse()
         .find((item) => deletedIDs.has(item.id))?.id;
       const replacement = lastDeletedID
-        ? replacementSession(
+        ? replacementSessionForClose(
           renderedSessionOrder(previousSessions),
           lastDeletedID,
           remaining,
@@ -3207,7 +3371,7 @@ export function App({
       }
     } catch (error) {
       if (deletedIDs.size > 0) {
-        if (latestSelection) applyServerSelection(latestSelection, "push");
+        if (latestSelection) acceptServerSelection(latestSelection);
         else reconcileLocalDeletion();
       }
       setRequestError(
@@ -3216,24 +3380,59 @@ export function App({
       return;
     }
 
-    if (latestSelection) applyServerSelection(latestSelection, "push");
-    else reconcileLocalDeletion();
+    if (latestSelection) {
+      if (items.length === 1) {
+        const remaining = previousSessions.filter(
+          (candidate) => !deletedIDs.has(candidate.id),
+        );
+        await applySharedCloseSelection(
+          latestSelection,
+          previousRevision,
+          previousSessions,
+          items[0].id,
+          remaining,
+          selectionBeforeClose,
+        );
+      } else {
+        acceptServerSelection(latestSelection);
+      }
+    } else reconcileLocalDeletion();
     setRequestError("");
   }
 
   async function archiveSession(item: Session) {
     if (!api) return;
+    const previousSessions = sessions ?? [];
+    const previousRevision = selectionRevisionRef.current;
+    const selectionBeforeClose = {
+      selectedIDs,
+      pinnedIDs,
+      focusedID,
+      statusFilters,
+      cwdFilters,
+      pinnedStatusFilters,
+      pinnedCwdFilters,
+    };
     try {
       const archived = await api.archiveSession(item.id);
-      const previousSessions = sessions ?? [];
       cancelFilterDeselect(item.id);
       setSessions((current) =>
         current?.filter((session) => session.id !== item.id) ?? current,
       );
-      if (syncSelection) applyServerSelection(archived.selection, "push");
+      if (syncSelection) {
+        const remaining = previousSessions.filter((session) => session.id !== item.id);
+        await applySharedCloseSelection(
+          archived.selection,
+          previousRevision,
+          previousSessions,
+          item.id,
+          remaining,
+          selectionBeforeClose,
+        );
+      }
       else {
         const remaining = previousSessions.filter((session) => session.id !== item.id);
-        const replacement = replacementSession(
+        const replacement = replacementSessionForClose(
           renderedSessionOrder(previousSessions),
           item.id,
           remaining,

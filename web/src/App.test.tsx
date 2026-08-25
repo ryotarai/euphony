@@ -1656,6 +1656,60 @@ test("does not select attention transitions", async () => {
   }
 });
 
+test("keeps a remaining session selected after an asynchronous disappearance with no prior survivor", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    history.replaceState(null, "", "/?terminal=stale-disappearance");
+    const staleSession: Session = {
+      ...plainTerminalSession,
+      id: "stale-disappearance",
+      name: "Stale disappearance",
+    };
+    const replacement: Session = {
+      ...plainTerminalSession,
+      id: "new-session-after-refresh",
+      name: "New session after refresh",
+    };
+    let sessionReads = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/api/sessions") {
+        sessionReads += 1;
+        return jsonResponse(sessionReads === 1 ? [staleSession] : [replacement]);
+      }
+      if (input === "/api/projects") return legacyProjectsResponse();
+      if (input === "/api/agent-summaries") return jsonResponse([]);
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    render(
+      <App
+        syncSelection={false}
+        syncEvents={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+      />,
+    );
+
+    expect(await screen.findByLabelText("Stale disappearance terminal pane")).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Select New session after refresh" }))
+        .toHaveAttribute("aria-current", "true");
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer valid-token" }),
+      }),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -2751,6 +2805,200 @@ test("opens the next rendered sidebar session after archiving across a project b
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/sessions/removed-agent/archive",
     expect.objectContaining({ method: "POST" }),
+  );
+});
+
+test("corrects shared deletion to the next rendered sidebar session", async () => {
+  history.replaceState(null, "", "/?terminal=removed-shared");
+  const removedProject: Project = {
+    id: "project-removed-shared",
+    path: "/workspace/removed-shared",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-below-shared",
+    path: "/workspace/below-shared",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "removed-shared",
+    name: "Removed shared",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "below-shared",
+    name: "Below shared",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const unassignedSession: Session = {
+    ...plainTerminalSession,
+    id: "unassigned-shared",
+    name: "Unassigned shared",
+    cwd: "/workspace/unassigned-shared",
+    createdAt: "2026-08-26T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  const initialSelection: SelectionSnapshot = {
+    terminalIds: [removedSession.id],
+    manualTerminalIds: [removedSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: removedSession.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 5,
+  };
+  const serverSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [unassignedSession.id],
+    manualTerminalIds: [unassignedSession.id],
+    focusedTerminalId: unassignedSession.id,
+    revision: 6,
+  };
+  const correctedSelection: SelectionSnapshot = {
+    ...serverSelection,
+    terminalIds: [belowSession.id],
+    manualTerminalIds: [belowSession.id],
+    focusedTerminalId: belowSession.id,
+    revision: 7,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([belowSession, removedSession, unassignedSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
+      return jsonResponse(initialSelection);
+    }
+    if (input === "/api/selection" && init?.method === "PUT") {
+      expect(JSON.parse(String(init.body))).toEqual({
+        manualTerminalIds: [belowSession.id],
+        pinnedTerminalIds: [],
+        focusedTerminalId: belowSession.id,
+        filters: { statuses: [], cwds: [] },
+        pinnedFilters: { statuses: [], cwds: [] },
+        expectedRevision: serverSelection.revision,
+      });
+      return jsonResponse(correctedSelection);
+    }
+    if (input === "/api/terminals/removed-shared" && init?.method === "DELETE") {
+      return jsonResponse({ id: removedSession.id, selection: serverSelection });
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Removed shared" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Removed shared" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Below shared" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(screen.getByRole("button", { name: "Select Unassigned shared" })).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock.mock.calls.filter(([input, init]) =>
+    input === "/api/selection" && init?.method === "PUT",
+  )).toHaveLength(1);
+});
+
+test("uses the legacy sidebar order when the project endpoint is unavailable", async () => {
+  history.replaceState(null, "", "/?terminal=legacy-removed");
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "legacy-removed",
+    name: "Legacy removed",
+    cwd: "/workspace/legacy",
+    agentStatus: "waiting",
+    updatedAt: "2026-08-27T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "legacy-below",
+    name: "Legacy below",
+    cwd: "/workspace/legacy",
+    updatedAt: "2026-08-26T00:00:00Z",
+  };
+  const otherSession: Session = {
+    ...plainTerminalSession,
+    id: "legacy-other",
+    name: "Legacy other",
+    cwd: "/workspace/legacy",
+    state: "exited",
+    updatedAt: "2026-08-25T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([removedSession, otherSession, belowSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return legacyProjectsResponse();
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/sessions/legacy-removed" && init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Legacy removed" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Legacy removed" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Legacy below" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(screen.getByRole("button", { name: "Select Legacy other" })).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/legacy-removed",
+    expect.objectContaining({ method: "DELETE" }),
   );
 });
 

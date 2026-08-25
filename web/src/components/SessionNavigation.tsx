@@ -42,6 +42,10 @@ import {
 import { ProjectSidebar, type SessionInfoInteractionHandlers } from "./ProjectSidebar";
 import { useSessionContextMenu } from "./SessionContextMenu";
 import { SessionInfoCard } from "./SessionInfoPane";
+import {
+  legacySessionActivity,
+  legacySidebarSessionGroups,
+} from "../legacySidebarUtils";
 import type { AgentSummary, Project, Session, Settings } from "../types";
 import {
   formatShortcut,
@@ -97,34 +101,6 @@ interface SessionNavigationProps {
   onOpenAgents?(multiple?: boolean): void;
 }
 
-function activity(session: Session) {
-  if (session.agentStatus) return session.agentStatus;
-  return session.state === "running" ? "terminal" : session.state;
-}
-
-const terminalRowPriority = new Map([
-  ["blocked", 1],
-  ["running", 2],
-  ["waiting", 3],
-  ["terminal", 4],
-]);
-
-function terminalPriority(session: Session) {
-  if (session.needsAttention) return 0;
-  return terminalRowPriority.get(activity(session)) ?? 100;
-}
-
-function terminalUpdatedAt(session: Session) {
-  const timestamp = Date.parse(session.updatedAt ?? session.createdAt);
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function compareTerminalRows(left: Session, right: Session) {
-  const priority = terminalPriority(left) - terminalPriority(right);
-  if (priority !== 0) return priority;
-  return terminalUpdatedAt(right) - terminalUpdatedAt(left);
-}
-
 function statusLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
@@ -163,26 +139,6 @@ function displayPath(path: string) {
 function sessionLabel(session: Session) {
   if (session.customName) return session.name;
   return session.agentTitle?.trim() || session.processName?.trim() || session.name;
-}
-
-function sidebarCwd(session: Session) {
-  return session.repoRoot?.trim() || session.cwd;
-}
-
-function groupSessionsByCwd(sessions: Session[]) {
-  const groups = new Map<string, Session[]>();
-  for (const session of sessions) {
-    const cwd = sidebarCwd(session);
-    const group = groups.get(cwd);
-    if (group) group.push(session);
-    else groups.set(cwd, [session]);
-  }
-  return [...groups].map(([cwd, groupedSessions]) => ({
-    cwd,
-    sessions: [...groupedSessions].sort(
-      compareTerminalRows,
-    ),
-  }));
 }
 
 function sessionStatusIcon(status: string) {
@@ -254,7 +210,7 @@ function SessionListItem({
   return (
     <SidebarMenuItem
       className="session-channel"
-      data-state={activity(session)}
+      data-state={legacySessionActivity(session)}
       data-attention={session.needsAttention || undefined}
       onContextMenu={onContextMenu}
       onPointerEnter={(event) => onSessionPointerEnter?.(session, event)}
@@ -283,7 +239,7 @@ function SessionListItem({
           selectSession(session.id, event.metaKey || event.ctrlKey)
         }
       >
-        {sessionStatusIcon(activity(session))}
+        {sessionStatusIcon(legacySessionActivity(session))}
         <span className="terminal-identity">
           <span className="agent-title">{sessionLabel(session)}</span>
         </span>
@@ -318,7 +274,7 @@ function SessionList(
 
   return (
     <nav className="session-list" aria-label="Terminal sessions">
-      {groupSessionsByCwd(props.sessions).map(({ cwd, sessions: cwdSessions }) => (
+      {legacySidebarSessionGroups(props.sessions).map(({ cwd, sessions: cwdSessions }) => (
         <SidebarGroup className="cwd-group" key={cwd}>
           <SidebarGroupLabel className="cwd-heading" title={displayPath(cwd)}>
             <h3>{displayPath(cwd)}</h3>
