@@ -2869,6 +2869,7 @@ test("corrects shared deletion to the next rendered sidebar session", async () =
     focusedTerminalId: belowSession.id,
     revision: 7,
   };
+  let deletionCompleted = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (input === "/api/sessions" && (!init || init.method === undefined)) {
       return jsonResponse([belowSession, removedSession, unassignedSession]);
@@ -2877,7 +2878,7 @@ test("corrects shared deletion to the next rendered sidebar session", async () =
       return jsonResponse([belowProject, removedProject]);
     }
     if (input === "/api/selection" && (!init || init.method === undefined)) {
-      return jsonResponse(initialSelection);
+      return jsonResponse(deletionCompleted ? serverSelection : initialSelection);
     }
     if (input === "/api/selection" && init?.method === "PUT") {
       expect(JSON.parse(String(init.body))).toEqual({
@@ -2891,6 +2892,7 @@ test("corrects shared deletion to the next rendered sidebar session", async () =
       return jsonResponse(correctedSelection);
     }
     if (input === "/api/terminals/removed-shared" && init?.method === "DELETE") {
+      deletionCompleted = true;
       return jsonResponse({ id: removedSession.id, selection: serverSelection });
     }
     if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
@@ -2927,6 +2929,500 @@ test("corrects shared deletion to the next rendered sidebar session", async () =
   expect(fetchMock.mock.calls.filter(([input, init]) =>
     input === "/api/selection" && init?.method === "PUT",
   )).toHaveLength(1);
+});
+
+test("does not overwrite a remote selection that races a shared close response", async () => {
+  history.replaceState(null, "", "/?terminal=remote-race-removed");
+  const removedProject: Project = {
+    id: "project-remote-race-removed",
+    path: "/workspace/remote-race-removed",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-remote-race-below",
+    path: "/workspace/remote-race-below",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "remote-race-removed",
+    name: "Remote race removed",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "remote-race-below",
+    name: "Remote race below",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const unassignedSession: Session = {
+    ...plainTerminalSession,
+    id: "remote-race-unassigned",
+    name: "Remote race unassigned",
+    cwd: "/workspace/remote-race-unassigned",
+    createdAt: "2026-08-26T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  const remoteSession: Session = {
+    ...plainTerminalSession,
+    id: "remote-race-selected",
+    name: "Remote race selected",
+    cwd: "/workspace/remote-race-selected",
+    createdAt: "2026-08-23T00:00:00Z",
+    updatedAt: "2026-08-27T00:00:00Z",
+  };
+  const initialSelection: SelectionSnapshot = {
+    terminalIds: [removedSession.id],
+    manualTerminalIds: [removedSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: removedSession.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 5,
+  };
+  const remoteSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [remoteSession.id],
+    manualTerminalIds: [remoteSession.id],
+    focusedTerminalId: remoteSession.id,
+    revision: 6,
+  };
+  const staleCloseSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [unassignedSession.id],
+    manualTerminalIds: [unassignedSession.id],
+    focusedTerminalId: unassignedSession.id,
+    revision: 6,
+  };
+  const correctedSelection: SelectionSnapshot = {
+    ...staleCloseSelection,
+    terminalIds: [belowSession.id],
+    manualTerminalIds: [belowSession.id],
+    focusedTerminalId: belowSession.id,
+    revision: 7,
+  };
+  const encoder = new TextEncoder();
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let remoteEmitted = false;
+  let deleteStarted = false;
+  let releaseDelete: (() => void) | undefined;
+  let correctionWrites = 0;
+  const deleteResponse = new Promise<Response>((resolve) => {
+    releaseDelete = () => resolve(
+      new Response(
+        JSON.stringify({ id: removedSession.id, selection: staleCloseSelection }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([
+        belowSession,
+        removedSession,
+        unassignedSession,
+        remoteSession,
+      ]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
+      return jsonResponse(remoteEmitted ? remoteSelection : initialSelection);
+    }
+    if (input === "/api/events") {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventController = controller;
+        },
+      }), {
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    }
+    if (input === "/api/selection" && init?.method === "PUT") {
+      correctionWrites += 1;
+      return jsonResponse(correctedSelection);
+    }
+    if (input === "/api/terminals/remote-race-removed" && init?.method === "DELETE") {
+      deleteStarted = true;
+      return deleteResponse;
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Remote race removed" });
+  await waitFor(() => expect(eventController).toBeDefined());
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Remote race removed" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+  await waitFor(() => expect(deleteStarted).toBe(true));
+
+  remoteEmitted = true;
+  eventController?.enqueue(encoder.encode(JSON.stringify({
+    sequence: 9,
+    occurredAt: "2026-08-30T00:00:00Z",
+    type: "selection.changed",
+    data: remoteSelection,
+  }) + "\n"));
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Remote race selected" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+
+  releaseDelete?.();
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Remote race selected" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(correctionWrites).toBe(0);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/terminals/remote-race-removed",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+  eventController?.close();
+});
+
+test("skips correction when the close response is no longer the current selection", async () => {
+  history.replaceState(null, "", "/?terminal=stale-close-response");
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "stale-close-removed",
+    name: "Stale close removed",
+    cwd: "/workspace/stale-close-removed",
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "stale-close-below",
+    name: "Stale close below",
+    cwd: "/workspace/stale-close-below",
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const unassignedSession: Session = {
+    ...plainTerminalSession,
+    id: "stale-close-unassigned",
+    name: "Stale close unassigned",
+    cwd: "/workspace/stale-close-unassigned",
+    createdAt: "2026-08-26T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  const remoteSession: Session = {
+    ...plainTerminalSession,
+    id: "stale-close-remote",
+    name: "Stale close remote",
+    cwd: "/workspace/stale-close-remote",
+    createdAt: "2026-08-23T00:00:00Z",
+    updatedAt: "2026-08-27T00:00:00Z",
+  };
+  const initialSelection: SelectionSnapshot = {
+    terminalIds: [removedSession.id],
+    manualTerminalIds: [removedSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: removedSession.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 5,
+  };
+  const remoteSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [remoteSession.id],
+    manualTerminalIds: [remoteSession.id],
+    focusedTerminalId: remoteSession.id,
+    revision: 6,
+  };
+  const staleCloseSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [unassignedSession.id],
+    manualTerminalIds: [unassignedSession.id],
+    focusedTerminalId: unassignedSession.id,
+    revision: 6,
+  };
+  const correctedSelection: SelectionSnapshot = {
+    ...staleCloseSelection,
+    terminalIds: [belowSession.id],
+    manualTerminalIds: [belowSession.id],
+    focusedTerminalId: belowSession.id,
+    revision: 7,
+  };
+  let closeResponseReturned = false;
+  let correctionWrites = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([
+        belowSession,
+        removedSession,
+        unassignedSession,
+        remoteSession,
+      ]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
+      return jsonResponse(closeResponseReturned ? remoteSelection : initialSelection);
+    }
+    if (input === "/api/terminals/stale-close-removed" && init?.method === "DELETE") {
+      closeResponseReturned = true;
+      return jsonResponse({ id: removedSession.id, selection: staleCloseSelection });
+    }
+    if (input === "/api/selection" && init?.method === "PUT") {
+      correctionWrites += 1;
+      return jsonResponse(correctedSelection);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Stale close removed" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Stale close removed" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Stale close remote" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(correctionWrites).toBe(0);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/terminals/stale-close-removed",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
+
+test("preserves a shared archive correction error", async () => {
+  history.replaceState(null, "", "/?terminal=shared-archive-removed");
+  const removedProject: Project = {
+    id: "project-shared-archive-removed",
+    path: "/workspace/shared-archive-removed",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-shared-archive-below",
+    path: "/workspace/shared-archive-below",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "shared-archive-removed",
+    name: "Shared archive removed",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    agent: "codex",
+    agentStatus: "waiting",
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    ...plainTerminalSession,
+    id: "shared-archive-below",
+    name: "Shared archive below",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const unassignedSession: Session = {
+    ...plainTerminalSession,
+    id: "shared-archive-unassigned",
+    name: "Shared archive unassigned",
+    cwd: "/workspace/shared-archive-unassigned",
+    createdAt: "2026-08-26T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  const initialSelection: SelectionSnapshot = {
+    terminalIds: [removedSession.id],
+    manualTerminalIds: [removedSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: removedSession.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 5,
+  };
+  const serverSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [unassignedSession.id],
+    manualTerminalIds: [unassignedSession.id],
+    focusedTerminalId: unassignedSession.id,
+    revision: 6,
+  };
+  let archiveCompleted = false;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([belowSession, removedSession, unassignedSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
+      return jsonResponse(archiveCompleted ? serverSelection : initialSelection);
+    }
+    if (input === "/api/sessions/shared-archive-removed/archive" && init?.method === "POST") {
+      archiveCompleted = true;
+      return jsonResponse({ id: removedSession.id, selection: serverSelection });
+    }
+    if (input === "/api/selection" && init?.method === "PUT") {
+      expect(JSON.parse(String(init.body))).toEqual({
+        manualTerminalIds: [belowSession.id],
+        pinnedTerminalIds: [],
+        focusedTerminalId: belowSession.id,
+        filters: { statuses: [], cwds: [] },
+        pinnedFilters: { statuses: [], cwds: [] },
+        expectedRevision: serverSelection.revision,
+      });
+      throw new Error("shared archive correction failed");
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Codex" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Codex" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Archive" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("alert")).toHaveTextContent("shared archive correction failed");
+  });
+  expect(screen.queryByRole("button", { name: "Select Codex" })).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/shared-archive-removed/archive",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
+test("does not replace the remaining shared multi-selection after a close", async () => {
+  history.replaceState(null, "", "/?terminal=multi-selection-removed");
+  const removedSession: Session = {
+    ...plainTerminalSession,
+    id: "multi-selection-removed",
+    name: "Multi-selection removed",
+    cwd: "/workspace/multi-selection-removed",
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const keptSession: Session = {
+    ...plainTerminalSession,
+    id: "multi-selection-kept",
+    name: "Multi-selection kept",
+    cwd: "/workspace/multi-selection-kept",
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const initialSelection: SelectionSnapshot = {
+    terminalIds: [removedSession.id, keptSession.id],
+    manualTerminalIds: [removedSession.id, keptSession.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: removedSession.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 5,
+  };
+  const remainingSelection: SelectionSnapshot = {
+    ...initialSelection,
+    terminalIds: [keptSession.id],
+    manualTerminalIds: [keptSession.id],
+    focusedTerminalId: keptSession.id,
+    revision: 6,
+  };
+  let correctionWrites = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([removedSession, keptSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/selection" && (!init || init.method === undefined)) {
+      return jsonResponse(initialSelection);
+    }
+    if (input === "/api/terminals/multi-selection-removed" && init?.method === "DELETE") {
+      return jsonResponse({ id: removedSession.id, selection: remainingSelection });
+    }
+    if (input === "/api/selection" && init?.method === "PUT") {
+      correctionWrites += 1;
+      return jsonResponse(remainingSelection);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Multi-selection removed" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Multi-selection removed" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Multi-selection kept" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(correctionWrites).toBe(0);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/terminals/multi-selection-removed",
+    expect.objectContaining({ method: "DELETE" }),
+  );
 });
 
 test("uses the legacy sidebar order when the project endpoint is unavailable", async () => {

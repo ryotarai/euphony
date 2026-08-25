@@ -415,6 +415,65 @@ function selectionSourceSignature(
   });
 }
 
+type SelectionIntent = {
+  selectedIDs: string[];
+  pinnedIDs: string[];
+  focusedID: string | null;
+  statusFilters: string[];
+  cwdFilters: string[];
+  pinnedStatusFilters: string[];
+  pinnedCwdFilters: string[];
+};
+
+function stringArraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function selectionIntentsEqual(left: SelectionIntent, right: SelectionIntent) {
+  return (
+    left.focusedID === right.focusedID &&
+    stringArraysEqual(left.selectedIDs, right.selectedIDs) &&
+    stringArraysEqual(left.pinnedIDs, right.pinnedIDs) &&
+    stringArraysEqual(left.statusFilters, right.statusFilters) &&
+    stringArraysEqual(left.cwdFilters, right.cwdFilters) &&
+    stringArraysEqual(left.pinnedStatusFilters, right.pinnedStatusFilters) &&
+    stringArraysEqual(left.pinnedCwdFilters, right.pinnedCwdFilters)
+  );
+}
+
+function selectionSnapshotsEqual(left: SelectionSnapshot, right: SelectionSnapshot) {
+  return JSON.stringify({
+    terminalIds: left.terminalIds,
+    manualTerminalIds: left.manualTerminalIds,
+    pinnedTerminalIds: left.pinnedTerminalIds,
+    focusedTerminalId: left.focusedTerminalId ?? "",
+    filters: left.filters,
+    pinnedFilters: left.pinnedFilters ?? { statuses: [], cwds: [] },
+    revision: left.revision,
+  }) === JSON.stringify({
+    terminalIds: right.terminalIds,
+    manualTerminalIds: right.manualTerminalIds,
+    pinnedTerminalIds: right.pinnedTerminalIds,
+    focusedTerminalId: right.focusedTerminalId ?? "",
+    filters: right.filters,
+    pinnedFilters: right.pinnedFilters ?? { statuses: [], cwds: [] },
+    revision: right.revision,
+  });
+}
+
+function isSingleTargetCloseIntent(intent: SelectionIntent, removedID: string) {
+  return (
+    intent.selectedIDs.length === 1 &&
+    intent.selectedIDs[0] === removedID &&
+    intent.focusedID === removedID &&
+    intent.pinnedIDs.every((id) => id === removedID) &&
+    intent.statusFilters.length === 0 &&
+    intent.cwdFilters.length === 0 &&
+    intent.pinnedStatusFilters.length === 0 &&
+    intent.pinnedCwdFilters.length === 0
+  );
+}
+
 function sessionCreatedAt(session: Session) {
   const timestamp = Date.parse(session.createdAt);
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -975,17 +1034,31 @@ export function App({
   const currentSelectionStateRef = useRef({
     selectedIDs,
     pinnedIDs,
+    focusedID,
     statusFilters,
     cwdFilters,
+    pinnedStatusFilters,
+    pinnedCwdFilters,
   });
   useLayoutEffect(() => {
     currentSelectionStateRef.current = {
       selectedIDs,
       pinnedIDs,
+      focusedID,
       statusFilters,
       cwdFilters,
+      pinnedStatusFilters,
+      pinnedCwdFilters,
     };
-  }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
+  }, [
+    cwdFilters,
+    focusedID,
+    pinnedCwdFilters,
+    pinnedIDs,
+    pinnedStatusFilters,
+    selectedIDs,
+    statusFilters,
+  ]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const renderedSessionOrder = useCallback((items: Session[]) => {
     if (!projectEndpointAvailableRef.current) return flattenLegacySidebarSessions(items);
@@ -3253,18 +3326,46 @@ export function App({
     previousSessions: Session[],
     removedID: string,
     remaining: Session[],
-    selectionBeforeClose: {
-      selectedIDs: string[];
-      pinnedIDs: string[];
-      focusedID: string | null;
-      statusFilters: string[];
-      cwdFilters: string[];
-      pinnedStatusFilters: string[];
-      pinnedCwdFilters: string[];
-    },
+    selectionBeforeClose: SelectionIntent,
   ) {
+    if (!isSingleTargetCloseIntent(selectionBeforeClose, removedID)) {
+      acceptServerSelection(snapshot);
+      return;
+    }
+    const currentSelection = currentSelectionStateRef.current;
+    const currentRevision = selectionRevisionRef.current;
+    if (
+      previousRevision === null ||
+      currentRevision !== previousRevision ||
+      snapshot.revision !== previousRevision + 1 ||
+      !selectionIntentsEqual(currentSelection, selectionBeforeClose)
+    ) {
+      if (!api) return;
+      try {
+        acceptServerSelection(await api.getSelection());
+      } catch {
+        setRequestError("The shared selection could not be refreshed.");
+      }
+      return;
+    }
+    if (!api) return;
+    let currentSnapshot: SelectionSnapshot;
+    try {
+      currentSnapshot = await api.getSelection();
+    } catch {
+      setRequestError("The shared selection could not be refreshed.");
+      return;
+    }
+    if (
+      !selectionSnapshotsEqual(currentSnapshot, snapshot) ||
+      selectionRevisionRef.current !== previousRevision ||
+      !selectionIntentsEqual(currentSelectionStateRef.current, selectionBeforeClose)
+    ) {
+      acceptServerSelection(currentSnapshot);
+      return;
+    }
     const correction = sharedCloseSelectionRequest({
-      snapshot,
+      snapshot: currentSnapshot,
       previousRevision,
       previousSessions,
       removedID,
@@ -3272,8 +3373,8 @@ export function App({
       renderedOrder: renderedSessionOrder(previousSessions),
       ...selectionBeforeClose,
     });
-    acceptServerSelection(snapshot);
-    if (!api || !correction || selectionRevisionRef.current !== snapshot.revision) {
+    acceptServerSelection(currentSnapshot);
+    if (!correction || selectionRevisionRef.current !== currentSnapshot.revision) {
       return;
     }
     try {
@@ -3298,6 +3399,7 @@ export function App({
 
   async function deleteSessions(items: Session[]) {
     if (!api || items.length === 0) return;
+    setRequestError("");
     const previousSessions = sessions ?? [];
     const previousRevision = selectionRevisionRef.current;
     const selectionBeforeClose = {
@@ -3397,11 +3499,11 @@ export function App({
         acceptServerSelection(latestSelection);
       }
     } else reconcileLocalDeletion();
-    setRequestError("");
   }
 
   async function archiveSession(item: Session) {
     if (!api) return;
+    setRequestError("");
     const previousSessions = sessions ?? [];
     const previousRevision = selectionRevisionRef.current;
     const selectionBeforeClose = {
@@ -3462,7 +3564,6 @@ export function App({
           cwdFilters,
         );
       }
-      setRequestError("");
     } catch (error) {
       setRequestError(
         error instanceof Error ? error.message : "The agent session could not be archived.",
