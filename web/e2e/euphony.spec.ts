@@ -177,6 +177,9 @@ function claudeTranscriptLine(index: number) {
   const diagram = index === 40
     ? "\n\n```mermaid\nflowchart LR\n  Plan[Plan] --> Build[Build]\n  Build --> Verify[Verify]\n```"
     : "";
+  const fencedCode = index === 40
+    ? "\n\n```text\nfenced-code-color-check\n```"
+    : "";
   return JSON.stringify({
     type: "assistant",
     timestamp: `2026-07-30T01:${String(index).padStart(2, "0")}:00Z`,
@@ -184,7 +187,7 @@ function claudeTranscriptLine(index: number) {
       role: "assistant",
       content: [{
         type: "text",
-        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}${diagram}`,
+        text: `## ${label}\n\n${"Readable transcript content. ".repeat(12)}${table}${diagram}${fencedCode}`,
       }],
     },
   }) + "\n";
@@ -873,6 +876,16 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await expect(tableCell).toHaveCSS("border-top-style", "solid");
   await expect(tableCell).toHaveCSS("padding-top", "8px");
   await expect(tableCell).toHaveCSS("padding-left", "10.4px");
+  const inlineCode = table.getByText(
+    "very-wide-unbroken-table-value-that-stays-readable-with-horizontal-scrolling-0123456789",
+    { exact: true },
+  );
+  await expect(inlineCode).toHaveCSS("color", "rgb(236, 126, 126)");
+  const fencedCode = page.locator(".agent-log-markdown pre > code", {
+    hasText: "fenced-code-color-check",
+  });
+  await expect(fencedCode).toHaveCount(1);
+  await expect(fencedCode).toHaveCSS("color", "rgb(212, 212, 212)");
   const tableScroll = page.locator(".agent-log-table-scroll");
   await expect(tableScroll).toHaveCSS("overflow-x", "auto");
   expect(await tableScroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
@@ -933,6 +946,9 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
     .filter({ hasText: "secret command 1" });
   await expect(firstExecution.getByText("secret command 1")).toBeVisible();
   await expect(firstExecution.getByText("secret result 1")).toBeVisible();
+  await expect(
+    firstExecution.locator(".agent-log-tool-region pre").first(),
+  ).toHaveCSS("color", "rgb(212, 212, 212)");
   await firstExecution.scrollIntoViewIfNeeded();
   await expect(firstExecution).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("agent-log-tool-trace.png") });

@@ -3064,7 +3064,7 @@ input {
 
 .agent-log-markdown :not(pre) > code {
   padding: 0.12rem 0.3rem;
-  color: #f5f5f5;
+  color: rgb(236, 126, 126);
   background: #171717;
   border: 1px solid #292929;
   border-radius: 0.2rem;
