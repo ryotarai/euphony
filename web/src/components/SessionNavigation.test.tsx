@@ -336,6 +336,48 @@ test("uses the same 500ms delay for focus and cancels on blur or Escape", () => 
   }
 });
 
+test("does not consume Escape from a focused terminal to cancel session information", () => {
+  vi.useFakeTimers();
+  try {
+    const terminalKeyDown = vi.fn();
+    render(
+      <>
+        <SessionNavigation
+          projects={[project]}
+          sessions={[projectAgent]}
+          agentSummaries={[projectSummary]}
+          selectedIDs={[projectAgent.id]}
+          selectedID={projectAgent.id}
+          onSelect={() => undefined}
+          onSelectSession={() => undefined}
+          onCreate={() => undefined}
+          onDelete={() => undefined}
+        />
+        <div className="terminal-host">
+          <textarea aria-label="Focused terminal" onKeyDown={terminalKeyDown} />
+        </div>
+      </>,
+    );
+
+    const select = screen.getByRole("button", { name: /Select Codex.*Sidebar fix/ });
+    fireEvent.focus(select);
+    act(() => vi.advanceTimersByTime(500));
+    expect(screen.getByRole("region", { name: "Session information" })).toBeVisible();
+
+    const terminal = screen.getByLabelText("Focused terminal");
+    terminal.focus();
+    fireEvent.keyDown(terminal, { key: "Escape" });
+
+    expect(screen.getByRole("region", { name: "Session information" })).toBeVisible();
+    expect(terminal).toHaveFocus();
+    expect(terminalKeyDown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "Escape" }),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("clamps the fixed card inside the viewport around the captured pointer", () => {
   vi.useFakeTimers();
   const previousWidth = window.innerWidth;

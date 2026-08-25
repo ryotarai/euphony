@@ -15,6 +15,7 @@ import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { KanbanDialog, kanbanAllProjectsFilter } from "./components/KanbanDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
+import { flattenProjectSidebarSessions } from "./components/ProjectSidebar";
 import { AgentsView } from "./components/AgentsView";
 import {
   agentLaunchTransitions,
@@ -881,6 +882,10 @@ export function App({
     };
   }, [cwdFilters, pinnedIDs, selectedIDs, statusFilters]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const renderedSessionOrder = useCallback((items: Session[]) => {
+    if (!projectEndpointAvailableRef.current) return items;
+    return flattenProjectSidebarSessions(projects ?? [], items, agentSummaries);
+  }, [agentSummaries, projects]);
   const fetchKanbanSnapshot = useCallback(async (): Promise<KanbanSession[]> => {
     if (!api) return [];
     const [active, archived] = await Promise.all([
@@ -1933,7 +1938,11 @@ export function App({
       ? focusedID
       : selectedIDs.find((id) => !available.has(id));
     const replacement = removedID
-      ? replacementSession(previousSessionOrderRef.current, removedID, sessions)
+      ? replacementSession(
+        renderedSessionOrder(previousSessionOrderRef.current),
+        removedID,
+        sessions,
+      )
       : undefined;
     if (
       nextIDs.length === 0 &&
@@ -1967,6 +1976,7 @@ export function App({
     focusedID,
     statusFilters,
     cwdFilters,
+    renderedSessionOrder,
     writeWorkspaceToURL,
   ]);
 
@@ -3146,7 +3156,11 @@ export function App({
         .reverse()
         .find((item) => deletedIDs.has(item.id))?.id;
       const replacement = lastDeletedID
-        ? replacementSession(previousSessions, lastDeletedID, remaining)
+        ? replacementSession(
+          renderedSessionOrder(previousSessions),
+          lastDeletedID,
+          remaining,
+        )
         : undefined;
       let nextIDs = selectedIDs.filter((id) => !deletedIDs.has(id));
       if (
@@ -3219,7 +3233,11 @@ export function App({
       if (syncSelection) applyServerSelection(archived.selection, "push");
       else {
         const remaining = previousSessions.filter((session) => session.id !== item.id);
-        const replacement = replacementSession(previousSessions, item.id, remaining);
+        const replacement = replacementSession(
+          renderedSessionOrder(previousSessions),
+          item.id,
+          remaining,
+        );
         let nextIDs = selectedIDs.filter((id) => id !== item.id);
         if (
           nextIDs.length === 0 &&

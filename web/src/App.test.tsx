@@ -2572,6 +2572,188 @@ test("creates a terminal in the focused terminal cwd, selects it, and archives a
   );
 });
 
+test("opens the next rendered sidebar session after deleting across a project boundary", async () => {
+  history.replaceState(null, "", "/?terminal=removed-session");
+  const removedProject: Project = {
+    id: "project-removed",
+    path: "/workspace/removed",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-below",
+    path: "/workspace/below",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedSession: Session = {
+    id: "removed-session",
+    name: "Removed",
+    state: "running",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    id: "below-session",
+    name: "Below",
+    state: "running",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const unassignedSession: Session = {
+    id: "unassigned-session",
+    name: "Unassigned",
+    state: "running",
+    cwd: "/workspace/unassigned",
+    createdAt: "2026-08-23T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([belowSession, removedSession, unassignedSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/sessions/removed-session" && init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Removed" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Removed" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Below" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(screen.getByRole("button", { name: "Select Unassigned" })).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/removed-session",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
+
+test("opens the next rendered sidebar session after archiving across a project boundary", async () => {
+  history.replaceState(null, "", "/?terminal=removed-agent");
+  const removedProject: Project = {
+    id: "project-removed-agent",
+    path: "/workspace/removed-agent",
+    createdAt: "2026-08-20T00:00:00Z",
+  };
+  const belowProject: Project = {
+    id: "project-below-agent",
+    path: "/workspace/below-agent",
+    createdAt: "2026-08-19T00:00:00Z",
+  };
+  const removedAgent: Session = {
+    id: "removed-agent",
+    name: "Removed agent",
+    state: "running",
+    cwd: removedProject.path,
+    projectId: removedProject.id,
+    agent: "codex",
+    agentStatus: "waiting",
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-30T00:00:00Z",
+  };
+  const belowSession: Session = {
+    id: "below-agent-session",
+    name: "Below agent",
+    state: "running",
+    cwd: belowProject.path,
+    projectId: belowProject.id,
+    createdAt: "2026-08-24T00:00:00Z",
+    updatedAt: "2026-08-29T00:00:00Z",
+  };
+  const unassignedSession: Session = {
+    id: "unassigned-agent-session",
+    name: "Unassigned agent",
+    state: "running",
+    cwd: "/workspace/unassigned-agent",
+    createdAt: "2026-08-23T00:00:00Z",
+    updatedAt: "2026-08-28T00:00:00Z",
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([belowSession, removedAgent, unassignedSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([belowProject, removedProject]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/sessions/removed-agent/archive" && init?.method === "POST") {
+      return jsonResponse({
+        id: "removed-agent",
+        selection: {
+          terminalIds: [],
+          manualTerminalIds: [],
+          pinnedTerminalIds: [],
+          filters: { statuses: [], cwds: [] },
+          revision: 1,
+        },
+      });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  const removed = await screen.findByRole("button", { name: "Select Codex" });
+  fireEvent.contextMenu(removed);
+  const menu = screen.getByRole("menu", { name: "Actions for Codex" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Archive" }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Select Below agent" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+  expect(screen.getByRole("button", { name: "Select Unassigned agent" })).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/removed-agent/archive",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
 test("falls back to home when the focused terminal cwd cannot be inherited", async () => {
   const created = { ...plainTerminalSession, id: "created-home", cwd: "/home/me" };
   const fetchMock = vi.spyOn(globalThis, "fetch");

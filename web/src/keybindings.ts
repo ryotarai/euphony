@@ -66,9 +66,13 @@ export function shortcutsEqual(left: string, right: string): boolean {
   );
 }
 
+export function isTerminalTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.closest(".terminal-host") !== null;
+}
+
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  if (target.closest(".terminal-host")) return false;
+  if (isTerminalTarget(target)) return false;
   return (
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||

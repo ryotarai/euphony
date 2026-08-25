@@ -209,6 +209,23 @@ function projectSessions(
   return { grouped, orderedProjects, unassigned };
 }
 
+export function flattenProjectSidebarSessions(
+  projects: Project[],
+  sessions: Session[],
+  agentSummaries: AgentSummary[],
+) {
+  const summaries = latestSummaries(agentSummaries);
+  const { grouped, orderedProjects, unassigned } = projectSessions(
+    projects,
+    sessions,
+    summaries,
+  );
+  return [
+    ...orderedProjects.flatMap((project) => grouped.get(project.id) ?? []),
+    ...unassigned,
+  ];
+}
+
 function ProjectActions({
   project,
   onCreateTerminal,

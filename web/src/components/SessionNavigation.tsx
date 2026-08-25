@@ -43,7 +43,12 @@ import { ProjectSidebar, type SessionInfoInteractionHandlers } from "./ProjectSi
 import { useSessionContextMenu } from "./SessionContextMenu";
 import { SessionInfoCard } from "./SessionInfoPane";
 import type { AgentSummary, Project, Session, Settings } from "../types";
-import { formatShortcut, isEditableTarget, matchesPrefix } from "../keybindings";
+import {
+  formatShortcut,
+  isEditableTarget,
+  isTerminalTarget,
+  matchesPrefix,
+} from "../keybindings";
 import {
   defaultKanbanShortcut,
   defaultTerminalCursorBlink,
@@ -519,7 +524,9 @@ function SessionNavigationContent({
 
   useEffect(() => {
     const cancelOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancelSessionInfo();
+      if (event.key === "Escape" && !isTerminalTarget(event.target)) {
+        cancelSessionInfo();
+      }
     };
     window.addEventListener("keydown", cancelOnEscape, true);
     return () => window.removeEventListener("keydown", cancelOnEscape, true);

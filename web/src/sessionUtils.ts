@@ -48,8 +48,12 @@ export function replacementSession(
   remaining: Session[],
 ): Session | undefined {
   const previousIndex = previous.findIndex((session) => session.id === removedID);
-  if (previousIndex < 0) return remaining[0];
-  return remaining[previousIndex] ?? remaining[previousIndex - 1] ?? remaining[0];
+  if (previousIndex < 0) return undefined;
+  const remainingIDs = new Set(remaining.map((session) => session.id));
+  return (
+    previous.slice(previousIndex + 1).find((session) => remainingIDs.has(session.id)) ??
+    previous.slice(0, previousIndex).reverse().find((session) => remainingIDs.has(session.id))
+  );
 }
 
 function sessionActivity(session: Session) {
