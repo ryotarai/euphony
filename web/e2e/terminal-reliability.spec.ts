@@ -738,7 +738,7 @@ test("keeps a running Claude terminal fitted across project pane changes", async
   for (let iteration = 0; iteration < 30; iteration += 1) {
     await openSharedSelection(page, [left.id, claude.id], claude.id);
     await expect(page.locator('.terminal-pane[data-visible="true"]')).toHaveCount(2);
-    await page.getByRole("checkbox", { name: "Deselect Left" }).click();
+    await page.getByRole("button", { name: "Select Claude" }).click();
     await expect(page.locator('.terminal-pane[data-visible="true"]')).toHaveCount(1);
   }
 

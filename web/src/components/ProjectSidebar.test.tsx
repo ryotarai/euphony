@@ -30,6 +30,7 @@ const agentSession: Session = {
 const terminalSession: Session = {
   id: "terminal-1",
   name: "Shell",
+  customName: true,
   state: "running",
   cwd: project.path,
   projectId: project.id,
@@ -88,8 +89,8 @@ test("renders persisted projects including an empty project", () => {
 
   expect(screen.getByRole("navigation", { name: "Projects and sessions" }))
     .toHaveAttribute("data-pane-name", "agent-list");
-  expect(screen.getByRole("heading", { name: project.path })).toBeVisible();
-  expect(screen.getByRole("heading", { name: emptyProject.path })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "api" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "empty" })).toBeVisible();
 });
 
 test("renders legacy sessions in a bounded Unassigned group", () => {
@@ -127,6 +128,16 @@ test("renders the generated purpose and required action without status text", ()
   expect(row).toHaveTextContent("API permissions");
   expect(row).toHaveTextContent("Updating the API");
   expect(row).toHaveTextContent("Approve the pending change");
+});
+
+test("keeps the actual coding agent identity when summary provider differs", () => {
+  renderSidebar({
+    sessions: [{ ...agentSession, agent: "claude" }],
+    agentSummaries: [{ ...unreadSummary, provider: "codex" }],
+  });
+
+  expect(screen.getByRole("button", { name: /Select Claude/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Select Codex/ })).not.toBeInTheDocument();
 });
 
 test("hides completion notices that are not a human decision", () => {
@@ -223,14 +234,90 @@ test("shows archived sessions only after the sidebar asks for them", async () =>
   expect(onSelectArchivedSession).toHaveBeenCalledWith(archivedSession);
 });
 
-test("labels a session with no purpose or summary as New session", () => {
+test("labels a manually named terminal with no purpose or summary by its name", () => {
   renderSidebar({
     sessions: [{ ...terminalSession, id: "new-session", name: "Shell" }],
     agentSummaries: [],
   });
 
   expect(screen.getByRole("button", { name: "Select Shell" }))
-    .toHaveTextContent("New session");
+    .toHaveTextContent("Shell");
+});
+
+test("preserves legacy non-default terminal names without a custom-name flag", () => {
+  renderSidebar({
+    sessions: [{ ...terminalSession, id: "legacy-shell", customName: false }],
+    agentSummaries: [],
+  });
+
+  expect(screen.getByRole("button", { name: "Select Shell" })).toBeInTheDocument();
+});
+
+test("gives generated terminals stable project-scoped identities", () => {
+  const first: Session = {
+    ...terminalSession,
+    id: "generated-terminal-1",
+    name: "Terminal",
+    customName: false,
+    processName: "zsh",
+    createdAt: "2026-08-12T00:03:00Z",
+  };
+  const second: Session = {
+    ...first,
+    id: "generated-terminal-2",
+    createdAt: "2026-08-12T00:04:00Z",
+  };
+  const props: React.ComponentProps<typeof ProjectSidebar> = {
+    projects: [project],
+    sessions: [first, second],
+    agentSummaries: [],
+    selectedID: first.id,
+    onSelectSession: vi.fn(),
+  };
+  const { rerender } = render(<ProjectSidebar {...props} />);
+
+  const group = screen.getByRole("heading", { name: "api" }).closest("section");
+  expect(group).not.toBeNull();
+  expect(
+    within(group as HTMLElement).getAllByRole("button").map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Select Terminal 1", "Select Terminal 2"]);
+  expect(within(group as HTMLElement).getByRole("button", { name: "Select Terminal 1" }))
+    .toHaveTextContent("zsh");
+
+  rerender(<ProjectSidebar {...props} sessions={[second, first]} selectedID={second.id} />);
+
+  expect(screen.getByRole("button", { name: "Select Terminal 2" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Select Terminal 1" })).toBeInTheDocument();
+});
+
+test("filters generated terminal identities as they appear in the sidebar", async () => {
+  const user = userEvent.setup();
+  const first: Session = {
+    ...terminalSession,
+    id: "generated-terminal-1",
+    name: "Terminal",
+    customName: false,
+    processName: "zsh",
+  };
+  const second: Session = {
+    ...first,
+    id: "generated-terminal-2",
+  };
+
+  renderSidebar({
+    sessions: [first, second],
+    agentSummaries: [],
+    selectedID: second.id,
+  });
+
+  await user.type(screen.getByRole("searchbox", { name: "Filter sessions" }), "Terminal 2");
+
+  expect(screen.getByRole("button", { name: "Select Terminal 2" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Select Terminal 1" })).not.toBeInTheDocument();
+  expect(screen.getByText("1 of 2 sessions")).toBeVisible();
 });
 
 test("announces row status, summary, action, and unread state", () => {
@@ -305,15 +392,19 @@ test("starts terminal or agent work only through project callbacks", async () =>
   expect(props.onAddProject).toHaveBeenCalledOnce();
 });
 
-test("right-aligns project paths and truncates their left side", () => {
+test("shows the project directory name while retaining the full path as a tooltip", () => {
   const { container } = renderSidebar({
     projects: [{ ...project, path: "/Users/ryotarai/work/euphony/very-long-project" }],
   });
 
   const heading = within(container).getByRole("heading", {
-    name: "/Users/ryotarai/work/euphony/very-long-project",
+    name: "very-long-project",
   });
   expect(heading).toHaveClass("project-sidebar-path");
+  expect(heading).toHaveAttribute(
+    "title",
+    "/Users/ryotarai/work/euphony/very-long-project",
+  );
 });
 
 test("does not render project controls when their callbacks are missing", () => {
@@ -402,13 +493,13 @@ test("keeps project and session order stable when activity changes", () => {
       .getAllByRole("heading", { level: 2 })
       .map((heading) => heading.textContent),
   ).toEqual([
-    olderProject.path,
-    createdAtFallbackProject.path,
-    recentProject.path,
+    "older",
+    "created-at-fallback",
+    "recent",
   ]);
 
   const recentSection = screen
-    .getByRole("heading", { name: recentProject.path })
+    .getByRole("heading", { name: "recent" })
     .closest("section") as HTMLElement;
   expect(
     Array.from(recentSection.querySelectorAll(".project-session-select")).map(
@@ -532,11 +623,11 @@ test("preserves project input order and keeps Unassigned last", () => {
       .getAllByRole("heading", { level: 2 })
       .map((heading) => heading.textContent),
   ).toEqual([
-    emptyProjectInOrder.path,
-    tieSecondProject.path,
-    invalidProject.path,
-    validProject.path,
-    tieFirstProject.path,
+    "empty-in-order",
+    "tie-second",
+    "invalid",
+    "valid",
+    "tie-first",
     "Unassigned",
   ]);
 

@@ -540,6 +540,11 @@ func (m *Manager) create(
 		CreatedAt: createdAt,
 		UpdatedAt: createdAt,
 	}
+	if agent := commandAgent(executable); agent != "" {
+		metadata.Agent = agent
+		metadata.ResumeAgent = agent
+		metadata.AgentStatus = "starting"
+	}
 	if !m.beginPendingAgentStart(metadata) {
 		return Metadata{}, ErrManagerClosing
 	}
@@ -586,6 +591,15 @@ func (m *Manager) create(
 	m.emitChange(change)
 	m.applyPendingAgentUpdates(id)
 	return item.metadata, nil
+}
+
+func commandAgent(executable string) string {
+	switch filepath.Base(strings.TrimSpace(executable)) {
+	case "codex", "claude":
+		return filepath.Base(strings.TrimSpace(executable))
+	default:
+		return ""
+	}
 }
 
 func (m *Manager) AssignProject(id, projectID string) (Metadata, error) {

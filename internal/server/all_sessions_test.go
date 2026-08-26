@@ -15,7 +15,7 @@ import (
 	"github.com/ryotarai/euphony/internal/session"
 )
 
-func TestAllSessionsListsPersistedAgentSessionsOnly(t *testing.T) {
+func TestAllSessionsListsPersistedAgentSessionsIncludingInProgressAgents(t *testing.T) {
 	root := t.TempDir()
 	databasePath := filepath.Join(root, "euphony.sqlite3")
 	codexRoot := filepath.Join(root, "codex", "sessions")
@@ -82,6 +82,15 @@ func TestAllSessionsListsPersistedAgentSessionsOnly(t *testing.T) {
 	if _, err := srv.sessions.Create(t.Context(), "Plain terminal", t.TempDir()); err != nil {
 		t.Fatalf("Create(plain terminal) error = %v", err)
 	}
+	starting, err := srv.sessions.Create(t.Context(), "Starting agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create(starting agent) error = %v", err)
+	}
+	if _, err := srv.sessions.UpdateAgent(starting.ID, session.AgentUpdate{
+		Agent: "codex", Status: "running", Title: "Starting agent",
+	}); err != nil {
+		t.Fatalf("UpdateAgent(starting agent) error = %v", err)
+	}
 	if err := srv.sessions.SaveAgentSummary(t.Context(), session.AgentSummary{
 		TerminalID:  current.ID,
 		Provider:    "codex",
@@ -99,10 +108,10 @@ func TestAllSessionsListsPersistedAgentSessionsOnly(t *testing.T) {
 	}
 	var items []allSession
 	decodeResponse(t, response, &items)
-	if len(items) != 2 {
-		t.Fatalf("all sessions = %#v, want current and closed DB agents", items)
+	if len(items) != 3 {
+		t.Fatalf("all sessions = %#v, want current, starting, and closed DB agents", items)
 	}
-	var currentItem, closedItem *allSession
+	var currentItem, startingItem, closedItem *allSession
 	for index := range items {
 		switch items[index].SessionID {
 		case "session-current":
@@ -110,12 +119,20 @@ func TestAllSessionsListsPersistedAgentSessionsOnly(t *testing.T) {
 		case "session-db-only":
 			closedItem = &items[index]
 		}
+		if items[index].ID == starting.ID {
+			startingItem = &items[index]
+		}
 	}
 	if currentItem == nil || currentItem.State != allSessionOpen ||
 		currentItem.TerminalID != current.ID || currentItem.Agent != "codex" ||
 		currentItem.Purpose != "Build the session index" ||
 		currentItem.Summary != "The current terminal is waiting." {
 		t.Fatalf("current all session = %#v", currentItem)
+	}
+	if startingItem == nil || startingItem.Agent != "codex" ||
+		startingItem.TerminalID != starting.ID || startingItem.SessionID != "" ||
+		startingItem.State != allSessionOpen || startingItem.Title != "Starting agent" {
+		t.Fatalf("starting all session = %#v", startingItem)
 	}
 	if closedItem == nil || closedItem.ID != "closed-agent" ||
 		closedItem.Agent != "claude" || closedItem.State != allSessionResume ||

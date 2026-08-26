@@ -2060,9 +2060,11 @@ test("creates a project and renders its empty project section", async () => {
   await user.type(screen.getByLabelText("Project directory"), createdProject.path);
   await user.click(screen.getByRole("button", { name: "Add project" }));
 
-  expect(await screen.findByRole("heading", { name: createdProject.path })).toBeVisible();
+  const projectHeading = await screen.findByRole("heading", { name: "new-project" });
+  expect(projectHeading).toBeVisible();
+  expect(projectHeading).toHaveAttribute("title", createdProject.path);
   expect(screen.getByRole("navigation", { name: "Projects and sessions" })).toHaveTextContent(
-    createdProject.path,
+    "new-project",
   );
   expect(screen.queryByRole("dialog", { name: "Add project" })).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(

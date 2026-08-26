@@ -58,6 +58,8 @@ test("orders rows newest first and exposes open and resume actions", () => {
   const rows = within(list).getAllByRole("button");
   expect(rows).toHaveLength(2);
   expect(rows[0]).toHaveTextContent("Newest session");
+  expect(rows[0]).toHaveTextContent("Euphony");
+  expect(rows[0]).toHaveTextContent("newest");
   expect(rows[1]).toHaveTextContent("Older session");
   expect(rows[0]).toHaveAccessibleName(/Open terminal/);
   expect(rows[1]).toHaveAccessibleName(/Resume session/);
@@ -89,12 +91,31 @@ test("gives generic terminal titles enough context to distinguish sessions", () 
 
   const rows = within(screen.getByRole("list", { name: "All sessions" })).getAllByRole("button");
   expect(rows[0]).toHaveTextContent("Codex · api");
-  expect(rows[0]).toHaveTextContent("#12345678");
+  expect(rows[0]).toHaveTextContent("#codex-se…12345678");
   expect(rows[0]).not.toHaveTextContent(/^Terminal$/);
   expect(rows[1]).toHaveTextContent("Codex · web");
-  expect(rows[1]).toHaveTextContent("#87654321");
-  expect(rows[0]).toHaveAccessibleName(/api.*#12345678/);
-  expect(rows[1]).toHaveAccessibleName(/web.*#87654321/);
+  expect(rows[1]).toHaveTextContent("#codex-se…87654321");
+  expect(rows[0]).toHaveAccessibleName(/api.*#codex-se…12345678/);
+  expect(rows[1]).toHaveAccessibleName(/web.*#codex-se…87654321/);
+});
+
+test("keeps an in-progress agent visible before its session ID arrives", () => {
+  const starting: AllSession = {
+    ...newest,
+    id: "starting-agent",
+    terminalId: "terminal-starting",
+    sessionId: undefined,
+    title: "Terminal",
+    cwd: "/workspace/api",
+    project: "/workspace/api",
+    state: "open",
+  };
+  renderDialog([starting]);
+
+  const row = within(screen.getByRole("list", { name: "All sessions" })).getByRole("button");
+  expect(row).toHaveTextContent("Codex · api");
+  expect(row).toHaveTextContent("#terminal…starting");
+  expect(row).toHaveAccessibleName(/Open terminal/);
 });
 
 test("marks archived rows as restorable", () => {

@@ -69,6 +69,10 @@ func TestCreateWithCommandStartsRequestedExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWithCommand() error = %v", err)
 	}
+	if metadata.Agent != "codex" || metadata.ResumeAgent != "codex" ||
+		metadata.AgentStatus != "starting" {
+		t.Fatalf("created command metadata = %#v, want an in-progress codex identity", metadata)
+	}
 	running, ok := manager.Get(metadata.ID)
 	if !ok {
 		t.Fatal("created command session is not registered")
