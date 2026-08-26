@@ -129,7 +129,6 @@ type AgentUpdate struct {
 type Settings struct {
 	Prefix                    string  `json:"prefix"`
 	PaneTabShortcut           string  `json:"paneTabShortcut"`
-	KanbanShortcut            string  `json:"kanbanShortcut"`
 	SidebarWidth              int     `json:"sidebarWidth"`
 	SidebarCollapsed          bool    `json:"sidebarCollapsed"`
 	InterfaceFontSize         int     `json:"interfaceFontSize"`
@@ -158,7 +157,6 @@ const (
 	DefaultTerminalCursorBlink       = false
 	DefaultTerminalScrollSensitivity = 3
 	DefaultTerminalOptionAsAlt       = true
-	DefaultKanbanShortcut            = "Meta+Alt+K"
 	DefaultAgentSummaryProvider      = "codex"
 	DefaultCodingAgent               = "codex"
 	DefaultAgentSummaryPrompt        = ""
@@ -169,7 +167,6 @@ func DefaultSettings() Settings {
 	return Settings{
 		Prefix:                    "Ctrl+B",
 		PaneTabShortcut:           "Meta+L",
-		KanbanShortcut:            DefaultKanbanShortcut,
 		SidebarWidth:              304,
 		InterfaceFontSize:         16,
 		TerminalFontSize:          14,
@@ -2966,9 +2963,9 @@ func (m *Manager) archiveAgentSession(
 }
 
 // SetAgentSessionArchived updates the user-managed archive flag for an agent
-// session identified by its Euphony terminal ID and agent session ID. Exited
-// sessions remain in m.archived, so the same identity works before and after a
-// terminal process exits.
+// session identified by its Euphony terminal ID and agent session ID. Resuming
+// an archived agent uses this to remove the archive marker from the old
+// exited record while keeping its history available to the session store.
 func (m *Manager) SetAgentSessionArchived(
 	terminalID, agentSessionID string, archived bool,
 ) (Metadata, error) {

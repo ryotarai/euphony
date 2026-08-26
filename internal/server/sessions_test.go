@@ -78,15 +78,15 @@ func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
 		t.Fatalf("POST /api/hooks/terminal status = %d, body = %s", hook.Code, hook.Body.String())
 	}
 
-	archived := performRequest(t, srv, http.MethodPost,
+	archiveResponse := performRequest(t, srv, http.MethodPost,
 		"/api/sessions/"+metadata.ID+"/archive", "")
-	if archived.Code != http.StatusOK {
-		t.Fatalf("POST archive status = %d, body = %s", archived.Code, archived.Body.String())
+	if archiveResponse.Code != http.StatusOK {
+		t.Fatalf("POST archive status = %d, body = %s", archiveResponse.Code, archiveResponse.Body.String())
 	}
 	var result struct {
 		ID string `json:"id"`
 	}
-	decodeResponse(t, archived, &result)
+	decodeResponse(t, archiveResponse, &result)
 	if result.ID != metadata.ID {
 		t.Fatalf("archive response = %#v, want terminal ID %q", result, metadata.ID)
 	}
@@ -110,6 +110,59 @@ func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
 	if len(stored) != 1 || stored[0].ID != metadata.ID || !stored[0].Archived ||
 		stored[0].State != allSessionResume || stored[0].SessionID != "archive-session" {
 		t.Fatalf("all sessions = %#v, want one archived resumable agent", stored)
+	}
+
+	archivedList := performRequest(t, srv, http.MethodGet, "/api/sessions/archived", "")
+	if archivedList.Code != http.StatusOK {
+		t.Fatalf("GET /api/sessions/archived status = %d, body = %s", archivedList.Code, archivedList.Body.String())
+	}
+	var archivedItems []struct {
+		session.Metadata
+		AgentSessionID string `json:"agentSessionId"`
+	}
+	decodeResponse(t, archivedList, &archivedItems)
+	if len(archivedItems) != 1 || archivedItems[0].ID != metadata.ID ||
+		archivedItems[0].AgentSessionID != "archive-session" || !archivedItems[0].Archived {
+		t.Fatalf("archived sessions = %#v, want one resumable archived agent", archivedItems)
+	}
+}
+
+func TestArchivedSessionAPIExposesResumeAgentIdentity(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "euphony.sqlite3")
+	store, err := session.OpenSQLiteStore(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	createdAt := time.Now().UTC().Add(-time.Minute)
+	if err := store.Save(t.Context(), session.Metadata{
+		ID: "archived-claude", Name: "Archived Claude", State: session.StateExited,
+		Archived: true, CWD: t.TempDir(), ResumeAgent: "claude",
+		AgentSessionID: "claude-session", CreatedAt: createdAt, UpdatedAt: createdAt,
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh", DatabasePath: databasePath})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	response := performRequest(t, srv, http.MethodGet, "/api/sessions/archived", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /api/sessions/archived status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var archived []struct {
+		session.Metadata
+		AgentSessionID string `json:"agentSessionId"`
+	}
+	decodeResponse(t, response, &archived)
+	if len(archived) != 1 || archived[0].Agent != "claude" ||
+		archived[0].AgentSessionID != "claude-session" {
+		t.Fatalf("archived sessions = %#v, want effective Claude identity", archived)
 	}
 }
 
@@ -504,6 +557,11 @@ func decodeResponse(t *testing.T, response *httptest.ResponseRecorder, target an
 	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
 		t.Fatalf("decode response: %v; body = %q", err, response.Body.String())
 	}
+}
+
+func jsonString(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
 
 func TestSessionListHealsStaleClaudeTitleFromTranscript(t *testing.T) {

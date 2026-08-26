@@ -16,7 +16,7 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
-  Columns3Icon,
+  ArchiveIcon,
   ListIcon,
   PlusIcon,
   Settings2Icon,
@@ -48,13 +48,9 @@ import {
 } from "../legacySidebarUtils";
 import type { AgentSummary, Project, Session, Settings } from "../types";
 import {
-  formatShortcut,
-  isEditableTarget,
   isTerminalTarget,
-  matchesPrefix,
 } from "../keybindings";
 import {
-  defaultKanbanShortcut,
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
@@ -62,6 +58,8 @@ import {
   defaultTerminalOptionAsAlt,
   defaultTerminalScrollSensitivity,
 } from "../settings";
+import { filterSessions, normalizeSessionFilter } from "../sessionPresentation";
+import { SessionFilter } from "./SessionFilter";
 
 const defaultSidebarWidth = 256;
 const minimumSidebarWidth = 180;
@@ -83,6 +81,7 @@ interface SessionNavigationProps {
   pinnedIDs?: string[];
   onSelect(id: string, multiple: boolean, pin?: boolean): void;
   onSelectSession?(sessionID: string): void;
+  onSelectArchivedSession?(session: Session): void;
   onCreate(cwd?: string): void;
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
@@ -93,8 +92,11 @@ interface SessionNavigationProps {
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
   onOpenAllSessions?(): void;
-  onOpenKanban?(): void;
-  onOpenKanbanForProject?(projectPath: string): void;
+  archivedVisible?: boolean;
+  archivedLoading?: boolean;
+  archivedError?: string;
+  onShowArchived?(): void;
+  onHideArchived?(): void;
   focusedPaneID?: string | null;
   agentsOpen?: boolean;
   agentSummaryCount?: number;
@@ -151,6 +153,8 @@ function sessionStatusIcon(status: string) {
   };
 
   switch (status) {
+    case "archived":
+      return <ArchiveIcon {...props} />;
     case "running":
       return <CircleDotIcon {...props} />;
     case "blocked":
@@ -179,6 +183,7 @@ function SessionListItem({
   selected,
   pinned,
   selectSession,
+  onSelectArchivedSession,
   onArchive,
   onDelete,
   onSessionPointerEnter,
@@ -190,17 +195,21 @@ function SessionListItem({
   selected: boolean;
   pinned: boolean;
   selectSession(id: string, multiple: boolean, pin?: boolean): void;
+  onSelectArchivedSession?(session: Session): void;
   onArchive?(session: Session): void;
   onDelete(session: Session): void;
 } & SessionInfoInteractionHandlers) {
   const isAgentSession = session.agent === "codex" || session.agent === "claude";
-  const { onContextMenu, menu } = useSessionContextMenu(
-    session.name,
-    isAgentSession
+  const contextAction = session.archived
+    ? undefined
+    : isAgentSession
       ? onArchive
         ? () => onArchive(session)
         : undefined
-      : () => onDelete(session),
+      : () => onDelete(session);
+  const { onContextMenu, menu } = useSessionContextMenu(
+    session.name,
+    contextAction,
     isAgentSession ? "Archive" : "Delete",
   );
   const attentionDescriptionID = session.needsAttention
@@ -235,9 +244,10 @@ function SessionListItem({
         title={displayPath(session.cwd)}
         onFocus={(event) => onSessionFocus?.(session, event)}
         onBlur={() => onSessionBlur?.(session.id)}
-        onClick={(event) =>
-          selectSession(session.id, event.metaKey || event.ctrlKey)
-        }
+        onClick={(event) => {
+          if (session.archived) onSelectArchivedSession?.(session);
+          else selectSession(session.id, event.metaKey || event.ctrlKey);
+        }}
       >
         {sessionStatusIcon(legacySessionActivity(session))}
         <span className="terminal-identity">
@@ -271,10 +281,43 @@ function SessionList(
   };
   const selectedIDSet = new Set(props.selectedIDs);
   const pinnedIDSet = new Set(props.pinnedIDs ?? []);
+  const [sessionFilter, setSessionFilter] = useState("");
+  const summaries = latestSessionSummaries(props.agentSummaries ?? []);
+  const visibleSessions = filterSessions(props.sessions, summaries, sessionFilter);
+  const normalizedFilter = normalizeSessionFilter(sessionFilter);
 
   return (
     <nav className="session-list" aria-label="Terminal sessions">
-      {legacySidebarSessionGroups(props.sessions).map(({ cwd, sessions: cwdSessions }) => (
+      <SessionFilter
+        value={sessionFilter}
+        totalCount={props.sessions.length}
+        visibleCount={visibleSessions.length}
+        onChange={setSessionFilter}
+      />
+      {props.onShowArchived && !props.archivedVisible && (
+        <button
+          type="button"
+          className="session-list-archived-toggle"
+          aria-label="Show archived"
+          onClick={() => props.onShowArchived?.()}
+        >
+          <ArchiveIcon aria-hidden="true" />
+          {props.archivedLoading ? "Loading archived…" : "Show archived"}
+        </button>
+      )}
+      {props.onHideArchived && props.archivedVisible && (
+        <button
+          type="button"
+          className="session-list-archived-toggle"
+          aria-label="Hide archived"
+          onClick={() => props.onHideArchived?.()}
+        >
+          <ArchiveIcon aria-hidden="true" />
+          Hide archived
+        </button>
+      )}
+      {props.archivedError && <p className="session-list-error" role="alert">{props.archivedError}</p>}
+      {legacySidebarSessionGroups(visibleSessions).map(({ cwd, sessions: cwdSessions }) => (
         <SidebarGroup className="cwd-group" key={cwd}>
           <SidebarGroupLabel className="cwd-heading" title={displayPath(cwd)}>
             <h3>{displayPath(cwd)}</h3>
@@ -301,6 +344,7 @@ function SessionList(
                   selected={selectedIDSet.has(session.id)}
                   pinned={pinnedIDSet.has(session.id)}
                   selectSession={selectSession}
+                  onSelectArchivedSession={props.onSelectArchivedSession}
                   onArchive={props.onArchive}
                   onDelete={props.onDelete}
                   {...props.sessionInfoHandlers}
@@ -310,6 +354,9 @@ function SessionList(
           </SidebarGroupContent>
         </SidebarGroup>
       ))}
+      {normalizedFilter && visibleSessions.length === 0 && (
+        <p className="session-list-empty">No sessions match your filter.</p>
+      )}
     </nav>
   );
 }
@@ -558,25 +605,6 @@ function SessionNavigationContent({
     props.onOpenAllSessions?.();
   };
 
-  const openKanban = useCallback(() => {
-    if (isMobile) setOpenMobile(false);
-    props.onOpenKanban?.();
-  }, [isMobile, props.onOpenKanban, setOpenMobile]);
-
-  useEffect(() => {
-    const kanbanShortcut = settings.kanbanShortcut ?? defaultKanbanShortcut;
-    const openWithShortcut = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target) || !matchesPrefix(event, kanbanShortcut)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      openKanban();
-    };
-    window.addEventListener("keydown", openWithShortcut, { capture: true });
-    return () => window.removeEventListener("keydown", openWithShortcut, { capture: true });
-  }, [openKanban, settings.kanbanShortcut]);
-
   const openAgents = (event: React.MouseEvent<HTMLButtonElement>) => {
     const multiple = event.metaKey || event.ctrlKey;
     if (isMobile && !multiple) setOpenMobile(false);
@@ -589,9 +617,9 @@ function SessionNavigationContent({
     if (isMobile) setOpenMobile(false);
   };
 
-  const openProjectKanban = (projectPath: string) => {
+  const selectArchivedSession = (session: Session) => {
+    props.onSelectArchivedSession?.(session);
     if (isMobile) setOpenMobile(false);
-    props.onOpenKanbanForProject?.(projectPath);
   };
 
   return (
@@ -660,7 +688,7 @@ function SessionNavigationContent({
               agentSummaries={props.agentSummaries ?? []}
               selectedID={props.selectedID ?? props.selectedIDs[0] ?? null}
               onSelectSession={selectProjectSession}
-              onOpenKanban={props.onOpenKanbanForProject ? openProjectKanban : undefined}
+              onSelectArchivedSession={selectArchivedSession}
               onCreateTerminal={props.onCreateTerminal
                 ? (projectID) => {
                   props.onCreateTerminal?.(projectID);
@@ -679,6 +707,11 @@ function SessionNavigationContent({
                   if (isMobile) setOpenMobile(false);
                 }
                 : undefined}
+              archivedVisible={props.archivedVisible}
+              archivedLoading={props.archivedLoading}
+              archivedError={props.archivedError}
+              onShowArchived={props.onShowArchived}
+              onHideArchived={props.onHideArchived}
               onDelete={(session) => {
                 props.onDelete(session);
                 if (isMobile) setOpenMobile(false);
@@ -710,21 +743,6 @@ function SessionNavigationContent({
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip={`Kanban (${formatShortcut(settings.kanbanShortcut ?? defaultKanbanShortcut)})`}
-                aria-label="Kanban"
-                aria-keyshortcuts={settings.kanbanShortcut ?? defaultKanbanShortcut}
-                title={`Kanban (${formatShortcut(settings.kanbanShortcut ?? defaultKanbanShortcut)})`}
-                onClick={openKanban}
-              >
-                <Columns3Icon aria-hidden="true" />
-                <span>Kanban</span>
-                <kbd className="sidebar-shortcut-hint" aria-hidden="true">
-                  {formatShortcut(settings.kanbanShortcut ?? defaultKanbanShortcut)}
-                </kbd>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="All sessions"
@@ -805,7 +823,6 @@ export function SessionNavigation(props: SessionNavigationProps) {
   const settings = props.settings ?? {
     prefix: "Ctrl+B",
     paneTabShortcut: "Meta+L",
-    kanbanShortcut: defaultKanbanShortcut,
     sidebarWidth: defaultSidebarWidth,
     sidebarCollapsed: false,
     interfaceFontSize: 16,

@@ -264,16 +264,24 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 			"The agent session could not be resumed.")
 		return
 	}
-	if queryOnly {
-		metadata, err = s.sessions.UpdateAgent(metadata.ID, session.AgentUpdate{
-			Agent:          agent,
-			ResumeAgent:    agent,
-			AgentSessionID: sessionID,
-		})
-		if err != nil {
+	metadata, err = s.sessions.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent:          agent,
+		ResumeAgent:    agent,
+		AgentSessionID: sessionID,
+		TranscriptPath: saved.AgentTranscriptPath,
+		Title:          saved.AgentTitle,
+	})
+	if err != nil {
+		_, _ = s.control.DeleteTerminal(metadata.ID)
+		writeError(w, http.StatusInternalServerError, "resume_failed",
+			"The agent session could not be resumed.")
+		return
+	}
+	if saved.Archived {
+		if _, err := s.sessions.SetAgentSessionArchived(saved.ID, sessionID, false); err != nil {
 			_, _ = s.control.DeleteTerminal(metadata.ID)
 			writeError(w, http.StatusInternalServerError, "resume_failed",
-				"The agent session could not be resumed.")
+				"The agent session could not be restored.")
 			return
 		}
 	}

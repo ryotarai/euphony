@@ -36,6 +36,17 @@ const terminalSession: Session = {
   createdAt: "2026-08-12T00:03:00Z",
 };
 
+const archivedSession: Session = {
+  ...agentSession,
+  id: "archived-agent",
+  name: "Archived rollout",
+  agentTitle: "Archived rollout",
+  agentSessionId: "archived-session",
+  state: "exited",
+  archived: true,
+  createdAt: "2026-08-11T00:00:00Z",
+};
+
 const legacySession: Session = {
   id: "legacy-1",
   name: "Legacy terminal",
@@ -116,6 +127,100 @@ test("renders the generated purpose and required action without status text", ()
   expect(row).toHaveTextContent("API permissions");
   expect(row).toHaveTextContent("Updating the API");
   expect(row).toHaveTextContent("Approve the pending change");
+});
+
+test("hides completion notices that are not a human decision", () => {
+  const completedNotice: AgentSummary = {
+    ...unreadSummary,
+    terminalId: "completed-notice",
+    purpose: "Release notes",
+    summary: "The release notes are complete.",
+    action: "Work completed. Please check it.",
+  };
+  renderSidebar({
+    sessions: [{ ...agentSession, id: "completed-notice" }],
+    agentSummaries: [completedNotice],
+    selectedID: "completed-notice",
+  });
+
+  const row = screen.getByRole("button", { name: "Select Codex — Release notes" });
+  expect(row).toHaveTextContent("Release notes");
+  expect(row).not.toHaveTextContent("Work completed. Please check it.");
+  expect(row).toHaveAccessibleDescription(
+    "Status: Waiting. Latest summary: The release notes are complete. Required action: None. Unread.",
+  );
+});
+
+test("filters sessions incrementally across purpose, directory, and project", async () => {
+  const user = userEvent.setup();
+  const otherProject: Project = {
+    id: "project-web",
+    path: "/workspace/web",
+    createdAt: "2026-08-12T00:01:00Z",
+  };
+  const otherSession: Session = {
+    ...terminalSession,
+    id: "terminal-web",
+    name: "Shell",
+    cwd: otherProject.path,
+    projectId: otherProject.id,
+  };
+  renderSidebar({
+    projects: [project, otherProject],
+    sessions: [agentSession, otherSession],
+    agentSummaries: [{ ...unreadSummary, purpose: "API permissions" }],
+  });
+
+  const filter = screen.getByRole("searchbox", { name: "Filter sessions" });
+  expect(screen.getByRole("button", { name: "Select Codex — API permissions — Approve the pending change" }))
+    .toBeVisible();
+  expect(screen.getByRole("button", { name: "Select Shell" })).toBeVisible();
+
+  await user.type(filter, "permissions");
+
+  expect(screen.getByRole("button", { name: /Select Codex.*Approve the pending change/ }))
+    .toBeVisible();
+  expect(screen.queryByRole("button", { name: "Select Shell" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: otherProject.path })).not.toBeInTheDocument();
+  expect(screen.getByText("1 of 2 sessions")).toBeVisible();
+
+  await user.clear(filter);
+  await user.type(filter, "does not exist");
+  expect(screen.getByText("No sessions match your filter.")).toBeVisible();
+});
+
+test("shows archived sessions only after the sidebar asks for them", async () => {
+  const user = userEvent.setup();
+  const onShowArchived = vi.fn();
+  const onSelectArchivedSession = vi.fn();
+  const { rerender } = renderSidebar({
+    sessions: [agentSession],
+    onShowArchived,
+    archivedVisible: false,
+  });
+
+  expect(screen.getByRole("button", { name: "Show archived" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Archived rollout/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Show archived" }));
+  expect(onShowArchived).toHaveBeenCalledOnce();
+
+  rerender(
+    <ProjectSidebar
+      projects={[project]}
+      sessions={[agentSession, archivedSession]}
+      agentSummaries={[unreadSummary]}
+      selectedID={agentSession.id}
+      onSelectSession={vi.fn()}
+      onSelectArchivedSession={onSelectArchivedSession}
+      archivedVisible
+      onHideArchived={vi.fn()}
+    />,
+  );
+  const archivedRow = screen.getByRole("button", { name: /Select Codex.*Archived rollout/ });
+  expect(archivedRow.closest(".project-session-row")).toHaveAttribute("data-state", "archived");
+  expect(archivedRow).toHaveTextContent("Archived");
+  await user.click(archivedRow);
+  expect(onSelectArchivedSession).toHaveBeenCalledWith(archivedSession);
 });
 
 test("labels a session with no purpose or summary as New session", () => {
@@ -200,18 +305,6 @@ test("starts terminal or agent work only through project callbacks", async () =>
   expect(props.onAddProject).toHaveBeenCalledOnce();
 });
 
-test("opens a project-filtered Kanban view from the project header", async () => {
-  const user = userEvent.setup();
-  const onOpenKanban = vi.fn();
-  renderSidebar({ onOpenKanban });
-
-  await user.click(screen.getByRole("button", {
-    name: `Open Kanban for ${project.path}`,
-  }));
-
-  expect(onOpenKanban).toHaveBeenCalledWith(project.path);
-});
-
 test("right-aligns project paths and truncates their left side", () => {
   const { container } = renderSidebar({
     projects: [{ ...project, path: "/Users/ryotarai/work/euphony/very-long-project" }],
@@ -239,7 +332,7 @@ test("does not render project controls when their callbacks are missing", () => 
   ).not.toBeInTheDocument();
 });
 
-test("orders projects by the newest session update", () => {
+test("keeps project and session order stable when activity changes", () => {
   const recentProject: Project = {
     id: "project-recent",
     path: "/workspace/recent",
@@ -309,9 +402,9 @@ test("orders projects by the newest session update", () => {
       .getAllByRole("heading", { level: 2 })
       .map((heading) => heading.textContent),
   ).toEqual([
-    recentProject.path,
-    createdAtFallbackProject.path,
     olderProject.path,
+    createdAtFallbackProject.path,
+    recentProject.path,
   ]);
 
   const recentSection = screen
@@ -332,7 +425,7 @@ test("orders projects by the newest session update", () => {
   expect(onSelectSession).toHaveBeenCalledWith(newestSession.id);
 });
 
-test("preserves project input order for equal or missing updates and keeps Unassigned last", () => {
+test("preserves project input order and keeps Unassigned last", () => {
   const emptyProjectInOrder: Project = {
     id: "project-empty-in-order",
     path: "/workspace/empty-in-order",
@@ -439,11 +532,11 @@ test("preserves project input order for equal or missing updates and keeps Unass
       .getAllByRole("heading", { level: 2 })
       .map((heading) => heading.textContent),
   ).toEqual([
-    validProject.path,
-    tieSecondProject.path,
-    tieFirstProject.path,
     emptyProjectInOrder.path,
+    tieSecondProject.path,
     invalidProject.path,
+    validProject.path,
+    tieFirstProject.path,
     "Unassigned",
   ]);
 

@@ -165,7 +165,6 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 	if defaults.Prefix != "Ctrl+B" || defaults.PaneTabShortcut != "Meta+L" ||
-		defaults.KanbanShortcut != DefaultKanbanShortcut ||
 		defaults.SidebarWidth != 304 || defaults.SidebarCollapsed ||
 		defaults.InterfaceFontSize != 16 || defaults.TerminalFontSize != 14 ||
 		defaults.TerminalFontFamily != DefaultTerminalFontFamily ||
@@ -178,7 +177,7 @@ func TestSQLiteStorePersistsSettings(t *testing.T) {
 		t.Fatalf("default settings = %#v", defaults)
 	}
 	want := Settings{
-		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J", KanbanShortcut: "Ctrl+Alt+K",
+		Prefix: "Ctrl+A", PaneTabShortcut: "Ctrl+J",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 18, TerminalFontSize: 17, AgentLogFontSize: 16,
 		TerminalFontFamily:   "JetBrains Mono, monospace",
@@ -415,7 +414,7 @@ func TestSQLiteStoreMigratesLegacySettingsWithDefaultPaneTabShortcut(t *testing.
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 	want := Settings{
-		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L", KanbanShortcut: "Meta+Alt+K",
+		Prefix: "Ctrl+A", PaneTabShortcut: "Meta+L",
 		SidebarWidth: 420, SidebarCollapsed: true,
 		InterfaceFontSize: 16, TerminalFontSize: 14, AgentLogFontSize: 14,
 		TerminalFontFamily:   DefaultTerminalFontFamily,

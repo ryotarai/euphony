@@ -6,7 +6,6 @@ import { attentionTransitions } from "./sessionUtils";
 import type {
   AgentSummary,
   AllSession,
-  KanbanSession,
   Project,
   SelectionSnapshot,
   Session,
@@ -20,7 +19,6 @@ beforeEach(() => {
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
   paneTabShortcut: "Meta+L",
-  kanbanShortcut: "Meta+Alt+K",
   sidebarWidth: 304,
   sidebarCollapsed: false,
   interfaceFontSize: 16,
@@ -79,21 +77,6 @@ const plainTerminalSession: Session = {
   state: "running",
   cwd: "/workspace/shell",
   createdAt: "2026-07-28T00:03:00Z",
-};
-
-const kanbanRunningSession: KanbanSession = {
-  id: "kanban-running",
-  terminalId: "session-1",
-  agent: "codex",
-  sessionId: "codex-kanban-running",
-  title: "Implement v0.2",
-  purpose: "Build the release surface",
-  summary: "The agent is implementing the next step.",
-  cwd: runningSession.cwd,
-  updatedAt: "2026-08-19T08:00:00Z",
-  state: "open",
-  status: "running",
-  archived: false,
 };
 
 function expectTerminalPaneHidden(label: string) {
@@ -1723,189 +1706,107 @@ function legacyProjectsResponse() {
   return jsonResponse({ code: "not_found", message: "Projects are unavailable." }, 404);
 }
 
-test("opens Kanban from the sidebar and its keyboard shortcut", async () => {
+test("refreshes All sessions while the dialog remains open", async () => {
+  const currentSession: AllSession = {
+    id: "all-current",
+    terminalId: runningSession.id,
+    agent: "codex",
+    sessionId: "all-current-session",
+    title: "Current session",
+    cwd: runningSession.cwd,
+    updatedAt: "2026-08-27T00:00:00Z",
+    state: "open",
+  };
+  const newSession: AllSession = {
+    ...currentSession,
+    id: "all-new",
+    terminalId: "session-new",
+    sessionId: "all-new-session",
+    title: "New session while open",
+    updatedAt: "2026-08-27T00:01:00Z",
+  };
+  let listedSessions = [currentSession];
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (input === "/api/sessions" && (!init || init.method === undefined)) {
       return jsonResponse([runningSession]);
     }
     if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return legacyProjectsResponse();
-    }
-    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
       return jsonResponse([]);
-    }
-    if (input === "/api/kanban/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse([kanbanRunningSession]);
-    }
-    if (input === "/api/kanban/archives" && (!init || init.method === undefined)) {
-      return jsonResponse([]);
-    }
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-  render(
-    <App
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      syncSelection={false}
-      syncEvents={false}
-      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
-    />,
-  );
-
-  await user.click(await screen.findByRole("button", { name: "Kanban" }));
-  expect(await screen.findByRole("dialog", { name: "Kanban" })).toBeVisible();
-  expect(screen.getByRole("region", { name: "Running" })).toHaveTextContent("Build the release surface");
-  expect(screen.getByRole("region", { name: "Waiting" })).toBeVisible();
-  expect(screen.getByRole("region", { name: "Blocked" })).toBeVisible();
-  expect(screen.getByRole("region", { name: "Archived" })).toBeVisible();
-
-  await user.click(within(screen.getByRole("dialog", { name: "Kanban" })).getByText("Build the release surface"));
-  await waitFor(() => {
-    expect(screen.queryByRole("dialog", { name: "Kanban" })).not.toBeInTheDocument();
-  });
-
-  await user.keyboard("{Escape}");
-  fireEvent.keyDown(window, { key: "k", metaKey: true, altKey: true });
-  expect(await screen.findByRole("dialog", { name: "Kanban" })).toBeVisible();
-  expect(fetchMock.mock.calls.some(([input]) => input === "/api/kanban/sessions")).toBe(true);
-});
-
-test("opens Kanban filtered to a project from its sidebar header", async () => {
-  const project: Project = {
-    id: "project-euphony",
-    path: "/workspace/euphony",
-    createdAt: "2026-08-01T00:00:00Z",
-  };
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (input === "/api/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse([runningSession]);
-    }
-    if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return jsonResponse([project]);
-    }
-    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
-      return jsonResponse([]);
-    }
-    if (input === "/api/kanban/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse([{ ...kanbanRunningSession, project: project.path }]);
-    }
-    if (input === "/api/kanban/archives" && (!init || init.method === undefined)) {
-      return jsonResponse([]);
-    }
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-  render(
-    <App
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      syncSelection={false}
-      syncEvents={false}
-      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
-    />,
-  );
-
-  await user.click(await screen.findByRole("button", {
-    name: `Open Kanban for ${project.path}`,
-  }));
-
-  const dialog = await screen.findByRole("dialog", { name: "Kanban" });
-  expect(within(dialog).getByRole("combobox", { name: "Filter by project" }))
-    .toHaveValue(project.path);
-  expect(within(dialog).getByRole("region", { name: "Running" }))
-    .toHaveTextContent("Build the release surface");
-  expect(fetchMock.mock.calls.some(([input]) => input === "/api/kanban/sessions")).toBe(true);
-});
-
-test("archives a Kanban agent session out of the sidebar and restores it", async () => {
-  let archived = false;
-  const archivedKanbanSession: KanbanSession = {
-    ...kanbanRunningSession,
-    archived: true,
-  };
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (input === "/api/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse(archived ? [] : [runningSession]);
-    }
-    if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return legacyProjectsResponse();
-    }
-    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
-      return jsonResponse([]);
-    }
-    if (input === "/api/kanban/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse(archived ? [] : [kanbanRunningSession]);
-    }
-    if (input === "/api/kanban/archives" && (!init || init.method === undefined)) {
-      return jsonResponse(archived ? [archivedKanbanSession] : []);
-    }
-    if (
-      input === "/api/kanban/sessions/session-1/codex-kanban-running"
-      && init?.method === "PATCH"
-    ) {
-      archived = JSON.parse(String(init.body)).archived;
-      return jsonResponse(archived ? archivedKanbanSession : kanbanRunningSession);
-    }
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
-  const user = userEvent.setup();
-  render(
-    <App
-      initialToken="valid-token"
-      initialSettings={defaultSettings}
-      syncSelection={false}
-      syncEvents={false}
-      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
-    />,
-  );
-
-  expect(await screen.findByRole("button", { name: "Select Codex" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Kanban" }));
-  await user.click(await screen.findByRole("button", { name: "Archive Build the release surface" }));
-
-  await user.keyboard("{Escape}");
-  await waitFor(() => {
-    expect(screen.queryByRole("button", { name: "Select Codex" })).not.toBeInTheDocument();
-  });
-  expect(fetchMock.mock.calls.some(([input, init]) =>
-    input === "/api/kanban/sessions/session-1/codex-kanban-running"
-    && init?.method === "PATCH"
-  )).toBe(true);
-
-  await user.click(screen.getByRole("button", { name: "Kanban" }));
-  await user.click(screen.getByRole("button", { name: "Restore Build the release surface" }));
-  await user.keyboard("{Escape}");
-  await waitFor(() => {
-    expect(screen.getByRole("button", { name: "Select Codex" })).toBeVisible();
-  });
-});
-
-test("reopens an archived live agent session from All sessions", async () => {
-  let archived = true;
-  const archivedAllSession: AllSession = {
-    ...kanbanRunningSession,
-    archived: true,
-  };
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (input === "/api/sessions" && (!init || init.method === undefined)) {
-      return jsonResponse(archived ? [] : [runningSession]);
-    }
-    if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return legacyProjectsResponse();
     }
     if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
       return jsonResponse([]);
     }
     if (input === "/api/all-sessions" && (!init || init.method === undefined)) {
-      return jsonResponse(archived ? [archivedAllSession] : [kanbanRunningSession]);
+      return jsonResponse(listedSessions);
     }
-    if (
-      input === "/api/kanban/sessions/session-1/codex-kanban-running"
-      && init?.method === "PATCH"
-    ) {
-      archived = JSON.parse(String(init.body)).archived;
-      return jsonResponse(archived ? archivedAllSession : kanbanRunningSession);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "All sessions" }));
+  const dialog = await screen.findByRole("dialog", { name: "All sessions" });
+  await waitFor(() => expect(within(dialog).getByText("Current session")).toBeVisible());
+
+  listedSessions = [newSession, currentSession];
+  await waitFor(() => {
+    expect(within(dialog).getByText("New session while open")).toBeVisible();
+  }, { timeout: 3_000 });
+  expect(fetchMock.mock.calls.filter(([input]) => input === "/api/all-sessions").length)
+    .toBeGreaterThan(1);
+});
+
+test("shows and resumes an archived session from the project sidebar", async () => {
+  const archivedSession: Session = {
+    ...runningSession,
+    id: "archived-sidebar-session",
+    name: "Archived rollout",
+    state: "exited",
+    archived: true,
+    agentStatus: "waiting",
+    agentTitle: "Build the release",
+    agentSessionId: "archived-sidebar-session-id",
+  };
+  const resumedTerminal: Session = {
+    ...archivedSession,
+    id: "resumed-sidebar-session",
+    name: "Codex",
+    state: "running",
+    archived: false,
+    agentStatus: "waiting",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [resumedTerminal.id],
+    manualTerminalIds: [resumedTerminal.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: resumedTerminal.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 9,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions/archived" && (!init || init.method === undefined)) {
+      return jsonResponse([archivedSession]);
+    }
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([plainTerminalSession]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/all-sessions/codex/archived-sidebar-session-id/resume") {
+      return jsonResponse({ terminal: resumedTerminal, selection });
     }
     throw new Error(`Unexpected request: ${String(input)}`);
   });
@@ -1920,21 +1821,28 @@ test("reopens an archived live agent session from All sessions", async () => {
     />,
   );
 
-  await user.click(await screen.findByRole("button", { name: "All sessions" }));
-  const row = await screen.findByRole("button", { name: /Implement v0\.2.*Restore terminal/ });
-  await user.click(row);
+  await user.click(await screen.findByRole("button", { name: "Show archived" }));
+  const archivedRow = await screen.findByRole("button", {
+    name: /Select Codex.*Build the release/,
+  });
+  expect(archivedRow.closest(".project-session-row")).toHaveAttribute(
+    "data-state",
+    "archived",
+  );
+  await user.click(archivedRow);
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: "Select Codex" })).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/all-sessions/codex/archived-sidebar-session-id/resume",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
-  expect(fetchMock.mock.calls.some(([input, init]) =>
-    input === "/api/kanban/sessions/session-1/codex-kanban-running"
-    && init?.method === "PATCH"
-  )).toBe(true);
-  expect(fetchMock.mock.calls.some(([input, init]) =>
-    typeof input === "string" && input.includes("/resume")
-    && init?.method === "POST"
-  )).toBe(false);
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: /Select Codex.*Build the release/ }))
+      .toHaveAttribute("aria-current", "true");
+  });
+  expect(screen.queryByRole("button", { name: "Show archived" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hide archived" })).toBeVisible();
 });
 
 test("stores a valid token and shows project setup when the session list is empty", async () => {
@@ -2697,12 +2605,12 @@ test("opens the next rendered sidebar session after deleting across a project bo
   await user.click(screen.getByRole("button", { name: "Delete terminal" }));
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: "Select Below" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Select Unassigned" })).toHaveAttribute(
       "aria-current",
       "true",
     );
   });
-  expect(screen.getByRole("button", { name: "Select Unassigned" })).not.toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Select Below" })).not.toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -2793,12 +2701,12 @@ test("opens the next rendered sidebar session after archiving across a project b
   await user.click(within(menu).getByRole("menuitem", { name: "Archive" }));
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: "Select Below agent" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Select Unassigned agent" })).toHaveAttribute(
       "aria-current",
       "true",
     );
   });
-  expect(screen.getByRole("button", { name: "Select Unassigned agent" })).not.toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Select Below agent" })).not.toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -3027,12 +2935,12 @@ test("corrects shared deletion to the next rendered sidebar session", async () =
   const removedProject: Project = {
     id: "project-removed-shared",
     path: "/workspace/removed-shared",
-    createdAt: "2026-08-20T00:00:00Z",
+    createdAt: "2026-08-19T00:00:00Z",
   };
   const belowProject: Project = {
     id: "project-below-shared",
     path: "/workspace/below-shared",
-    createdAt: "2026-08-19T00:00:00Z",
+    createdAt: "2026-08-20T00:00:00Z",
   };
   const removedSession: Session = {
     ...plainTerminalSession,
@@ -3089,7 +2997,7 @@ test("corrects shared deletion to the next rendered sidebar session", async () =
       return jsonResponse([belowSession, removedSession, unassignedSession]);
     }
     if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return jsonResponse([belowProject, removedProject]);
+      return jsonResponse([removedProject, belowProject]);
     }
     if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse(deletionCompleted ? serverSelection : initialSelection);
@@ -3446,12 +3354,12 @@ test("preserves a shared archive correction error", async () => {
   const removedProject: Project = {
     id: "project-shared-archive-removed",
     path: "/workspace/shared-archive-removed",
-    createdAt: "2026-08-20T00:00:00Z",
+    createdAt: "2026-08-19T00:00:00Z",
   };
   const belowProject: Project = {
     id: "project-shared-archive-below",
     path: "/workspace/shared-archive-below",
-    createdAt: "2026-08-19T00:00:00Z",
+    createdAt: "2026-08-20T00:00:00Z",
   };
   const removedSession: Session = {
     ...plainTerminalSession,
@@ -3503,7 +3411,7 @@ test("preserves a shared archive correction error", async () => {
       return jsonResponse([belowSession, removedSession, unassignedSession]);
     }
     if (input === "/api/projects" && (!init || init.method === undefined)) {
-      return jsonResponse([belowProject, removedProject]);
+      return jsonResponse([removedProject, belowProject]);
     }
     if (input === "/api/selection" && (!init || init.method === undefined)) {
       return jsonResponse(archiveCompleted ? serverSelection : initialSelection);
@@ -3697,12 +3605,12 @@ test("uses the legacy sidebar order when the project endpoint is unavailable", a
   await user.click(screen.getByRole("button", { name: "Delete terminal" }));
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: "Select Legacy below" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Select Legacy other" })).toHaveAttribute(
       "aria-current",
       "true",
     );
   });
-  expect(screen.getByRole("button", { name: "Select Legacy other" })).not.toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Select Legacy below" })).not.toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -5862,8 +5770,6 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const prefix = screen.getByLabelText("Prefix");
   expect(prefix).toHaveAttribute("data-slot", "input");
   expect(prefix).toHaveFocus();
-  const kanbanShortcut = within(dialog).getByLabelText("Kanban shortcut");
-  expect(kanbanShortcut).toHaveValue("Meta+Alt+K");
   const interfaceFontSize = within(dialog).getByLabelText("Interface");
   const terminalFontSize = within(dialog).getByLabelText("Terminal");
   const agentLogFontSize = within(dialog).getByLabelText("Agent log");
@@ -5905,7 +5811,6 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   const reopenedDialog = screen.getByRole("dialog", { name: "Settings" });
   const reopenedPrefix = screen.getByLabelText("Prefix");
   const paneTabShortcut = screen.getByLabelText("Pane tab toggle");
-  const reopenedKanbanShortcut = within(reopenedDialog).getByLabelText("Kanban shortcut");
   const historyBuffer = screen.getByLabelText("History buffer");
   expect(historyBuffer).toHaveValue(1);
   expect(screen.getByRole("checkbox", { name: "Unlimited history" })).not.toBeChecked();
@@ -5924,7 +5829,6 @@ test("loads settings and saves changed workspace shortcuts", async () => {
   expect(reopenedSummaryPrompt).toHaveValue(defaultSettings.agentSummaryPrompt);
   fireEvent.change(reopenedPrefix, { target: { value: "Ctrl+A" } });
   fireEvent.change(paneTabShortcut, { target: { value: "control+j" } });
-  fireEvent.change(reopenedKanbanShortcut, { target: { value: "Ctrl+Alt+J" } });
   fireEvent.change(historyBuffer, { target: { value: "8" } });
   fireEvent.change(within(reopenedDialog).getByLabelText("Interface"), {
     target: { value: "18" },
@@ -5952,7 +5856,6 @@ test("loads settings and saves changed workspace shortcuts", async () => {
         ...defaultSettings,
         prefix: "Ctrl+A",
         paneTabShortcut: "Ctrl+J",
-        kanbanShortcut: "Ctrl+Alt+J",
         interfaceFontSize: 18,
         terminalFontSize: 17,
         terminalFontFamily: "Iosevka, monospace",

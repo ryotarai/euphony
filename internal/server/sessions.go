@@ -16,6 +16,26 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 	s.sessions.RefreshMetadata()
 }
 
+func (s *Server) listArchivedSessions(w http.ResponseWriter, _ *http.Request) {
+	type archivedSession struct {
+		session.Metadata
+		AgentSessionID string `json:"agentSessionId,omitempty"`
+	}
+	archived := make([]archivedSession, 0)
+	for _, metadata := range s.sessions.ListStored() {
+		if metadata.Archived {
+			if metadata.Agent == "" {
+				metadata.Agent = metadata.ResumeAgent
+			}
+			archived = append(archived, archivedSession{
+				Metadata:       metadata,
+				AgentSessionID: metadata.AgentSessionID,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, archived)
+}
+
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name string `json:"name"`

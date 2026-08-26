@@ -66,6 +66,37 @@ test("orders rows newest first and exposes open and resume actions", () => {
   );
 });
 
+test("gives generic terminal titles enough context to distinguish sessions", () => {
+  const first: AllSession = {
+    ...newest,
+    id: "generic-first",
+    terminalId: "terminal-first",
+    sessionId: "codex-session-first-12345678",
+    title: "Terminal",
+    cwd: "/workspace/api",
+    project: "/workspace/api",
+  };
+  const second: AllSession = {
+    ...first,
+    id: "generic-second",
+    terminalId: "terminal-second",
+    sessionId: "codex-session-second-87654321",
+    cwd: "/workspace/web",
+    project: "/workspace/web",
+    updatedAt: "2026-08-11T12:00:00Z",
+  };
+  renderDialog([first, second]);
+
+  const rows = within(screen.getByRole("list", { name: "All sessions" })).getAllByRole("button");
+  expect(rows[0]).toHaveTextContent("Codex · api");
+  expect(rows[0]).toHaveTextContent("#12345678");
+  expect(rows[0]).not.toHaveTextContent(/^Terminal$/);
+  expect(rows[1]).toHaveTextContent("Codex · web");
+  expect(rows[1]).toHaveTextContent("#87654321");
+  expect(rows[0]).toHaveAccessibleName(/api.*#12345678/);
+  expect(rows[1]).toHaveAccessibleName(/web.*#87654321/);
+});
+
 test("marks archived rows as restorable", () => {
   const archived: AllSession = {
     ...newest,
