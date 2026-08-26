@@ -53,6 +53,8 @@ function sessionSearchText(session: AllSession): string {
     session.cwd,
     session.project,
     session.agent,
+    session.sessionId,
+    session.terminalId,
   ].filter(Boolean).join(" "));
 }
 
@@ -75,6 +77,29 @@ function displayAgent(session: AllSession): string {
 
 function displayPath(path: string): string {
   return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
+}
+
+function sessionLocation(session: AllSession): string {
+  const path = (session.project || session.cwd).replace(/\/+$/, "");
+  const displayed = displayPath(path);
+  return displayed.split("/").filter(Boolean).at(-1) || displayed || "unknown";
+}
+
+function sessionShortID(session: AllSession): string {
+  const id = (session.sessionId || session.terminalId || session.id).trim();
+  return `#${id.slice(-8) || "unknown"}`;
+}
+
+function hasGenericTitle(title: string): boolean {
+  return new Set(["terminal", "shell", "zsh", "new session", "codex session", "claude session"])
+    .has(title.trim().toLowerCase());
+}
+
+function displayTitle(session: AllSession): string {
+  const title = session.title.trim();
+  return title && !hasGenericTitle(title)
+    ? title
+    : `${displayAgent(session)} · ${sessionLocation(session)}`;
 }
 
 function sessionActionLabel(session: AllSession): string {
@@ -180,6 +205,9 @@ export function AllSessionsDialog({
               {visibleSessions.map((session) => {
                 const resuming = resumingID === session.id;
                 const busy = resumingID !== null;
+                const title = displayTitle(session);
+                const location = sessionLocation(session);
+                const shortID = sessionShortID(session);
                 return (
                   <li key={session.id}>
                     <Button
@@ -190,7 +218,7 @@ export function AllSessionsDialog({
                       data-state={session.state}
                       disabled={busy}
                       aria-busy={resuming || undefined}
-                      aria-label={`${session.title} — ${resuming ? "Resuming session" : sessionActionLabel(session)}`}
+                      aria-label={`${title} · ${location} ${shortID} — ${resuming ? "Resuming session" : sessionActionLabel(session)}`}
                       onClick={() => void onSelect(session)}
                     >
                       <span className="all-session-activity-rail" aria-hidden="true" />
@@ -213,7 +241,7 @@ export function AllSessionsDialog({
                             ) : sessionActionLabel(session)}
                           </span>
                         </span>
-                        <span className="all-session-title">{session.title}</span>
+                        <span className="all-session-title">{title}</span>
                         {session.purpose && (
                           <span className="all-session-purpose">{session.purpose}</span>
                         )}
@@ -225,6 +253,9 @@ export function AllSessionsDialog({
                           {session.project && session.project !== session.cwd && (
                             <span>{session.project}</span>
                           )}
+                          <span className="all-session-session-id" title={session.sessionId || session.id}>
+                            {shortID}
+                          </span>
                           <span className="all-session-updated">
                             <Clock3Icon aria-hidden="true" />
                             <time dateTime={session.updatedAt} title={session.updatedAt}>

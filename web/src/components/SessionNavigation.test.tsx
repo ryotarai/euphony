@@ -687,7 +687,7 @@ test("renders a cwd-first tree with lifecycle icons and trailing attention", () 
     .not.toHaveAccessibleDescription("Needs attention");
 });
 
-test("orders terminal rows by attention, lifecycle priority, and last update", () => {
+test("keeps terminal rows in source order while status and attention change", () => {
   const makeSession = (
     id: string,
     name: string,
@@ -740,15 +740,15 @@ test("orders terminal rows by attention, lifecycle priority, and last update", (
     .getByLabelText("Terminal sessions")
     .querySelectorAll<HTMLButtonElement>(".session-select");
   expect([...labels].map((button) => button.getAttribute("aria-label"))).toEqual([
-    "Select New attention",
-    "Select Old attention",
-    "Select New blocked",
-    "Select Old blocked",
-    "Select New running",
-    "Select Old running",
-    "Select New waiting",
-    "Select Old waiting",
     "Select Terminal",
+    "Select Old waiting",
+    "Select New waiting",
+    "Select Old running",
+    "Select New running",
+    "Select Old blocked",
+    "Select New blocked",
+    "Select Old attention",
+    "Select New attention",
   ]);
 });
 
@@ -1052,56 +1052,4 @@ test("places All sessions above Settings and closes the mobile drawer", async ()
   await user.click(allSessions);
   expect(onOpenAllSessions).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog", { name: "Terminal menu" })).not.toBeInTheDocument();
-});
-
-test("places Kanban above All sessions and exposes its keyboard shortcut", async () => {
-  const onOpenKanban = vi.fn();
-  const user = userEvent.setup();
-  render(
-    <SessionNavigation
-      sessions={sessions}
-      selectedIDs={["one"]}
-      onSelect={() => undefined}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-      onOpenKanban={onOpenKanban}
-    />,
-  );
-
-  const kanban = screen.getByRole("button", { name: "Kanban" });
-  const allSessions = screen.getByRole("button", { name: "All sessions" });
-  expect(kanban.compareDocumentPosition(allSessions) & Node.DOCUMENT_POSITION_FOLLOWING)
-    .toBeTruthy();
-  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+Alt+K");
-  expect(kanban).toHaveTextContent("⌘⌥K");
-
-  await user.click(kanban);
-  expect(onOpenKanban).toHaveBeenCalledOnce();
-
-  fireEvent.keyDown(window, { key: "k", metaKey: true, altKey: true });
-  expect(onOpenKanban).toHaveBeenCalledTimes(2);
-
-  fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
-  expect(onOpenKanban).toHaveBeenCalledTimes(2);
-});
-
-test("uses the configured Kanban shortcut", () => {
-  const onOpenKanban = vi.fn();
-  render(
-    <SessionNavigation
-      sessions={sessions}
-      selectedIDs={["one"]}
-      onSelect={() => undefined}
-      onCreate={() => undefined}
-      onDelete={() => undefined}
-      onOpenKanban={onOpenKanban}
-      settings={{ ...settings, kanbanShortcut: "Ctrl+Alt+J" }}
-    />,
-  );
-
-  const kanban = screen.getByRole("button", { name: "Kanban" });
-  expect(kanban).toHaveAttribute("aria-keyshortcuts", "Ctrl+Alt+J");
-  expect(kanban).toHaveTextContent("⌃⌥J");
-  fireEvent.keyDown(window, { key: "j", ctrlKey: true, altKey: true });
-  expect(onOpenKanban).toHaveBeenCalledOnce();
 });

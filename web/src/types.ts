@@ -16,6 +16,7 @@ export interface Session {
   archived?: boolean;
   agent?: string;
   agentStatus?: string;
+  agentSessionId?: string;
   needsAttention?: boolean;
   agentTitle?: string;
   processName?: string;
@@ -46,15 +47,6 @@ export interface AllSession {
 export interface AllSessionResumeResult {
   terminal: Session;
   selection: SelectionSnapshot;
-}
-
-export type KanbanStatus = "running" | "waiting" | "blocked" | "archived";
-export type KanbanSessionStatus = KanbanStatus;
-
-export interface KanbanSession extends AllSession {
-  agent: "codex" | "claude";
-  status: KanbanStatus;
-  archived: boolean;
 }
 
 export type AgentSummaryProvider = "openai" | "codex" | "claude";
@@ -94,7 +86,6 @@ export type TerminalCursorStyle = "bar" | "block" | "underline";
 export interface Settings {
   prefix: string;
   paneTabShortcut: string;
-  kanbanShortcut?: string;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   interfaceFontSize: number;

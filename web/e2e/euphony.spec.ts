@@ -239,18 +239,30 @@ test("opens from a development token URL and immediately scrubs it", async ({ pa
 
 test("opens the All sessions index, searches it, and opens a current terminal", async ({
   page,
-}) => {
+}, testInfo) => {
   await clearSessions(page);
   const terminal = await createSession(page, "All sessions terminal", "/tmp");
+  await reportAgent(
+    page,
+    terminal.id,
+    "codex",
+    "All sessions terminal",
+    "running",
+    "all-sessions-e2e-session",
+  );
   await replaceSharedSelection(page, [terminal.id], terminal.id);
   await page.goto("/?token=test-token");
 
-  await expect(page.getByRole("button", { name: "Select All sessions terminal" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Select Codex.*All sessions terminal/ })).toBeVisible();
   await page.getByRole("button", { name: "All sessions", exact: true }).click();
 
   const dialog = page.getByRole("dialog", { name: "All sessions" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("All sessions terminal", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("all-sessions-dialog.png"),
+    fullPage: true,
+  });
   const bounds = await dialog.boundingBox();
   const viewport = page.viewportSize();
   expect(bounds).not.toBeNull();
@@ -269,62 +281,84 @@ test("opens the All sessions index, searches it, and opens a current terminal", 
   await expect(page.getByLabel("All sessions terminal terminal", { exact: true })).toBeVisible();
 });
 
-test("opens Kanban, archives an agent, and restores it from All sessions", async ({ page }) => {
+test("shows archived agents from the sidebar and resumes one", async ({ page }, testInfo) => {
   await clearSessions(page);
-  const agent = await createSession(page, "Kanban agent", "/tmp");
+  const agent = await createSession(page, "Archived agent", "/tmp");
   await reportAgent(
     page,
     agent.id,
     "codex",
     "Build the release",
-    "running",
-    "kanban-e2e-session",
+    "waiting",
+    "archived-sidebar-e2e-session",
   );
   await replaceSharedSelection(page, [agent.id], agent.id);
   await page.goto("/?token=test-token");
 
   const sidebarAgent = page.getByRole("button", { name: /Select Codex/ });
   await expect(sidebarAgent).toBeVisible();
-  await page.getByRole("button", { name: "Kanban", exact: true }).click();
-
-  const dialog = page.getByRole("dialog", { name: "Kanban" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("region", { name: "Running" })).toContainText(
-    "Build the release",
-  );
-  for (const column of ["Waiting", "Blocked", "Archived"]) {
-    await expect(dialog.getByRole("region", { name: column })).toBeVisible();
-  }
-  const bounds = await dialog.boundingBox();
-  const dimensions = await dialog.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      width: Number.parseFloat(style.width),
-      height: Number.parseFloat(style.height),
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    };
+  await page.screenshot({
+    path: testInfo.outputPath("archived-sidebar-before.png"),
+    fullPage: true,
   });
-  expect(bounds).not.toBeNull();
-  expect(dimensions.width / dimensions.viewportWidth).toBeCloseTo(0.9, 2);
-  expect(dimensions.height / dimensions.viewportHeight).toBeCloseTo(0.9, 2);
 
-  await dialog.getByRole("button", { name: "Archive Build the release" }).click();
-  await page.keyboard.press("Escape");
+  await sidebarAgent.click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "Actions for Codex" });
+  await menu.getByRole("menuitem", { name: "Archive" }).click();
   await expect(sidebarAgent).toHaveCount(0);
 
-  await page.getByRole("button", { name: "All sessions", exact: true }).click();
-  const allSessions = page.getByRole("dialog", { name: "All sessions" });
-  const archivedRow = allSessions.getByRole("button", {
-    name: /Build the release.*Restore terminal/,
-  });
+  await page.getByRole("button", { name: "Show archived" }).click();
+  const archivedRow = page.locator(
+    '.project-session-row[data-state="archived"] button',
+  );
   await expect(archivedRow).toBeVisible();
-  await archivedRow.click();
-  await expect(allSessions).toHaveCount(0);
-  await expect(sidebarAgent).toBeVisible();
+  await expect(archivedRow).toHaveAccessibleName(/Select Codex.*Build the release/);
+  await page.screenshot({
+    path: testInfo.outputPath("archived-sidebar-after.png"),
+    fullPage: true,
+  });
 
-  await page.keyboard.press("Meta+Alt+K");
-  await expect(page.getByRole("dialog", { name: "Kanban" })).toBeVisible();
+  // The Go API is covered with a fake agent executable in server tests. Keep
+  // this browser flow deterministic by stubbing the successful resume result
+  // here, so it does not depend on a locally installed Codex CLI.
+  const resumedTerminal = {
+    ...agent,
+    state: "running",
+    archived: false,
+    agent: "codex",
+    agentStatus: "waiting",
+    agentTitle: "Build the release",
+    agentSessionId: "archived-sidebar-e2e-session",
+  };
+  const resumedSelection = {
+    terminalIds: [agent.id],
+    manualTerminalIds: [agent.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: agent.id,
+    filters: { statuses: [], cwds: [] },
+    pinnedFilters: { statuses: [], cwds: [] },
+    revision: 2,
+  };
+  await page.route(
+    "**/api/all-sessions/codex/archived-sidebar-e2e-session/resume",
+    async (route) => {
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ terminal: resumedTerminal, selection: resumedSelection }),
+      });
+    },
+  );
+  await page.route("**/api/sessions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([resumedTerminal]),
+    });
+  });
+  await archivedRow.click();
+  await expect(page.locator('.project-session-row[data-state="archived"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Select Codex.*Build the release/ })).toBeVisible();
 });
 
 test("renames the focused terminal from Quick Actions and updates the sidebar", async ({

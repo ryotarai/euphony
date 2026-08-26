@@ -20,6 +20,8 @@
 
 - Use Playwright for frontend behavior verification when it provides stronger
   evidence than unit tests or source inspection.
+- When using Playwright for UI verification, capture screenshots at the baseline
+  and after the change alongside behavioral assertions.
 - Run end-to-end servers with an isolated test database so persisted local
   sessions cannot leak into browser tests.
 - When coding agents run in parallel, give each agent an isolated database and

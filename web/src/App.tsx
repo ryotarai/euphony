@@ -13,7 +13,6 @@ import {
 import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
-import { KanbanDialog, kanbanAllProjectsFilter } from "./components/KanbanDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
 import { flattenProjectSidebarSessions } from "./components/ProjectSidebar";
 import { AgentsView } from "./components/AgentsView";
@@ -73,8 +72,6 @@ import type {
   AgentSummary,
   AllSession,
   CwdSelectionFilter,
-  KanbanSession,
-  KanbanStatus,
   Project,
   ReplaceSelectionRequest,
   SelectionSnapshot,
@@ -83,7 +80,6 @@ import type {
   TerminalCursorStyle,
 } from "./types";
 import {
-  defaultKanbanShortcut,
   defaultTerminalCursorBlink,
   defaultTerminalCursorStyle,
   defaultTerminalFontFamily,
@@ -213,7 +209,6 @@ interface AppProps {
 const defaultSettings: Settings = {
   prefix: "Ctrl+B",
   paneTabShortcut: "Meta+L",
-  kanbanShortcut: defaultKanbanShortcut,
   sidebarWidth: 256,
   sidebarCollapsed: false,
   interfaceFontSize: 16,
@@ -347,23 +342,6 @@ function availableQuickActionValues(
 
 function activityLabel(status: string) {
   return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function kanbanStatus(value: string | undefined): KanbanStatus {
-  if (value === "waiting" || value === "blocked" || value === "running") {
-    return value;
-  }
-  return "running";
-}
-
-function normalizeKanbanSession(item: KanbanSession): KanbanSession {
-  const archived = item.archived === true || item.status === "archived";
-  const lifecycleStatus = item.status === "archived" ? undefined : item.status;
-  return {
-    ...item,
-    archived,
-    status: kanbanStatus(lifecycleStatus),
-  };
 }
 
 function matchesWorkspaceFilter(
@@ -823,17 +801,18 @@ export function App({
   const [requestError, setRequestError] = useState("");
   const [settings, setSettings] = useState(initialSettings ?? defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [kanbanOpen, setKanbanOpen] = useState(false);
-  const [kanbanProjectFilter, setKanbanProjectFilter] = useState(kanbanAllProjectsFilter);
-  const [kanbanSessions, setKanbanSessions] = useState<KanbanSession[]>([]);
-  const [kanbanLoading, setKanbanLoading] = useState(false);
-  const [kanbanError, setKanbanError] = useState("");
-  const kanbanMutationIDRef = useRef<string | null>(null);
   const [allSessionsOpen, setAllSessionsOpen] = useState(false);
   const [allSessions, setAllSessions] = useState<AllSession[]>([]);
   const [allSessionsLoading, setAllSessionsLoading] = useState(false);
   const [allSessionsError, setAllSessionsError] = useState("");
   const [resumingAllSessionID, setResumingAllSessionID] = useState<string | null>(null);
+  const [archivedSessions, setArchivedSessions] = useState<Session[]>([]);
+  const [archivedVisible, setArchivedVisible] = useState(false);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedError, setArchivedError] = useState("");
+  const archivedLoadedRef = useRef(false);
+  const archivedLoadingRef = useRef(false);
+  const allSessionsRefreshInFlightRef = useRef(false);
   const [selectedDashboardIDs, setSelectedDashboardIDs] = useState<DashboardPaneID[]>(
     () => initialDashboardRoute.pane ? [initialDashboardRoute.pane] : [],
   );
@@ -852,9 +831,6 @@ export function App({
   const [prefixDraft, setPrefixDraft] = useState(settings.prefix);
   const [paneTabShortcutDraft, setPaneTabShortcutDraft] = useState(
     settings.paneTabShortcut,
-  );
-  const [kanbanShortcutDraft, setKanbanShortcutDraft] = useState(
-    settings.kanbanShortcut ?? defaultKanbanShortcut,
   );
   const [terminalHistoryLimitDraft, setTerminalHistoryLimitDraft] = useState(
     () => historyLimitDraft(settings.terminalHistoryLimit),
@@ -899,7 +875,6 @@ export function App({
     field:
       | "prefix"
       | "paneTabShortcut"
-      | "kanbanShortcut"
       | "terminalHistoryLimit"
       | "terminalFontFamily"
       | "terminalLineHeight"
@@ -1062,110 +1037,68 @@ export function App({
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
   const renderedSessionOrder = useCallback((items: Session[]) => {
     if (!projectEndpointAvailableRef.current) return flattenLegacySidebarSessions(items);
-    return flattenProjectSidebarSessions(projects ?? [], items, agentSummaries);
-  }, [agentSummaries, projects]);
-  const fetchKanbanSnapshot = useCallback(async (): Promise<KanbanSession[]> => {
-    if (!api) return [];
-    const [active, archived] = await Promise.all([
-      api.listKanbanSessions(),
-      api.listKanbanArchives(),
-    ]);
-    const byID = new Map<string, KanbanSession>();
-    for (const item of [...active, ...archived]) {
-      const normalized = normalizeKanbanSession(item);
-      const previous = byID.get(normalized.id);
-      if (!previous || normalized.archived || !previous.archived) {
-        byID.set(normalized.id, normalized);
-      }
+    return flattenProjectSidebarSessions(projects ?? [], items);
+  }, [projects]);
+
+  const refreshAllSessions = useCallback(async (showLoading: boolean) => {
+    if (!api || allSessionsRefreshInFlightRef.current) return;
+    allSessionsRefreshInFlightRef.current = true;
+    if (showLoading) {
+      setAllSessionsLoading(true);
+      setAllSessionsError("");
     }
-    return [...byID.values()];
-  }, [api]);
-
-  useEffect(() => {
-    if (!kanbanOpen || !api) return;
-    let active = true;
-    setKanbanLoading(true);
-    setKanbanError("");
-    fetchKanbanSnapshot().then((items) => {
-      if (active) setKanbanSessions(items);
-    }).catch((error: unknown) => {
-      if (!active) return;
-      setKanbanError(
-        error instanceof Error ? error.message : "Kanban sessions could not be loaded.",
-      );
-    }).finally(() => {
-      if (active) setKanbanLoading(false);
-    });
-    return () => {
-      active = false;
-    };
-  }, [api, fetchKanbanSnapshot, kanbanOpen]);
-
-  useEffect(() => {
-    if (!kanbanOpen || !sessions) return;
-    const sessionsByID = new Map(sessions.map((session) => [session.id, session]));
-    const summariesByID = new Map<string, AgentSummary>();
-    for (const summary of agentSummaries) {
-      if (!summary.done) summariesByID.set(summary.terminalId, summary);
-    }
-    setKanbanSessions((current) => current.map((item) => {
-      if (item.archived || !item.terminalId) return item;
-      const live = sessionsByID.get(item.terminalId);
-      if (!live) return item;
-      const summary = summariesByID.get(item.terminalId);
-      const nextStatus = kanbanStatus(summary?.status ?? live.agentStatus);
-      if (
-        item.status === nextStatus
-        && item.purpose === (summary?.purpose ?? item.purpose)
-        && item.summary === (summary?.summary ?? item.summary)
-      ) {
-        return item;
-      }
-      return {
-        ...item,
-        status: nextStatus,
-        purpose: summary?.purpose ?? item.purpose,
-        summary: summary?.summary ?? item.summary,
-      };
-    }));
-  }, [agentSummaries, kanbanOpen, sessions]);
-
-  useEffect(() => {
-    if (!kanbanOpen || !api) return;
-    const timer = window.setInterval(() => {
-      if (kanbanMutationIDRef.current !== null) return;
-      fetchKanbanSnapshot().then((items) => {
-        setKanbanSessions(items);
-        setKanbanError("");
-      }).catch((error: unknown) => {
-        setKanbanError(
-          error instanceof Error ? error.message : "Kanban sessions could not be refreshed.",
-        );
-      });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [api, fetchKanbanSnapshot, kanbanOpen]);
-
-  useEffect(() => {
-    if (!allSessionsOpen || !api) return;
-    let active = true;
-    setAllSessionsLoading(true);
-    setAllSessionsError("");
-    api.listAllSessions().then((items) => {
-      if (!active) return;
-      setAllSessions(items);
-    }).catch((error: unknown) => {
-      if (!active) return;
+    try {
+      setAllSessions(await api.listAllSessions());
+      setAllSessionsError("");
+    } catch (error: unknown) {
       setAllSessionsError(
         error instanceof Error ? error.message : "All sessions could not be loaded.",
       );
-    }).finally(() => {
-      if (active) setAllSessionsLoading(false);
-    });
-    return () => {
-      active = false;
-    };
-  }, [allSessionsOpen, api]);
+    } finally {
+      allSessionsRefreshInFlightRef.current = false;
+      if (showLoading) setAllSessionsLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    if (!allSessionsOpen || !api) return;
+    void refreshAllSessions(true);
+    const timer = window.setInterval(() => {
+      void refreshAllSessions(false);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [allSessionsOpen, api, refreshAllSessions]);
+
+  useEffect(() => {
+    archivedLoadedRef.current = false;
+    archivedLoadingRef.current = false;
+    setArchivedSessions([]);
+    setArchivedVisible(false);
+    setArchivedError("");
+  }, [api]);
+
+  const showArchivedSessions = useCallback(async () => {
+    setArchivedVisible(true);
+    if (!api || archivedLoadedRef.current || archivedLoadingRef.current) return;
+    archivedLoadingRef.current = true;
+    setArchivedLoading(true);
+    setArchivedError("");
+    try {
+      setArchivedSessions(await api.listArchivedSessions());
+      archivedLoadedRef.current = true;
+    } catch (error: unknown) {
+      setArchivedError(
+        error instanceof Error ? error.message : "Archived sessions could not be loaded.",
+      );
+    } finally {
+      archivedLoadingRef.current = false;
+      setArchivedLoading(false);
+    }
+  }, [api]);
+
+  const hideArchivedSessions = useCallback(() => {
+    setArchivedVisible(false);
+  }, []);
   const agentSummaryRevisionsRef = useRef<Map<string, number>>(new Map());
   const agentSummaryDeletedAtRef = useRef<Map<string, string>>(new Map());
   const agentSummariesInFlightRef = useRef<{
@@ -3524,6 +3457,10 @@ export function App({
     };
     try {
       const archived = await api.archiveSession(item.id);
+      if (archivedLoadedRef.current) {
+        archivedLoadedRef.current = false;
+        if (archivedVisible) void showArchivedSessions();
+      }
       cancelFilterDeselect(item.id);
       setSessions((current) =>
         current?.filter((session) => session.id !== item.id) ?? current,
@@ -3607,7 +3544,6 @@ export function App({
   function openSettings() {
     setPrefixDraft(settings.prefix);
     setPaneTabShortcutDraft(settings.paneTabShortcut);
-    setKanbanShortcutDraft(settings.kanbanShortcut ?? defaultKanbanShortcut);
     setTerminalHistoryLimitDraft(historyLimitDraft(settings.terminalHistoryLimit));
     setUnlimitedTerminalHistory(settings.terminalHistoryLimit === 0);
     setTerminalFontFamilyDraft(settings.terminalFontFamily);
@@ -3629,74 +3565,40 @@ export function App({
     setSettingsOpen(true);
   }
 
-  function openKanban() {
-    setAllSessionsOpen(false);
-    setKanbanProjectFilter(kanbanAllProjectsFilter);
-    setKanbanOpen((current) => !current);
-  }
-
-  function openKanbanForProject(projectPath: string) {
-    setAllSessionsOpen(false);
-    setKanbanProjectFilter(projectPath);
-    setKanbanOpen(true);
-  }
-
   function openAllSessions() {
-    setKanbanOpen(false);
     setAllSessionsOpen(true);
   }
 
-  async function openKanbanSession(item: KanbanSession) {
-    setKanbanOpen(false);
-    await selectAllSession(item);
-  }
-
-  async function updateKanbanArchive(item: KanbanSession, archived: boolean) {
-    if (!api) throw new Error("The Kanban archive API is unavailable.");
-    if (!item.terminalId || !item.sessionId) {
-      throw new Error("This agent session no longer has a restorable identity.");
+  async function resumeArchivedSidebarSession(session: Session) {
+    if (!api || resumingAllSessionID !== null) return;
+    const agent = session.agent === "codex" || session.agent === "claude"
+      ? session.agent
+      : null;
+    const sessionID = session.agentSessionId?.trim();
+    if (!agent || !sessionID) {
+      setArchivedError("This archived session no longer has a resumable agent identity.");
+      return;
     }
-    if (kanbanMutationIDRef.current !== null) {
-      throw new Error("Another Kanban archive update is already in progress.");
-    }
-    kanbanMutationIDRef.current = item.id;
-    setKanbanError("");
+    setResumingAllSessionID(session.id);
+    setArchivedError("");
     try {
-      await api.setKanbanSessionArchived(item.terminalId, item.sessionId, archived);
-      if (archived && (selectedIDs.includes(item.terminalId) || pinnedIDs.includes(item.terminalId))) {
-        selectSession(item.terminalId, true, true, false);
-      }
-      try {
-        const nextSessions = await api.listSessions();
-        applySessionSnapshot(nextSessions);
-      } catch (error: unknown) {
-        setKanbanError(
-          error instanceof Error
-            ? `Archive state saved, but sessions could not be refreshed: ${error.message}`
-            : "Archive state saved, but sessions could not be refreshed.",
-        );
-      }
-      try {
-        setKanbanSessions(await fetchKanbanSnapshot());
-      } catch (error: unknown) {
-        setKanbanError(
-          error instanceof Error ? error.message : "Kanban sessions could not be refreshed.",
-        );
-      }
-      if (!archived) {
-        selectSession(item.terminalId, false);
-      }
+      const result = await api.resumeAllSession(agent, sessionID, "replace");
+      setArchivedSessions((current) => current.filter((item) =>
+        item.id !== session.id && item.agentSessionId !== sessionID,
+      ));
+      applySessionSnapshot([
+        ...(sessions ?? []).filter((item) => item.id !== result.terminal.id),
+        result.terminal,
+      ]);
+      applyServerSelection(result.selection, "push");
+      setRequestError("");
+    } catch (error: unknown) {
+      setArchivedError(
+        error instanceof Error ? error.message : "The archived session could not be resumed.",
+      );
     } finally {
-      kanbanMutationIDRef.current = null;
+      setResumingAllSessionID(null);
     }
-  }
-
-  async function archiveKanbanSession(item: KanbanSession) {
-    await updateKanbanArchive(item, true);
-  }
-
-  async function restoreKanbanSession(item: KanbanSession) {
-    await updateKanbanArchive(item, false);
   }
 
   async function selectAllSession(item: AllSession) {
@@ -3717,17 +3619,6 @@ export function App({
     setResumingAllSessionID(item.id);
     setAllSessionsError("");
     try {
-      const terminalID = item.terminalId ?? item.id;
-      if (item.archived) {
-        await api.setKanbanSessionArchived(terminalID, item.sessionId, false);
-        if (item.state === "open") {
-          const nextSessions = await api.listSessions();
-          applySessionSnapshot(nextSessions);
-          setAllSessionsOpen(false);
-          selectSession(terminalID, false);
-          return;
-        }
-      }
       const result = await api.resumeAllSession(item.agent, item.sessionId, "replace");
       const nextSessions = [
         ...(sessions ?? []).filter((session) => session.id !== result.terminal.id),
@@ -3750,7 +3641,6 @@ export function App({
     event.preventDefault();
     const prefix = normalizePrefix(prefixDraft);
     const paneTabShortcut = normalizePrefix(paneTabShortcutDraft);
-    const kanbanShortcut = normalizePrefix(kanbanShortcutDraft);
     if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(prefix)) {
       setSettingsError({
         field: "prefix",
@@ -3765,24 +3655,10 @@ export function App({
       });
       return;
     }
-    if (!/^(?:(?:Ctrl|Alt|Shift|Meta)\+)+(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/.test(kanbanShortcut)) {
-      setSettingsError({
-        field: "kanbanShortcut",
-        message: "Use modifiers and one key, for example Meta+Alt+K.",
-      });
-      return;
-    }
     if (shortcutsEqual(prefix, paneTabShortcut)) {
       setSettingsError({
         field: "paneTabShortcut",
         message: "Choose a different shortcut from Prefix.",
-      });
-      return;
-    }
-    if (shortcutsEqual(prefix, kanbanShortcut) || shortcutsEqual(paneTabShortcut, kanbanShortcut)) {
-      setSettingsError({
-        field: "kanbanShortcut",
-        message: "Choose a different shortcut from Prefix and Pane tab toggle.",
       });
       return;
     }
@@ -3855,7 +3731,6 @@ export function App({
       ...settings,
       prefix,
       paneTabShortcut,
-      kanbanShortcut,
       interfaceFontSize: fontSizes.interfaceFontSize!,
       terminalFontSize: fontSizes.terminalFontSize!,
       terminalFontFamily,
@@ -4182,6 +4057,13 @@ export function App({
     : [];
   const workspacePanes = [...dashboardPanes, ...terminalPanes];
   const projectList = projects ?? [];
+  const activeSessionIDs = new Set(sessions.map((session) => session.id));
+  const sidebarSessions = archivedVisible
+    ? [
+        ...sessions,
+        ...archivedSessions.filter((session) => !activeSessionIDs.has(session.id)),
+      ]
+    : sessions;
   const projectNavigationProps = projectEndpointAvailableRef.current
     ? {
         projects: projectList,
@@ -4193,7 +4075,6 @@ export function App({
           void createSession(false, undefined, projectID);
         },
         onCreateAgent: startConfiguredAgent,
-        onOpenKanbanForProject: openKanbanForProject,
       }
     : {};
   const summaryByTerminalID = new Map(
@@ -4403,7 +4284,7 @@ export function App({
     >
       <SessionNavigation
         {...projectNavigationProps}
-        sessions={sessions}
+        sessions={sidebarSessions}
         selectedIDs={selectedIDs}
         pinnedIDs={pinnedIDs}
         onSelect={(id, multiple, pin) =>
@@ -4415,27 +4296,17 @@ export function App({
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}
-        onOpenKanban={openKanban}
         onOpenAllSessions={openAllSessions}
+        onSelectArchivedSession={(session) => void resumeArchivedSidebarSession(session)}
+        archivedVisible={archivedVisible}
+        archivedLoading={archivedLoading}
+        archivedError={archivedError}
+        onShowArchived={() => void showArchivedSessions()}
+        onHideArchived={hideArchivedSessions}
         focusedPaneID={focusedPaneID}
         agentsOpen={agentsOpen}
         agentSummaryCount={agentSummaryCount}
         onOpenAgents={openAgentsWorkspace}
-      />
-      <KanbanDialog
-        key={`kanban-${kanbanOpen ? "open" : "closed"}`}
-        open={kanbanOpen}
-        sessions={kanbanSessions}
-        projects={projectList}
-        projectFilter={kanbanProjectFilter}
-        loading={kanbanLoading}
-        error={kanbanError}
-        shortcut={settings.kanbanShortcut ?? defaultKanbanShortcut}
-        onOpenChange={setKanbanOpen}
-        onProjectFilterChange={setKanbanProjectFilter}
-        onOpenSession={openKanbanSession}
-        onArchiveSession={archiveKanbanSession}
-        onRestoreSession={restoreKanbanSession}
       />
       <AllSessionsDialog
         key={`all-sessions-${allSessionsOpen ? "open" : "closed"}`}
@@ -4773,21 +4644,6 @@ export function App({
                   Cycle the focused pane through Terminal, Agent log, and Changes.
                 </FieldDescription>
                 {settingsError?.field === "paneTabShortcut" && (
-                  <FieldError>{settingsError.message}</FieldError>
-                )}
-              </Field>
-              <Field data-invalid={settingsError?.field === "kanbanShortcut"}>
-                <FieldLabel htmlFor="kanban-shortcut">Kanban shortcut</FieldLabel>
-                <Input
-                  id="kanban-shortcut"
-                  value={kanbanShortcutDraft}
-                  onChange={(event) => setKanbanShortcutDraft(event.target.value)}
-                  aria-invalid={settingsError?.field === "kanbanShortcut"}
-                />
-                <FieldDescription>
-                  Open Kanban. For example Meta+Alt+K or Ctrl+Alt+K.
-                </FieldDescription>
-                {settingsError?.field === "kanbanShortcut" && (
                   <FieldError>{settingsError.message}</FieldError>
                 )}
               </Field>

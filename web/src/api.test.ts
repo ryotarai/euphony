@@ -111,51 +111,25 @@ test("lists all sessions and resumes a history session with replacement selectio
   );
 });
 
-test("lists Kanban sessions and archives and updates a session through the direct API contract", async () => {
-  const activeSession = {
-    id: "kanban-1",
-    terminalId: "terminal/one",
-    agent: "codex" as const,
-    sessionId: "session/one",
-    title: "Investigate the relay",
+test("lists archived sidebar sessions separately from current sessions", async () => {
+  const archived = {
+    id: "archived-1",
+    name: "Archived rollout",
+    state: "exited" as const,
+    archived: true,
     cwd: "/repo",
-    updatedAt: "2026-08-19T00:00:00Z",
-    state: "open" as const,
-    status: "running" as const,
-    archived: false,
+    agent: "codex",
+    agentSessionId: "session-archived",
+    createdAt: "2026-08-12T00:00:00Z",
   };
-  const archivedSession = { ...activeSession, archived: true };
   const fetchMock = vi.spyOn(globalThis, "fetch")
-    .mockImplementationOnce(() => jsonResponse([activeSession]))
-    .mockImplementationOnce(() => jsonResponse([archivedSession]))
-    .mockImplementationOnce(() => jsonResponse(archivedSession));
+    .mockImplementationOnce(() => jsonResponse([archived]));
   const api = new ApiClient("token");
 
-  expect(await api.listKanbanSessions()).toEqual([activeSession]);
-  expect(await api.listKanbanArchives()).toEqual([archivedSession]);
-  expect(await api.setKanbanSessionArchived("terminal/one", "session/one", true))
-    .toEqual(archivedSession);
-
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    1,
-    "/api/kanban/sessions",
+  expect(await api.listArchivedSessions()).toEqual([archived]);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/archived",
     expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: "Bearer token" }),
-    }),
-  );
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
-    "/api/kanban/archives",
-    expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: "Bearer token" }),
-    }),
-  );
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
-    "/api/kanban/sessions/terminal%2Fone/session%2Fone",
-    expect.objectContaining({
-      method: "PATCH",
-      body: JSON.stringify({ archived: true }),
       headers: expect.objectContaining({ Authorization: "Bearer token" }),
     }),
   );

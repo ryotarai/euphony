@@ -216,12 +216,29 @@ func TestAllSessionsResumeStartsPersistedCodexWithSeparateArgumentsAndSelection(
 		Selection selection.Snapshot `json:"selection"`
 	}
 	decodeResponse(t, response, &result)
-	if result.Terminal.ID == "" || result.Terminal.CWD != cwd || result.Terminal.State != session.StateRunning {
+	if result.Terminal.ID == "" || result.Terminal.CWD != cwd || result.Terminal.State != session.StateRunning ||
+		result.Terminal.Agent != "codex" || result.Terminal.AgentTitle != "Resume rollout" {
 		t.Fatalf("resumed terminal = %#v", result.Terminal)
+	}
+	resumedMetadata, ok := srv.sessions.Metadata(result.Terminal.ID)
+	if !ok || resumedMetadata.ResumeAgent != "codex" ||
+		resumedMetadata.AgentSessionID != "session-resume" {
+		t.Fatalf("resumed metadata identity = %#v, found = %t", resumedMetadata, ok)
 	}
 	if !reflect.DeepEqual(result.Selection.TerminalIDs, []string{result.Terminal.ID}) ||
 		result.Selection.FocusedTerminalID != result.Terminal.ID {
 		t.Fatalf("resume selection = %#v", result.Selection)
+	}
+	archivedResponse := performRequest(t, srv, http.MethodGet, "/api/sessions/archived", "")
+	if archivedResponse.Code != http.StatusOK {
+		t.Fatalf("GET archived after resume status = %d, body = %s", archivedResponse.Code, archivedResponse.Body.String())
+	}
+	var archivedItems []struct {
+		AgentSessionID string `json:"agentSessionId"`
+	}
+	decodeResponse(t, archivedResponse, &archivedItems)
+	if len(archivedItems) != 0 {
+		t.Fatalf("archived sessions after resume = %#v, want no restored session", archivedItems)
 	}
 	waitForServer(t, 3*time.Second, func() bool {
 		data, err := os.ReadFile(argsPath)

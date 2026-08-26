@@ -6,13 +6,16 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
-  Columns3Icon,
   FolderPlusIcon,
+  ArchiveIcon,
   SquareTerminalIcon,
 } from "lucide-react";
+import { useState } from "react";
 import type { FocusEvent, PointerEvent } from "react";
 import type { AgentSummary, Project, Session } from "../types";
+import { filterSessions, isHumanActionRequired, normalizeSessionFilter } from "../sessionPresentation";
 import { useSessionContextMenu } from "./SessionContextMenu";
+import { SessionFilter } from "./SessionFilter";
 
 export interface SessionInfoInteractionHandlers {
   onSessionPointerEnter?(session: Session, event: PointerEvent<HTMLElement>): void;
@@ -27,10 +30,15 @@ export interface ProjectSidebarProps extends SessionInfoInteractionHandlers {
   agentSummaries: AgentSummary[];
   selectedID?: string | null;
   onSelectSession(sessionID: string): void;
+  onSelectArchivedSession?(session: Session): void;
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
-  onOpenKanban?(projectPath: string): void;
   onAddProject?(): void;
+  archivedVisible?: boolean;
+  archivedLoading?: boolean;
+  archivedError?: string;
+  onShowArchived?(): void;
+  onHideArchived?(): void;
   onArchive?(session: Session): void;
   onDelete?(session: Session): void;
 }
@@ -46,6 +54,7 @@ function statusLabel(status: string) {
 }
 
 function activity(session: Session, summary: SessionSummary) {
+  if (session.archived) return "archived";
   if (summary) return summary.status;
   if (session.agentStatus) return session.agentStatus;
   return session.state === "running" ? "terminal" : session.state;
@@ -54,6 +63,11 @@ function activity(session: Session, summary: SessionSummary) {
 function providerLabel(provider: string | undefined) {
   if (!provider) return "";
   return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function sentence(value: string, fallback: string) {
+  const text = value.trim() || fallback;
+  return /[.!?。！？]$/u.test(text) ? text : `${text}.`;
 }
 
 function sessionIdentity(session: Session, summary: SessionSummary) {
@@ -95,66 +109,6 @@ function latestSummaries(summaries: AgentSummary[]) {
   return current;
 }
 
-function terminalUpdatedAt(session: Session) {
-  const timestamp = Date.parse(session.updatedAt ?? session.createdAt);
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function sessionPriority(session: Session, summary: SessionSummary) {
-  if (session.needsAttention) return 0;
-  switch (activity(session, isAgentSession(session) ? summary : undefined)) {
-    case "blocked":
-      return 1;
-    case "running":
-      return 2;
-    case "waiting":
-      return 3;
-    case "terminal":
-      return 4;
-    default:
-      return 100;
-  }
-}
-
-function compareSessions(
-  summaries: Map<string, AgentSummary>,
-  left: Session,
-  right: Session,
-) {
-  const priority =
-    sessionPriority(left, summaries.get(left.id)) -
-    sessionPriority(right, summaries.get(right.id));
-  if (priority !== 0) return priority;
-  return terminalUpdatedAt(right) - terminalUpdatedAt(left);
-}
-
-function latestProjectSessionUpdatedAt(sessions: Session[]) {
-  if (sessions.length === 0) return 0;
-  return sessions.reduce(
-    (latest, session) => Math.max(latest, terminalUpdatedAt(session)),
-    Number.NEGATIVE_INFINITY,
-  );
-}
-
-function orderProjectsByLatestSession(
-  projects: Project[],
-  grouped: Map<string, Session[]>,
-) {
-  return projects
-    .map((project, index) => ({
-      index,
-      latestUpdatedAt: latestProjectSessionUpdatedAt(
-        grouped.get(project.id) ?? [],
-      ),
-      project,
-    }))
-    .sort(
-      (left, right) =>
-        right.latestUpdatedAt - left.latestUpdatedAt || left.index - right.index,
-    )
-    .map(({ project }) => project);
-}
-
 function sessionStatusIcon(status: string) {
   const props = {
     "aria-label": statusLabel(status),
@@ -163,6 +117,8 @@ function sessionStatusIcon(status: string) {
   };
 
   switch (status) {
+    case "archived":
+      return <ArchiveIcon {...props} />;
     case "running":
       return <CircleDotIcon {...props} />;
     case "blocked":
@@ -185,7 +141,6 @@ function sessionStatusIcon(status: string) {
 function projectSessions(
   projects: Project[],
   sessions: Session[],
-  summaries: Map<string, AgentSummary>,
 ) {
   const knownProjectIDs = new Set(projects.map((project) => project.id));
   const grouped = new Map<string, Session[]>();
@@ -201,24 +156,16 @@ function projectSessions(
     else grouped.set(session.projectId, [session]);
   }
 
-  for (const group of grouped.values()) {
-    group.sort((left, right) => compareSessions(summaries, left, right));
-  }
-  unassigned.sort((left, right) => compareSessions(summaries, left, right));
-  const orderedProjects = orderProjectsByLatestSession(projects, grouped);
-  return { grouped, orderedProjects, unassigned };
+  return { grouped, orderedProjects: projects, unassigned };
 }
 
 export function flattenProjectSidebarSessions(
   projects: Project[],
   sessions: Session[],
-  agentSummaries: AgentSummary[],
 ) {
-  const summaries = latestSummaries(agentSummaries);
   const { grouped, orderedProjects, unassigned } = projectSessions(
     projects,
     sessions,
-    summaries,
   );
   return [
     ...orderedProjects.flatMap((project) => grouped.get(project.id) ?? []),
@@ -278,6 +225,7 @@ function ProjectSessionRow({
   summary,
   selected,
   onSelectSession,
+  onSelectArchivedSession,
   onArchive,
   onDelete,
   onSessionPointerEnter,
@@ -289,6 +237,7 @@ function ProjectSessionRow({
   summary: SessionSummary;
   selected: boolean;
   onSelectSession(sessionID: string): void;
+  onSelectArchivedSession?(session: Session): void;
   onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
@@ -297,7 +246,9 @@ function ProjectSessionRow({
   const status = activity(session, effectiveSummary);
   const identity = sessionIdentity(session, effectiveSummary);
   const purpose = sessionPurpose(session, effectiveSummary);
-  const action = effectiveSummary?.action?.trim() || "";
+  const action = effectiveSummary && isHumanActionRequired(effectiveSummary)
+    ? effectiveSummary.action?.trim() ?? ""
+    : "";
   const unread = effectiveSummary?.unread === true;
   const latestSummary = effectiveSummary?.summary?.trim() || "";
   const purposeText = purpose || latestSummary || "New session";
@@ -306,22 +257,25 @@ function ProjectSessionRow({
   const accessibleDescriptionID = `project-session-details-${session.id}`;
   const accessibleDescription = [
     `Status: ${statusLabel(status)}.`,
-    `Latest summary: ${latestSummary}.`,
-    `Required action: ${requiredAction}.`,
+    `Latest summary: ${sentence(latestSummary, "None")}`,
+    `Required action: ${sentence(requiredAction, "None")}`,
     unread ? "Unread." : "Read.",
     ...(session.needsAttention ? ["Needs attention."] : []),
   ].join(" ");
   const selectionDetails = [purpose, action].filter(Boolean).join(" — ");
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
-  const { onContextMenu, menu } = useSessionContextMenu(
-    identity,
-    agentSession
+  const contextAction = session.archived
+    ? undefined
+    : agentSession
       ? onArchive
         ? () => onArchive(session)
         : undefined
       : onDelete
         ? () => onDelete(session)
-        : undefined,
+        : undefined;
+  const { onContextMenu, menu } = useSessionContextMenu(
+    identity,
+    contextAction,
     agentSession ? "Archive" : "Delete",
   );
 
@@ -346,7 +300,10 @@ function ProjectSessionRow({
         data-unread={unread ? "true" : "false"}
         onFocus={(event) => onSessionFocus?.(session, event)}
         onBlur={() => onSessionBlur?.(session.id)}
-        onClick={() => onSelectSession(session.id)}
+        onClick={() => {
+          if (session.archived) onSelectArchivedSession?.(session);
+          else onSelectSession(session.id);
+        }}
       >
         {sessionStatusIcon(status)}
         {purposeText && (
@@ -386,9 +343,9 @@ function ProjectGroup({
   summaries,
   selectedID,
   onSelectSession,
+  onSelectArchivedSession,
   onCreateTerminal,
   onCreateAgent,
-  onOpenKanban,
   onArchive,
   onDelete,
   onSessionPointerEnter,
@@ -401,9 +358,9 @@ function ProjectGroup({
   summaries: Map<string, AgentSummary>;
   selectedID?: string | null;
   onSelectSession(sessionID: string): void;
+  onSelectArchivedSession?(session: Session): void;
   onCreateTerminal?(projectID: string): void;
   onCreateAgent?(projectID: string): void;
-  onOpenKanban?(projectPath: string): void;
   onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
 } & SessionInfoInteractionHandlers) {
@@ -419,21 +376,6 @@ function ProjectGroup({
       aria-labelledby={headingID}
     >
       <header className="project-sidebar-header">
-        {project && onOpenKanban && (
-          <button
-            type="button"
-            className="project-open-kanban"
-            aria-label={`Open Kanban for ${project.path}`}
-            title={`Open Kanban for ${project.path}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenKanban(project.path);
-            }}
-          >
-            <Columns3Icon aria-hidden="true" />
-            <span className="sr-only">Open Kanban for {project.path}</span>
-          </button>
-        )}
         <h2 className="project-sidebar-path" id={headingID} title={label}>{label}</h2>
         {project && (onCreateTerminal || onCreateAgent) && (
           <ProjectActions
@@ -452,6 +394,7 @@ function ProjectGroup({
               summary={summaries.get(session.id)}
               selected={selectedID === session.id}
               onSelectSession={onSelectSession}
+              onSelectArchivedSession={onSelectArchivedSession}
               onArchive={onArchive}
               onDelete={onDelete}
               onSessionPointerEnter={onSessionPointerEnter}
@@ -474,10 +417,15 @@ export function ProjectSidebar({
   agentSummaries,
   selectedID,
   onSelectSession,
+  onSelectArchivedSession,
   onCreateTerminal,
   onCreateAgent,
-  onOpenKanban,
   onAddProject,
+  archivedVisible = false,
+  archivedLoading = false,
+  archivedError = "",
+  onShowArchived,
+  onHideArchived,
   onArchive,
   onDelete,
   onSessionPointerEnter,
@@ -485,12 +433,18 @@ export function ProjectSidebar({
   onSessionFocus,
   onSessionBlur,
 }: ProjectSidebarProps) {
+  const [localFilter, setLocalFilter] = useState("");
   const summaries = latestSummaries(agentSummaries);
+  const sessionFilter = localFilter;
+  const visibleSessions = filterSessions(sessions, summaries, sessionFilter);
   const { grouped, orderedProjects, unassigned } = projectSessions(
     projects,
-    sessions,
-    summaries,
+    visibleSessions,
   );
+  const normalizedFilter = normalizeSessionFilter(sessionFilter);
+  const visibleProjects = normalizedFilter
+    ? orderedProjects.filter((project) => (grouped.get(project.id)?.length ?? 0) > 0)
+    : orderedProjects;
 
   return (
     <nav
@@ -500,6 +454,12 @@ export function ProjectSidebar({
     >
       <header className="project-sidebar-toolbar">
         <h1 className="sr-only">Projects</h1>
+        <SessionFilter
+          value={sessionFilter}
+          totalCount={sessions.length}
+          visibleCount={visibleSessions.length}
+          onChange={setLocalFilter}
+        />
         {onAddProject && (
           <button
             type="button"
@@ -515,9 +475,38 @@ export function ProjectSidebar({
             <span>Add project</span>
           </button>
         )}
+        {onShowArchived && !archivedVisible && (
+          <button
+            type="button"
+            className="project-sidebar-archived-toggle"
+            aria-label="Show archived"
+            onClick={(event) => {
+              event.stopPropagation();
+              onShowArchived();
+            }}
+          >
+            <ArchiveIcon aria-hidden="true" />
+            <span>{archivedLoading ? "Loading archived…" : "Show archived"}</span>
+          </button>
+        )}
+        {onHideArchived && archivedVisible && (
+          <button
+            type="button"
+            className="project-sidebar-archived-toggle"
+            aria-label="Hide archived"
+            onClick={(event) => {
+              event.stopPropagation();
+              onHideArchived();
+            }}
+          >
+            <ArchiveIcon aria-hidden="true" />
+            <span>Hide archived</span>
+          </button>
+        )}
       </header>
+      {archivedError && <p className="project-sidebar-error" role="alert">{archivedError}</p>}
       <div className="project-sidebar-groups">
-        {orderedProjects.map((project) => (
+        {visibleProjects.map((project) => (
           <ProjectGroup
             key={project.id}
             project={project}
@@ -525,9 +514,9 @@ export function ProjectSidebar({
             summaries={summaries}
             selectedID={selectedID}
             onSelectSession={onSelectSession}
+            onSelectArchivedSession={onSelectArchivedSession}
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
-            onOpenKanban={onOpenKanban}
             onArchive={onArchive}
             onDelete={onDelete}
             onSessionPointerEnter={onSessionPointerEnter}
@@ -542,6 +531,7 @@ export function ProjectSidebar({
             summaries={summaries}
             selectedID={selectedID}
             onSelectSession={onSelectSession}
+            onSelectArchivedSession={onSelectArchivedSession}
             onCreateTerminal={onCreateTerminal}
             onCreateAgent={onCreateAgent}
             onArchive={onArchive}
@@ -551,6 +541,9 @@ export function ProjectSidebar({
             onSessionFocus={onSessionFocus}
             onSessionBlur={onSessionBlur}
           />
+        )}
+        {normalizedFilter && visibleSessions.length === 0 && (
+          <p className="project-sidebar-filter-empty">No sessions match your filter.</p>
         )}
       </div>
     </nav>
