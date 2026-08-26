@@ -20,7 +20,7 @@ type Config struct {
 }
 
 func Report(ctx context.Context, config Config, input io.Reader) error {
-	if config.URL == "" || config.Token == "" || config.TerminalID == "" {
+	if config.URL == "" || config.TerminalID == "" {
 		return nil
 	}
 	var event struct {
@@ -65,7 +65,9 @@ func Report(ctx context.Context, config Config, input io.Reader) error {
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+config.Token)
+	if config.Token != "" {
+		request.Header.Set("Authorization", "Bearer "+config.Token)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

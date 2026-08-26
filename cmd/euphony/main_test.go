@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ryotarai/euphony/internal/server"
 	euphonysetup "github.com/ryotarai/euphony/internal/setup"
 )
 
@@ -308,6 +309,40 @@ func TestResolveTokenPreservesConfiguredToken(t *testing.T) {
 	}
 	if token != "configured-token" {
 		t.Fatalf("resolveToken() token = %q, want configured token", token)
+	}
+}
+
+func TestResolveAuthMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		wantMode server.AuthMode
+		wantErr  bool
+	}{
+		{name: "default", wantMode: server.AuthModeToken},
+		{name: "token", input: "token", wantMode: server.AuthModeToken},
+		{name: "none", input: "none", wantMode: server.AuthModeNone},
+		{name: "invalid", input: "disabled", wantErr: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			mode, err := resolveAuthMode(test.input)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("resolveAuthMode() error = nil, want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveAuthMode() error = %v", err)
+			}
+			if mode != test.wantMode {
+				t.Fatalf("resolveAuthMode() = %q, want %q", mode, test.wantMode)
+			}
+		})
 	}
 }
 

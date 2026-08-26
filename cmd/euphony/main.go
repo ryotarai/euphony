@@ -114,6 +114,10 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 			log.Printf("Agent setup warning: %v", err)
 		},
 	)
+	authMode, err := resolveAuthMode(os.Getenv("EUPHONY_AUTH_MODE"))
+	if err != nil {
+		return err
+	}
 	address := os.Getenv("EUPHONY_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"
@@ -146,12 +150,17 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	codexSessionsRoot, claudeProjectsRoot := agentLogRoots(
 		home, codexDirectory, claudeDirectory,
 	)
-	token, generatedToken, err := resolveToken(os.Getenv("EUPHONY_TOKEN"))
-	if err != nil {
-		return err
+	var token string
+	generatedToken := false
+	if authMode == server.AuthModeToken {
+		token, generatedToken, err = resolveToken(os.Getenv("EUPHONY_TOKEN"))
+		if err != nil {
+			return err
+		}
 	}
 	srv, err := server.New(server.Config{
 		Token:              token,
+		AuthMode:           authMode,
 		Shell:              os.Getenv("SHELL"),
 		HookURL:            "http://" + actualAddress + "/api/hooks/terminal",
 		DatabasePath:       databasePath,
@@ -426,6 +435,17 @@ func resolveToken(configured string) (string, bool, error) {
 		return "", false, fmt.Errorf("generate EUPHONY_TOKEN: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(bytes), true, nil
+}
+
+func resolveAuthMode(configured string) (server.AuthMode, error) {
+	switch strings.TrimSpace(configured) {
+	case "", string(server.AuthModeToken):
+		return server.AuthModeToken, nil
+	case string(server.AuthModeNone):
+		return server.AuthModeNone, nil
+	default:
+		return "", fmt.Errorf("EUPHONY_AUTH_MODE must be token or none")
+	}
 }
 
 func browserURL(address, token string) string {

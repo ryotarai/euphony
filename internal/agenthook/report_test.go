@@ -150,6 +150,33 @@ func TestReportIsNoopOutsideEuphonyTerminal(t *testing.T) {
 	}
 }
 
+func TestReportWithoutTokenStillPostsActivity(t *testing.T) {
+	received := false
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = true
+		authorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	err := Report(context.Background(), Config{
+		URL:        server.URL,
+		TerminalID: "terminal-123",
+		Agent:      "codex",
+		Status:     "running",
+	}, strings.NewReader(`{"cwd":"/repo"}`))
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if !received {
+		t.Fatal("Report() did not post activity without a token")
+	}
+	if authorization != "" {
+		t.Fatalf("Authorization = %q, want no header", authorization)
+	}
+}
+
 func TestReportClearsAgentWhenSessionEnds(t *testing.T) {
 	var payload map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
