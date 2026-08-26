@@ -18,8 +18,16 @@ import (
 	webassets "github.com/ryotarai/euphony/web"
 )
 
+type AuthMode string
+
+const (
+	AuthModeToken AuthMode = "token"
+	AuthModeNone  AuthMode = "none"
+)
+
 type Config struct {
 	Token              string
+	AuthMode           AuthMode
 	Shell              string
 	HookURL            string
 	DatabasePath       string
@@ -53,7 +61,14 @@ type Server struct {
 }
 
 func New(config Config) (*Server, error) {
-	if config.Token == "" {
+	authMode := config.AuthMode
+	if authMode == "" {
+		authMode = AuthModeToken
+	}
+	if authMode != AuthModeToken && authMode != AuthModeNone {
+		return nil, errors.New("EUPHONY_AUTH_MODE must be token or none")
+	}
+	if authMode == AuthModeToken && config.Token == "" {
 		return nil, errors.New("EUPHONY_TOKEN is required")
 	}
 
@@ -142,6 +157,9 @@ func New(config Config) (*Server, error) {
 	public.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	public.HandleFunc("GET /api/auth/config", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]AuthMode{"mode": authMode})
+	})
 	public.HandleFunc("GET /api/sessions/{id}/terminal", server.terminal)
 
 	protected := http.NewServeMux()
@@ -199,7 +217,11 @@ func New(config Config) (*Server, error) {
 	protected.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "api_not_found", "The API endpoint does not exist.")
 	})
-	public.Handle("/api/", bearerAuth(config.Token, protected))
+	apiHandler := http.Handler(protected)
+	if authMode == AuthModeToken {
+		apiHandler = bearerAuth(config.Token, protected)
+	}
+	public.Handle("/api/", apiHandler)
 
 	assets := config.Assets
 	if assets == nil {
