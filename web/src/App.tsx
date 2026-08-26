@@ -101,6 +101,7 @@ const quickActionStatuses = [
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 const filterDeselectDelayMs = 10_000;
+const agentLaunchVerificationDelayMs = 500;
 const maxCachedTerminalViews = 4;
 const maxTerminalScreenSnapshotBytes = 128 * 1024;
 const agentsPaneID = "agents" as const;
@@ -898,6 +899,17 @@ export function App({
   const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
   const [projectDirectoryPicking, setProjectDirectoryPicking] = useState(false);
   const agentStartSubmittingRef = useRef(false);
+  const agentLaunchRevisionRef = useRef(0);
+  const agentLaunchTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      agentLaunchRevisionRef.current += 1;
+      if (agentLaunchTimerRef.current !== null) {
+        window.clearTimeout(agentLaunchTimerRef.current);
+        agentLaunchTimerRef.current = null;
+      }
+    };
+  }, []);
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [pendingRename, setPendingRename] = useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -3177,6 +3189,12 @@ export function App({
   async function startAgentInProject(projectID: string, kind: AgentKind) {
     if (!api || agentStartSubmittingRef.current) return;
     agentStartSubmittingRef.current = true;
+    const launchRevision = agentLaunchRevisionRef.current + 1;
+    agentLaunchRevisionRef.current = launchRevision;
+    if (agentLaunchTimerRef.current !== null) {
+      window.clearTimeout(agentLaunchTimerRef.current);
+      agentLaunchTimerRef.current = null;
+    }
     try {
       const created = await createSession(false, undefined, projectID, kind);
       if (!created) {
@@ -3184,7 +3202,21 @@ export function App({
         return;
       }
       try {
-        applySessionSnapshot(await api.listSessions());
+        const refreshedSessions = await api.listSessions();
+        applySessionSnapshot(refreshedSessions);
+        agentLaunchTimerRef.current = window.setTimeout(() => {
+          agentLaunchTimerRef.current = null;
+          if (agentLaunchRevisionRef.current !== launchRevision) return;
+          void api.listSessions().then((latestSessions) => {
+            if (agentLaunchRevisionRef.current !== launchRevision) return;
+            applySessionSnapshot(latestSessions);
+            if (latestSessions.some((session) => session.id === created.id)) return;
+            const agentName = kind === "codex" ? "Codex" : "Claude Code";
+            setRequestError(
+              `${agentName} exited before it could connect. Check that ${agentName} is installed and its Euphony hook integration is configured.`,
+            );
+          }).catch(() => undefined);
+        }, agentLaunchVerificationDelayMs);
       } catch {
         // The terminal remains usable even if the post-start refresh is delayed.
       }
