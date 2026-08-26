@@ -1848,6 +1848,7 @@ test("shows and resumes an archived session from the project sidebar", async () 
 test("stores a valid token and shows project setup when the session list is empty", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock
+    .mockImplementationOnce(() => jsonResponse({ mode: "token" }))
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse([]))
     .mockImplementationOnce(() => jsonResponse([]));
@@ -1859,17 +1860,42 @@ test("stores a valid token and shows project setup when the session list is empt
     />,
   );
 
-  await user.type(screen.getByLabelText("Access token"), "valid-token");
+  await user.type(await screen.findByLabelText("Access token"), "valid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
 
   expect(await screen.findByRole("button", { name: "Add project" })).toBeVisible();
   expect(screen.queryByRole("button", { name: /Select Terminal/ })).not.toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenCalledTimes(4);
   expect(fetchMock).toHaveBeenLastCalledWith("/api/agent-summaries", expect.anything());
   expect(fetchMock.mock.calls.some(
     ([input, init]) => input === "/api/sessions" && init?.method === "POST",
   )).toBe(false);
   expect(sessionStorage.getItem("euphony.token")).toBe("valid-token");
+});
+
+test("opens the workspace directly when the server has no authentication", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/auth/config") return jsonResponse({ mode: "none" });
+    if (input === "/api/sessions") return jsonResponse([runningSession]);
+    if (input === "/api/projects") return jsonResponse([]);
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(
+    <App
+      syncSelection={false}
+      initialSettings={defaultSettings}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
+  expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
+  const sessionRequest = fetchMock.mock.calls.find(([input]) => input === "/api/sessions");
+  expect(sessionRequest?.[1]).toEqual(expect.objectContaining({
+    headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+  }));
 });
 
 test("consumes a token from the URL without leaving it in browser history", async () => {
@@ -1905,7 +1931,7 @@ test("returns to token entry after an invalid token", async () => {
   const user = userEvent.setup();
   render(<App syncSelection={false} initialSettings={defaultSettings} />);
 
-  await user.type(screen.getByLabelText("Access token"), "invalid-token");
+  await user.type(await screen.findByLabelText("Access token"), "invalid-token");
   await user.click(screen.getByRole("button", { name: "Open Euphony" }));
 
   expect(await screen.findByText("That token was not accepted.")).toBeVisible();

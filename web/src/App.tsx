@@ -109,6 +109,7 @@ const agentsPaneID = "agents" as const;
 
 type DashboardPaneID = typeof agentsPaneID;
 type AgentKind = "codex" | "claude";
+type AuthMode = "unknown" | "token" | "none";
 
 interface DashboardRoute {
   pane: DashboardPaneID | null;
@@ -773,6 +774,7 @@ export function App({
 }: AppProps) {
   const initialDashboardRoute = dashboardRouteFromURL();
   const [token, setToken] = useState(() => resolveInitialToken(initialToken));
+  const [authMode, setAuthMode] = useState<AuthMode>("unknown");
   const resumeRoute = window.location.pathname === "/resume";
   const resumeQueryParameters = useMemo(
     () => new URLSearchParams(window.location.search),
@@ -1050,7 +1052,34 @@ export function App({
     selectedIDs,
     statusFilters,
   ]);
-  const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const api = useMemo(() => {
+    if (token) return new ApiClient(token);
+    return authMode === "none" ? new ApiClient("") : null;
+  }, [authMode, token]);
+
+  useEffect(() => {
+    if (token || authMode !== "unknown") return;
+    let active = true;
+    void fetch("/api/auth/config", {
+      headers: { Accept: "application/json" },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Authentication configuration unavailable.");
+        const config = (await response.json()) as { mode?: unknown };
+        return config.mode === "none" ? "none" : "token";
+      })
+      .then((mode) => {
+        if (active) setAuthMode(mode);
+      })
+      .catch(() => {
+        // Fail closed when an older or unavailable server cannot describe its auth mode.
+        if (active) setAuthMode("token");
+      });
+    return () => {
+      active = false;
+    };
+  }, [authMode, token]);
+
   const listSessionSnapshot = useCallback(async (): Promise<Session[] | null> => {
     if (!api) return null;
     const requestID = ++sessionSnapshotRequestRef.current;
@@ -1728,6 +1757,7 @@ export function App({
         const error = sessionResult.reason;
         if (error instanceof ApiError && error.status === 401) {
           sessionStorage.removeItem(tokenKey);
+          setAuthMode("token");
           setAuthError(true);
           setToken("");
         } else {
@@ -1751,6 +1781,7 @@ export function App({
         && projectResult.reason.status === 401
       ) {
         sessionStorage.removeItem(tokenKey);
+        setAuthMode("token");
         setAuthError(true);
         setToken("");
         return;
@@ -1821,6 +1852,7 @@ export function App({
       if (!active) return;
       if (error instanceof ApiError && error.status === 401) {
         sessionStorage.removeItem(tokenKey);
+        setAuthMode("token");
         setAuthError(true);
         setToken("");
       } else {
@@ -1981,6 +2013,7 @@ export function App({
           refreshNeedsAgentSummaries = true;
           if (error instanceof ApiError && error.status === 401) {
             sessionStorage.removeItem(tokenKey);
+            setAuthMode("token");
             setAuthError(true);
             setToken("");
             return;
@@ -3022,6 +3055,7 @@ export function App({
     event.preventDefault();
     const value = draftToken.trim();
     if (!value) return;
+    setAuthMode("token");
     setAuthError(false);
     sessionStorage.setItem(tokenKey, value);
     setToken(value);
@@ -4036,7 +4070,11 @@ export function App({
     }
   }
 
-  if (!token) {
+  if (!token && authMode === "unknown") {
+    return <main className="loading-screen">Checking Euphony authentication…</main>;
+  }
+
+  if (!token && authMode !== "none") {
     return (
       <main className="auth-shell">
         <form className="auth-panel" onSubmit={authenticate}>

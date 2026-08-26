@@ -248,10 +248,9 @@ export class ApiClient {
   ): Promise<void> {
     const response = await fetch("/api/events", {
       signal,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
+      headers: this.requestHeaders({
         Accept: "application/x-ndjson",
-      },
+      }),
     });
     if (!response.ok) {
       throw await this.apiError(response);
@@ -306,10 +305,9 @@ export class ApiClient {
     const response = await fetch(
       `/api/sessions/${encodeURIComponent(id)}/agent-log${suffix}`,
       {
-        headers: {
-          Authorization: `Bearer ${this.token}`,
+        headers: this.requestHeaders({
           ...(request.etag ? { "If-None-Match": request.etag } : {}),
-        },
+        }),
       },
     );
     if (response.status === 304) {
@@ -373,11 +371,10 @@ export class ApiClient {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(path, {
       ...init,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
+      headers: this.requestHeaders({
         "Content-Type": "application/json",
-        ...init.headers,
-      },
+        ...(init.headers as Record<string, string> | undefined),
+      }),
     });
     if (!response.ok) {
       throw await this.apiError(response);
@@ -386,6 +383,13 @@ export class ApiClient {
       return undefined as T;
     }
     return (await response.json()) as T;
+  }
+
+  private requestHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    return {
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      ...extra,
+    };
   }
 
   private async apiError(response: Response): Promise<ApiError> {

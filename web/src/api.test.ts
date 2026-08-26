@@ -56,6 +56,21 @@ test("reads and replaces the shared selection", async () => {
   );
 });
 
+test("omits authorization for an empty token", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse([]));
+  const api = new ApiClient("");
+
+  await expect(api.listSessions()).resolves.toEqual([]);
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions",
+    expect.objectContaining({
+      headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+    }),
+  );
+});
+
 test("lists all sessions and resumes a history session with replacement selection", async () => {
   const allSession: AllSession = {
     id: "history-1",
