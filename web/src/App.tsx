@@ -101,6 +101,8 @@ const quickActionStatuses = [
 const bytesPerMiB = 1024 * 1024;
 const maxHistoryMiB = 4095;
 const filterDeselectDelayMs = 10_000;
+const agentLaunchVerificationDelayMs = 500;
+const agentLaunchVerificationAttempts = 3;
 const maxCachedTerminalViews = 4;
 const maxTerminalScreenSnapshotBytes = 128 * 1024;
 const agentsPaneID = "agents" as const;
@@ -898,6 +900,17 @@ export function App({
   const [projectCreateSubmitting, setProjectCreateSubmitting] = useState(false);
   const [projectDirectoryPicking, setProjectDirectoryPicking] = useState(false);
   const agentStartSubmittingRef = useRef(false);
+  const agentLaunchRevisionRef = useRef(0);
+  const agentLaunchTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      agentLaunchRevisionRef.current += 1;
+      if (agentLaunchTimerRef.current !== null) {
+        window.clearTimeout(agentLaunchTimerRef.current);
+        agentLaunchTimerRef.current = null;
+      }
+    };
+  }, []);
   const [pendingDelete, setPendingDelete] = useState<Session[] | null>(null);
   const [pendingRename, setPendingRename] = useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -978,6 +991,9 @@ export function App({
   const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(null!);
   const previousSessionsRef = useRef<Session[]>([]);
   const previousSessionOrderRef = useRef<Session[]>([]);
+  const sessionSnapshotRequestRef = useRef(0);
+  const appliedSessionSnapshotRequestRef = useRef(0);
+  const latestSessionSnapshotRef = useRef<Session[] | null>(null);
   const openedTerminalIDs = useMemo(() => new Set<string>(), []);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(null!);
   const filterDeselectTimersRef = useRef<Map<string, number>>(null!);
@@ -1035,6 +1051,15 @@ export function App({
     statusFilters,
   ]);
   const api = useMemo(() => (token ? new ApiClient(token) : null), [token]);
+  const listSessionSnapshot = useCallback(async (): Promise<Session[] | null> => {
+    if (!api) return null;
+    const requestID = ++sessionSnapshotRequestRef.current;
+    const items = await api.listSessions();
+    if (requestID < appliedSessionSnapshotRequestRef.current) return null;
+    appliedSessionSnapshotRequestRef.current = requestID;
+    latestSessionSnapshotRef.current = items;
+    return items;
+  }, [api]);
   const renderedSessionOrder = useCallback((items: Session[]) => {
     if (!projectEndpointAvailableRef.current) return flattenLegacySidebarSessions(items);
     return flattenProjectSidebarSessions(projects ?? [], items);
@@ -1694,7 +1719,7 @@ export function App({
     let active = true;
     const loadInitialState = async () => {
       const [sessionResult, projectResult] = await Promise.allSettled([
-        api.listSessions(),
+        listSessionSnapshot(),
         api.listProjects(),
       ]);
       if (!active) return;
@@ -1715,6 +1740,7 @@ export function App({
         return;
       }
 
+      if (sessionResult.value === null) return;
       const items = sessionResult.value;
       if (projectResult.status === "fulfilled" && isProjectList(projectResult.value)) {
         projectEndpointAvailableRef.current = true;
@@ -1808,7 +1834,7 @@ export function App({
     return () => {
       active = false;
     };
-  }, [api, syncSelection]);
+  }, [api, listSessionSnapshot, syncSelection]);
 
   useLayoutEffect(() => {
     if (!sessions) return;
@@ -1833,7 +1859,8 @@ export function App({
   useEffect(() => {
     if (!api || !sessions) return;
     const timer = window.setInterval(() => {
-      api.listSessions().then(async (items) => {
+      listSessionSnapshot().then(async (items) => {
+        if (items === null) return;
         applySessionSnapshot(items);
         if (syncSelection) {
           const selection = await api.getSelection();
@@ -1842,7 +1869,7 @@ export function App({
       }).catch(() => undefined);
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [api, applySessionSnapshot, sessions !== null, syncSelection]);
+  }, [api, applySessionSnapshot, listSessionSnapshot, sessions !== null, syncSelection]);
 
   useEffect(() => {
     if (!syncSelection || !syncEvents || !api || !sessions) return;
@@ -1856,10 +1883,11 @@ export function App({
       refreshRunning = true;
       try {
         const [items, selection] = await Promise.all([
-          api.listSessions(),
+          listSessionSnapshot(),
           api.getSelection(),
         ]);
         if (controller.signal.aborted) return;
+        if (items === null) return;
         applySessionSnapshot(items);
         acceptServerSelection(selection);
         if (includeAgentSummaries) await loadAgentSummaries(true);
@@ -1970,6 +1998,7 @@ export function App({
     applySessionSnapshot,
     applyAgentSummarySnapshot,
     bumpAgentSummaryRevision,
+    listSessionSnapshot,
     loadAgentSummaries,
     sessions !== null,
     syncSelection,
@@ -3177,17 +3206,80 @@ export function App({
   async function startAgentInProject(projectID: string, kind: AgentKind) {
     if (!api || agentStartSubmittingRef.current) return;
     agentStartSubmittingRef.current = true;
+    const launchRevision = agentLaunchRevisionRef.current + 1;
+    agentLaunchRevisionRef.current = launchRevision;
+    if (agentLaunchTimerRef.current !== null) {
+      window.clearTimeout(agentLaunchTimerRef.current);
+      agentLaunchTimerRef.current = null;
+    }
     try {
       const created = await createSession(false, undefined, projectID, kind);
+      if (agentLaunchRevisionRef.current !== launchRevision) return;
       if (!created) {
         setRequestError((current) => current || "The project terminal could not be created.");
         return;
       }
+      const agentName = kind === "codex" ? "Codex" : "Claude Code";
+      const reportLaunchFailure = () => {
+        setRequestError(
+          `${agentName} exited before it could connect. Check that ${agentName} is installed and its Euphony hook integration is configured.`,
+        );
+      };
+      const reportLaunchVerificationFailure = () => {
+        setRequestError(
+          `${agentName} launch could not be confirmed. Check your Euphony connection and try again.`,
+        );
+      };
+      const scheduleLaunchVerification = (attempt: number) => {
+        if (agentLaunchRevisionRef.current !== launchRevision) return;
+        agentLaunchTimerRef.current = window.setTimeout(() => {
+          agentLaunchTimerRef.current = null;
+          if (agentLaunchRevisionRef.current !== launchRevision) return;
+          void verifyLaunch(attempt);
+        }, agentLaunchVerificationDelayMs);
+      };
+      const verifyLaunch = async (attempt: number): Promise<void> => {
+        if (agentLaunchRevisionRef.current !== launchRevision) return;
+        let latestSessions: Session[] | null = null;
+        try {
+          latestSessions = await listSessionSnapshot();
+        } catch {
+          if (agentLaunchRevisionRef.current !== launchRevision) return;
+          if (attempt >= agentLaunchVerificationAttempts) {
+            reportLaunchVerificationFailure();
+            return;
+          }
+          scheduleLaunchVerification(attempt + 1);
+          return;
+        }
+        if (agentLaunchRevisionRef.current !== launchRevision) return;
+        if (latestSessions === null) {
+          if (latestSessionSnapshotRef.current?.some((session) => session.id === created.id)) {
+            return;
+          }
+          // A superseded response is not evidence that the agent disappeared.
+          scheduleLaunchVerification(attempt);
+          return;
+        }
+        applySessionSnapshot(latestSessions);
+        if (!latestSessions.some((session) => session.id === created.id)) {
+          reportLaunchFailure();
+          return;
+        }
+        if (attempt >= agentLaunchVerificationAttempts) {
+          return;
+        }
+        scheduleLaunchVerification(attempt + 1);
+      };
       try {
-        applySessionSnapshot(await api.listSessions());
+        const refreshedSessions = await listSessionSnapshot();
+        if (agentLaunchRevisionRef.current !== launchRevision) return;
+        if (refreshedSessions !== null) applySessionSnapshot(refreshedSessions);
       } catch {
         // The terminal remains usable even if the post-start refresh is delayed.
       }
+      if (agentLaunchRevisionRef.current !== launchRevision) return;
+      scheduleLaunchVerification(1);
       setRequestError("");
     } catch (error) {
       const message = error instanceof Error

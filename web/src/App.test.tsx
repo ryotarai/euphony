@@ -2291,6 +2291,514 @@ test("starts an agent from a project section", async () => {
   expect(await screen.findByLabelText("Terminal terminal pane")).toBeVisible();
 });
 
+test("reports when a project agent exits before connecting", async () => {
+  const project: Project = {
+    id: "project-agent-exit",
+    path: "/workspace/agent-exit-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created: Session = {
+    ...plainTerminalSession,
+    id: "project-agent-exit-terminal",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "starting",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 9,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/terminals" && init?.method === "POST") {
+      return jsonResponse({ terminal: created, selection }, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Codex exited before it could connect.",
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/terminals",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
+test("reports when a project agent disappears after the initial refresh", async () => {
+  const project: Project = {
+    id: "project-agent-race",
+    path: "/workspace/agent-race-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created: Session = {
+    ...plainTerminalSession,
+    id: "project-agent-race-terminal",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "starting",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 10,
+  };
+  let sessionListCalls = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      sessionListCalls += 1;
+      return jsonResponse(sessionListCalls === 2 ? [created] : []);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/terminals" && init?.method === "POST") {
+      return jsonResponse({ terminal: created, selection }, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Codex exited before it could connect.",
+  );
+  expect(sessionListCalls).toBeGreaterThanOrEqual(3);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/terminals",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
+test("keeps checking when the post-start refresh fails", async () => {
+  const project: Project = {
+    id: "project-agent-refresh-error",
+    path: "/workspace/agent-refresh-error-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created: Session = {
+    ...plainTerminalSession,
+    id: "project-agent-refresh-error-terminal",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "starting",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 11,
+  };
+  let sessionListCalls = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      sessionListCalls += 1;
+      if (sessionListCalls === 2) throw new Error("temporary refresh failure");
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/terminals" && init?.method === "POST") {
+      return jsonResponse({ terminal: created, selection }, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Codex exited before it could connect.",
+  );
+  expect(sessionListCalls).toBeGreaterThanOrEqual(3);
+});
+
+test("retries a failed launch verification refresh", async () => {
+  const project: Project = {
+    id: "project-agent-verification-error",
+    path: "/workspace/agent-verification-error-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created: Session = {
+    ...plainTerminalSession,
+    id: "project-agent-verification-error-terminal",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "starting",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 12,
+  };
+  let sessionListCalls = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      sessionListCalls += 1;
+      if (sessionListCalls === 3) throw new Error("temporary verification failure");
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/terminals" && init?.method === "POST") {
+      return jsonResponse({ terminal: created, selection }, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+
+  render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Codex exited before it could connect.",
+  );
+  expect(sessionListCalls).toBeGreaterThanOrEqual(4);
+});
+
+test("does not schedule launch verification after unmount", async () => {
+  const project: Project = {
+    id: "project-agent-unmount",
+    path: "/workspace/agent-unmount-project",
+    createdAt: "2026-08-12T00:00:00Z",
+  };
+  const created: Session = {
+    ...plainTerminalSession,
+    id: "project-agent-unmount-terminal",
+    cwd: project.path,
+    projectId: project.id,
+    agent: "codex",
+    agentStatus: "starting",
+  };
+  const selection: SelectionSnapshot = {
+    terminalIds: [created.id],
+    manualTerminalIds: [created.id],
+    pinnedTerminalIds: [],
+    focusedTerminalId: created.id,
+    filters: { statuses: [], cwds: [] },
+    revision: 13,
+  };
+  let sessionListCalls = 0;
+  let resolvePostStartRefresh = () => {};
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      sessionListCalls += 1;
+      if (sessionListCalls === 2) {
+        return new Promise<Response>((resolve) => {
+          resolvePostStartRefresh = () => resolve(new Response("[]", {
+            headers: { "Content-Type": "application/json" },
+          }));
+        });
+      }
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([project]);
+    }
+    if (input === "/api/agent-summaries") return jsonResponse([]);
+    if (input === "/api/terminals" && init?.method === "POST") {
+      return jsonResponse({ terminal: created, selection }, 201);
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const user = userEvent.setup();
+  const view = render(
+    <App
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      syncSelection={false}
+      syncEvents={false}
+      renderTerminal={(session) => <div aria-label={`${session.name} terminal pane`} />}
+    />,
+  );
+
+  await user.click(await screen.findByRole("button", {
+    name: `Start agent in ${project.path}`,
+  }));
+  await waitFor(() => expect(sessionListCalls).toBe(2));
+  view.unmount();
+  resolvePostStartRefresh();
+  await new Promise((resolve) => setTimeout(resolve, 600));
+
+  expect(sessionListCalls).toBe(2);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/terminals",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
+test("does not let an older session refresh restore a failed launch", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const project: Project = {
+      id: "project-agent-stale-refresh",
+      path: "/workspace/agent-stale-refresh-project",
+      createdAt: "2026-08-12T00:00:00Z",
+    };
+    const created: Session = {
+      ...plainTerminalSession,
+      id: "project-agent-stale-refresh-terminal",
+      cwd: project.path,
+      projectId: project.id,
+      agent: "codex",
+      agentStatus: "starting",
+    };
+    const selection: SelectionSnapshot = {
+      terminalIds: [created.id],
+      manualTerminalIds: [created.id],
+      pinnedTerminalIds: [],
+      focusedTerminalId: created.id,
+      filters: { statuses: [], cwds: [] },
+      revision: 14,
+    };
+    let sessionListCalls = 0;
+    let resolveOlderRefresh = () => {};
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/api/sessions" && (!init || init.method === undefined)) {
+        sessionListCalls += 1;
+        if (sessionListCalls === 2) {
+          return new Promise<Response>((resolve) => {
+            resolveOlderRefresh = () => resolve(new Response(JSON.stringify([created]), {
+              headers: { "Content-Type": "application/json" },
+            }));
+          });
+        }
+        if (sessionListCalls === 3) return jsonResponse([created]);
+        return jsonResponse([]);
+      }
+      if (input === "/api/projects" && (!init || init.method === undefined)) {
+        return jsonResponse([project]);
+      }
+      if (input === "/api/agent-summaries") return jsonResponse([]);
+      if (input === "/api/terminals" && init?.method === "POST") {
+        return jsonResponse({ terminal: created, selection }, 201);
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        syncSelection={false}
+        syncEvents={false}
+        renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      />,
+    );
+
+    await screen.findByRole("button", {
+      name: `Start agent in ${project.path}`,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(sessionListCalls).toBe(2);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: `Start agent in ${project.path}`,
+    }));
+    await waitFor(() => expect(sessionListCalls).toBe(3));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Codex exited before it could connect.",
+    );
+
+    resolveOlderRefresh();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText(`${created.id} terminal pane`)).not.toBeInTheDocument();
+    expect(sessionListCalls).toBeGreaterThanOrEqual(4);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("does not spend launch verification attempts on superseded snapshots", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const project: Project = {
+      id: "project-agent-superseded-verification",
+      path: "/workspace/agent-superseded-verification-project",
+      createdAt: "2026-08-12T00:00:00Z",
+    };
+    const created: Session = {
+      ...plainTerminalSession,
+      id: "project-agent-superseded-verification-terminal",
+      cwd: project.path,
+      projectId: project.id,
+      agent: "codex",
+      agentStatus: "starting",
+    };
+    const selection: SelectionSnapshot = {
+      terminalIds: [created.id],
+      manualTerminalIds: [created.id],
+      pinnedTerminalIds: [],
+      focusedTerminalId: created.id,
+      filters: { statuses: [], cwds: [] },
+      revision: 15,
+    };
+    let sessionListCalls = 0;
+    const pendingRefreshes = new Map<number, () => void>();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/api/sessions" && (!init || init.method === undefined)) {
+        sessionListCalls += 1;
+        if (sessionListCalls === 1) return jsonResponse([]);
+        if (sessionListCalls === 2) return jsonResponse([created]);
+        if (sessionListCalls % 2 === 1) {
+          return new Promise<Response>((resolve) => {
+            pendingRefreshes.set(sessionListCalls, () => resolve(new Response(
+              JSON.stringify([created]),
+              { headers: { "Content-Type": "application/json" } },
+            )));
+          });
+        }
+        return jsonResponse([created]);
+      }
+      if (input === "/api/projects" && (!init || init.method === undefined)) {
+        return jsonResponse([project]);
+      }
+      if (input === "/api/agent-summaries") return jsonResponse([]);
+      if (input === "/api/terminals" && init?.method === "POST") {
+        return jsonResponse({ terminal: created, selection }, 201);
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        syncSelection={false}
+        syncEvents={false}
+        renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      />,
+    );
+
+    await screen.findByRole("button", {
+      name: `Start agent in ${project.path}`,
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: `Start agent in ${project.path}`,
+    }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(sessionListCalls).toBe(4);
+    pendingRefreshes.get(3)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    pendingRefreshes.get(5)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    pendingRefreshes.get(7)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    pendingRefreshes.get(9)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("shows the project terminal startup cause when starting an agent fails", async () => {
   const project: Project = {
     id: "project-agent-error",
