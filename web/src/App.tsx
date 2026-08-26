@@ -993,6 +993,7 @@ export function App({
   const previousSessionOrderRef = useRef<Session[]>([]);
   const sessionSnapshotRequestRef = useRef(0);
   const appliedSessionSnapshotRequestRef = useRef(0);
+  const latestSessionSnapshotRef = useRef<Session[] | null>(null);
   const openedTerminalIDs = useMemo(() => new Set<string>(), []);
   const pendingAgentLaunchIDsRef = useRef<Set<string>>(null!);
   const filterDeselectTimersRef = useRef<Map<string, number>>(null!);
@@ -1056,6 +1057,7 @@ export function App({
     const items = await api.listSessions();
     if (requestID < appliedSessionSnapshotRequestRef.current) return null;
     appliedSessionSnapshotRequestRef.current = requestID;
+    latestSessionSnapshotRef.current = items;
     return items;
   }, [api]);
   const renderedSessionOrder = useCallback((items: Session[]) => {
@@ -3251,15 +3253,20 @@ export function App({
           return;
         }
         if (agentLaunchRevisionRef.current !== launchRevision) return;
-        if (latestSessions !== null) {
-          applySessionSnapshot(latestSessions);
-          if (!latestSessions.some((session) => session.id === created.id)) {
-            reportLaunchFailure();
+        if (latestSessions === null) {
+          if (latestSessionSnapshotRef.current?.some((session) => session.id === created.id)) {
             return;
           }
+          // A superseded response is not evidence that the agent disappeared.
+          scheduleLaunchVerification(attempt);
+          return;
+        }
+        applySessionSnapshot(latestSessions);
+        if (!latestSessions.some((session) => session.id === created.id)) {
+          reportLaunchFailure();
+          return;
         }
         if (attempt >= agentLaunchVerificationAttempts) {
-          if (latestSessions === null) reportLaunchVerificationFailure();
           return;
         }
         scheduleLaunchVerification(attempt + 1);

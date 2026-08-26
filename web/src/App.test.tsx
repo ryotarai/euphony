@@ -2694,6 +2694,111 @@ test("does not let an older session refresh restore a failed launch", async () =
   }
 });
 
+test("does not spend launch verification attempts on superseded snapshots", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const project: Project = {
+      id: "project-agent-superseded-verification",
+      path: "/workspace/agent-superseded-verification-project",
+      createdAt: "2026-08-12T00:00:00Z",
+    };
+    const created: Session = {
+      ...plainTerminalSession,
+      id: "project-agent-superseded-verification-terminal",
+      cwd: project.path,
+      projectId: project.id,
+      agent: "codex",
+      agentStatus: "starting",
+    };
+    const selection: SelectionSnapshot = {
+      terminalIds: [created.id],
+      manualTerminalIds: [created.id],
+      pinnedTerminalIds: [],
+      focusedTerminalId: created.id,
+      filters: { statuses: [], cwds: [] },
+      revision: 15,
+    };
+    let sessionListCalls = 0;
+    const pendingRefreshes = new Map<number, () => void>();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/api/sessions" && (!init || init.method === undefined)) {
+        sessionListCalls += 1;
+        if (sessionListCalls === 1) return jsonResponse([]);
+        if (sessionListCalls === 2) return jsonResponse([created]);
+        if (sessionListCalls % 2 === 1) {
+          return new Promise<Response>((resolve) => {
+            pendingRefreshes.set(sessionListCalls, () => resolve(new Response(
+              JSON.stringify([created]),
+              { headers: { "Content-Type": "application/json" } },
+            )));
+          });
+        }
+        return jsonResponse([created]);
+      }
+      if (input === "/api/projects" && (!init || init.method === undefined)) {
+        return jsonResponse([project]);
+      }
+      if (input === "/api/agent-summaries") return jsonResponse([]);
+      if (input === "/api/terminals" && init?.method === "POST") {
+        return jsonResponse({ terminal: created, selection }, 201);
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    render(
+      <App
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        syncSelection={false}
+        syncEvents={false}
+        renderTerminal={(session) => <div aria-label={`${session.id} terminal pane`} />}
+      />,
+    );
+
+    await screen.findByRole("button", {
+      name: `Start agent in ${project.path}`,
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: `Start agent in ${project.path}`,
+    }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(sessionListCalls).toBe(4);
+    pendingRefreshes.get(3)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    pendingRefreshes.get(5)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    pendingRefreshes.get(7)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    pendingRefreshes.get(9)?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("shows the project terminal startup cause when starting an agent fails", async () => {
   const project: Project = {
     id: "project-agent-error",
