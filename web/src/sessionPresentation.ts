@@ -33,29 +33,42 @@ export function sessionMatchesFilter(
   session: Session,
   summary: AgentSummary | undefined,
   filter: string,
+  additionalSearchText = "",
 ): boolean {
   const query = normalizeSessionFilter(filter);
   if (!query) return true;
-  const searchable = normalizeSessionFilter([
-    session.name,
-    session.agent,
-    session.agentTitle,
-    session.processName,
-    session.agentStatus,
-    session.cwd,
-    session.repoRoot,
-    summary?.provider,
-    summary?.purpose,
-    summary?.summary,
-    summary?.action,
-  ].filter(Boolean).join(" "));
-  return query.split(" ").every((term) => searchable.includes(term));
+  const searchableGroups = [
+    [
+      session.name,
+      session.agent,
+      session.agentTitle,
+      session.processName,
+      session.agentStatus,
+      summary?.provider,
+      summary?.purpose,
+      summary?.summary,
+      summary?.action,
+      additionalSearchText,
+    ],
+    [session.cwd, session.repoRoot],
+  ].map((group) => normalizeSessionFilter(group.filter(Boolean).join(" ")));
+  const terms = query.split(" ");
+  return searchableGroups.some((group) => terms.every((term) => group.includes(term)));
 }
 
 export function filterSessions(
   sessions: Session[],
   summaries: ReadonlyMap<string, AgentSummary>,
   filter: string,
+  additionalSearchText?: (session: Session, summary: AgentSummary | undefined) => string,
 ): Session[] {
-  return sessions.filter((session) => sessionMatchesFilter(session, summaries.get(session.id), filter));
+  return sessions.filter((session) => {
+    const summary = summaries.get(session.id);
+    return sessionMatchesFilter(
+      session,
+      summary,
+      filter,
+      additionalSearchText?.(session, summary),
+    );
+  });
 }

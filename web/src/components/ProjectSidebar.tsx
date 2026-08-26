@@ -10,7 +10,7 @@ import {
   ArchiveIcon,
   SquareTerminalIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FocusEvent, PointerEvent } from "react";
 import type { AgentSummary, Project, Session } from "../types";
 import { filterSessions, isHumanActionRequired, normalizeSessionFilter } from "../sessionPresentation";
@@ -65,17 +65,36 @@ function providerLabel(provider: string | undefined) {
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
+const generatedTerminalName = "terminal";
+
+function isGeneratedTerminal(session: Session) {
+  return !session.customName && session.name.trim().toLocaleLowerCase() === generatedTerminalName;
+}
+
+function projectName(path: string) {
+  const trimmed = path.trim().replace(/\/+$/u, "");
+  return trimmed.split("/").filter(Boolean).at(-1) || trimmed || "Unassigned";
+}
+
 function sentence(value: string, fallback: string) {
   const text = value.trim() || fallback;
   return /[.!?。！？]$/u.test(text) ? text : `${text}.`;
 }
 
-function sessionIdentity(session: Session, summary: SessionSummary) {
+function sessionIdentity(
+  session: Session,
+  summary: SessionSummary,
+  terminalOrdinal?: number,
+) {
   if (session.customName) return session.name;
-  return providerLabel(summary?.provider ?? session.agent) || session.name;
+  const provider = providerLabel(session.agent || summary?.provider);
+  if (provider) return provider;
+  if (isGeneratedTerminal(session)) return `Terminal ${terminalOrdinal ?? 1}`;
+  return session.name;
 }
 
 function sessionPurpose(session: Session, summary: SessionSummary) {
+  if (!isAgentSession(session)) return "";
   const identity = sessionIdentity(session, summary).trim().toLocaleLowerCase();
   const generatedPurpose = summary?.purpose?.trim();
   if (generatedPurpose && generatedPurpose.toLocaleLowerCase() !== identity) {
@@ -223,6 +242,7 @@ function ProjectActions({
 function ProjectSessionRow({
   session,
   summary,
+  terminalOrdinal,
   selected,
   onSelectSession,
   onSelectArchivedSession,
@@ -235,6 +255,7 @@ function ProjectSessionRow({
 }: {
   session: Session;
   summary: SessionSummary;
+  terminalOrdinal?: number;
   selected: boolean;
   onSelectSession(sessionID: string): void;
   onSelectArchivedSession?(session: Session): void;
@@ -244,21 +265,24 @@ function ProjectSessionRow({
   const agentSession = isAgentSession(session);
   const effectiveSummary = agentSession ? summary : undefined;
   const status = activity(session, effectiveSummary);
-  const identity = sessionIdentity(session, effectiveSummary);
+  const identity = sessionIdentity(session, effectiveSummary, terminalOrdinal);
   const purpose = sessionPurpose(session, effectiveSummary);
   const action = effectiveSummary && isHumanActionRequired(effectiveSummary)
     ? effectiveSummary.action?.trim() ?? ""
     : "";
   const unread = effectiveSummary?.unread === true;
   const latestSummary = effectiveSummary?.summary?.trim() || "";
-  const purposeText = purpose || latestSummary || "New session";
-  const showSummary = Boolean(latestSummary && purpose && latestSummary !== purpose);
+  const processName = !agentSession ? session.processName?.trim() || "" : "";
+  const purposeText = purpose || latestSummary || identity || "New session";
+  const showSummary = Boolean(latestSummary && latestSummary !== purposeText);
+  const showProcessName = Boolean(processName && processName !== purposeText);
   const requiredAction = action || "None";
   const accessibleDescriptionID = `project-session-details-${session.id}`;
   const accessibleDescription = [
     `Status: ${statusLabel(status)}.`,
     `Latest summary: ${sentence(latestSummary, "None")}`,
     `Required action: ${sentence(requiredAction, "None")}`,
+    ...(processName ? [`Process: ${processName}.`] : []),
     unread ? "Unread." : "Read.",
     ...(session.needsAttention ? ["Needs attention."] : []),
   ].join(" ");
@@ -319,6 +343,14 @@ function ProjectSessionRow({
             {latestSummary}
           </span>
         )}
+        {showProcessName && (
+          <span
+            className="project-session-summary project-session-process"
+            data-unread={unread ? "true" : "false"}
+          >
+            {processName}
+          </span>
+        )}
         {action && (
           <span
             className="project-session-action"
@@ -341,6 +373,7 @@ function ProjectGroup({
   project,
   sessions,
   summaries,
+  terminalOrdinals,
   selectedID,
   onSelectSession,
   onSelectArchivedSession,
@@ -356,6 +389,7 @@ function ProjectGroup({
   project?: Project;
   sessions: Session[];
   summaries: Map<string, AgentSummary>;
+  terminalOrdinals: Map<string, number>;
   selectedID?: string | null;
   onSelectSession(sessionID: string): void;
   onSelectArchivedSession?(session: Session): void;
@@ -367,6 +401,7 @@ function ProjectGroup({
   const groupID = project?.id ?? "unassigned";
   const headingID = `project-sidebar-heading-${groupID}`;
   const label = project?.path ?? "Unassigned";
+  const heading = project ? projectName(label) : label;
 
   return (
     <section
@@ -376,7 +411,7 @@ function ProjectGroup({
       aria-labelledby={headingID}
     >
       <header className="project-sidebar-header">
-        <h2 className="project-sidebar-path" id={headingID} title={label}>{label}</h2>
+        <h2 className="project-sidebar-path" id={headingID} title={label}>{heading}</h2>
         {project && (onCreateTerminal || onCreateAgent) && (
           <ProjectActions
             project={project}
@@ -392,6 +427,7 @@ function ProjectGroup({
               key={session.id}
               session={session}
               summary={summaries.get(session.id)}
+              terminalOrdinal={terminalOrdinals.get(session.id)}
               selected={selectedID === session.id}
               onSelectSession={onSelectSession}
               onSelectArchivedSession={onSelectArchivedSession}
@@ -434,9 +470,29 @@ export function ProjectSidebar({
   onSessionBlur,
 }: ProjectSidebarProps) {
   const [localFilter, setLocalFilter] = useState("");
+  const terminalOrdinalByIDRef = useRef(new Map<string, number>());
+  const nextTerminalOrdinalByProjectRef = useRef(new Map<string, number>());
   const summaries = latestSummaries(agentSummaries);
+  const terminalOrdinals = new Map<string, number>();
+  for (const session of sessions) {
+    if (!isGeneratedTerminal(session)) continue;
+    const projectKey = session.projectId || "unassigned";
+    const existing = terminalOrdinalByIDRef.current.get(session.id);
+    const ordinal = existing ?? (() => {
+      const next = (nextTerminalOrdinalByProjectRef.current.get(projectKey) ?? 0) + 1;
+      nextTerminalOrdinalByProjectRef.current.set(projectKey, next);
+      terminalOrdinalByIDRef.current.set(session.id, next);
+      return next;
+    })();
+    terminalOrdinals.set(session.id, ordinal);
+  }
   const sessionFilter = localFilter;
-  const visibleSessions = filterSessions(sessions, summaries, sessionFilter);
+  const visibleSessions = filterSessions(
+    sessions,
+    summaries,
+    sessionFilter,
+    (session, summary) => sessionIdentity(session, summary, terminalOrdinals.get(session.id)),
+  );
   const { grouped, orderedProjects, unassigned } = projectSessions(
     projects,
     visibleSessions,
@@ -512,6 +568,7 @@ export function ProjectSidebar({
             project={project}
             sessions={grouped.get(project.id) ?? []}
             summaries={summaries}
+            terminalOrdinals={terminalOrdinals}
             selectedID={selectedID}
             onSelectSession={onSelectSession}
             onSelectArchivedSession={onSelectArchivedSession}
@@ -529,6 +586,7 @@ export function ProjectSidebar({
           <ProjectGroup
             sessions={unassigned}
             summaries={summaries}
+            terminalOrdinals={terminalOrdinals}
             selectedID={selectedID}
             onSelectSession={onSelectSession}
             onSelectArchivedSession={onSelectArchivedSession}

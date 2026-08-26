@@ -72,10 +72,13 @@ func (s *Server) allSessions(ctx context.Context) ([]allSession, error) {
 	byKey := make(map[string]allSession, len(stored))
 	for _, metadata := range stored {
 		item := allSessionFromMetadata(metadata, projectsByID, summaries[metadata.ID])
-		if item.Agent == "" || item.SessionID == "" {
+		if item.Agent == "" || (item.SessionID == "" && item.State != allSessionOpen) {
 			continue
 		}
 		key := allSessionAgentKey(item.Agent, item.SessionID)
+		if item.SessionID == "" {
+			key = item.Agent + "\x00terminal\x00" + item.ID
+		}
 		previous, ok := byKey[key]
 		if !ok || preferAllSession(item, previous) {
 			byKey[key] = item

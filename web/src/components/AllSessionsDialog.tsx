@@ -79,15 +79,21 @@ function displayPath(path: string): string {
   return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
 }
 
-function sessionLocation(session: AllSession): string {
-  const path = (session.project || session.cwd).replace(/\/+$/, "");
-  const displayed = displayPath(path);
+function pathLocation(path: string): string {
+  const normalizedPath = path.replace(/\/+$/, "");
+  const displayed = displayPath(normalizedPath);
   return displayed.split("/").filter(Boolean).at(-1) || displayed || "unknown";
+}
+
+function sessionLocation(session: AllSession): string {
+  return pathLocation(session.project || session.cwd);
 }
 
 function sessionShortID(session: AllSession): string {
   const id = (session.sessionId || session.terminalId || session.id).trim();
-  return `#${id.slice(-8) || "unknown"}`;
+  if (!id) return "#unknown";
+  if (id.length <= 16) return `#${id}`;
+  return `#${id.slice(0, 8)}…${id.slice(-8)}`;
 }
 
 function hasGenericTitle(title: string): boolean {
@@ -208,6 +214,7 @@ export function AllSessionsDialog({
                 const title = displayTitle(session);
                 const location = sessionLocation(session);
                 const shortID = sessionShortID(session);
+                const locationPath = session.project || session.cwd;
                 return (
                   <li key={session.id}>
                     <Button
@@ -249,9 +256,9 @@ export function AllSessionsDialog({
                           <span className="all-session-summary">{session.summary}</span>
                         )}
                         <span className="all-session-metadata">
-                          <span title={session.cwd}>{displayPath(session.cwd)}</span>
+                          <span className="all-session-location" title={locationPath}>{location}</span>
                           {session.project && session.project !== session.cwd && (
-                            <span>{session.project}</span>
+                            <span title={session.cwd}>{pathLocation(session.cwd)}</span>
                           )}
                           <span className="all-session-session-id" title={session.sessionId || session.id}>
                             {shortID}

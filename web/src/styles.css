@@ -5475,12 +5475,10 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
-  text-align: right;
-  color: var(--muted-foreground);
+  color: var(--foreground);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.62rem;
-  font-weight: 500;
+  font-size: 0.7rem;
+  font-weight: 650;
   letter-spacing: 0.02em;
 }
 
@@ -5539,7 +5537,7 @@ input {
 .project-sidebar-session-list {
   display: grid;
   gap: 0.1rem;
-  margin: 0;
+  margin: 0 0 0 0.55rem;
   padding: 0;
   list-style: none;
 }

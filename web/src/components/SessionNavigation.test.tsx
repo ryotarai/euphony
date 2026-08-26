@@ -142,7 +142,10 @@ test("renders the project tree without Inbox or split controls", () => {
     />,
   );
 
-  expect(screen.getByRole("heading", { name: project.path })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "euphony" })).toHaveAttribute(
+    "title",
+    project.path,
+  );
   expect(screen.queryByRole("checkbox", { name: /Include .* in split/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Inbox" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
@@ -268,7 +271,7 @@ test("cancels pending and visible cards when a project row is left or replaced",
       .getByRole("button", { name: /Select Codex.*Sidebar fix/ })
       .closest(".project-session-row");
     const secondRow = screen
-      .getByRole("button", { name: "Select Terminal" })
+      .getByRole("button", { name: "Select Terminal 1" })
       .closest(".project-session-row");
     expect(firstRow).not.toBeNull();
     expect(secondRow).not.toBeNull();

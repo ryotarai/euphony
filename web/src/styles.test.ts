@@ -43,13 +43,14 @@ test("dims read waiting project sessions without attention", () => {
   expect(waitingRule).toContain("opacity: 0.78;");
 });
 
-test("keeps project paths aligned to the visible tail", () => {
+test("keeps project names concise while retaining readable emphasis", () => {
   const headingRule = stylesheet.match(
     /\.project-sidebar-header h2\s*\{([\s\S]*?)\}/,
   )?.[1] ?? "";
 
-  expect(headingRule).toContain("direction: rtl;");
-  expect(headingRule).toContain("text-align: right;");
+  expect(headingRule).toContain("color: var(--foreground);");
+  expect(headingRule).toContain("font-size: 0.7rem;");
+  expect(headingRule).toContain("font-weight: 650;");
 });
 
 test("keeps project session rows flush with the project list", () => {
