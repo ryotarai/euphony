@@ -12,7 +12,7 @@ cp "$repo_root/scripts/dev.sh" "$fixture/repo/scripts/dev.sh"
 cat >"$fixture/bin/go" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'token=%s\naddr=%s\nargs=%s\n' "$EUPHONY_TOKEN" "$EUPHONY_ADDR" "$*" >"$DEV_TEST_LOG/go-started"
+printf 'token=%s\nauth_mode=%s\naddr=%s\nargs=%s\n' "$EUPHONY_TOKEN" "$EUPHONY_AUTH_MODE" "$EUPHONY_ADDR" "$*" >"$DEV_TEST_LOG/go-started"
 trap 'printf "stopped\n" >"$DEV_TEST_LOG/go-stopped"; exit 0' TERM INT
 while true; do sleep 0.05; done
 EOF
@@ -42,6 +42,7 @@ set +e
 PATH="$fixture/bin:$PATH" \
   DEV_TEST_LOG="$fixture/log" \
   EUPHONY_TOKEN="custom-token" \
+  EUPHONY_AUTH_MODE="token" \
   EUPHONY_ADDR="127.0.0.1:19090" \
   EUPHONY_DEV_HOST="0.0.0.0" \
   EUPHONY_DEV_PORT="5199" \
@@ -55,11 +56,33 @@ if [[ $status -eq 0 ]]; then
 fi
 
 grep -q '^token=custom-token$' "$fixture/log/go-started"
+grep -q '^auth_mode=token$' "$fixture/log/go-started"
 grep -q '^addr=127.0.0.1:19090$' "$fixture/log/go-started"
 grep -q '^args=run ./cmd/euphony$' "$fixture/log/go-started"
 grep -q '^installed$' "$fixture/log/npm-installed"
 grep -q '^api_url=http://127.0.0.1:19090$' "$fixture/log/vite-started"
 grep -q '^args=run dev -- --host 0.0.0.0 --port 5199 --open /?token=custom-token$' "$fixture/log/vite-started"
 grep -q '^stopped$' "$fixture/log/go-stopped"
+
+mkdir -p "$fixture/none-log"
+set +e
+PATH="$fixture/bin:$PATH" \
+  DEV_TEST_LOG="$fixture/none-log" \
+  EUPHONY_TOKEN="ignored-token" \
+  EUPHONY_AUTH_MODE="none" \
+  EUPHONY_ADDR="127.0.0.1:19091" \
+  "$fixture/repo/scripts/dev.sh"
+none_status=$?
+set -e
+
+if [[ $none_status -eq 0 ]]; then
+  echo "dev.sh unexpectedly exited successfully after TERM in no-auth mode" >&2
+  exit 1
+fi
+
+grep -q '^auth_mode=none$' "$fixture/none-log/go-started"
+grep -q '^api_url=http://127.0.0.1:19091$' "$fixture/none-log/vite-started"
+grep -q '^args=run dev -- --host 127.0.0.1 --port 5173 --open /$' "$fixture/none-log/vite-started"
+grep -q '^stopped$' "$fixture/none-log/go-stopped"
 
 echo "dev process orchestration passed"

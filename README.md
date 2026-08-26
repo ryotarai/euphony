@@ -76,6 +76,21 @@ EUPHONY_ADDR='0.0.0.0:8080' \
 bin/euphony
 ```
 
+For trusted, loopback-only development, authentication can be disabled
+explicitly:
+
+```sh
+EUPHONY_AUTH_MODE=none \
+EUPHONY_ADDR=127.0.0.1:8080 \
+bin/euphony
+```
+
+Open the printed local address in a browser. In this mode every API endpoint
+and terminal control operation is accessible without a credential, so never
+bind the server to a non-loopback address or expose it through an untrusted
+network. `EUPHONY_AUTH_MODE` accepts `token` (the default) or `none`; an
+unknown value prevents startup.
+
 Euphony does not terminate TLS. When the server is reachable outside a trusted
 network, place it behind an HTTPS reverse proxy and restrict network access.
 
@@ -117,9 +132,9 @@ Start the Go API and Vite development server together:
 make dev
 ```
 
-The command opens <http://127.0.0.1:5173> in the default browser and signs in
-with `development-token`. The token is removed from the address bar
-immediately after the page consumes it. The command installs frontend
+The command opens <http://127.0.0.1:5173> in the default browser and, by
+default, signs in with `development-token`. The token is removed from the
+address bar immediately after the page consumes it. The command installs frontend
 dependencies when needed, waits for the API to become healthy, and stops both
 processes when you press Ctrl+C.
 
@@ -134,6 +149,15 @@ EUPHONY_DEV_PORT=5199 \
 make dev
 ```
 
+To run the development server without authentication:
+
+```sh
+EUPHONY_AUTH_MODE=none make dev
+```
+
+In this mode the development server opens the root URL without a token query
+parameter. The same loopback-only warning as above applies.
+
 Vite proxies `/api` requests and WebSockets to the configured API URL.
 
 ## Agent hooks
@@ -142,9 +166,11 @@ Every Euphony terminal receives these environment variables:
 
 - `EUPHONY_TERMINAL_ID`: the terminal associated with the agent process
 - `EUPHONY_HOOK_URL`: the endpoint that accepts agent activity
-- `EUPHONY_TOKEN`: the bearer token for that endpoint
+- `EUPHONY_TOKEN`: the bearer token for that endpoint; empty when
+  `EUPHONY_AUTH_MODE=none`
 
-Codex, Claude Code, or a wrapper script can report hook events with:
+Codex, Claude Code, or a wrapper script can report hook events with the
+following request in token mode:
 
 ```sh
 curl --fail --silent \
@@ -153,6 +179,9 @@ curl --fail --silent \
   -d "{\"terminalId\":\"$EUPHONY_TERMINAL_ID\",\"agent\":\"codex\",\"status\":\"running\",\"title\":\"Implement terminal groups\",\"cwd\":\"$PWD\"}" \
   "$EUPHONY_HOOK_URL"
 ```
+
+In no-auth mode, omit the `Authorization` header. Agent hooks do this
+automatically when `EUPHONY_AUTH_MODE=none` is used to start Euphony.
 
 Use the agent's start, stop, notification, and session-title hooks to send the
 corresponding status and title. The sidebar refreshes activity automatically.

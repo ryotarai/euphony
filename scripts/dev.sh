@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 token="${EUPHONY_TOKEN:-development-token}"
+auth_mode="${EUPHONY_AUTH_MODE:-token}"
 api_address="${EUPHONY_ADDR:-127.0.0.1:8080}"
 api_url="${EUPHONY_DEV_API_URL:-http://$api_address}"
 vite_host="${EUPHONY_DEV_HOST:-127.0.0.1}"
@@ -36,6 +37,7 @@ echo "Starting Euphony API at http://$api_address"
 (
   cd "$repo_root"
   export EUPHONY_TOKEN="$token"
+  export EUPHONY_AUTH_MODE="$auth_mode"
   export EUPHONY_ADDR="$api_address"
   exec go run ./cmd/euphony
 ) &
@@ -56,8 +58,12 @@ if ! curl --fail --silent --output /dev/null "$api_url/api/health"; then
   exit 1
 fi
 
-encoded_token="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$token")"
+open_path="/"
+if [[ "$auth_mode" != "none" ]]; then
+  encoded_token="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$token")"
+  open_path="/?token=$encoded_token"
+fi
 echo "Starting Euphony web UI at http://$vite_host:$vite_port"
 cd "$repo_root/web"
 export EUPHONY_DEV_API_URL="$api_url"
-npm run dev -- --host "$vite_host" --port "$vite_port" --open "/?token=$encoded_token"
+npm run dev -- --host "$vite_host" --port "$vite_port" --open "$open_path"
