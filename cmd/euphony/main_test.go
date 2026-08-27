@@ -324,6 +324,7 @@ func TestResolveAuthMode(t *testing.T) {
 		{name: "default", wantMode: server.AuthModeToken},
 		{name: "token", input: "token", wantMode: server.AuthModeToken},
 		{name: "none", input: "none", wantMode: server.AuthModeNone},
+		{name: "whitespace is invalid", input: " none ", wantErr: true},
 		{name: "invalid", input: "disabled", wantErr: true},
 	}
 	for _, test := range tests {

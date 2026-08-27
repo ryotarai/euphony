@@ -683,6 +683,36 @@ func TestTerminalRejectsReusedTicket(t *testing.T) {
 	}
 }
 
+func TestNoAuthModeStillRequiresTerminalTicket(t *testing.T) {
+	srv, err := New(Config{AuthMode: AuthModeNone, Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpServer.Close)
+
+	created := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Terminal"}`)
+	var metadata session.Metadata
+	decodeResponse(t, created, &metadata)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") +
+		"/api/sessions/" + metadata.ID + "/terminal"
+	_, response, dialErr := websocket.Dial(ctx, wsURL, nil)
+	if dialErr == nil {
+		t.Fatal("websocket.Dial() error = nil, want missing ticket rejection")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		t.Fatalf("websocket.Dial() status = %d, want %d; error = %v", status, http.StatusUnauthorized, dialErr)
+	}
+}
+
 func TestTerminalWebSocketDoesNotReportExitForLaggingClient(t *testing.T) {
 	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
 	if err != nil {

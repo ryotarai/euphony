@@ -158,6 +158,7 @@ func New(config Config) (*Server, error) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	public.HandleFunc("GET /api/auth/config", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, map[string]AuthMode{"mode": authMode})
 	})
 	public.HandleFunc("GET /api/sessions/{id}/terminal", server.terminal)

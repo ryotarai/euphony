@@ -1061,6 +1061,7 @@ export function App({
     if (token || authMode !== "unknown") return;
     let active = true;
     void fetch("/api/auth/config", {
+      cache: "no-store",
       headers: { Accept: "application/json" },
     })
       .then(async (response) => {

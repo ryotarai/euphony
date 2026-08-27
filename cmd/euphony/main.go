@@ -105,6 +105,10 @@ func runHook(args []string, stdin io.Reader) error {
 }
 
 func runServer(stdin io.Reader, stdout io.Writer) error {
+	authMode, err := resolveAuthMode(os.Getenv("EUPHONY_AUTH_MODE"))
+	if err != nil {
+		return err
+	}
 	runAgentSetupPreflight(
 		isTerminalReader(stdin),
 		func() error {
@@ -114,10 +118,6 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 			log.Printf("Agent setup warning: %v", err)
 		},
 	)
-	authMode, err := resolveAuthMode(os.Getenv("EUPHONY_AUTH_MODE"))
-	if err != nil {
-		return err
-	}
 	address := os.Getenv("EUPHONY_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"
@@ -438,7 +438,7 @@ func resolveToken(configured string) (string, bool, error) {
 }
 
 func resolveAuthMode(configured string) (server.AuthMode, error) {
-	switch strings.TrimSpace(configured) {
+	switch configured {
 	case "", string(server.AuthModeToken):
 		return server.AuthModeToken, nil
 	case string(server.AuthModeNone):

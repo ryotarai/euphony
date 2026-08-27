@@ -62,6 +62,9 @@ func TestAuthConfigIsPublicInBothModes(t *testing.T) {
 			if response.Code != http.StatusOK {
 				t.Fatalf("GET /api/auth/config status = %d, want %d", response.Code, http.StatusOK)
 			}
+			if got := response.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("GET /api/auth/config Cache-Control = %q, want %q", got, "no-store")
+			}
 			var body struct {
 				Mode string `json:"mode"`
 			}
