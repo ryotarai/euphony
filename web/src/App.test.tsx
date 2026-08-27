@@ -1892,6 +1892,13 @@ test("opens the workspace directly when the server has no authentication", async
 
   expect(await screen.findByLabelText("Codex terminal pane")).toBeVisible();
   expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/auth/config",
+    expect.objectContaining({
+      cache: "no-store",
+      headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+    }),
+  );
   const sessionRequest = fetchMock.mock.calls.find(([input]) => input === "/api/sessions");
   expect(sessionRequest?.[1]).toEqual(expect.objectContaining({
     headers: expect.not.objectContaining({ Authorization: expect.anything() }),
