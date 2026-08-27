@@ -30,6 +30,7 @@ type Config struct {
 	AuthMode           AuthMode
 	Shell              string
 	HookURL            string
+	HookSocket         string
 	DatabasePath       string
 	CodexSessionIndex  string
 	CodexSessionsRoot  string
@@ -74,6 +75,7 @@ func New(config Config) (*Server, error) {
 
 	hooks := session.HookConfig{
 		URL:               config.HookURL,
+		Socket:            config.HookSocket,
 		Token:             config.Token,
 		CodexSessionIndex: config.CodexSessionIndex,
 	}

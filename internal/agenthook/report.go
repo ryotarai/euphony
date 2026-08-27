@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"os"
 
@@ -13,10 +14,23 @@ import (
 
 type Config struct {
 	URL        string
+	Socket     string
 	Token      string
 	TerminalID string
 	Agent      string
 	Status     string
+}
+
+// hookClient dials the Unix socket when Euphony serves no TCP listener.
+func hookClient(socket string) *http.Client {
+	if socket == "" {
+		return http.DefaultClient
+	}
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		},
+	}}
 }
 
 func Report(ctx context.Context, config Config, input io.Reader) error {
@@ -69,7 +83,7 @@ func Report(ctx context.Context, config Config, input io.Reader) error {
 		request.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(request)
+	response, err := hookClient(config.Socket).Do(request)
 	if err != nil {
 		return err
 	}

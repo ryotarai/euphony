@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -231,5 +232,33 @@ func TestReportPrefersRenamedClaudeSessionTitle(t *testing.T) {
 	}
 	if payload["title"] != "deploy" {
 		t.Fatalf("payload[title] = %q, want the renamed session title", payload["title"])
+	}
+}
+
+func TestReportOverUnixSocket(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "h.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var payload map[string]string
+	server := &httptest.Server{
+		Listener: listener,
+		Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+		})},
+	}
+	server.Start()
+	defer server.Close()
+
+	err = Report(context.Background(), Config{
+		URL: "http://euphony.local/api/hooks/terminal", Socket: socket,
+		Token: "secret", TerminalID: "terminal-123", Agent: "claude", Status: "running",
+	}, strings.NewReader(`{"cwd":"/repo","session_id":"agent-1"}`))
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if payload["terminalId"] != "terminal-123" {
+		t.Fatalf("payload = %#v", payload)
 	}
 }
