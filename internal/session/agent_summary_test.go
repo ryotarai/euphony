@@ -660,6 +660,10 @@ func (*agentSummaryTestStore) Save(context.Context, Metadata) error {
 	return nil
 }
 
+func (*agentSummaryTestStore) Reorder(context.Context, []string) error {
+	return nil
+}
+
 func (*agentSummaryTestStore) Delete(context.Context, string) error {
 	return nil
 }

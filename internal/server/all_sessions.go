@@ -69,10 +69,37 @@ func (s *Server) allSessions(ctx context.Context) ([]allSession, error) {
 	for _, item := range s.sessions.AgentSummaries() {
 		summaries[item.TerminalID] = item
 	}
+	summariesByAgentSession := make(map[string]session.AgentSummary)
+	for _, metadata := range stored {
+		agent := metadata.Agent
+		if agent == "" {
+			agent = metadata.ResumeAgent
+		}
+		if agent == "" || metadata.AgentSessionID == "" {
+			continue
+		}
+		summary, ok := summaries[metadata.ID]
+		if !ok {
+			continue
+		}
+		key := allSessionAgentKey(agent, metadata.AgentSessionID)
+		previous, exists := summariesByAgentSession[key]
+		if !exists || summary.GeneratedAt.After(previous.GeneratedAt) {
+			summariesByAgentSession[key] = summary
+		}
+	}
 
 	byKey := make(map[string]allSession, len(stored))
 	for _, metadata := range stored {
-		item := allSessionFromMetadata(metadata, projectsByID, summaries[metadata.ID])
+		summary := summaries[metadata.ID]
+		if summary.TerminalID == "" && metadata.AgentSessionID != "" {
+			agent := metadata.Agent
+			if agent == "" {
+				agent = metadata.ResumeAgent
+			}
+			summary = summariesByAgentSession[allSessionAgentKey(agent, metadata.AgentSessionID)]
+		}
+		item := allSessionFromMetadata(metadata, projectsByID, summary)
 		if item.Agent == "" || (item.SessionID == "" && item.State != allSessionOpen) {
 			continue
 		}

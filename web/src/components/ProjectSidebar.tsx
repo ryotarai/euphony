@@ -82,6 +82,10 @@ function projectName(path: string) {
   return trimmed.split("/").filter(Boolean).at(-1) || trimmed || "Unassigned";
 }
 
+function isProjectActionTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest("button"));
+}
+
 function sentence(value: string, fallback: string) {
   const text = value.trim() || fallback;
   return /[.!?。！？]$/u.test(text) ? text : `${text}.`;
@@ -221,6 +225,9 @@ function ProjectSessionRow({
   onDelete,
   onRename,
   canReorder,
+  canMoveUp,
+  canMoveDown,
+  onMove,
   onDragStart,
   onDrop,
   onDragEnd,
@@ -239,6 +246,9 @@ function ProjectSessionRow({
   onDelete?: (session: Session) => void;
   onRename?: (session: Session) => void;
   canReorder?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMove?(direction: "up" | "down"): void;
   onDragStart?(session: Session): void;
   onDrop?(session: Session): void;
   onDragEnd?(): void;
@@ -273,6 +283,10 @@ function ProjectSessionRow({
     .filter(Boolean)
     .join(" — ");
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
+  const reorderActions = [
+    ...(canMoveUp ? [{ label: "Move up", onSelect: () => onMove?.("up") }] : []),
+    ...(canMoveDown ? [{ label: "Move down", onSelect: () => onMove?.("down") }] : []),
+  ];
   const contextAction = session.archived
     ? undefined
     : agentSession
@@ -286,9 +300,12 @@ function ProjectSessionRow({
     identity,
     contextAction,
     agentSession ? "Archive" : "Delete",
-    onRename && !session.archived
-      ? [{ label: "Rename", onSelect: () => onRename(session) }]
-      : [],
+    [
+      ...reorderActions,
+      ...(onRename && !session.archived
+        ? [{ label: "Rename", onSelect: () => onRename(session) }]
+        : []),
+    ],
   );
 
   return (
@@ -336,9 +353,20 @@ function ProjectSessionRow({
         aria-describedby={accessibleDescriptionID}
         aria-pressed={selected}
         aria-current={selected ? "true" : undefined}
+        aria-keyshortcuts={canMoveUp || canMoveDown ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
         data-unread={unread ? "true" : "false"}
         onFocus={(event) => onSessionFocus?.(session, event)}
         onBlur={() => onSessionBlur?.(session.id)}
+        onKeyDown={(event) => {
+          if (!event.altKey) return;
+          if (event.key === "ArrowUp" && canMoveUp) {
+            event.preventDefault();
+            onMove?.("up");
+          } else if (event.key === "ArrowDown" && canMoveDown) {
+            event.preventDefault();
+            onMove?.("down");
+          }
+        }}
         onClick={() => {
           if (session.archived) onSelectArchivedSession?.(session);
           else onSelectSession(session.id);
@@ -398,6 +426,7 @@ function ProjectGroup({
   onDelete,
   onRename,
   canReorderSessions,
+  onSessionMove,
   onSessionDragStart,
   onSessionDrop,
   onSessionDragEnd,
@@ -405,6 +434,9 @@ function ProjectGroup({
   onProjectDragOver,
   onProjectDrop,
   onProjectDragEnd,
+  canMoveProjectUp,
+  canMoveProjectDown,
+  onProjectMove,
   onSessionPointerEnter,
   onSessionPointerLeave,
   onSessionFocus,
@@ -423,6 +455,7 @@ function ProjectGroup({
   onDelete?: (session: Session) => void;
   onRename?: (session: Session) => void;
   canReorderSessions?: boolean;
+  onSessionMove?(session: Session, direction: "up" | "down"): void;
   onSessionDragStart?(session: Session): void;
   onSessionDrop?(session: Session): void;
   onSessionDragEnd?(): void;
@@ -430,11 +463,27 @@ function ProjectGroup({
   onProjectDragOver?(): void;
   onProjectDrop?(project: Project): void;
   onProjectDragEnd?(): void;
+  canMoveProjectUp?: boolean;
+  canMoveProjectDown?: boolean;
+  onProjectMove?(direction: "up" | "down"): void;
 } & SessionInfoInteractionHandlers) {
   const groupID = project?.id ?? "unassigned";
   const headingID = `project-sidebar-heading-${groupID}`;
   const label = project?.path ?? "Unassigned";
   const heading = project ? projectName(label) : label;
+  const projectReorderActions = [
+    ...(canMoveProjectUp
+      ? [{ label: "Move project up", onSelect: () => onProjectMove?.("up") }]
+      : []),
+    ...(canMoveProjectDown
+      ? [{ label: "Move project down", onSelect: () => onProjectMove?.("down") }]
+      : []),
+  ];
+  const {
+    onContextMenu: onProjectContextMenu,
+    menu: projectMenu,
+  } = useSessionContextMenu(heading, undefined, "Delete", projectReorderActions);
+  const activeSessions = sessions.filter((session) => !session.archived);
 
   return (
     <section
@@ -446,19 +495,38 @@ function ProjectGroup({
       <header
         className="project-sidebar-header"
         draggable={Boolean(project && onProjectDragStart)}
+        tabIndex={projectReorderActions.length > 0 ? 0 : undefined}
+        aria-keyshortcuts={projectReorderActions.length > 0
+          ? "Alt+ArrowUp Alt+ArrowDown"
+          : undefined}
+        onContextMenu={(event) => {
+          if (isProjectActionTarget(event.target)) return;
+          onProjectContextMenu(event);
+        }}
+        onKeyDown={(event) => {
+          if (isProjectActionTarget(event.target)) return;
+          if (!event.altKey) return;
+          if (event.key === "ArrowUp" && canMoveProjectUp) {
+            event.preventDefault();
+            onProjectMove?.("up");
+          } else if (event.key === "ArrowDown" && canMoveProjectDown) {
+            event.preventDefault();
+            onProjectMove?.("down");
+          }
+        }}
         onDragStart={(event) => {
-          if (!project || !onProjectDragStart) return;
+          if (isProjectActionTarget(event.target) || !project || !onProjectDragStart) return;
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("text/plain", project.id);
           onProjectDragStart(project);
         }}
         onDragOver={(event) => {
-          if (!project || !onProjectDragOver) return;
+          if (isProjectActionTarget(event.target) || !project || !onProjectDragOver) return;
           event.preventDefault();
           onProjectDragOver();
         }}
         onDrop={(event) => {
-          if (!project || !onProjectDrop) return;
+          if (isProjectActionTarget(event.target) || !project || !onProjectDrop) return;
           event.preventDefault();
           onProjectDrop(project);
         }}
@@ -473,9 +541,13 @@ function ProjectGroup({
           />
         )}
       </header>
+      {projectMenu}
       {sessions.length > 0 ? (
         <ul className="project-sidebar-session-list">
-          {sessions.map((session) => (
+          {sessions.map((session) => {
+            const activeIndex = activeSessions.findIndex((item) => item.id === session.id);
+            const canMove = !session.archived && Boolean(canReorderSessions);
+            return (
             <ProjectSessionRow
               key={session.id}
               session={session}
@@ -487,7 +559,10 @@ function ProjectGroup({
               onArchive={onArchive}
               onDelete={onDelete}
               onRename={onRename}
-              canReorder={!session.archived && Boolean(canReorderSessions)}
+              canReorder={canMove}
+              canMoveUp={canMove && activeIndex > 0}
+              canMoveDown={canMove && activeIndex >= 0 && activeIndex < activeSessions.length - 1}
+              onMove={(direction) => onSessionMove?.(session, direction)}
               onDragStart={onSessionDragStart}
               onDrop={onSessionDrop}
               onDragEnd={onSessionDragEnd}
@@ -496,7 +571,8 @@ function ProjectGroup({
               onSessionFocus={onSessionFocus}
               onSessionBlur={onSessionBlur}
             />
-          ))}
+            );
+          })}
         </ul>
       ) : (
         <p className="project-sidebar-empty">No sessions yet.</p>
@@ -598,6 +674,39 @@ export function ProjectSidebar({
     onReorderSessions?.(finalIDs);
   };
 
+  const reorderSessionByOffset = (
+    groupID: string,
+    sessionID: string,
+    offset: -1 | 1,
+  ) => {
+    if (!reorderEnabled) return;
+    const groupSessions = groupID === "unassigned"
+      ? unassigned
+      : grouped.get(groupID) ?? [];
+    const activeIDs = groupSessions
+      .filter((session) => !session.archived)
+      .map((session) => session.id);
+    const fromIndex = activeIDs.indexOf(sessionID);
+    const targetIndex = fromIndex + offset;
+    if (fromIndex < 0 || targetIndex < 0 || targetIndex >= activeIDs.length) return;
+    activeIDs.splice(fromIndex, 1);
+    activeIDs.splice(targetIndex, 0, sessionID);
+    const groupActiveIDs = new Set(
+      groupSessions.filter((session) => !session.archived).map((session) => session.id),
+    );
+    let replacementIndex = 0;
+    const finalIDs: string[] = [];
+    for (const session of sessions) {
+      if (session.archived) continue;
+      finalIDs.push(
+        groupActiveIDs.has(session.id)
+          ? activeIDs[replacementIndex++]
+          : session.id,
+      );
+    }
+    onReorderSessions?.(finalIDs);
+  };
+
   const beginSessionDrag = (session: Session) => {
     if (!reorderEnabled || session.archived) return;
     draggedSessionIDRef.current = session.id;
@@ -620,6 +729,16 @@ export function ProjectSidebar({
     projectIDs.splice(targetIndex, 0, draggedProjectID);
     onReorderProjects?.(projectIDs);
   };
+  const reorderProjectByOffset = (projectID: string, offset: -1 | 1) => {
+    if (!reorderEnabled) return;
+    const projectIDs = orderedProjects.map((project) => project.id);
+    const fromIndex = projectIDs.indexOf(projectID);
+    const targetIndex = fromIndex + offset;
+    if (fromIndex < 0 || targetIndex < 0 || targetIndex >= projectIDs.length) return;
+    projectIDs.splice(fromIndex, 1);
+    projectIDs.splice(targetIndex, 0, projectID);
+    onReorderProjects?.(projectIDs);
+  };
   const endProjectDrag = () => {
     draggedProjectIDRef.current = null;
   };
@@ -640,6 +759,11 @@ export function ProjectSidebar({
       onDelete={onDelete}
       onRename={onRename}
       canReorderSessions={reorderEnabled && Boolean(onReorderSessions)}
+      onSessionMove={(session, direction) => reorderSessionByOffset(
+        project?.id ?? "unassigned",
+        session.id,
+        direction === "up" ? -1 : 1,
+      )}
       onSessionDragStart={beginSessionDrag}
       onSessionDrop={(session) => reorderSessionGroup(project?.id ?? "unassigned", session.id)}
       onSessionDragEnd={endSessionDrag}
@@ -647,6 +771,21 @@ export function ProjectSidebar({
       onProjectDragOver={project && reorderEnabled && onReorderProjects ? () => {} : undefined}
       onProjectDrop={project && reorderEnabled && onReorderProjects ? dropProject : undefined}
       onProjectDragEnd={endProjectDrag}
+      canMoveProjectUp={Boolean(
+        project && reorderEnabled && onReorderProjects
+        && orderedProjects.findIndex((item) => item.id === project.id) > 0,
+      )}
+      canMoveProjectDown={Boolean(
+        project && reorderEnabled && onReorderProjects
+        && (() => {
+          const index = orderedProjects.findIndex((item) => item.id === project.id);
+          return index >= 0 && index < orderedProjects.length - 1;
+        })(),
+      )}
+      onProjectMove={(direction) => {
+        if (!project) return;
+        reorderProjectByOffset(project.id, direction === "up" ? -1 : 1);
+      }}
       onSessionPointerEnter={onSessionPointerEnter}
       onSessionPointerLeave={onSessionPointerLeave}
       onSessionFocus={onSessionFocus}

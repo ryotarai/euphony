@@ -17,6 +17,7 @@ import (
 type metadataStore interface {
 	Load(context.Context) ([]Metadata, error)
 	Save(context.Context, Metadata) error
+	Reorder(context.Context, []string) error
 	Delete(context.Context, string) error
 	LoadSettings(context.Context) (Settings, error)
 	SaveSettings(context.Context, Settings) error

@@ -4298,6 +4298,10 @@ func (s *failSaveMetadataStore) Save(context.Context, Metadata) error {
 	return s.err
 }
 
+func (s *failSaveMetadataStore) Reorder(context.Context, []string) error {
+	return s.err
+}
+
 type gatedResultMetadataStore struct {
 	recordingMetadataStore
 	entered      chan int
@@ -4451,6 +4455,8 @@ func (s *recordingMetadataStore) Save(_ context.Context, metadata Metadata) erro
 	s.mu.Unlock()
 	return nil
 }
+
+func (s *recordingMetadataStore) Reorder(context.Context, []string) error { return nil }
 
 func (s *recordingMetadataStore) Delete(context.Context, string) error {
 	return nil

@@ -1523,6 +1523,186 @@ test("does not render the removed dashboard or request its API", async () => {
   expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/tasks"))).toBe(false);
 });
 
+test("serializes rapid project reorder requests and keeps the latest intent", async () => {
+  const secondProject: Project = {
+    id: "project-second",
+    path: "/workspace/second",
+    createdAt: "2026-07-28T00:01:00Z",
+    order: 2,
+  };
+  const firstProject: Project = {
+    id: "project-first",
+    path: "/workspace/first",
+    createdAt: "2026-07-28T00:00:00Z",
+    order: 1,
+  };
+  const session: Session = {
+    ...plainTerminalSession,
+    id: "project-order-session",
+    projectId: firstProject.id,
+  };
+  const projectOrderRequests: string[][] = [];
+  let releaseFirstRequest = () => {};
+  const firstResponse = new Promise<Response>((resolve) => {
+    releaseFirstRequest = () => {
+      resolve(jsonResponse([secondProject, firstProject]));
+    };
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (input === "/api/sessions" && (!init || init.method === undefined)) {
+      return jsonResponse([session]);
+    }
+    if (input === "/api/projects" && (!init || init.method === undefined)) {
+      return jsonResponse([firstProject, secondProject]);
+    }
+    if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+      return jsonResponse([]);
+    }
+    if (input === "/api/projects/order" && init?.method === "PUT") {
+      const body = JSON.parse(String(init.body)) as { ids: string[] };
+      projectOrderRequests.push(body.ids);
+      if (projectOrderRequests.length === 1) return firstResponse;
+      return jsonResponse(
+        body.ids.map((id) => id === firstProject.id ? firstProject : secondProject),
+      );
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(
+    <App
+      syncSelection={false}
+      syncEvents={false}
+      initialToken="valid-token"
+      initialSettings={defaultSettings}
+      renderTerminal={(currentSession) => <div aria-label={`${currentSession.id} terminal pane`} />}
+    />,
+  );
+
+  const firstHeader = await screen.findByRole("heading", { name: "first" });
+  const secondHeader = screen.getByRole("heading", { name: "second" });
+  const dataTransfer = {
+    effectAllowed: "",
+    dropEffect: "",
+    setData: vi.fn(),
+    getData: vi.fn(),
+  };
+  fireEvent.dragStart(secondHeader.closest("header")!, { dataTransfer });
+  fireEvent.dragOver(firstHeader.closest("header")!, { dataTransfer });
+  fireEvent.drop(firstHeader.closest("header")!, { dataTransfer });
+
+  await waitFor(() => expect(projectOrderRequests).toHaveLength(1));
+  const optimisticFirstHeader = screen.getByRole("heading", { name: "second" });
+  const optimisticSecondHeader = screen.getByRole("heading", { name: "first" });
+  fireEvent.dragStart(optimisticSecondHeader.closest("header")!, { dataTransfer });
+  fireEvent.dragOver(optimisticFirstHeader.closest("header")!, { dataTransfer });
+  fireEvent.drop(optimisticFirstHeader.closest("header")!, { dataTransfer });
+
+  expect(projectOrderRequests).toHaveLength(1);
+  releaseFirstRequest();
+  await waitFor(() => expect(projectOrderRequests).toHaveLength(2));
+  expect(projectOrderRequests[0]).toEqual([secondProject.id, firstProject.id]);
+  expect(projectOrderRequests[1]).toEqual([firstProject.id, secondProject.id]);
+  await waitFor(() => {
+    const headers = [...document.querySelectorAll(".project-sidebar-group > header h2")]
+      .map((heading) => heading.textContent);
+    expect(headers).toEqual(["first", "second"]);
+  });
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects/order",
+    expect.objectContaining({ method: "PUT" }),
+  );
+});
+
+test("keeps an optimistic session order while polling returns a stale order", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const project: Project = {
+      id: "project-session-order",
+      path: "/workspace/session-order",
+      createdAt: "2026-07-28T00:00:00Z",
+      order: 1,
+    };
+    const firstSession: Session = {
+      ...plainTerminalSession,
+      id: "session-order-first",
+      name: "First session",
+      projectId: project.id,
+    };
+    const secondSession: Session = {
+      ...plainTerminalSession,
+      id: "session-order-second",
+      name: "Second session",
+      projectId: project.id,
+    };
+    const sessionOrderRequests: string[][] = [];
+    let releaseFirstRequest = () => {};
+    const firstResponse = new Promise<Response>((resolve) => {
+      releaseFirstRequest = () => resolve(jsonResponse([secondSession, firstSession]));
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/api/sessions" && (!init || init.method === undefined)) {
+        return jsonResponse([firstSession, secondSession]);
+      }
+      if (input === "/api/projects" && (!init || init.method === undefined)) {
+        return jsonResponse([project]);
+      }
+      if (input === "/api/agent-summaries" && (!init || init.method === undefined)) {
+        return jsonResponse([]);
+      }
+      if (input === "/api/sessions/order" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { ids: string[] };
+        sessionOrderRequests.push(body.ids);
+        if (sessionOrderRequests.length === 1) return firstResponse;
+        return jsonResponse(body.ids.map((id) => id === firstSession.id ? firstSession : secondSession));
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    render(
+      <App
+        syncSelection={false}
+        syncEvents={false}
+        initialToken="valid-token"
+        initialSettings={defaultSettings}
+        renderTerminal={(currentSession) => <div aria-label={`${currentSession.id} terminal pane`} />}
+      />,
+    );
+
+    const sidebar = await screen.findByRole("navigation", { name: "Projects and sessions" });
+    const rowIDs = () => [...sidebar.querySelectorAll(".project-session-row")]
+      .map((row) => row.getAttribute("data-session-id"));
+    await waitFor(() => expect(rowIDs()).toEqual([firstSession.id, secondSession.id]));
+    const firstRow = sidebar.querySelector(`[data-session-id="${firstSession.id}"]`);
+    const secondRow = sidebar.querySelector(`[data-session-id="${secondSession.id}"]`);
+    const dataTransfer = {
+      effectAllowed: "",
+      dropEffect: "",
+      setData: vi.fn(),
+      getData: vi.fn(),
+    };
+    fireEvent.dragStart(secondRow!, { dataTransfer });
+    fireEvent.dragOver(firstRow!, { dataTransfer });
+    fireEvent.drop(firstRow!, { dataTransfer });
+    await waitFor(() => expect(sessionOrderRequests).toHaveLength(1));
+    expect(rowIDs()).toEqual([secondSession.id, firstSession.id]);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await waitFor(() => expect(rowIDs()).toEqual([secondSession.id, firstSession.id]));
+
+    releaseFirstRequest();
+    await waitFor(() => expect(rowIDs()).toEqual([secondSession.id, firstSession.id]));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions/order",
+      expect.objectContaining({ method: "PUT" }),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("restores a selected Inbox item from its URL", async () => {
   history.replaceState(null, "", "/inbox/session-2");
   const firstSummary: AgentSummary = {

@@ -2123,10 +2123,6 @@ func sortMetadata(metadata []Metadata) {
 	})
 }
 
-type metadataOrderStore interface {
-	Reorder(context.Context, []string) error
-}
-
 type metadataOrderUpdate struct {
 	item   *entry
 	before Metadata
@@ -2200,15 +2196,7 @@ func (m *Manager) ReorderCurrent(ctx context.Context, orderedIDs []string) ([]Me
 
 	if store != nil && len(updates) > 0 {
 		persist := func() error {
-			if reorderStore, ok := store.(metadataOrderStore); ok {
-				return reorderStore.Reorder(ctx, orderedIDs)
-			}
-			for _, metadata := range updates {
-				if err := store.Save(ctx, metadata); err != nil {
-					return err
-				}
-			}
-			return nil
+			return store.Reorder(ctx, orderedIDs)
 		}
 		if err := m.runStoreOperationContext(ctx, operation, persist); err != nil {
 			m.mu.Lock()

@@ -5561,6 +5561,12 @@ input {
   cursor: grabbing;
 }
 
+.project-sidebar-header[tabindex="0"]:focus-visible {
+  border-radius: 0.2rem;
+  outline: 2px solid color-mix(in srgb, var(--foreground) 70%, transparent);
+  outline-offset: 1px;
+}
+
 .project-sidebar-header h2 {
   flex: 1 1 auto;
   min-width: 0;

@@ -799,6 +799,80 @@ test("reorders project headers when one is dropped onto another", () => {
   expect(onReorderProjects).toHaveBeenCalledWith([secondProject.id, project.id]);
 });
 
+test("offers keyboard-friendly move actions from session and project context menus", async () => {
+  const user = userEvent.setup();
+  const secondSession: Session = {
+    ...terminalSession,
+    id: "terminal-2",
+    name: "Second shell",
+  };
+  const secondProject: Project = {
+    ...emptyProject,
+    id: "project-second",
+    path: "/workspace/second",
+  };
+  const onReorderSessions = vi.fn();
+  const onReorderProjects = vi.fn();
+  renderSidebar({
+    projects: [project, secondProject],
+    sessions: [terminalSession, secondSession],
+    agentSummaries: [],
+    onReorderSessions,
+    onReorderProjects,
+  });
+
+  const secondRow = document.querySelector(`[data-session-id="${secondSession.id}"]`);
+  expect(secondRow).not.toBeNull();
+  fireEvent.contextMenu(secondRow!);
+  await user.click(screen.getByRole("menuitem", { name: "Move up" }));
+  expect(onReorderSessions).toHaveBeenCalledWith([secondSession.id, terminalSession.id]);
+  onReorderSessions.mockClear();
+  fireEvent.keyDown(
+    within(secondRow as HTMLElement).getByRole("button"),
+    { key: "ArrowUp", altKey: true },
+  );
+  expect(onReorderSessions).toHaveBeenCalledWith([secondSession.id, terminalSession.id]);
+
+  const secondHeader = screen.getByRole("heading", { name: "second" }).closest("header");
+  expect(secondHeader).not.toBeNull();
+  fireEvent.contextMenu(secondHeader!);
+  await user.click(screen.getByRole("menuitem", { name: "Move project up" }));
+  expect(onReorderProjects).toHaveBeenCalledWith([secondProject.id, project.id]);
+  onReorderProjects.mockClear();
+  fireEvent.keyDown(secondHeader!, { key: "ArrowUp", altKey: true });
+  expect(onReorderProjects).toHaveBeenCalledWith([secondProject.id, project.id]);
+});
+
+test("does not reorder a project when its action button is used", () => {
+  const onReorderProjects = vi.fn();
+  renderSidebar({
+    projects: [project, emptyProject],
+    onReorderProjects,
+  });
+
+  const secondHeader = screen.getByRole("heading", { name: "empty" }).closest("header");
+  const actionButton = secondHeader?.querySelector(".project-create-terminal");
+  const firstHeader = screen.getByRole("heading", { name: "api" }).closest("header");
+  expect(secondHeader).not.toBeNull();
+  expect(actionButton).not.toBeNull();
+  expect(firstHeader).not.toBeNull();
+
+  fireEvent.contextMenu(actionButton!);
+  fireEvent.keyDown(actionButton!, { key: "ArrowUp", altKey: true });
+  const dataTransfer = {
+    effectAllowed: "",
+    dropEffect: "",
+    setData: vi.fn(),
+    getData: vi.fn(),
+  };
+  fireEvent.dragStart(actionButton!, { dataTransfer });
+  fireEvent.dragOver(firstHeader!, { dataTransfer });
+  fireEvent.drop(firstHeader!, { dataTransfer });
+
+  expect(screen.queryByRole("menu", { name: "Actions for empty" })).not.toBeInTheDocument();
+  expect(onReorderProjects).not.toHaveBeenCalled();
+});
+
 test("offers Rename from a session context menu and prefers a custom title over purpose", async () => {
   const user = userEvent.setup();
   const onRename = vi.fn();
