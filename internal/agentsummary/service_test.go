@@ -636,6 +636,52 @@ func TestServiceSchedulesStatusChangesAndRunningTicks(t *testing.T) {
 	}
 }
 
+func TestServicePreservesSummaryWhenExitedTerminalIsArchived(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	metadata, err := manager.Create(context.Background(), "Agent", t.TempDir())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	metadata, err = manager.UpdateAgent(metadata.ID, session.AgentUpdate{
+		Agent: "codex", AgentSessionID: "session-1", Status: "waiting",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAgent() error = %v", err)
+	}
+	want := session.AgentSummary{
+		TerminalID:  metadata.ID,
+		Provider:    "codex",
+		Status:      "waiting",
+		Purpose:     "Review the release",
+		Summary:     "The release is ready.",
+		GeneratedAt: time.Now().UTC(),
+	}
+	if err := manager.SaveAgentSummary(context.Background(), want); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
+
+	service := New(Config{Sessions: manager, Events: newTestEvents()})
+	service.handleEvent(context.Background(), control.Event{
+		Type: "terminal.deleted",
+		Data: map[string]string{
+			"id":                   metadata.ID,
+			"preserveAgentSummary": "true",
+		},
+	})
+	if got := manager.AgentSummaries(); len(got) != 1 || got[0].Purpose != want.Purpose || got[0].Summary != want.Summary {
+		t.Fatalf("summary after archive event = %#v, want %#v", got, want)
+	}
+
+	service.handleEvent(context.Background(), control.Event{
+		Type: "terminal.deleted",
+		Data: map[string]string{"id": metadata.ID},
+	})
+	if got := manager.AgentSummaries(); len(got) != 0 {
+		t.Fatalf("summary after explicit delete event = %#v, want none", got)
+	}
+}
+
 func TestServiceRefreshAllQueuesEveryCurrentAgentState(t *testing.T) {
 	manager := session.NewManager("/bin/sh")
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })

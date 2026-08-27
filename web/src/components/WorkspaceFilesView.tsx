@@ -5,6 +5,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type MouseEvent,
   type CSSProperties,
   type ReactElement,
@@ -14,6 +15,7 @@ import { FileTree as PierreFileTree } from "@pierre/trees/react";
 import { File as PierreFile } from "@pierre/diffs/react";
 import {
   BinaryIcon,
+  DownloadIcon,
   FileTextIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -251,6 +253,13 @@ function fileKind(path: string): string {
   return extension.toUpperCase();
 }
 
+const imageFilePattern = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/iu;
+
+function isImageFile(file: WorkspaceFile): boolean {
+  return file.mimeType?.split(";", 1)[0].trim().toLocaleLowerCase().startsWith("image/")
+    || imageFilePattern.test(file.path);
+}
+
 function fileContents(content: string): { content: string; truncated: boolean } {
   if (content === "") return { content: "", truncated: false };
   let start = 0;
@@ -336,6 +345,12 @@ interface WorkspaceFileViewerProps {
   fileError: boolean;
   selectedFile: WorkspaceFile | null;
   renderedFile: ReturnType<typeof fileContents>;
+  imagePreview: { path: string; url: string } | null;
+  imagePreviewLoading: boolean;
+  imagePreviewError: boolean;
+  downloadError: boolean;
+  downloading: boolean;
+  onDownload(): void;
 }
 
 function renderWorkspaceFileViewer({
@@ -343,6 +358,12 @@ function renderWorkspaceFileViewer({
   fileError,
   selectedFile,
   renderedFile,
+  imagePreview,
+  imagePreviewLoading,
+  imagePreviewError,
+  downloadError,
+  downloading,
+  onDownload,
 }: WorkspaceFileViewerProps) {
   return (
     <article className="workspace-file-viewer">
@@ -386,11 +407,55 @@ function renderWorkspaceFileViewer({
               <h2>{selectedFile.name}</h2>
               <span>{selectedFile.path}</span>
             </div>
-            <span>
-              {fileKind(selectedFile.path)} · {formatBytes(selectedFile.size)}
-            </span>
+            <div className="workspace-file-header-actions">
+              <span>
+                {fileKind(selectedFile.path)} · {formatBytes(selectedFile.size)}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                aria-label={`Download ${selectedFile.name}`}
+                title={`Download ${selectedFile.name}`}
+                disabled={downloading}
+                onClick={onDownload}
+              >
+                <DownloadIcon aria-hidden="true" />
+                <span>Download</span>
+              </Button>
+            </div>
           </header>
-          {selectedFile.binary
+          {isImageFile(selectedFile)
+            ? (
+              imagePreviewLoading
+                ? (
+                  <div className="workspace-image-preview-state" role="status">
+                    <Skeleton />
+                    <span>Loading image preview…</span>
+                  </div>
+                )
+                : imagePreviewError || imagePreview?.path !== selectedFile.path
+                  ? (
+                    <Empty className="workspace-files-empty">
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">
+                          <FileTextIcon aria-hidden="true" />
+                        </EmptyMedia>
+                        <EmptyTitle>Image preview unavailable</EmptyTitle>
+                        <EmptyDescription>
+                          Download the file to open it in another application.
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  )
+                  : (
+                    <figure className="workspace-image-preview">
+                      <img src={imagePreview.url} alt={selectedFile.name} />
+                      <figcaption>{selectedFile.path}</figcaption>
+                    </figure>
+                  )
+            )
+            : selectedFile.binary
             ? (
               <Empty className="workspace-files-empty">
                 <EmptyHeader>
@@ -434,6 +499,11 @@ function renderWorkspaceFileViewer({
                 )}
               </div>
             )}
+          {downloadError && (
+            <p className="workspace-file-download-error" role="status">
+              The file could not be downloaded.
+            </p>
+          )}
         </>
       )}
     </article>
@@ -721,6 +791,14 @@ function WorkspaceFilesViewContent({
     fileLoading,
     fileError,
   } = state;
+  const [imagePreview, setImagePreview] = useState<{
+    path: string;
+    url: string;
+  } | null>(null);
+  const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
+  const [imagePreviewError, setImagePreviewError] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const sessionIDRef = useRef(session.id);
   const refreshGenerationRef = useRef(0);
   const treeSelectionRef = useRef<(paths: readonly string[]) => void>(() => {});
@@ -825,6 +903,37 @@ function WorkspaceFilesViewContent({
     };
   }, [active, api, refreshVersion, selectedPath, session.id]);
 
+  useEffect(() => {
+    const filePath = selectedFile && isImageFile(selectedFile)
+      ? selectedFile.path
+      : null;
+    let current = true;
+    let objectURL: string | null = null;
+    setImagePreview(null);
+    setImagePreviewError(false);
+    setImagePreviewLoading(Boolean(active && filePath));
+    if (!active || !filePath) {
+      return () => {
+        current = false;
+      };
+    }
+
+    void api.getWorkspaceFileContent(session.id, filePath).then((content) => {
+      if (!current) return;
+      objectURL = URL.createObjectURL(content);
+      setImagePreview({ path: filePath, url: objectURL });
+      setImagePreviewLoading(false);
+    }).catch(() => {
+      if (!current) return;
+      setImagePreviewError(true);
+      setImagePreviewLoading(false);
+    });
+    return () => {
+      current = false;
+      if (objectURL) URL.revokeObjectURL(objectURL);
+    };
+  }, [active, api, selectedFile, session.id]);
+
   const root = directories[""];
   const workspaceRoot = root?.root ?? searchResult?.root ?? session.cwd;
 
@@ -855,6 +964,35 @@ function WorkspaceFilesViewContent({
   const openFile = useCallback((path: string) => {
     dispatch({ type: "fileSelected", path });
   }, []);
+
+  const downloadSelectedFile = useCallback(async () => {
+    if (!selectedFile || downloading) return;
+    setDownloading(true);
+    setDownloadError(false);
+    let url = imagePreview?.path === selectedFile.path ? imagePreview.url : null;
+    let temporaryURL = false;
+    try {
+      if (!url) {
+        const content = await api.getWorkspaceFileContent(session.id, selectedFile.path);
+        url = URL.createObjectURL(content);
+        temporaryURL = true;
+      }
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = selectedFile.name;
+      anchor.rel = "noopener";
+      anchor.click();
+      if (temporaryURL) {
+        const downloadURL = url;
+        window.setTimeout(() => URL.revokeObjectURL(downloadURL), 0);
+      }
+    } catch {
+      if (temporaryURL && url) URL.revokeObjectURL(url);
+      setDownloadError(true);
+    } finally {
+      setDownloading(false);
+    }
+  }, [api, downloading, imagePreview, selectedFile, session.id]);
 
   const handleTreeClick = (event: MouseEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey) return;
@@ -927,6 +1065,12 @@ function WorkspaceFilesViewContent({
           fileError,
           selectedFile,
           renderedFile,
+          imagePreview,
+          imagePreviewLoading,
+          imagePreviewError,
+          downloadError,
+          downloading,
+          onDownload: () => void downloadSelectedFile(),
         })}
         {renderWorkspaceFileNavigator({
           root,

@@ -50,6 +50,9 @@ function filesAPI(overrides: Partial<ApiClient> = {}): ApiClient {
       size: 7,
       content: "# Read\n",
     }),
+    getWorkspaceFileContent: vi.fn().mockResolvedValue(
+      new Blob(["workspace file"], { type: "application/octet-stream" }),
+    ),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -590,4 +593,77 @@ test("renders selected text through Pierre's read-only File surface", async () =
 
   await findDiffsSurface();
   expect(getWorkspaceFile).toHaveBeenCalledWith("terminal-1", "README.md");
+});
+
+test("previews a selected image and downloads it from the workspace", async () => {
+  const user = userEvent.setup();
+  const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+  const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const anchorClick = vi
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => {});
+  const getWorkspaceFile = vi.fn().mockResolvedValue({
+    root: "/repo",
+    name: "preview.png",
+    path: "preview.png",
+    size: 4,
+    binary: true,
+  } satisfies WorkspaceFile);
+  const getWorkspaceFileContent = vi.fn().mockResolvedValue(
+    new Blob(["png"], { type: "image/png" }),
+  );
+  const directory: WorkspaceDirectory = {
+    root: "/repo",
+    path: "",
+    entries: [{ name: "preview.png", path: "preview.png", kind: "file", size: 4 }],
+  };
+  const { unmount } = render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({
+        getWorkspaceDirectory: vi.fn().mockResolvedValue(directory),
+        getWorkspaceFile,
+        getWorkspaceFileContent,
+      })}
+      active
+    />,
+  );
+
+  await clickTreeItem("preview.png");
+
+  const image = await screen.findByRole("img", { name: "preview.png" });
+  expect(image).toHaveAttribute("src", "blob:preview");
+  expect(getWorkspaceFileContent).toHaveBeenCalledWith("terminal-1", "preview.png");
+
+  await user.click(screen.getByRole("button", { name: "Download preview.png" }));
+
+  expect(anchorClick).toHaveBeenCalledTimes(1);
+  const anchor = anchorClick.mock.instances[0];
+  expect(anchor).toHaveAttribute("href", "blob:preview");
+  expect(anchor).toHaveAttribute("download", "preview.png");
+
+  unmount();
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+});
+
+test("downloads a selected text file from the workspace", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:text");
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const getWorkspaceFileContent = vi.fn().mockResolvedValue(
+    new Blob(["# Read\n"], { type: "text/markdown" }),
+  );
+  render(
+    <WorkspaceFilesView
+      session={session}
+      api={filesAPI({ getWorkspaceFileContent })}
+      active
+    />,
+  );
+
+  await clickTreeItem("README.md");
+  await screen.findByRole("heading", { name: "README.md" });
+  await user.click(screen.getByRole("button", { name: "Download README.md" }));
+
+  expect(getWorkspaceFileContent).toHaveBeenCalledWith("terminal-1", "README.md");
 });

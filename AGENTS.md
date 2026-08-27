@@ -13,6 +13,9 @@
   automated safely.
 - After implementing and verifying changes in a task worktree, commit and merge
   them back to the base branch automatically unless the user asks otherwise.
+- After merging completed work into the base branch, push the merged branch to
+  its configured remote when repository synchronization is requested; never
+  force-push as part of this workflow.
 - Before asking users to install integrations, explain what each hook or skill
   does and that existing settings are preserved.
 

@@ -334,7 +334,11 @@ function TranscriptView({
       defaultScrollPosition="end"
     >
       <MessageScroller className="agent-log-scroller">
-        <MessageScrollerViewport aria-label="Agent log" ref={viewportRef}>
+        <MessageScrollerViewport
+          aria-label="Agent log"
+          ref={viewportRef}
+          preserveScrollOnPrepend={false}
+        >
           <MessageScrollerContent aria-label={`${transcript.agent} transcript`}>
             {transcript.nextCursor && (
               <div className="agent-log-load-more">
@@ -425,16 +429,28 @@ function AgentLogViewContent({ session, api, active, fontSize = 14 }: AgentLogVi
     const viewport = viewportRef.current;
     if (!viewport) return;
     let adjustmentFrame = 0;
+    let settlingFrame = 0;
+    let remainingSettles = 4;
+    const restoreScrollPosition = () => {
+      if (prependAdjustmentRef.current !== adjustment) return;
+      viewport.scrollTop =
+        adjustment.scrollTop + viewport.scrollHeight - adjustment.scrollHeight;
+      remainingSettles -= 1;
+      if (remainingSettles <= 0) {
+        prependAdjustmentRef.current = null;
+        return;
+      }
+      settlingFrame = window.requestAnimationFrame(restoreScrollPosition);
+    };
     const layoutFrame = window.requestAnimationFrame(() => {
       adjustmentFrame = window.requestAnimationFrame(() => {
-        viewport.scrollTop =
-          adjustment.scrollTop + viewport.scrollHeight - adjustment.scrollHeight;
-        prependAdjustmentRef.current = null;
+        restoreScrollPosition();
       });
     });
     return () => {
       window.cancelAnimationFrame(layoutFrame);
       if (adjustmentFrame) window.cancelAnimationFrame(adjustmentFrame);
+      if (settlingFrame) window.cancelAnimationFrame(settlingFrame);
     };
   }, [log?.sessionId, log?.startCursor]);
 

@@ -51,6 +51,7 @@ type File struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
 	Size      int64  `json:"size"`
+	MimeType  string `json:"mimeType,omitempty"`
 	Content   string `json:"content,omitempty"`
 	Binary    bool   `json:"binary,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`

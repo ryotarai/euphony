@@ -52,6 +52,37 @@ func TestProjectsEndpointCreatesAndListsProjects(t *testing.T) {
 	}
 }
 
+func TestProjectsEndpointPersistsSidebarOrder(t *testing.T) {
+	srv := newProjectTestServer(t)
+	firstDirectory := t.TempDir()
+	secondDirectory := t.TempDir()
+	firstResponse := performRequest(t, srv, http.MethodPost, "/api/projects",
+		`{"path":`+strconv.Quote(firstDirectory)+`}`)
+	secondResponse := performRequest(t, srv, http.MethodPost, "/api/projects",
+		`{"path":`+strconv.Quote(secondDirectory)+`}`)
+	var first, second project.Project
+	decodeResponse(t, firstResponse, &first)
+	decodeResponse(t, secondResponse, &second)
+
+	ordered := performRequest(t, srv, http.MethodPut, "/api/projects/order",
+		`{"ids":[`+strconv.Quote(second.ID)+`,`+strconv.Quote(first.ID)+`]}`)
+	if ordered.Code != http.StatusOK {
+		t.Fatalf("reorder status = %d, body = %s", ordered.Code, ordered.Body.String())
+	}
+	var response []project.Project
+	decodeResponse(t, ordered, &response)
+	if len(response) != 2 || response[0].ID != second.ID || response[1].ID != first.ID {
+		t.Fatalf("reordered projects = %#v, want [%s %s]", response, second.ID, first.ID)
+	}
+
+	relisted := performRequest(t, srv, http.MethodGet, "/api/projects", "")
+	var persisted []project.Project
+	decodeResponse(t, relisted, &persisted)
+	if len(persisted) != 2 || persisted[0].ID != second.ID || persisted[1].ID != first.ID {
+		t.Fatalf("persisted projects = %#v, want [%s %s]", persisted, second.ID, first.ID)
+	}
+}
+
 func TestProjectDirectoryPickerEndpointReturnsTheSelectedDirectory(t *testing.T) {
 	directory := t.TempDir()
 	pickerCalls := 0
@@ -363,6 +394,10 @@ func (r *disappearingLegacyProjectRepository) Delete(_ context.Context, id strin
 		return project.ErrNotFound
 	}
 	delete(r.projects, id)
+	return nil
+}
+
+func (r *disappearingLegacyProjectRepository) Reorder(_ context.Context, _ []string) error {
 	return nil
 }
 

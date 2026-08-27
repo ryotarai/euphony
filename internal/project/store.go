@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -18,6 +17,7 @@ type Repository interface {
 	Create(context.Context, Project) error
 	Get(context.Context, string) (Project, error)
 	List(context.Context) ([]Project, error)
+	Reorder(context.Context, []string) error
 	Delete(context.Context, string) error
 	Close() error
 }
@@ -73,13 +73,30 @@ func (r *memoryRepository) List(_ context.Context) ([]Project, error) {
 		projects = append(projects, project)
 	}
 	r.mu.RUnlock()
-	sort.SliceStable(projects, func(i, j int) bool {
-		if projects[i].CreatedAt.Equal(projects[j].CreatedAt) {
-			return projects[i].ID < projects[j].ID
-		}
-		return projects[i].CreatedAt.Before(projects[j].CreatedAt)
-	})
+	sortProjects(projects)
 	return projects, nil
+}
+
+func (r *memoryRepository) Reorder(_ context.Context, orderedIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(orderedIDs) != len(r.projects) {
+		return ErrInvalidOrder
+	}
+	seen := make(map[string]struct{}, len(orderedIDs))
+	for index, id := range orderedIDs {
+		project, ok := r.projects[id]
+		if !ok {
+			return ErrNotFound
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return ErrInvalidOrder
+		}
+		seen[id] = struct{}{}
+		project.Order = int64(index + 1)
+		r.projects[id] = project
+	}
+	return nil
 }
 
 func (*memoryRepository) Close() error { return nil }
@@ -113,20 +130,32 @@ func (r *SQLiteRepository) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS projects (
 			id TEXT PRIMARY KEY,
 			path TEXT UNIQUE NOT NULL,
-			created_at TEXT NOT NULL
+			created_at TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0
 		)`,
 	} {
 		if _, err := r.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate project database: %w", err)
 		}
 	}
+	hasOrder, err := r.hasColumn(ctx, "projects", "sort_order")
+	if err != nil {
+		return err
+	}
+	if !hasOrder {
+		if _, err := r.db.ExecContext(ctx,
+			"ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add project order: %w", err)
+		}
+	}
 	return nil
 }
 
 func (r *SQLiteRepository) Create(ctx context.Context, project Project) error {
-	result, err := r.db.ExecContext(ctx, `INSERT INTO projects (id, path, created_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT DO NOTHING`, project.ID, project.Path, formatTime(project.CreatedAt))
+	result, err := r.db.ExecContext(ctx, `INSERT INTO projects (id, path, created_at, sort_order)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`, project.ID, project.Path, formatTime(project.CreatedAt), project.Order)
 	if err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}
@@ -142,7 +171,7 @@ func (r *SQLiteRepository) Create(ctx context.Context, project Project) error {
 
 func (r *SQLiteRepository) Get(ctx context.Context, id string) (Project, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, path, created_at FROM projects WHERE id = ?", id)
+		"SELECT id, path, created_at, sort_order FROM projects WHERE id = ?", id)
 	project, err := scanProject(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
@@ -170,7 +199,7 @@ func (r *SQLiteRepository) Delete(ctx context.Context, id string) error {
 
 func (r *SQLiteRepository) List(ctx context.Context) ([]Project, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, path, created_at FROM projects ORDER BY created_at, id")
+		"SELECT id, path, created_at, sort_order FROM projects ORDER BY sort_order, created_at, id")
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
@@ -190,6 +219,32 @@ func (r *SQLiteRepository) List(ctx context.Context) ([]Project, error) {
 	return projects, nil
 }
 
+func (r *SQLiteRepository) Reorder(ctx context.Context, orderedIDs []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin project reorder: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for index, id := range orderedIDs {
+		result, err := tx.ExecContext(ctx,
+			"UPDATE projects SET sort_order = ? WHERE id = ?", index+1, id)
+		if err != nil {
+			return fmt.Errorf("reorder project: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reorder project result: %w", err)
+		}
+		if rows != 1 {
+			return ErrNotFound
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit project reorder: %w", err)
+	}
+	return nil
+}
+
 func (r *SQLiteRepository) Close() error {
 	return r.db.Close()
 }
@@ -201,7 +256,7 @@ type projectScanner interface {
 func scanProject(scanner projectScanner) (Project, error) {
 	var project Project
 	var createdAt string
-	if err := scanner.Scan(&project.ID, &project.Path, &createdAt); err != nil {
+	if err := scanner.Scan(&project.ID, &project.Path, &createdAt, &project.Order); err != nil {
 		return Project{}, err
 	}
 	var err error
@@ -210,6 +265,30 @@ func scanProject(scanner projectScanner) (Project, error) {
 		return Project{}, fmt.Errorf("parse project timestamp: %w", err)
 	}
 	return project, nil
+}
+
+func (r *SQLiteRepository) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	rows, err := r.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect project schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, fmt.Errorf("scan project schema: %w", err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("inspect project schema: %w", err)
+	}
+	return false, nil
 }
 
 func formatTime(value time.Time) string {

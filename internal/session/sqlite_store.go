@@ -17,6 +17,7 @@ import (
 type metadataStore interface {
 	Load(context.Context) ([]Metadata, error)
 	Save(context.Context, Metadata) error
+	Reorder(context.Context, []string) error
 	Delete(context.Context, string) error
 	LoadSettings(context.Context) (Settings, error)
 	SaveSettings(context.Context, Settings) error
@@ -76,9 +77,10 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			custom_name INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL,
-			cwd TEXT NOT NULL,
-			project_id TEXT NOT NULL DEFAULT '',
-			agent TEXT NOT NULL DEFAULT '',
+				cwd TEXT NOT NULL,
+				project_id TEXT NOT NULL DEFAULT '',
+				sort_order INTEGER NOT NULL DEFAULT 0,
+				agent TEXT NOT NULL DEFAULT '',
 			resume_agent TEXT NOT NULL DEFAULT '',
 			agent_status TEXT NOT NULL DEFAULT '',
 			needs_attention INTEGER NOT NULL DEFAULT 0,
@@ -219,6 +221,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			"ALTER TABLE terminals ADD COLUMN project_id TEXT NOT NULL DEFAULT ''",
 		); err != nil {
 			return fmt.Errorf("add terminal project ID: %w", err)
+		}
+	}
+	hasOrder, err := s.hasColumn(ctx, "terminals", "sort_order")
+	if err != nil {
+		return err
+	}
+	if !hasOrder {
+		if _, err := s.db.ExecContext(ctx,
+			"ALTER TABLE terminals ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("add terminal order: %w", err)
 		}
 	}
 	hasPaneTabShortcut, err := s.hasColumn(ctx, "settings", "pane_tab_shortcut")
@@ -662,7 +675,7 @@ func (s *SQLiteStore) SaveSelection(ctx context.Context, state selection.State) 
 }
 
 func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, custom_name, archived, state, cwd, project_id, agent, resume_agent,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, custom_name, archived, state, cwd, project_id, sort_order, agent, resume_agent,
 		agent_status, needs_attention, agent_title, agent_session_id, agent_transcript_path,
 		created_at, updated_at, exited_at, exit_code, message
 		FROM terminals ORDER BY created_at`)
@@ -680,7 +693,7 @@ func (s *SQLiteStore) Load(ctx context.Context) ([]Metadata, error) {
 		var customName int
 		var archived int
 		var needsAttention int
-		if err := rows.Scan(&item.ID, &item.Name, &customName, &archived, &item.State, &item.CWD, &item.ProjectID, &item.Agent,
+		if err := rows.Scan(&item.ID, &item.Name, &customName, &archived, &item.State, &item.CWD, &item.ProjectID, &item.Order, &item.Agent,
 			&item.ResumeAgent, &item.AgentStatus, &needsAttention,
 			&item.AgentTitle, &item.AgentSessionID, &item.AgentTranscriptPath,
 			&createdAt, &updatedAt, &exitedAt, &exitCode, &item.Message); err != nil {
@@ -734,14 +747,14 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 		exitCode = *item.ExitCode
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO terminals (
-		id, name, custom_name, archived, state, cwd, project_id, agent, resume_agent, agent_status, needs_attention,
-		agent_title, agent_session_id, agent_transcript_path,
-		created_at, updated_at, exited_at, exit_code, message
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		id, name, custom_name, archived, state, cwd, project_id, sort_order, agent, resume_agent, agent_status, needs_attention,
+			agent_title, agent_session_id, agent_transcript_path,
+			created_at, updated_at, exited_at, exit_code, message
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, custom_name=excluded.custom_name, archived=excluded.archived,
 			state=excluded.state,
-		cwd=excluded.cwd, project_id=excluded.project_id, agent=excluded.agent,
+		cwd=excluded.cwd, project_id=excluded.project_id, sort_order=excluded.sort_order, agent=excluded.agent,
 		resume_agent=excluded.resume_agent, agent_status=excluded.agent_status,
 		needs_attention=excluded.needs_attention,
 		agent_title=excluded.agent_title, agent_session_id=excluded.agent_session_id,
@@ -749,13 +762,39 @@ func (s *SQLiteStore) Save(ctx context.Context, item Metadata) error {
 		created_at=excluded.created_at, updated_at=excluded.updated_at,
 		exited_at=excluded.exited_at,
 		exit_code=excluded.exit_code, message=excluded.message`,
-		item.ID, item.Name, item.CustomName, item.Archived, item.State, item.CWD, item.ProjectID, item.Agent, item.ResumeAgent,
+		item.ID, item.Name, item.CustomName, item.Archived, item.State, item.CWD, item.ProjectID, item.Order, item.Agent, item.ResumeAgent,
 		item.AgentStatus, item.NeedsAttention, item.AgentTitle, item.AgentSessionID,
 		item.AgentTranscriptPath,
 		item.CreatedAt.Format(time.RFC3339Nano), updatedAt.Format(time.RFC3339Nano),
 		exitedAt, exitCode, item.Message)
 	if err != nil {
 		return fmt.Errorf("save terminal: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) Reorder(ctx context.Context, orderedIDs []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin terminal reorder: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for index, id := range orderedIDs {
+		result, err := tx.ExecContext(ctx,
+			"UPDATE terminals SET sort_order = ? WHERE id = ? AND archived = 0", index+1, id)
+		if err != nil {
+			return fmt.Errorf("reorder terminal: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reorder terminal result: %w", err)
+		}
+		if rows != 1 {
+			return ErrNotFound
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit terminal reorder: %w", err)
 	}
 	return nil
 }

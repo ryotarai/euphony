@@ -16,6 +16,36 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 	s.sessions.RefreshMetadata()
 }
 
+func (s *Server) reorderSessions(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		IDs []string `json:"ids"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.IDs == nil {
+		writeError(w, http.StatusBadRequest, "invalid_order", "Provide the complete session order.")
+		return
+	}
+	if err := ensureJSONEnd(decoder); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_order", "Provide the complete session order.")
+		return
+	}
+	sessions, err := s.sessions.ReorderCurrent(r.Context(), request.IDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrInvalidOrder):
+			writeError(w, http.StatusBadRequest, "invalid_order", "Provide the complete session order.")
+		case errors.Is(err, session.ErrNotFound):
+			writeError(w, http.StatusNotFound, "session_not_found", "The terminal session does not exist.")
+		default:
+			writeError(w, http.StatusInternalServerError, "session_order_failed",
+				"The session order could not be saved.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, sessions)
+}
+
 func (s *Server) listArchivedSessions(w http.ResponseWriter, _ *http.Request) {
 	type archivedSession struct {
 		session.Metadata

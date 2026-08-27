@@ -2,7 +2,9 @@ package server
 
 import (
 	"errors"
+	"mime"
 	"net/http"
+	"path/filepath"
 
 	"github.com/ryotarai/euphony/internal/workspacefiles"
 )
@@ -62,6 +64,32 @@ func (s *Server) workspaceFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeWorkspaceJSON(w, file)
+}
+
+func (s *Server) workspaceFileContent(w http.ResponseWriter, r *http.Request) {
+	reader, ok := s.workspaceReader(w, r)
+	if !ok {
+		return
+	}
+	defer reader.Close()
+	path, valid := requiredSingleQueryValue(r, "path")
+	if !valid {
+		writeWorkspaceError(w, workspacefiles.ErrInvalidPath)
+		return
+	}
+	file, info, err := reader.OpenFile(path)
+	if err != nil {
+		writeWorkspaceError(w, err)
+		return
+	}
+	defer file.Close()
+
+	name := filepath.Base(path)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	if disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name}); disposition != "" {
+		w.Header().Set("Content-Disposition", disposition)
+	}
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }
 
 func (s *Server) workspaceReader(

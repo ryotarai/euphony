@@ -421,6 +421,97 @@ test("renames the focused terminal from Quick Actions and updates the sidebar", 
   await expect(page.getByRole("button", { name: "Select Terminal" })).toHaveCount(0);
 });
 
+test("renames sidebar items and persists drag-and-drop order", async ({ page }, testInfo) => {
+  await clearSessions(page);
+  const firstPath = await mkdtemp(`/tmp/euphony-e2e-${e2ePort}-sidebar-first-`);
+  const secondPath = await mkdtemp(`/tmp/euphony-e2e-${e2ePort}-sidebar-second-`);
+
+  try {
+    const firstProject = await getOrCreateProject(page, firstPath);
+    const secondProject = await getOrCreateProject(page, secondPath);
+    const first = await createSession(page, "First sidebar session", firstPath);
+    const second = await createSession(page, "Second sidebar session", firstPath);
+    await page.goto("/?token=test-token");
+
+    const firstGroup = page.locator(`[data-project-id="${firstProject.id}"]`);
+    const secondGroup = page.locator(`[data-project-id="${secondProject.id}"]`);
+    await expect(firstGroup.getByRole("button", { name: "Select First sidebar session" }))
+      .toBeVisible();
+    await expect(secondGroup).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("sidebar-rename-reorder-before.png"),
+      fullPage: true,
+    });
+
+    await firstGroup.getByRole("button", { name: "Select First sidebar session" })
+      .click({ button: "right" });
+    const menu = page.getByRole("menu", { name: "Actions for First sidebar session" });
+    await menu.getByRole("menuitem", { name: "Rename" }).click();
+    const renameDialog = page.getByRole("dialog", { name: "Rename terminal" });
+    await renameDialog.getByLabel("Terminal name").fill("Renamed sidebar session");
+    await renameDialog.getByRole("button", { name: "Rename terminal" }).click();
+
+    const renamedButton = firstGroup.getByRole("button", {
+      name: "Select Renamed sidebar session",
+    });
+    await expect(renamedButton).toBeVisible();
+
+    const renamedRow = firstGroup.locator(
+      `.project-session-row[data-session-id="${first.id}"]`,
+    );
+    const secondRow = firstGroup.locator(
+      `.project-session-row[data-session-id="${second.id}"]`,
+    );
+    await secondRow.dragTo(renamedRow);
+    await expect.poll(() => firstGroup.locator(".project-session-select").evaluateAll(
+      (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+    )).toEqual([
+      "Select Second sidebar session",
+      "Select Renamed sidebar session",
+    ]);
+
+    const projectGroups = page.locator(".project-sidebar-group");
+    const initialProjectIDs = await projectGroups.evaluateAll((groups) =>
+      groups.map((group) => group.getAttribute("data-project-id")),
+    );
+    const firstIndex = initialProjectIDs.indexOf(firstProject.id);
+    const secondIndex = initialProjectIDs.indexOf(secondProject.id);
+    expect(firstIndex).toBeGreaterThanOrEqual(0);
+    expect(secondIndex).toBeGreaterThanOrEqual(0);
+    const expectedProjectIDs = [...initialProjectIDs];
+    [expectedProjectIDs[firstIndex], expectedProjectIDs[secondIndex]] =
+      [expectedProjectIDs[secondIndex], expectedProjectIDs[firstIndex]];
+    await secondGroup.locator(".project-sidebar-header").dragTo(
+      firstGroup.locator(".project-sidebar-header"),
+    );
+    await expect.poll(() => projectGroups.evaluateAll((groups) =>
+      groups.map((group) => group.getAttribute("data-project-id")),
+    )).toEqual(expectedProjectIDs);
+
+    const sessionResponse = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(sessionResponse.ok()).toBe(true);
+    const persistedSessions = await sessionResponse.json() as Array<{ id: string }>;
+    expect(persistedSessions.map((session) => session.id)).toEqual([second.id, first.id]);
+
+    const projectResponse = await page.request.get("/api/projects", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(projectResponse.ok()).toBe(true);
+    const persistedProjects = await projectResponse.json() as ProjectFixture[];
+    expect(persistedProjects.map((project) => project.id)).toEqual(expectedProjectIDs);
+    await page.screenshot({
+      path: testInfo.outputPath("sidebar-rename-reorder-after.png"),
+      fullPage: true,
+    });
+  } finally {
+    await clearSessions(page);
+    await rm(firstPath, { recursive: true, force: true });
+    await rm(secondPath, { recursive: true, force: true });
+  }
+});
+
 test("follows the previous terminal when the focused shell exits", async ({ page }) => {
   await clearSessions(page);
   await createSession(page, "First", "/tmp");
@@ -484,7 +575,7 @@ test("renders persisted projects and creates a terminal from a project action", 
   await expect(page.getByRole("tab", { name: /Done/ })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("project-sidebar.png") });
 
-  await page.getByRole("button", { name: "Create terminal in /tmp" }).click();
+  await page.getByRole("button", { name: "Create terminal in /tmp", exact: true }).click();
   const createdTerminal = page.getByRole("button", { name: "Select Terminal" });
   await expect(createdTerminal).toBeVisible();
   await expect.poll(async () => {
@@ -1051,6 +1142,78 @@ test("shows a live agent transcript and releases follow when the reader scrolls 
   await page.screenshot({ path: testInfo.outputPath("agent-log-tab.png") });
 });
 
+test("keeps the reading position when loading multiple older agent log pages", async ({
+  page,
+}, testInfo) => {
+  await clearSessions(page);
+  const terminal = await createSession(page, "Paged log", "/tmp");
+  const sessionID = `e2e-${terminal.id}-paged`;
+  const transcriptPath = `${claudeConfigDir}/projects/euphony/${sessionID}.jsonl`;
+  await mkdir(`${claudeConfigDir}/projects/euphony`, { recursive: true });
+  await writeFile(
+    transcriptPath,
+    Array.from({ length: 305 }, (_, index) => claudeTranscriptLine(index + 1)).join(""),
+  );
+  const hook = await page.request.post("/api/hooks/terminal", {
+    headers: {
+      Authorization: "Bearer test-token",
+      "Content-Type": "application/json",
+    },
+    data: {
+      terminalId: terminal.id,
+      agent: "claude",
+      agentSessionId: sessionID,
+      agentTranscriptPath: transcriptPath,
+      status: "waiting",
+      title: "Paged transcript",
+      cwd: "/tmp",
+    },
+  });
+  expect(hook.ok()).toBe(true);
+
+  await page.goto("/?token=test-token");
+  await page.getByRole("tab", { name: "Agent log" }).click();
+  const viewport = page.locator('[data-slot="message-scroller-viewport"]');
+  await expect(page.getByRole("heading", { name: "Agent log entry 305" })).toBeVisible();
+
+  await viewport.hover();
+  await page.mouse.wheel(0, -20_000);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(20);
+
+  const firstAnchor = page.getByRole("heading", { name: "Agent log entry 206" });
+  const firstTop = (await firstAnchor.boundingBox())?.y;
+  expect(firstTop).toBeDefined();
+  await page.screenshot({
+    path: testInfo.outputPath("agent-log-load-more-position-before.png"),
+  });
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByRole("heading", { name: "Agent log entry 106" })).toBeAttached();
+  await expect.poll(async () => {
+    const currentTop = (await firstAnchor.boundingBox())?.y;
+    return currentTop === undefined ? Number.POSITIVE_INFINITY : Math.abs(currentTop - firstTop!);
+  }).toBeLessThan(2);
+  await expect.poll(() => viewport.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight,
+  )).toBeGreaterThan(100);
+
+  await viewport.hover();
+  await page.mouse.wheel(0, -20_000);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(20);
+  const secondAnchor = page.getByRole("heading", { name: "Agent log entry 106" });
+  const secondTop = (await secondAnchor.boundingBox())?.y;
+  expect(secondTop).toBeDefined();
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.getByRole("heading", { name: "Agent log entry 06" })).toBeAttached();
+  await expect.poll(async () => {
+    const currentTop = (await secondAnchor.boundingBox())?.y;
+    return currentTop === undefined ? Number.POSITIVE_INFINITY : Math.abs(currentTop - secondTop!);
+  }).toBeLessThan(2);
+  await expect.poll(() => viewport.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight,
+  )).toBeGreaterThan(100);
+  await page.screenshot({ path: testInfo.outputPath("agent-log-load-more-position.png") });
+});
+
 test("keeps the agent log open when a filtered running agent starts waiting", async ({
   page,
 }) => {
@@ -1592,20 +1755,49 @@ test("keeps project headers and session rows compact", async ({ page }) => {
   expect(terminalBox!.height).toBeLessThanOrEqual(60);
 });
 
-test("uses distinct colors for running and waiting status icons", async ({ page }) => {
+test("uses blue, green, and yellow lifecycle accents with a running spinner", async ({
+  page,
+}, testInfo) => {
   await clearSessions(page);
   const running = await createSession(page, "Running agent", "/tmp");
   const waiting = await createSession(page, "Waiting agent", "/tmp");
+  const blocked = await createSession(page, "Blocked agent", "/tmp");
   await reportAgent(page, running.id, "codex", "Running work", "running");
   await reportAgent(page, waiting.id, "claude", "Waiting work");
+  await reportAgent(page, blocked.id, "codex", "Blocked work", "running");
+  await reportAgent(page, blocked.id, "codex", "Blocked work", "blocked");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/sessions", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const sessions = await response.json() as Array<{
+      id: string;
+      agentStatus?: string;
+    }>;
+    return sessions.find((session) => session.id === blocked.id)?.agentStatus;
+  }, { timeout: 15_000 }).toBe("blocked");
 
   await page.goto("/?token=test-token");
   const tmpGroup = await projectGroup(page, "/tmp");
-  const runningIcon = tmpGroup.locator(".project-session-status-running");
-  const waitingIcon = tmpGroup.locator(".project-session-status-waiting");
+  const runningIcon = tmpGroup.getByRole("button", {
+    name: "Select Codex — Running work",
+  }).locator(".project-session-status-running");
+  const waitingIcon = tmpGroup.getByRole("button", {
+    name: "Select Claude — Waiting work",
+  }).locator(".project-session-status-waiting");
+  const blockedIcon = tmpGroup.getByRole("button", {
+    name: "Select Codex — Blocked work",
+  }).locator(".project-session-status-blocked");
 
-  await expect(runningIcon).toHaveCSS("color", "rgb(74, 222, 128)");
-  await expect(waitingIcon).toHaveCSS("color", "rgb(251, 191, 36)");
+  await expect(runningIcon).toHaveClass(/lucide-loader-circle/);
+  await expect.poll(() => runningIcon.evaluate((element) =>
+    getComputedStyle(element).animationName,
+  )).toBe("sidebar-session-status-spin");
+  await expect(runningIcon).toHaveCSS("color", "rgb(96, 165, 250)");
+  await expect(waitingIcon).toHaveCSS("color", "rgb(74, 222, 128)");
+  await expect(blockedIcon).toHaveClass(/lucide-circle-alert/);
+  await expect(blockedIcon).toHaveCSS("color", "rgb(251, 191, 36)");
+  await page.screenshot({ path: testInfo.outputPath("sidebar-lifecycle-accents.png") });
 });
 
 test("indents project session rows beneath project headers", async ({ page }) => {

@@ -101,6 +101,13 @@ export class ApiClient {
     });
   }
 
+  reorderProjects(ids: string[]): Promise<Project[]> {
+    return this.request("/api/projects/order", {
+      method: "PUT",
+      body: JSON.stringify({ ids }),
+    });
+  }
+
   async pickProjectDirectory(): Promise<string | null> {
     const result = await this.request<{ path: string } | undefined>(
       "/api/projects/pick-directory",
@@ -152,6 +159,13 @@ export class ApiClient {
     return this.request("/api/sessions", {
       method: "POST",
       body: JSON.stringify({ name, ...(cwd ? { cwd } : {}) }),
+    });
+  }
+
+  reorderSessions(ids: string[]): Promise<Session[]> {
+    return this.request("/api/sessions/order", {
+      method: "PUT",
+      body: JSON.stringify({ ids }),
     });
   }
 
@@ -355,6 +369,22 @@ export class ApiClient {
     return this.request(
       `/api/sessions/${encodeURIComponent(id)}/workspace/file?${query.toString()}`,
     );
+  }
+
+  async getWorkspaceFileContent(id: string, path: string): Promise<Blob> {
+    const query = new URLSearchParams({ path });
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(id)}/workspace/file/content?${query.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
+      },
+    );
+    if (!response.ok) {
+      throw await this.apiError(response);
+    }
+    return response.blob();
   }
 
   getSettings(): Promise<Settings> {

@@ -87,6 +87,36 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, created)
 }
 
+func (s *Server) reorderProjects(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		IDs []string `json:"ids"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.IDs == nil {
+		writeError(w, http.StatusBadRequest, "invalid_order", "Provide the complete project order.")
+		return
+	}
+	if err := ensureJSONEnd(decoder); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_order", "Provide the complete project order.")
+		return
+	}
+	projects, err := s.projects.Reorder(r.Context(), request.IDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, project.ErrInvalidOrder):
+			writeError(w, http.StatusBadRequest, "invalid_order", "Provide the complete project order.")
+		case errors.Is(err, project.ErrNotFound):
+			writeError(w, http.StatusNotFound, "project_not_found", "The project does not exist.")
+		default:
+			writeError(w, http.StatusInternalServerError, "project_order_failed",
+				"The project order could not be saved.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, projects)
+}
+
 func isInvalidProjectPath(err error) bool {
 	return errors.Is(err, project.ErrInvalidPath)
 }

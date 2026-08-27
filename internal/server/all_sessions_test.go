@@ -40,9 +40,9 @@ func TestAllSessionsListsPersistedAgentSessionsIncludingInProgressAgents(t *test
 	}
 	closedAt := time.Now().UTC().Add(-time.Minute)
 	if err := store.Save(t.Context(), session.Metadata{
-		ID: "closed-agent", Name: "Closed DB agent", State: session.StateExited,
+		ID: "closed-agent", Name: "Manual closed title", CustomName: true, State: session.StateExited,
 		CWD: t.TempDir(), Agent: "claude", ResumeAgent: "claude",
-		AgentSessionID: "session-db-only", AgentTitle: "Closed DB agent",
+		AgentSessionID: "session-db-only", AgentTitle: "AI guessed title",
 		Archived:  true,
 		CreatedAt: closedAt.Add(-time.Hour), UpdatedAt: closedAt, ExitedAt: &closedAt,
 	}); err != nil {
@@ -136,7 +136,7 @@ func TestAllSessionsListsPersistedAgentSessionsIncludingInProgressAgents(t *test
 	}
 	if closedItem == nil || closedItem.ID != "closed-agent" ||
 		closedItem.Agent != "claude" || closedItem.State != allSessionResume ||
-		closedItem.Title != "Closed DB agent" || !closedItem.Archived {
+		closedItem.Title != "Manual closed title" || !closedItem.CustomName || !closedItem.Archived {
 		t.Fatalf("closed DB all session = %#v", closedItem)
 	}
 	if !items[0].UpdatedAt.After(items[1].UpdatedAt) {
@@ -212,6 +212,16 @@ func TestAllSessionsResumeStartsPersistedCodexWithSeparateArgumentsAndSelection(
 		t.Fatalf("New() error = %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	if err := srv.sessions.SaveAgentSummary(t.Context(), session.AgentSummary{
+		TerminalID:  "persisted-resume",
+		Provider:    "codex",
+		Status:      "waiting",
+		Purpose:     "Resume the rollout",
+		Summary:     "The rollout is waiting to continue.",
+		GeneratedAt: createdAt.Add(30 * time.Second),
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
+	}
 	indexed := performRequest(t, srv, http.MethodGet, "/api/all-sessions", "")
 	if indexed.Code != http.StatusOK {
 		t.Fatalf("GET archived /api/all-sessions status = %d, body = %s", indexed.Code, indexed.Body.String())
@@ -256,6 +266,17 @@ func TestAllSessionsResumeStartsPersistedCodexWithSeparateArgumentsAndSelection(
 	decodeResponse(t, archivedResponse, &archivedItems)
 	if len(archivedItems) != 0 {
 		t.Fatalf("archived sessions after resume = %#v, want no restored session", archivedItems)
+	}
+	resumedIndex := performRequest(t, srv, http.MethodGet, "/api/all-sessions", "")
+	if resumedIndex.Code != http.StatusOK {
+		t.Fatalf("GET /api/all-sessions after resume status = %d, body = %s", resumedIndex.Code, resumedIndex.Body.String())
+	}
+	var resumedItems []allSession
+	decodeResponse(t, resumedIndex, &resumedItems)
+	if len(resumedItems) != 1 || resumedItems[0].SessionID != "session-resume" ||
+		resumedItems[0].Purpose != "Resume the rollout" ||
+		resumedItems[0].Summary != "The rollout is waiting to continue." {
+		t.Fatalf("resumed all sessions = %#v, want retained purpose and summary", resumedItems)
 	}
 	waitForServer(t, 3*time.Second, func() bool {
 		data, err := os.ReadFile(argsPath)

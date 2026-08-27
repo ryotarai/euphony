@@ -1,18 +1,21 @@
 import {
   BotIcon,
+  CircleAlertIcon,
   CircleCheckIcon,
-  CircleDotIcon,
   CircleHelpIcon,
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
   FolderPlusIcon,
   ArchiveIcon,
+  GripVerticalIcon,
+  LoaderCircleIcon,
   SquareTerminalIcon,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import type { FocusEvent, PointerEvent } from "react";
 import type { AgentSummary, Project, Session } from "../types";
+import { groupProjectSidebarSessions } from "../projectSidebarUtils";
 import { filterSessions, isHumanActionRequired, normalizeSessionFilter } from "../sessionPresentation";
 import { useSessionContextMenu } from "./SessionContextMenu";
 import { SessionFilter } from "./SessionFilter";
@@ -41,6 +44,9 @@ export interface ProjectSidebarProps extends SessionInfoInteractionHandlers {
   onHideArchived?(): void;
   onArchive?(session: Session): void;
   onDelete?(session: Session): void;
+  onRename?(session: Session): void;
+  onReorderSessions?(orderedIDs: string[]): void;
+  onReorderProjects?(orderedIDs: string[]): void;
 }
 
 type SessionSummary = AgentSummary | undefined;
@@ -74,6 +80,10 @@ function isGeneratedTerminal(session: Session) {
 function projectName(path: string) {
   const trimmed = path.trim().replace(/\/+$/u, "");
   return trimmed.split("/").filter(Boolean).at(-1) || trimmed || "Unassigned";
+}
+
+function isProjectActionTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest("button"));
 }
 
 function sentence(value: string, fallback: string) {
@@ -139,9 +149,9 @@ function sessionStatusIcon(status: string) {
     case "archived":
       return <ArchiveIcon {...props} />;
     case "running":
-      return <CircleDotIcon {...props} />;
+      return <LoaderCircleIcon {...props} />;
     case "blocked":
-      return <span {...props}>🚫</span>;
+      return <CircleAlertIcon {...props} />;
     case "waiting":
       return <CirclePauseIcon {...props} />;
     case "terminal":
@@ -155,41 +165,6 @@ function sessionStatusIcon(status: string) {
     default:
       return <CircleHelpIcon {...props} />;
   }
-}
-
-function projectSessions(
-  projects: Project[],
-  sessions: Session[],
-) {
-  const knownProjectIDs = new Set(projects.map((project) => project.id));
-  const grouped = new Map<string, Session[]>();
-  const unassigned: Session[] = [];
-
-  for (const session of sessions) {
-    if (!session.projectId || !knownProjectIDs.has(session.projectId)) {
-      unassigned.push(session);
-      continue;
-    }
-    const group = grouped.get(session.projectId);
-    if (group) group.push(session);
-    else grouped.set(session.projectId, [session]);
-  }
-
-  return { grouped, orderedProjects: projects, unassigned };
-}
-
-export function flattenProjectSidebarSessions(
-  projects: Project[],
-  sessions: Session[],
-) {
-  const { grouped, orderedProjects, unassigned } = projectSessions(
-    projects,
-    sessions,
-  );
-  return [
-    ...orderedProjects.flatMap((project) => grouped.get(project.id) ?? []),
-    ...unassigned,
-  ];
 }
 
 function ProjectActions({
@@ -248,6 +223,14 @@ function ProjectSessionRow({
   onSelectArchivedSession,
   onArchive,
   onDelete,
+  onRename,
+  canReorder,
+  canMoveUp,
+  canMoveDown,
+  onMove,
+  onDragStart,
+  onDrop,
+  onDragEnd,
   onSessionPointerEnter,
   onSessionPointerLeave,
   onSessionFocus,
@@ -261,6 +244,14 @@ function ProjectSessionRow({
   onSelectArchivedSession?(session: Session): void;
   onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
+  onRename?: (session: Session) => void;
+  canReorder?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMove?(direction: "up" | "down"): void;
+  onDragStart?(session: Session): void;
+  onDrop?(session: Session): void;
+  onDragEnd?(): void;
 } & SessionInfoInteractionHandlers) {
   const agentSession = isAgentSession(session);
   const effectiveSummary = agentSession ? summary : undefined;
@@ -273,7 +264,9 @@ function ProjectSessionRow({
   const unread = effectiveSummary?.unread === true;
   const latestSummary = effectiveSummary?.summary?.trim() || "";
   const processName = !agentSession ? session.processName?.trim() || "" : "";
-  const purposeText = purpose || latestSummary || identity || "New session";
+  const purposeText = session.customName
+    ? identity
+    : purpose || latestSummary || identity || "New session";
   const showSummary = Boolean(latestSummary && latestSummary !== purposeText);
   const showProcessName = Boolean(processName && processName !== purposeText);
   const requiredAction = action || "None";
@@ -286,8 +279,14 @@ function ProjectSessionRow({
     unread ? "Unread." : "Read.",
     ...(session.needsAttention ? ["Needs attention."] : []),
   ].join(" ");
-  const selectionDetails = [purpose, action].filter(Boolean).join(" — ");
+  const selectionDetails = [session.customName ? "" : purpose, action]
+    .filter(Boolean)
+    .join(" — ");
   const selectionLabel = `Select ${identity}${selectionDetails ? ` — ${selectionDetails}` : ""}`;
+  const reorderActions = [
+    ...(canMoveUp ? [{ label: "Move up", onSelect: () => onMove?.("up") }] : []),
+    ...(canMoveDown ? [{ label: "Move down", onSelect: () => onMove?.("down") }] : []),
+  ];
   const contextAction = session.archived
     ? undefined
     : agentSession
@@ -301,11 +300,19 @@ function ProjectSessionRow({
     identity,
     contextAction,
     agentSession ? "Archive" : "Delete",
+    [
+      ...reorderActions,
+      ...(onRename && !session.archived
+        ? [{ label: "Rename", onSelect: () => onRename(session) }]
+        : []),
+    ],
   );
 
   return (
     <li
       className="project-session-row"
+      draggable={canReorder}
+      data-session-id={session.id}
       data-agent={agentSession ? "true" : undefined}
       data-attention={session.needsAttention ? "true" : undefined}
       data-state={status}
@@ -313,7 +320,32 @@ function ProjectSessionRow({
       onContextMenu={onContextMenu}
       onPointerEnter={(event) => onSessionPointerEnter?.(session, event)}
       onPointerLeave={() => onSessionPointerLeave?.(session.id)}
+      onDragStart={(event) => {
+        if (!canReorder) return;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", session.id);
+        onDragStart?.(session);
+      }}
+      onDragOver={(event) => {
+        if (!canReorder) return;
+        event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!canReorder) return;
+        event.preventDefault();
+        onDrop?.(session);
+      }}
+      onDragEnd={onDragEnd}
     >
+      {canReorder && (
+        <span
+          className="project-session-drag-handle"
+          aria-hidden="true"
+          title="Drag to reorder"
+        >
+          <GripVerticalIcon />
+        </span>
+      )}
       <button
         type="button"
         className="project-session-select"
@@ -321,9 +353,20 @@ function ProjectSessionRow({
         aria-describedby={accessibleDescriptionID}
         aria-pressed={selected}
         aria-current={selected ? "true" : undefined}
+        aria-keyshortcuts={canMoveUp || canMoveDown ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
         data-unread={unread ? "true" : "false"}
         onFocus={(event) => onSessionFocus?.(session, event)}
         onBlur={() => onSessionBlur?.(session.id)}
+        onKeyDown={(event) => {
+          if (!event.altKey) return;
+          if (event.key === "ArrowUp" && canMoveUp) {
+            event.preventDefault();
+            onMove?.("up");
+          } else if (event.key === "ArrowDown" && canMoveDown) {
+            event.preventDefault();
+            onMove?.("down");
+          }
+        }}
         onClick={() => {
           if (session.archived) onSelectArchivedSession?.(session);
           else onSelectSession(session.id);
@@ -381,6 +424,19 @@ function ProjectGroup({
   onCreateAgent,
   onArchive,
   onDelete,
+  onRename,
+  canReorderSessions,
+  onSessionMove,
+  onSessionDragStart,
+  onSessionDrop,
+  onSessionDragEnd,
+  onProjectDragStart,
+  onProjectDragOver,
+  onProjectDrop,
+  onProjectDragEnd,
+  canMoveProjectUp,
+  canMoveProjectDown,
+  onProjectMove,
   onSessionPointerEnter,
   onSessionPointerLeave,
   onSessionFocus,
@@ -397,11 +453,37 @@ function ProjectGroup({
   onCreateAgent?(projectID: string): void;
   onArchive?: (session: Session) => void;
   onDelete?: (session: Session) => void;
+  onRename?: (session: Session) => void;
+  canReorderSessions?: boolean;
+  onSessionMove?(session: Session, direction: "up" | "down"): void;
+  onSessionDragStart?(session: Session): void;
+  onSessionDrop?(session: Session): void;
+  onSessionDragEnd?(): void;
+  onProjectDragStart?(project: Project): void;
+  onProjectDragOver?(): void;
+  onProjectDrop?(project: Project): void;
+  onProjectDragEnd?(): void;
+  canMoveProjectUp?: boolean;
+  canMoveProjectDown?: boolean;
+  onProjectMove?(direction: "up" | "down"): void;
 } & SessionInfoInteractionHandlers) {
   const groupID = project?.id ?? "unassigned";
   const headingID = `project-sidebar-heading-${groupID}`;
   const label = project?.path ?? "Unassigned";
   const heading = project ? projectName(label) : label;
+  const projectReorderActions = [
+    ...(canMoveProjectUp
+      ? [{ label: "Move project up", onSelect: () => onProjectMove?.("up") }]
+      : []),
+    ...(canMoveProjectDown
+      ? [{ label: "Move project down", onSelect: () => onProjectMove?.("down") }]
+      : []),
+  ];
+  const {
+    onContextMenu: onProjectContextMenu,
+    menu: projectMenu,
+  } = useSessionContextMenu(heading, undefined, "Delete", projectReorderActions);
+  const activeSessions = sessions.filter((session) => !session.archived);
 
   return (
     <section
@@ -410,7 +492,46 @@ function ProjectGroup({
       data-bounded={!project ? "true" : undefined}
       aria-labelledby={headingID}
     >
-      <header className="project-sidebar-header">
+      <header
+        className="project-sidebar-header"
+        draggable={Boolean(project && onProjectDragStart)}
+        tabIndex={projectReorderActions.length > 0 ? 0 : undefined}
+        aria-keyshortcuts={projectReorderActions.length > 0
+          ? "Alt+ArrowUp Alt+ArrowDown"
+          : undefined}
+        onContextMenu={(event) => {
+          if (isProjectActionTarget(event.target)) return;
+          onProjectContextMenu(event);
+        }}
+        onKeyDown={(event) => {
+          if (isProjectActionTarget(event.target)) return;
+          if (!event.altKey) return;
+          if (event.key === "ArrowUp" && canMoveProjectUp) {
+            event.preventDefault();
+            onProjectMove?.("up");
+          } else if (event.key === "ArrowDown" && canMoveProjectDown) {
+            event.preventDefault();
+            onProjectMove?.("down");
+          }
+        }}
+        onDragStart={(event) => {
+          if (isProjectActionTarget(event.target) || !project || !onProjectDragStart) return;
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", project.id);
+          onProjectDragStart(project);
+        }}
+        onDragOver={(event) => {
+          if (isProjectActionTarget(event.target) || !project || !onProjectDragOver) return;
+          event.preventDefault();
+          onProjectDragOver();
+        }}
+        onDrop={(event) => {
+          if (isProjectActionTarget(event.target) || !project || !onProjectDrop) return;
+          event.preventDefault();
+          onProjectDrop(project);
+        }}
+        onDragEnd={onProjectDragEnd}
+      >
         <h2 className="project-sidebar-path" id={headingID} title={label}>{heading}</h2>
         {project && (onCreateTerminal || onCreateAgent) && (
           <ProjectActions
@@ -420,9 +541,13 @@ function ProjectGroup({
           />
         )}
       </header>
+      {projectMenu}
       {sessions.length > 0 ? (
         <ul className="project-sidebar-session-list">
-          {sessions.map((session) => (
+          {sessions.map((session) => {
+            const activeIndex = activeSessions.findIndex((item) => item.id === session.id);
+            const canMove = !session.archived && Boolean(canReorderSessions);
+            return (
             <ProjectSessionRow
               key={session.id}
               session={session}
@@ -433,12 +558,21 @@ function ProjectGroup({
               onSelectArchivedSession={onSelectArchivedSession}
               onArchive={onArchive}
               onDelete={onDelete}
+              onRename={onRename}
+              canReorder={canMove}
+              canMoveUp={canMove && activeIndex > 0}
+              canMoveDown={canMove && activeIndex >= 0 && activeIndex < activeSessions.length - 1}
+              onMove={(direction) => onSessionMove?.(session, direction)}
+              onDragStart={onSessionDragStart}
+              onDrop={onSessionDrop}
+              onDragEnd={onSessionDragEnd}
               onSessionPointerEnter={onSessionPointerEnter}
               onSessionPointerLeave={onSessionPointerLeave}
               onSessionFocus={onSessionFocus}
               onSessionBlur={onSessionBlur}
             />
-          ))}
+            );
+          })}
         </ul>
       ) : (
         <p className="project-sidebar-empty">No sessions yet.</p>
@@ -464,6 +598,9 @@ export function ProjectSidebar({
   onHideArchived,
   onArchive,
   onDelete,
+  onRename,
+  onReorderSessions,
+  onReorderProjects,
   onSessionPointerEnter,
   onSessionPointerLeave,
   onSessionFocus,
@@ -493,11 +630,168 @@ export function ProjectSidebar({
     sessionFilter,
     (session, summary) => sessionIdentity(session, summary, terminalOrdinals.get(session.id)),
   );
-  const { grouped, orderedProjects, unassigned } = projectSessions(
+  const { grouped, orderedProjects, unassigned } = groupProjectSidebarSessions(
     projects,
     visibleSessions,
   );
   const normalizedFilter = normalizeSessionFilter(sessionFilter);
+  const draggedSessionIDRef = useRef<string | null>(null);
+  const draggedProjectIDRef = useRef<string | null>(null);
+  const reorderEnabled = !normalizedFilter;
+
+  const reorderSessionGroup = (groupID: string, targetID: string) => {
+    const draggedSessionID = draggedSessionIDRef.current;
+    if (!draggedSessionID || draggedSessionID === targetID || !reorderEnabled) return;
+    const groupSessions = groupID === "unassigned"
+      ? unassigned
+      : grouped.get(groupID) ?? [];
+    if (
+      !groupSessions.some((session) => session.id === draggedSessionID && !session.archived)
+      || !groupSessions.some((session) => session.id === targetID && !session.archived)
+    ) return;
+    const activeIDs: string[] = [];
+    const groupActiveIDs = new Set<string>();
+    for (const session of groupSessions) {
+      if (session.archived) continue;
+      activeIDs.push(session.id);
+      groupActiveIDs.add(session.id);
+    }
+    const fromIndex = activeIDs.indexOf(draggedSessionID);
+    const targetIndex = activeIDs.indexOf(targetID);
+    if (fromIndex < 0 || targetIndex < 0) return;
+    activeIDs.splice(fromIndex, 1);
+    activeIDs.splice(targetIndex, 0, draggedSessionID);
+    let replacementIndex = 0;
+    const finalIDs: string[] = [];
+    for (const session of sessions) {
+      if (session.archived) continue;
+      finalIDs.push(
+        groupActiveIDs.has(session.id)
+          ? activeIDs[replacementIndex++]
+          : session.id,
+      );
+    }
+    onReorderSessions?.(finalIDs);
+  };
+
+  const reorderSessionByOffset = (
+    groupID: string,
+    sessionID: string,
+    offset: -1 | 1,
+  ) => {
+    if (!reorderEnabled) return;
+    const groupSessions = groupID === "unassigned"
+      ? unassigned
+      : grouped.get(groupID) ?? [];
+    const activeIDs = groupSessions
+      .filter((session) => !session.archived)
+      .map((session) => session.id);
+    const fromIndex = activeIDs.indexOf(sessionID);
+    const targetIndex = fromIndex + offset;
+    if (fromIndex < 0 || targetIndex < 0 || targetIndex >= activeIDs.length) return;
+    activeIDs.splice(fromIndex, 1);
+    activeIDs.splice(targetIndex, 0, sessionID);
+    const groupActiveIDs = new Set(
+      groupSessions.filter((session) => !session.archived).map((session) => session.id),
+    );
+    let replacementIndex = 0;
+    const finalIDs: string[] = [];
+    for (const session of sessions) {
+      if (session.archived) continue;
+      finalIDs.push(
+        groupActiveIDs.has(session.id)
+          ? activeIDs[replacementIndex++]
+          : session.id,
+      );
+    }
+    onReorderSessions?.(finalIDs);
+  };
+
+  const beginSessionDrag = (session: Session) => {
+    if (!reorderEnabled || session.archived) return;
+    draggedSessionIDRef.current = session.id;
+  };
+  const endSessionDrag = () => {
+    draggedSessionIDRef.current = null;
+  };
+  const beginProjectDrag = (project: Project) => {
+    if (!reorderEnabled) return;
+    draggedProjectIDRef.current = project.id;
+  };
+  const dropProject = (project: Project) => {
+    const draggedProjectID = draggedProjectIDRef.current;
+    if (!draggedProjectID || draggedProjectID === project.id || !reorderEnabled) return;
+    const projectIDs = orderedProjects.map((item) => item.id);
+    const fromIndex = projectIDs.indexOf(draggedProjectID);
+    const targetIndex = projectIDs.indexOf(project.id);
+    if (fromIndex < 0 || targetIndex < 0) return;
+    projectIDs.splice(fromIndex, 1);
+    projectIDs.splice(targetIndex, 0, draggedProjectID);
+    onReorderProjects?.(projectIDs);
+  };
+  const reorderProjectByOffset = (projectID: string, offset: -1 | 1) => {
+    if (!reorderEnabled) return;
+    const projectIDs = orderedProjects.map((project) => project.id);
+    const fromIndex = projectIDs.indexOf(projectID);
+    const targetIndex = fromIndex + offset;
+    if (fromIndex < 0 || targetIndex < 0 || targetIndex >= projectIDs.length) return;
+    projectIDs.splice(fromIndex, 1);
+    projectIDs.splice(targetIndex, 0, projectID);
+    onReorderProjects?.(projectIDs);
+  };
+  const endProjectDrag = () => {
+    draggedProjectIDRef.current = null;
+  };
+
+  const renderGroup = (project: Project | undefined, groupSessions: Session[]) => (
+    <ProjectGroup
+      key={project?.id ?? "unassigned"}
+      project={project}
+      sessions={groupSessions}
+      summaries={summaries}
+      terminalOrdinals={terminalOrdinals}
+      selectedID={selectedID}
+      onSelectSession={onSelectSession}
+      onSelectArchivedSession={onSelectArchivedSession}
+      onCreateTerminal={onCreateTerminal}
+      onCreateAgent={onCreateAgent}
+      onArchive={onArchive}
+      onDelete={onDelete}
+      onRename={onRename}
+      canReorderSessions={reorderEnabled && Boolean(onReorderSessions)}
+      onSessionMove={(session, direction) => reorderSessionByOffset(
+        project?.id ?? "unassigned",
+        session.id,
+        direction === "up" ? -1 : 1,
+      )}
+      onSessionDragStart={beginSessionDrag}
+      onSessionDrop={(session) => reorderSessionGroup(project?.id ?? "unassigned", session.id)}
+      onSessionDragEnd={endSessionDrag}
+      onProjectDragStart={project && reorderEnabled && onReorderProjects ? beginProjectDrag : undefined}
+      onProjectDragOver={project && reorderEnabled && onReorderProjects ? () => {} : undefined}
+      onProjectDrop={project && reorderEnabled && onReorderProjects ? dropProject : undefined}
+      onProjectDragEnd={endProjectDrag}
+      canMoveProjectUp={Boolean(
+        project && reorderEnabled && onReorderProjects
+        && orderedProjects.findIndex((item) => item.id === project.id) > 0,
+      )}
+      canMoveProjectDown={Boolean(
+        project && reorderEnabled && onReorderProjects
+        && (() => {
+          const index = orderedProjects.findIndex((item) => item.id === project.id);
+          return index >= 0 && index < orderedProjects.length - 1;
+        })(),
+      )}
+      onProjectMove={(direction) => {
+        if (!project) return;
+        reorderProjectByOffset(project.id, direction === "up" ? -1 : 1);
+      }}
+      onSessionPointerEnter={onSessionPointerEnter}
+      onSessionPointerLeave={onSessionPointerLeave}
+      onSessionFocus={onSessionFocus}
+      onSessionBlur={onSessionBlur}
+    />
+  );
   const visibleProjects = normalizedFilter
     ? orderedProjects.filter((project) => (grouped.get(project.id)?.length ?? 0) > 0)
     : orderedProjects;
@@ -562,43 +856,9 @@ export function ProjectSidebar({
       </header>
       {archivedError && <p className="project-sidebar-error" role="alert">{archivedError}</p>}
       <div className="project-sidebar-groups">
-        {visibleProjects.map((project) => (
-          <ProjectGroup
-            key={project.id}
-            project={project}
-            sessions={grouped.get(project.id) ?? []}
-            summaries={summaries}
-            terminalOrdinals={terminalOrdinals}
-            selectedID={selectedID}
-            onSelectSession={onSelectSession}
-            onSelectArchivedSession={onSelectArchivedSession}
-            onCreateTerminal={onCreateTerminal}
-            onCreateAgent={onCreateAgent}
-            onArchive={onArchive}
-            onDelete={onDelete}
-            onSessionPointerEnter={onSessionPointerEnter}
-            onSessionPointerLeave={onSessionPointerLeave}
-            onSessionFocus={onSessionFocus}
-            onSessionBlur={onSessionBlur}
-          />
-        ))}
+        {visibleProjects.map((project) => renderGroup(project, grouped.get(project.id) ?? []))}
         {unassigned.length > 0 && (
-          <ProjectGroup
-            sessions={unassigned}
-            summaries={summaries}
-            terminalOrdinals={terminalOrdinals}
-            selectedID={selectedID}
-            onSelectSession={onSelectSession}
-            onSelectArchivedSession={onSelectArchivedSession}
-            onCreateTerminal={onCreateTerminal}
-            onCreateAgent={onCreateAgent}
-            onArchive={onArchive}
-            onDelete={onDelete}
-            onSessionPointerEnter={onSessionPointerEnter}
-            onSessionPointerLeave={onSessionPointerLeave}
-            onSessionFocus={onSessionFocus}
-            onSessionBlur={onSessionBlur}
-          />
+          renderGroup(undefined, unassigned)
         )}
         {normalizedFilter && visibleSessions.length === 0 && (
           <p className="project-sidebar-filter-empty">No sessions match your filter.</p>

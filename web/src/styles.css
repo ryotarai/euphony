@@ -1643,15 +1643,17 @@ input:focus-visible,
 .session-status-running {
   color: #60a5fa;
   transform-origin: center;
-  animation: none;
+  animation: sidebar-session-status-spin 900ms linear infinite;
+  will-change: transform;
 }
 
 .session-status-blocked {
   font-size: 0.84rem;
+  color: #fbbf24;
 }
 
 .session-status-waiting {
-  color: #fbbf24;
+  color: #4ade80;
 }
 
 .session-status-terminal,
@@ -1665,6 +1667,12 @@ input:focus-visible,
 
 .session-status-failed {
   color: #f87171;
+}
+
+@keyframes sidebar-session-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .attention-dot {
@@ -3835,6 +3843,7 @@ input {
 }
 
 .workspace-file-viewer {
+  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background:
@@ -3881,7 +3890,8 @@ input {
 }
 
 .workspace-file-header > div > span,
-.workspace-file-header > span {
+.workspace-file-header > span,
+.workspace-file-header-actions > span {
   overflow: hidden;
   color: #737373;
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -3893,6 +3903,22 @@ input {
 .workspace-file-header > span {
   flex: 0 0 auto;
   letter-spacing: 0.05em;
+}
+
+.workspace-file-header-actions {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.55rem !important;
+}
+
+.workspace-file-header-actions [data-slot="button"] {
+  flex: 0 0 auto;
+}
+
+.workspace-file-header-actions [data-slot="button"] svg {
+  width: 0.78rem;
+  height: 0.78rem;
 }
 
 .workspace-navigator-header {
@@ -4197,6 +4223,64 @@ input {
 
 .workspace-code-scroll {
   background: #050505;
+}
+
+.workspace-image-preview {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  place-items: center;
+  align-content: center;
+  gap: 0.75rem;
+  overflow: auto;
+  background: #050505;
+  padding: 1.25rem;
+}
+
+.workspace-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid #262626;
+  background: #0b0d0f;
+}
+
+.workspace-image-preview figcaption {
+  max-width: 100%;
+  overflow: hidden;
+  color: #737373;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.55rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-image-preview-state {
+  display: grid;
+  min-height: 0;
+  place-items: center;
+  align-content: center;
+  gap: 0.7rem;
+  color: #737373;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+}
+
+.workspace-image-preview-state [data-slot="skeleton"] {
+  width: min(18rem, 60%);
+  height: min(12rem, 40%);
+}
+
+.workspace-file-download-error {
+  position: absolute;
+  right: 0.8rem;
+  bottom: 0.65rem;
+  margin: 0;
+  color: #f87171;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.58rem;
 }
 
 .workspace-pierre-file {
@@ -5468,6 +5552,21 @@ input {
   padding: 0.2rem 0.35rem 0.35rem;
 }
 
+.project-sidebar-header[draggable="true"] {
+  cursor: grab;
+  user-select: none;
+}
+
+.project-sidebar-header[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.project-sidebar-header[tabindex="0"]:focus-visible {
+  border-radius: 0.2rem;
+  outline: 2px solid color-mix(in srgb, var(--foreground) 70%, transparent);
+  outline-offset: 1px;
+}
+
 .project-sidebar-header h2 {
   flex: 1 1 auto;
   min-width: 0;
@@ -5543,9 +5642,42 @@ input {
 }
 
 .project-session-row {
+  position: relative;
   display: block;
   min-width: 0;
   margin-left: 0;
+}
+
+.project-session-row[draggable="true"] {
+  cursor: grab;
+}
+
+.project-session-row[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.project-session-drag-handle {
+  position: absolute;
+  top: 50%;
+  left: -0.9rem;
+  display: grid;
+  width: 0.7rem;
+  height: 1rem;
+  place-items: center;
+  color: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: color 120ms ease;
+}
+
+.project-session-drag-handle svg {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.project-session-row[draggable="true"]:hover .project-session-drag-handle,
+.project-session-row[draggable="true"]:focus-within .project-session-drag-handle {
+  color: var(--muted-foreground);
 }
 
 .project-session-row[data-state="waiting"][data-unread="false"]:not([data-attention="true"])
@@ -5593,14 +5725,20 @@ input {
 }
 
 .project-session-status-running {
-  color: #4ade80;
+  color: #60a5fa;
+  transform-origin: center;
+  animation: sidebar-session-status-spin 900ms linear infinite;
+  will-change: transform;
 }
 
 .project-session-status-waiting {
+  color: #4ade80;
+}
+
+.project-session-status-blocked {
   color: #fbbf24;
 }
 
-.project-session-status-blocked,
 .project-session-status-failed {
   color: #f87171;
 }
@@ -5672,8 +5810,12 @@ input {
   .project-add-project,
   .project-create-terminal,
   .project-create-agent,
-  .project-sidebar-archived-toggle {
+  .project-sidebar-archived-toggle,
+  .session-status-running,
+  .project-session-status-running {
     transition: none;
+    animation: none;
+    will-change: auto;
   }
 }
 

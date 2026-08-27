@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	pathpkg "path"
@@ -119,18 +120,11 @@ func (r *Reader) File(path string) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
-	handle, err := r.rootHandle.OpenFile(rootPath(clean), secureReadOnlyFlags, 0)
+	handle, info, err := r.openRegularFile(clean)
 	if err != nil {
-		return File{}, classifyPathError(err)
+		return File{}, err
 	}
 	defer handle.Close()
-	info, err := handle.Stat()
-	if err != nil {
-		return File{}, classifyPathError(err)
-	}
-	if !info.Mode().IsRegular() {
-		return File{}, ErrTypeMismatch
-	}
 
 	data, err := io.ReadAll(io.LimitReader(handle, maxFileBytes+1))
 	if err != nil {
@@ -151,10 +145,36 @@ func (r *Reader) File(path string) (File, error) {
 		Name:      filepath.Base(clean),
 		Path:      slash(clean),
 		Size:      info.Size(),
+		MimeType:  http.DetectContentType(data),
 		Content:   content,
 		Binary:    binary,
 		Truncated: truncated,
 	}, nil
+}
+
+func (r *Reader) OpenFile(path string) (*os.File, fs.FileInfo, error) {
+	clean, err := cleanPath(path, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	return r.openRegularFile(clean)
+}
+
+func (r *Reader) openRegularFile(clean string) (*os.File, fs.FileInfo, error) {
+	handle, err := r.rootHandle.OpenFile(rootPath(clean), secureReadOnlyFlags, 0)
+	if err != nil {
+		return nil, nil, classifyPathError(err)
+	}
+	info, err := handle.Stat()
+	if err != nil {
+		handle.Close()
+		return nil, nil, classifyPathError(err)
+	}
+	if !info.Mode().IsRegular() {
+		handle.Close()
+		return nil, nil, ErrTypeMismatch
+	}
+	return handle, info, nil
 }
 
 func (r *Reader) Search(query string) (SearchResult, error) {

@@ -14,7 +14,7 @@ import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
-import { flattenProjectSidebarSessions } from "./components/ProjectSidebar";
+import { flattenProjectSidebarSessions } from "./projectSidebarUtils";
 import { AgentsView } from "./components/AgentsView";
 import { flattenLegacySidebarSessions } from "./legacySidebarUtils";
 import {
@@ -309,8 +309,48 @@ function projectsEqual(left: Project[], right: Project[]): boolean {
     const other = right[index];
     return project.id === other?.id
       && project.path === other.path
-      && project.createdAt === other.createdAt;
+      && project.createdAt === other.createdAt
+      && project.order === other.order;
   });
+}
+
+function reorderItemsByIDs<T extends { id: string }>(items: T[], orderedIDs: string[]): T[] {
+  const byID = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const ordered: T[] = [];
+  for (const id of orderedIDs) {
+    const item = byID.get(id);
+    if (!item || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(item);
+  }
+  return [...ordered, ...items.filter((item) => !seen.has(item.id))];
+}
+
+function mergeOrderedItems<T extends { id: string }>(current: T[], ordered: T[]): T[] {
+  const orderedByID = new Map(ordered.map((item) => [item.id, item]));
+  return reorderItemsByIDs(current, ordered.map((item) => item.id)).map(
+    (item) => orderedByID.get(item.id) ?? item,
+  );
+}
+
+function mergeItemsInCurrentOrder<T extends { id: string }>(current: T[], next: T[]): T[] {
+  const nextByID = new Map(next.map((item) => [item.id, item]));
+  return current.map((item) => nextByID.get(item.id) ?? item);
+}
+
+interface SidebarOrderSync {
+  committedIDs: string[] | null;
+  desiredIDs: string[] | null;
+  inFlight: boolean;
+  revision: number;
+}
+
+function terminalDeletionPreservesAgentSummary(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const candidate = data as { preserveAgentSummary?: unknown };
+  return candidate.preserveAgentSummary === true
+    || candidate.preserveAgentSummary === "true";
 }
 
 function isProjectList(value: unknown): value is Project[] {
@@ -319,7 +359,8 @@ function isProjectList(value: unknown): value is Project[] {
     const candidate = project as Record<string, unknown>;
     return typeof candidate.id === "string"
       && typeof candidate.path === "string"
-      && typeof candidate.createdAt === "string";
+      && typeof candidate.createdAt === "string"
+      && (candidate.order === undefined || typeof candidate.order === "number");
   });
 }
 
@@ -792,6 +833,7 @@ export function App({
   const queryResumeSucceededRef = useRef(false);
   const queryResumeActiveRef = useRef(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const projectStateRef = useRef<Project[] | null>(null);
   const projectEndpointAvailableRef = useRef(false);
   const [annotationRevision, setAnnotationRevision] = useState(0);
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
@@ -993,6 +1035,19 @@ export function App({
   const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(null!);
   const previousSessionsRef = useRef<Session[]>([]);
   const previousSessionOrderRef = useRef<Session[]>([]);
+  const sessionStateRef = useRef<Session[] | null>(null);
+  const sidebarSessionOrderSyncRef = useRef<SidebarOrderSync>({
+    committedIDs: null,
+    desiredIDs: null,
+    inFlight: false,
+    revision: 0,
+  });
+  const sidebarProjectOrderSyncRef = useRef<SidebarOrderSync>({
+    committedIDs: null,
+    desiredIDs: null,
+    inFlight: false,
+    revision: 0,
+  });
   const sessionSnapshotRequestRef = useRef(0);
   const appliedSessionSnapshotRequestRef = useRef(0);
   const latestSessionSnapshotRef = useRef<Session[] | null>(null);
@@ -1023,6 +1078,12 @@ export function App({
     expiredFilterDeselectIDsRef.current ??= new Set();
     pendingAttentionAcknowledgementsRef.current ??= new Set();
   }, []);
+  useLayoutEffect(() => {
+    sessionStateRef.current = sessions;
+  }, [sessions]);
+  useLayoutEffect(() => {
+    projectStateRef.current = projects;
+  }, [projects]);
 
   const currentSelectionStateRef = useRef({
     selectedIDs,
@@ -1360,12 +1421,29 @@ export function App({
     );
   }, []);
   const applySessionSnapshot = useCallback((items: Session[]) => {
+    const orderSync = sidebarSessionOrderSyncRef.current;
+    let nextItems = items;
+    if (orderSync.desiredIDs) {
+      const incomingIDs = new Set(items.map((session) => session.id));
+      const desiredIDSet = new Set(orderSync.desiredIDs);
+      const reconciledIDs = [
+        ...orderSync.desiredIDs.filter((id) => incomingIDs.has(id)),
+        ...items
+          .map((session) => session.id)
+          .filter((id) => !desiredIDSet.has(id)),
+      ];
+      if (reconciledIDs.join("\0") !== orderSync.desiredIDs.join("\0")) {
+        orderSync.desiredIDs = reconciledIDs;
+        orderSync.revision += 1;
+      }
+      nextItems = reorderItemsByIDs(items, orderSync.desiredIDs);
+    }
     const previous = previousSessionsRef.current;
     const previousByID = new Map(previous.map((session) => [session.id, session]));
     const currentSelection = currentSelectionStateRef.current;
     const selectedIDSet = new Set(currentSelection.selectedIDs);
     const pinnedIDSet = new Set(currentSelection.pinnedIDs);
-    for (const session of items) {
+    for (const session of nextItems) {
       const previousSession = previousByID.get(session.id);
       if (!previousSession) continue;
       const wasMatch = matchesWorkspaceFilter(
@@ -1392,17 +1470,18 @@ export function App({
         scheduleFilterDeselect(session.id);
       }
     }
-    const transitions = attentionTransitions(previous, items);
+    const transitions = attentionTransitions(previous, nextItems);
     pendingAgentLaunchIDsRef.current = new Set(
-      agentLaunchTransitions(previous, items).map((session) => session.id),
+      agentLaunchTransitions(previous, nextItems).map((session) => session.id),
     );
     previousSessionOrderRef.current = previous;
-    previousSessionsRef.current = items;
+    previousSessionsRef.current = nextItems;
+    sessionStateRef.current = nextItems;
     setSessions((current) =>
-      current && sessionsEqual(current, items) ? current : items,
+      current && sessionsEqual(current, nextItems) ? current : nextItems,
     );
     if (!projectEndpointAvailableRef.current) {
-      const legacyProjects = deriveLegacyProjects(items);
+      const legacyProjects = deriveLegacyProjects(nextItems);
       setProjects((current) =>
         current && projectsEqual(current, legacyProjects) ? current : legacyProjects,
       );
@@ -1996,9 +2075,13 @@ export function App({
               event.type === "subscriber_lagged"
             ) {
               if (event.type === "terminal.deleted") {
-                const data = event.data as { id?: string; terminalId?: string };
+                const data = event.data as {
+                  id?: string;
+                  terminalId?: string;
+                  preserveAgentSummary?: boolean | string;
+                };
                 const deletedID = data?.id ?? data?.terminalId;
-                if (deletedID) {
+                if (deletedID && !terminalDeletionPreservesAgentSummary(data)) {
                   agentSummaryDeletedAtRef.current.set(deletedID, event.occurredAt);
                   bumpAgentSummaryRevision(deletedID);
                   setAgentSummaries((current) =>
@@ -3380,6 +3463,125 @@ export function App({
     }
   }
 
+  function setSessionOrderState(next: Session[]) {
+    sessionStateRef.current = next;
+    previousSessionsRef.current = next;
+    previousSessionOrderRef.current = next;
+    setSessions(next);
+  }
+
+  function flushSidebarSessionOrder() {
+    const orderSync = sidebarSessionOrderSyncRef.current;
+    if (orderSync.inFlight || !api || !orderSync.desiredIDs) return;
+    const requestIDs = [...orderSync.desiredIDs];
+    const requestRevision = orderSync.revision;
+    orderSync.inFlight = true;
+    void api.reorderSessions(requestIDs).then((response) => {
+      orderSync.committedIDs = response.map((session) => session.id);
+      const current = sessionStateRef.current ?? [];
+      if (orderSync.revision === requestRevision) {
+        orderSync.desiredIDs = null;
+        setSessionOrderState(mergeOrderedItems(current, response));
+        setRequestError("");
+        return;
+      }
+      // A newer drag is already visible. Merge fresh metadata without replacing
+      // the user's newer order, then flush that order in finally.
+      setSessionOrderState(mergeItemsInCurrentOrder(current, response));
+    }).catch((error: unknown) => {
+      if (orderSync.revision !== requestRevision) return;
+      const rollbackIDs = orderSync.committedIDs ?? requestIDs;
+      orderSync.desiredIDs = null;
+      setSessionOrderState(
+        reorderItemsByIDs(sessionStateRef.current ?? [], rollbackIDs),
+      );
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The session order could not be saved.",
+      );
+    }).finally(() => {
+      orderSync.inFlight = false;
+      if (orderSync.desiredIDs) flushSidebarSessionOrder();
+    });
+  }
+
+  function reorderSidebarSessions(orderedIDs: string[]) {
+    if (!api || !projectEndpointAvailableRef.current) return;
+    const current = sessionStateRef.current ?? sessions;
+    if (!current) return;
+    const orderSync = sidebarSessionOrderSyncRef.current;
+    const previousOrderIDs = current.map((session) => session.id);
+    const optimistic = reorderItemsByIDs(current, orderedIDs);
+    if (
+      optimistic.length === previousOrderIDs.length
+      && optimistic.every((session, index) => session.id === previousOrderIDs[index])
+    ) return;
+    if (!orderSync.desiredIDs) orderSync.committedIDs = previousOrderIDs;
+    orderSync.desiredIDs = optimistic.map((session) => session.id);
+    orderSync.revision += 1;
+    setSessionOrderState(optimistic);
+    flushSidebarSessionOrder();
+  }
+
+  function setProjectOrderState(next: Project[]) {
+    projectStateRef.current = next;
+    setProjects(next);
+  }
+
+  function flushSidebarProjectOrder() {
+    const orderSync = sidebarProjectOrderSyncRef.current;
+    if (orderSync.inFlight || !api || !orderSync.desiredIDs) return;
+    const requestIDs = [...orderSync.desiredIDs];
+    const requestRevision = orderSync.revision;
+    orderSync.inFlight = true;
+    void api.reorderProjects(requestIDs).then((response) => {
+      orderSync.committedIDs = response.map((project) => project.id);
+      const current = projectStateRef.current ?? [];
+      if (orderSync.revision === requestRevision) {
+        orderSync.desiredIDs = null;
+        setProjectOrderState(mergeOrderedItems(current, response));
+        setRequestError("");
+        return;
+      }
+      // Preserve a newer optimistic order while adopting fresh project data.
+      setProjectOrderState(mergeItemsInCurrentOrder(current, response));
+    }).catch((error: unknown) => {
+      if (orderSync.revision !== requestRevision) return;
+      const rollbackIDs = orderSync.committedIDs ?? requestIDs;
+      orderSync.desiredIDs = null;
+      setProjectOrderState(
+        reorderItemsByIDs(projectStateRef.current ?? [], rollbackIDs),
+      );
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The project order could not be saved.",
+      );
+    }).finally(() => {
+      orderSync.inFlight = false;
+      if (orderSync.desiredIDs) flushSidebarProjectOrder();
+    });
+  }
+
+  function reorderSidebarProjects(orderedIDs: string[]) {
+    if (!api || !projectEndpointAvailableRef.current) return;
+    const current = projectStateRef.current ?? projects;
+    if (!current) return;
+    const orderSync = sidebarProjectOrderSyncRef.current;
+    const previousOrderIDs = current.map((project) => project.id);
+    const optimistic = reorderItemsByIDs(current, orderedIDs);
+    if (
+      optimistic.length === previousOrderIDs.length
+      && optimistic.every((project, index) => project.id === previousOrderIDs[index])
+    ) return;
+    if (!orderSync.desiredIDs) orderSync.committedIDs = previousOrderIDs;
+    orderSync.desiredIDs = optimistic.map((project) => project.id);
+    orderSync.revision += 1;
+    setProjectOrderState(optimistic);
+    flushSidebarProjectOrder();
+  }
+
   async function applySharedCloseSelection(
     snapshot: SelectionSnapshot,
     previousRevision: number | null,
@@ -4206,6 +4408,8 @@ export function App({
           void createSession(false, undefined, projectID);
         },
         onCreateAgent: startConfiguredAgent,
+        onReorderSessions: reorderSidebarSessions,
+        onReorderProjects: reorderSidebarProjects,
       }
     : {};
   const summaryByTerminalID = new Map(
@@ -4424,6 +4628,7 @@ export function App({
         onCreate={(cwd) => void createSession(false, cwd)}
         onArchive={(session) => void archiveSession(session)}
         onDelete={(session) => setPendingDelete([session])}
+        onRename={openRenameDialog}
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}

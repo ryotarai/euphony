@@ -29,6 +29,7 @@ type allSession struct {
 	Agent      string    `json:"agent,omitempty"`
 	SessionID  string    `json:"sessionId,omitempty"`
 	Title      string    `json:"title"`
+	CustomName bool      `json:"customName,omitempty"`
 	Purpose    string    `json:"purpose,omitempty"`
 	Summary    string    `json:"summary,omitempty"`
 	Status     string    `json:"status,omitempty"`
@@ -68,10 +69,37 @@ func (s *Server) allSessions(ctx context.Context) ([]allSession, error) {
 	for _, item := range s.sessions.AgentSummaries() {
 		summaries[item.TerminalID] = item
 	}
+	summariesByAgentSession := make(map[string]session.AgentSummary)
+	for _, metadata := range stored {
+		agent := metadata.Agent
+		if agent == "" {
+			agent = metadata.ResumeAgent
+		}
+		if agent == "" || metadata.AgentSessionID == "" {
+			continue
+		}
+		summary, ok := summaries[metadata.ID]
+		if !ok {
+			continue
+		}
+		key := allSessionAgentKey(agent, metadata.AgentSessionID)
+		previous, exists := summariesByAgentSession[key]
+		if !exists || summary.GeneratedAt.After(previous.GeneratedAt) {
+			summariesByAgentSession[key] = summary
+		}
+	}
 
 	byKey := make(map[string]allSession, len(stored))
 	for _, metadata := range stored {
-		item := allSessionFromMetadata(metadata, projectsByID, summaries[metadata.ID])
+		summary := summaries[metadata.ID]
+		if summary.TerminalID == "" && metadata.AgentSessionID != "" {
+			agent := metadata.Agent
+			if agent == "" {
+				agent = metadata.ResumeAgent
+			}
+			summary = summariesByAgentSession[allSessionAgentKey(agent, metadata.AgentSessionID)]
+		}
+		item := allSessionFromMetadata(metadata, projectsByID, summary)
 		if item.Agent == "" || (item.SessionID == "" && item.State != allSessionOpen) {
 			continue
 		}
@@ -120,15 +148,13 @@ func allSessionFromMetadata(
 		TerminalID: terminalID,
 		Agent:      agent,
 		SessionID:  metadata.AgentSessionID,
-		Title:      metadata.Name,
+		Title:      allSessionTitle(metadata),
+		CustomName: metadata.CustomName,
 		Status:     metadata.AgentStatus,
 		Archived:   metadata.Archived,
 		CWD:        metadata.CWD,
 		UpdatedAt:  metadata.UpdatedAt,
 		State:      state,
-	}
-	if metadata.AgentTitle != "" {
-		item.Title = metadata.AgentTitle
 	}
 	if metadata.RepoRoot != "" {
 		item.Project = metadata.RepoRoot
@@ -153,6 +179,13 @@ func allSessionFromMetadata(
 
 func allSessionAgentKey(agent, sessionID string) string {
 	return agent + "\x00" + sessionID
+}
+
+func allSessionTitle(metadata session.Metadata) string {
+	if metadata.CustomName || strings.TrimSpace(metadata.AgentTitle) == "" {
+		return metadata.Name
+	}
+	return metadata.AgentTitle
 }
 
 func preferAllSession(candidate, previous allSession) bool {
@@ -228,7 +261,7 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 			CWD:            requestedCWD,
 		}
 	}
-	name := truncateAllSessionName(saved.AgentTitle)
+	name := truncateAllSessionName(allSessionTitle(*saved))
 	if name == "" {
 		name = truncateAllSessionName(saved.Name)
 	}
@@ -279,6 +312,15 @@ func (s *Server) resumeAllSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "resume_failed",
 			"The agent session could not be resumed.")
 		return
+	}
+	if saved.CustomName {
+		metadata, err = s.sessions.Rename(metadata.ID, saved.Name)
+		if err != nil {
+			_, _ = s.control.DeleteTerminal(metadata.ID)
+			writeError(w, http.StatusInternalServerError, "resume_failed",
+				"The agent session could not be resumed.")
+			return
+		}
 	}
 	if saved.Archived {
 		if _, err := s.sessions.SetAgentSessionArchived(saved.ID, sessionID, false); err != nil {

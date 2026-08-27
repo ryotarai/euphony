@@ -2515,6 +2515,43 @@ func TestMetadataPersistencePreservesUpdateOrder(t *testing.T) {
 	}
 }
 
+func TestReorderCurrentRollsBackTheMatchingMetadataOnPersistenceFailure(t *testing.T) {
+	manager := NewManager("/bin/sh")
+	createdAt := time.Now().UTC()
+	manager.sessions = map[string]*entry{
+		"first": {
+			metadata: Metadata{ID: "first", Name: "First", State: StateRunning, Order: 1, CreatedAt: createdAt},
+		},
+		"second": {
+			metadata: Metadata{ID: "second", Name: "Second", State: StateRunning, Order: 2, CreatedAt: createdAt.Add(time.Second)},
+		},
+		"third": {
+			metadata: Metadata{ID: "third", Name: "Third", State: StateRunning, Order: 3, CreatedAt: createdAt.Add(2 * time.Second)},
+		},
+	}
+	persistenceErr := errors.New("persist session order")
+	manager.store = &failSaveMetadataStore{
+		metadataStore: &recordingMetadataStore{},
+		err:           persistenceErr,
+	}
+
+	_, err := manager.ReorderCurrent(context.Background(), []string{"first", "third", "second"})
+	if !errors.Is(err, persistenceErr) {
+		t.Fatalf("ReorderCurrent() error = %v, want %v", err, persistenceErr)
+	}
+
+	items := manager.ListCurrent()
+	if len(items) != 3 {
+		t.Fatalf("ListCurrent() returned %d items, want 3", len(items))
+	}
+	for index, item := range items {
+		wantID := []string{"first", "second", "third"}[index]
+		if item.ID != wantID || item.Order != int64(index+1) {
+			t.Fatalf("item %d = %#v, want %s with order %d", index, item, wantID, index+1)
+		}
+	}
+}
+
 func TestMetadataPersistenceSerializesTitleBeforeNewerUpdate(t *testing.T) {
 	manager := NewManager("/bin/sh")
 	manager.sessions["terminal"] = codexTitleTestEntry()
@@ -4261,6 +4298,10 @@ func (s *failSaveMetadataStore) Save(context.Context, Metadata) error {
 	return s.err
 }
 
+func (s *failSaveMetadataStore) Reorder(context.Context, []string) error {
+	return s.err
+}
+
 type gatedResultMetadataStore struct {
 	recordingMetadataStore
 	entered      chan int
@@ -4414,6 +4455,8 @@ func (s *recordingMetadataStore) Save(_ context.Context, metadata Metadata) erro
 	s.mu.Unlock()
 	return nil
 }
+
+func (s *recordingMetadataStore) Reorder(context.Context, []string) error { return nil }
 
 func (s *recordingMetadataStore) Delete(context.Context, string) error {
 	return nil

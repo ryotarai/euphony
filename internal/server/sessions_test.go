@@ -54,6 +54,38 @@ func TestSessionAPI(t *testing.T) {
 	}
 }
 
+func TestSessionAPIReordersSidebarItems(t *testing.T) {
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+
+	firstResponse := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"First"}`)
+	secondResponse := performRequest(t, srv, http.MethodPost, "/api/sessions", `{"name":"Second"}`)
+	var first, second session.Metadata
+	decodeResponse(t, firstResponse, &first)
+	decodeResponse(t, secondResponse, &second)
+
+	ordered := performRequest(t, srv, http.MethodPut, "/api/sessions/order",
+		`{"ids":[`+jsonString(second.ID)+`,`+jsonString(first.ID)+`]}`)
+	if ordered.Code != http.StatusOK {
+		t.Fatalf("reorder status = %d, body = %s", ordered.Code, ordered.Body.String())
+	}
+	var response []session.Metadata
+	decodeResponse(t, ordered, &response)
+	if len(response) != 2 || response[0].ID != second.ID || response[1].ID != first.ID {
+		t.Fatalf("reordered sessions = %#v, want [%s %s]", response, second.ID, first.ID)
+	}
+
+	relisted := performRequest(t, srv, http.MethodGet, "/api/sessions", "")
+	var persisted []session.Metadata
+	decodeResponse(t, relisted, &persisted)
+	if len(persisted) != 2 || persisted[0].ID != second.ID || persisted[1].ID != first.ID {
+		t.Fatalf("persisted sessions = %#v, want [%s %s]", persisted, second.ID, first.ID)
+	}
+}
+
 func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
 	srv, err := New(Config{
 		Token:        "token",
@@ -76,6 +108,16 @@ func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
 			`"agentSessionId":"archive-session","status":"waiting"}`)
 	if hook.Code != http.StatusOK {
 		t.Fatalf("POST /api/hooks/terminal status = %d, body = %s", hook.Code, hook.Body.String())
+	}
+	if err := srv.sessions.SaveAgentSummary(t.Context(), session.AgentSummary{
+		TerminalID:  metadata.ID,
+		Provider:    "codex",
+		Status:      "waiting",
+		Purpose:     "Review the archived release",
+		Summary:     "The archived release is ready.",
+		GeneratedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SaveAgentSummary() error = %v", err)
 	}
 
 	archiveResponse := performRequest(t, srv, http.MethodPost,
@@ -101,14 +143,25 @@ func TestArchiveSessionAPIStopsAgentAndKeepsItInAllSessions(t *testing.T) {
 		t.Fatalf("current sessions = %#v, want archived agent hidden", current)
 	}
 
-	all := performRequest(t, srv, http.MethodGet, "/api/all-sessions", "")
-	if all.Code != http.StatusOK {
-		t.Fatalf("GET /api/all-sessions status = %d, body = %s", all.Code, all.Body.String())
-	}
 	var stored []allSession
-	decodeResponse(t, all, &stored)
+	waitForServer(t, time.Second, func() bool {
+		all := performRequest(t, srv, http.MethodGet, "/api/all-sessions", "")
+		if all.Code != http.StatusOK {
+			return false
+		}
+		var candidate []allSession
+		decodeResponse(t, all, &candidate)
+		if len(candidate) != 1 {
+			return false
+		}
+		stored = candidate
+		return candidate[0].Purpose == "Review the archived release" &&
+			candidate[0].Summary == "The archived release is ready."
+	})
 	if len(stored) != 1 || stored[0].ID != metadata.ID || !stored[0].Archived ||
-		stored[0].State != allSessionResume || stored[0].SessionID != "archive-session" {
+		stored[0].State != allSessionResume || stored[0].SessionID != "archive-session" ||
+		stored[0].Purpose != "Review the archived release" ||
+		stored[0].Summary != "The archived release is ready." {
 		t.Fatalf("all sessions = %#v, want one archived resumable agent", stored)
 	}
 
