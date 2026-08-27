@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -175,10 +177,25 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	requestContext, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
 	httpServer := newHTTPServer(actualAddress, srv.Handler(), requestContext, cancelRequests)
-	result := make(chan error, 1)
+	result := make(chan error, 2)
 	go func() {
 		result <- httpServer.Serve(tcpListener)
 	}()
+	unixListener, err := listenUnix(
+		os.Getenv("EUPHONY_SOCKET"), os.Getenv("EUPHONY_SOCKET_MODE"),
+	)
+	if err != nil {
+		_ = httpServer.Close()
+		_ = srv.Close(context.Background())
+		return err
+	}
+	if unixListener != nil {
+		defer func() { _ = unixListener.Close() }()
+		log.Printf("Euphony listening on unix://%s", unixListener.Addr().String())
+		go func() {
+			result <- httpServer.Serve(unixListener)
+		}()
+	}
 	readyFile := os.Getenv("EUPHONY_READY_FILE")
 	if readyFile != "" {
 		if err := writeReadyFile(readyFile, "http://"+actualAddress); err != nil {
@@ -272,6 +289,53 @@ func listenTCP(address string) (net.Listener, string, error) {
 		return nil, "", fmt.Errorf("listen on %s: %w", address, err)
 	}
 	return listener, listener.Addr().String(), nil
+}
+
+// listenUnix returns nil when no socket path is configured.
+func listenUnix(path, mode string) (net.Listener, error) {
+	if path == "" {
+		return nil, nil
+	}
+	fileMode := fs.FileMode(0o600)
+	if mode != "" {
+		parsed, err := strconv.ParseUint(mode, 8, 32)
+		if err != nil {
+			return nil, fmt.Errorf("parse EUPHONY_SOCKET_MODE %q: %w", mode, err)
+		}
+		fileMode = fs.FileMode(parsed)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create socket directory: %w", err)
+	}
+	if err := removeStaleSocket(path); err != nil {
+		return nil, err
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", path, err)
+	}
+	// ponytail: the socket briefly carries default permissions before this chmod;
+	// tighten with a private parent directory if that window ever matters.
+	if err := os.Chmod(path, fileMode); err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("set socket mode: %w", err)
+	}
+	return listener, nil
+}
+
+func removeStaleSocket(path string) error {
+	if _, err := os.Lstat(path); err != nil {
+		return nil
+	}
+	connection, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		_ = connection.Close()
+		return fmt.Errorf("socket %s is already in use", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
 }
 
 func writeReadyFile(path, baseURL string) error {
