@@ -104,6 +104,14 @@ bin/euphony
 Socket requests still require the bearer token. Euphony removes a stale socket
 file on startup and refuses to replace one that a live server is using.
 
+To serve the socket only, set `EUPHONY_ADDR` to an empty value. Euphony then
+skips the TCP listener, logs a generated token instead of opening a browser,
+and routes coding-agent hooks through the socket:
+
+```sh
+EUPHONY_ADDR= EUPHONY_SOCKET=/run/euphony/euphony.sock bin/euphony
+```
+
 Euphony does not terminate TLS. When the server is reachable outside a trusted
 network, place it behind an HTTPS reverse proxy and restrict network access.
 

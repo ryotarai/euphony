@@ -115,6 +115,7 @@ func (summary AgentSummary) MarshalJSON() ([]byte, error) {
 
 type HookConfig struct {
 	URL               string
+	Socket            string
 	Token             string
 	CodexSessionIndex string
 }
@@ -759,6 +760,7 @@ func (m *Manager) start(metadata Metadata, command *exec.Cmd) (*entry, error) {
 		"LC_CTYPE=en_US.UTF-8",
 		"EUPHONY_TERMINAL_ID="+metadata.ID,
 		"EUPHONY_HOOK_URL="+m.hooks.URL,
+		"EUPHONY_HOOK_SOCKET="+m.hooks.Socket,
 		"EUPHONY_TOKEN="+m.hooks.Token,
 	)
 	started, err := startTerminal(command, 80, 24)

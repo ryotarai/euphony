@@ -98,6 +98,7 @@ func runHook(args []string, stdin io.Reader) error {
 	// Hooks must never interrupt the coding agent when Euphony is unavailable.
 	_ = agenthook.Report(context.Background(), agenthook.Config{
 		URL:        os.Getenv("EUPHONY_HOOK_URL"),
+		Socket:     os.Getenv("EUPHONY_HOOK_SOCKET"),
 		Token:      os.Getenv("EUPHONY_TOKEN"),
 		TerminalID: os.Getenv("EUPHONY_TERMINAL_ID"),
 		Agent:      args[0],
@@ -120,15 +121,26 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 			log.Printf("Agent setup warning: %v", err)
 		},
 	)
-	address := os.Getenv("EUPHONY_ADDR")
+	socketPath := os.Getenv("EUPHONY_SOCKET")
+	address, tcpEnabled := os.LookupEnv("EUPHONY_ADDR")
+	// An explicitly empty EUPHONY_ADDR disables TCP and leaves only the socket.
+	tcpEnabled = !tcpEnabled || address != ""
+	if !tcpEnabled && socketPath == "" {
+		return errors.New("EUPHONY_SOCKET is required when EUPHONY_ADDR is empty")
+	}
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
-	tcpListener, actualAddress, err := listenTCP(address)
-	if err != nil {
-		return err
+	var tcpListener net.Listener
+	var actualAddress string
+	if tcpEnabled {
+		var err error
+		tcpListener, actualAddress, err = listenTCP(address)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tcpListener.Close() }()
 	}
-	defer func() { _ = tcpListener.Close() }()
 	databasePath := os.Getenv("EUPHONY_DB")
 	codexDirectory := os.Getenv("CODEX_HOME")
 	claudeDirectory := os.Getenv("CLAUDE_CONFIG_DIR")
@@ -160,11 +172,18 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 			return err
 		}
 	}
+	hookURL := "http://" + actualAddress + "/api/hooks/terminal"
+	hookSocket := ""
+	if !tcpEnabled {
+		hookURL = "http://euphony.local/api/hooks/terminal"
+		hookSocket = socketPath
+	}
 	srv, err := server.New(server.Config{
 		Token:              token,
 		AuthMode:           authMode,
 		Shell:              os.Getenv("SHELL"),
-		HookURL:            "http://" + actualAddress + "/api/hooks/terminal",
+		HookURL:            hookURL,
+		HookSocket:         hookSocket,
 		DatabasePath:       databasePath,
 		CodexSessionIndex:  filepath.Join(codexDirectory, "session_index.jsonl"),
 		CodexSessionsRoot:  codexSessionsRoot,
@@ -173,17 +192,19 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Euphony listening on http://%s", actualAddress)
+	if tcpEnabled {
+		log.Printf("Euphony listening on http://%s", actualAddress)
+	}
 	requestContext, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
 	httpServer := newHTTPServer(actualAddress, srv.Handler(), requestContext, cancelRequests)
 	result := make(chan error, 2)
-	go func() {
-		result <- httpServer.Serve(tcpListener)
-	}()
-	unixListener, err := listenUnix(
-		os.Getenv("EUPHONY_SOCKET"), os.Getenv("EUPHONY_SOCKET_MODE"),
-	)
+	if tcpEnabled {
+		go func() {
+			result <- httpServer.Serve(tcpListener)
+		}()
+	}
+	unixListener, err := listenUnix(socketPath, os.Getenv("EUPHONY_SOCKET_MODE"))
 	if err != nil {
 		_ = httpServer.Close()
 		_ = srv.Close(context.Background())
@@ -198,14 +219,21 @@ func runServer(stdin io.Reader, stdout io.Writer) error {
 	}
 	readyFile := os.Getenv("EUPHONY_READY_FILE")
 	if readyFile != "" {
-		if err := writeReadyFile(readyFile, "http://"+actualAddress); err != nil {
+		baseURL := "http://" + actualAddress
+		if !tcpEnabled {
+			baseURL = "unix://" + socketPath
+		}
+		if err := writeReadyFile(readyFile, baseURL); err != nil {
 			_ = httpServer.Close()
 			_ = srv.Close(context.Background())
 			return err
 		}
 		defer func() { _ = os.Remove(readyFile) }()
 	}
-	if generatedToken {
+	if generatedToken && !tcpEnabled {
+		log.Printf("Euphony token: %s", token)
+	}
+	if generatedToken && tcpEnabled {
 		url := browserURL(actualAddress, token)
 		if err := openBrowser(url); err != nil {
 			log.Printf("Open %s in a browser: %v", url, err)
