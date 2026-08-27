@@ -207,7 +207,11 @@ func (s *Service) publishSessionChange(change session.Change) {
 			s.events.publish("agent.updated", *change.After)
 		}
 	case session.ChangeDeleted:
-		s.events.publish("terminal.deleted", map[string]string{"id": change.Before.ID})
+		deleted := map[string]string{"id": change.Before.ID}
+		if change.PreserveAgentSummary {
+			deleted["preserveAgentSummary"] = "true"
+		}
+		s.events.publish("terminal.deleted", deleted)
 	}
 }
 

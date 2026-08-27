@@ -218,7 +218,7 @@ func (s *Service) handleEvent(ctx context.Context, event control.Event) {
 		}
 	case "terminal.deleted":
 		id := deletedTerminalID(event.Data)
-		if id == "" {
+		if id == "" || preservesAgentSummary(event.Data) {
 			return
 		}
 		s.mu.Lock()
@@ -441,4 +441,20 @@ func deletedTerminalID(value any) string {
 		}
 	}
 	return ""
+}
+
+func preservesAgentSummary(value any) bool {
+	switch deleted := value.(type) {
+	case map[string]string:
+		return deleted["preserveAgentSummary"] == "true"
+	case map[string]any:
+		preserve, ok := deleted["preserveAgentSummary"].(bool)
+		if ok {
+			return preserve
+		}
+		value, ok := deleted["preserveAgentSummary"].(string)
+		return ok && value == "true"
+	default:
+		return false
+	}
 }

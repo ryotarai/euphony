@@ -5,6 +5,7 @@ import type {
   AnnotationSession,
   Project,
   SelectionSnapshot,
+  Session,
 } from "./types";
 
 function jsonResponse(body: unknown, status = 200) {
@@ -388,6 +389,66 @@ test("creates a project from its directory path", async () => {
   );
 });
 
+test("persists project sidebar order", async () => {
+  const projects: Project[] = [
+    {
+      id: "project-two",
+      path: "/second",
+      createdAt: "2026-08-12T00:01:00Z",
+    },
+    {
+      id: "project-one",
+      path: "/first",
+      createdAt: "2026-08-12T00:00:00Z",
+    },
+  ];
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(projects));
+  const api = new ApiClient("token");
+
+  expect(await api.reorderProjects(["project-two", "project-one"])).toEqual(projects);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/projects/order",
+    expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ ids: ["project-two", "project-one"] }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
+test("persists session sidebar order", async () => {
+  const sessions: Session[] = [
+    {
+      id: "session-two",
+      name: "Second",
+      state: "exited",
+      cwd: "/repo",
+      createdAt: "2026-08-12T00:01:00Z",
+    },
+    {
+      id: "session-one",
+      name: "First",
+      state: "exited",
+      cwd: "/repo",
+      createdAt: "2026-08-12T00:00:00Z",
+    },
+  ];
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => jsonResponse(sessions));
+  const api = new ApiClient("token");
+
+  expect(await api.reorderSessions(["session-two", "session-one"])).toEqual(sessions);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/order",
+    expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ ids: ["session-two", "session-one"] }),
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
+  );
+});
+
 test("opens the native project directory picker", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockImplementationOnce(() => jsonResponse({ path: "/workspace/selected" }));
@@ -750,5 +811,25 @@ test("lists, searches, and reads terminal workspace paths", async () => {
     4,
     "/api/sessions/terminal%2Fone/workspace/file?path=docs%2FUser+Guide.md",
     expect.anything(),
+  );
+});
+
+test("downloads terminal workspace file content with authentication", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response("download me", {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    }),
+  );
+  const api = new ApiClient("token");
+
+  const content = await api.getWorkspaceFileContent("terminal/one", "docs/read me.txt");
+
+  expect(await content.text()).toBe("download me");
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/sessions/terminal%2Fone/workspace/file/content?path=docs%2Fread+me.txt",
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer token" }),
+    }),
   );
 });

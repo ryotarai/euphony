@@ -3,13 +3,18 @@ import { resolve } from "node:path";
 
 const stylesheet = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
-test("does not animate running status icons forever", () => {
+test("animates running sidebar status icons with a transform-only spinner", () => {
   const runningRule = stylesheet.match(
     /\.session-status-running\s*\{([\s\S]*?)\}/,
   )?.[1] ?? "";
 
-  expect(runningRule).toContain("animation: none;");
-  expect(stylesheet).not.toContain("@keyframes session-status-spin");
+  expect(runningRule).toContain(
+    "animation: sidebar-session-status-spin 900ms linear infinite;",
+  );
+  expect(runningRule).toContain("will-change: transform;");
+  expect(stylesheet).toContain(".project-session-status-running");
+  expect(stylesheet).toContain("@keyframes sidebar-session-status-spin");
+  expect(stylesheet).toContain("transform: rotate(360deg);");
 });
 
 test("does not animate xterm scrollbar opacity in terminal views", () => {
@@ -41,6 +46,18 @@ test("dims read waiting project sessions without attention", () => {
   )?.[1] ?? "";
 
   expect(waitingRule).toContain("opacity: 0.78;");
+});
+
+test("uses the sidebar blue, green, and yellow lifecycle palette", () => {
+  expect(latestRule(".project-session-status-running", "color: #60a5fa;")).toContain(
+    "color: #60a5fa;",
+  );
+  expect(latestRule(".project-session-status-waiting", "color: #4ade80;")).toContain(
+    "color: #4ade80;",
+  );
+  expect(latestRule(".project-session-status-blocked", "color: #fbbf24;")).toContain(
+    "color: #fbbf24;",
+  );
 });
 
 test("keeps project names concise while retaining readable emphasis", () => {

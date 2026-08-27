@@ -4,6 +4,7 @@ export interface Project {
   id: string;
   path: string;
   createdAt: string;
+  order?: number;
 }
 
 export interface Session {
@@ -12,6 +13,7 @@ export interface Session {
   state: SessionState;
   cwd: string;
   projectId?: string;
+  order?: number;
   repoRoot?: string;
   archived?: boolean;
   agent?: string;
@@ -34,6 +36,7 @@ export interface AllSession {
   agent?: "codex" | "claude";
   sessionId?: string;
   title: string;
+  customName?: boolean;
   purpose?: string;
   summary?: string;
   status?: string;
@@ -280,11 +283,12 @@ export interface WorkspaceSearchResult {
 }
 
 export interface WorkspaceFile {
-  root: string;
-  name: string;
-  path: string;
-  size: number;
-  content?: string;
+	root: string;
+	name: string;
+	path: string;
+	size: number;
+	mimeType?: string;
+	content?: string;
   binary?: boolean;
   truncated?: boolean;
 }

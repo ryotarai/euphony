@@ -10,14 +10,15 @@ import {
 } from "react";
 import {
   BotIcon,
+  CircleAlertIcon,
   CircleCheckIcon,
-  CircleDotIcon,
   CircleHelpIcon,
   CirclePauseIcon,
   CircleXIcon,
   Clock3Icon,
   ArchiveIcon,
   ListIcon,
+  LoaderCircleIcon,
   PlusIcon,
   Settings2Icon,
   SquareTerminalIcon,
@@ -88,6 +89,9 @@ interface SessionNavigationProps {
   onAddProject?(): void;
   onArchive?(session: Session): void;
   onDelete(session: Session): void;
+  onRename?(session: Session): void;
+  onReorderSessions?(orderedIDs: string[]): void;
+  onReorderProjects?(orderedIDs: string[]): void;
   settings?: Settings;
   onSettingsChange?(settings: Settings): void;
   onOpenSettings?(): void;
@@ -156,13 +160,9 @@ function sessionStatusIcon(status: string) {
     case "archived":
       return <ArchiveIcon {...props} />;
     case "running":
-      return <CircleDotIcon {...props} />;
+      return <LoaderCircleIcon {...props} />;
     case "blocked":
-      return (
-        <span {...props}>
-          🚫
-        </span>
-      );
+      return <CircleAlertIcon {...props} />;
     case "waiting":
       return <CirclePauseIcon {...props} />;
     case "terminal":
@@ -186,6 +186,7 @@ function SessionListItem({
   onSelectArchivedSession,
   onArchive,
   onDelete,
+  onRename,
   onSessionPointerEnter,
   onSessionPointerLeave,
   onSessionFocus,
@@ -198,6 +199,7 @@ function SessionListItem({
   onSelectArchivedSession?(session: Session): void;
   onArchive?(session: Session): void;
   onDelete(session: Session): void;
+  onRename?(session: Session): void;
 } & SessionInfoInteractionHandlers) {
   const isAgentSession = session.agent === "codex" || session.agent === "claude";
   const contextAction = session.archived
@@ -211,6 +213,9 @@ function SessionListItem({
     session.name,
     contextAction,
     isAgentSession ? "Archive" : "Delete",
+    onRename && !session.archived
+      ? [{ label: "Rename", onSelect: () => onRename(session) }]
+      : [],
   );
   const attentionDescriptionID = session.needsAttention
     ? `attention-${session.id}`
@@ -347,6 +352,7 @@ function SessionList(
                   onSelectArchivedSession={props.onSelectArchivedSession}
                   onArchive={props.onArchive}
                   onDelete={props.onDelete}
+                  onRename={props.onRename}
                   {...props.sessionInfoHandlers}
                 />
               ))}
@@ -712,6 +718,14 @@ function SessionNavigationContent({
               archivedError={props.archivedError}
               onShowArchived={props.onShowArchived}
               onHideArchived={props.onHideArchived}
+              onRename={props.onRename
+                ? (session) => {
+                  props.onRename?.(session);
+                  if (isMobile) setOpenMobile(false);
+                }
+                : undefined}
+              onReorderSessions={props.onReorderSessions}
+              onReorderProjects={props.onReorderProjects}
               onDelete={(session) => {
                 props.onDelete(session);
                 if (isMobile) setOpenMobile(false);

@@ -99,6 +99,19 @@ test("gives generic terminal titles enough context to distinguish sessions", () 
   expect(rows[1]).toHaveAccessibleName(/web.*#codex-se…87654321/);
 });
 
+test("keeps a manually renamed generic title", () => {
+  renderDialog([{
+    ...newest,
+    id: "manual-generic",
+    title: "Terminal",
+    customName: true,
+  }]);
+
+  const row = within(screen.getByRole("list", { name: "All sessions" })).getByRole("button");
+  expect(row).toHaveTextContent("Terminal");
+  expect(row).not.toHaveTextContent("Codex ·");
+});
+
 test("keeps an in-progress agent visible before its session ID arrives", () => {
   const starting: AllSession = {
     ...newest,

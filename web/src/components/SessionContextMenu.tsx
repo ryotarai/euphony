@@ -6,19 +6,25 @@ interface ContextMenuPosition {
   y: number;
 }
 
+export interface SessionContextMenuAction {
+  label: string;
+  onSelect(): void;
+}
+
 export function useSessionContextMenu(
   identity: string,
   onAction?: () => void,
   actionLabel = "Delete",
+  additionalActions: SessionContextMenuAction[] = [],
 ) {
   const [position, setPosition] = useState<ContextMenuPosition | null>(null);
 
   const close = useCallback(() => setPosition(null), []);
   const onContextMenu = useCallback((event: MouseEvent<HTMLElement>) => {
-    if (!onAction) return;
+    if (!onAction && additionalActions.length === 0) return;
     event.preventDefault();
     setPosition({ x: event.clientX, y: event.clientY });
-  }, [onAction]);
+  }, [additionalActions.length, onAction]);
 
   useEffect(() => {
     if (!position) return;
@@ -34,7 +40,11 @@ export function useSessionContextMenu(
     };
   }, [close, position]);
 
-  const menu = position && onAction
+  const actions = [
+    ...additionalActions,
+    ...(onAction ? [{ label: actionLabel, onSelect: onAction }] : []),
+  ];
+  const menu = position && actions.length > 0
     ? createPortal(
         <div
           className="session-context-menu"
@@ -44,17 +54,20 @@ export function useSessionContextMenu(
           onContextMenu={(event) => event.preventDefault()}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <button
-            type="button"
-            role="menuitem"
-            autoFocus
-            onClick={() => {
-              close();
-              onAction();
-            }}
-          >
-            {actionLabel}
-          </button>
+          {actions.map((action, index) => (
+            <button
+              type="button"
+              role="menuitem"
+              autoFocus={index === 0}
+              key={action.label}
+              onClick={() => {
+                close();
+                action.onSelect();
+              }}
+            >
+              {action.label}
+            </button>
+          ))}
         </div>,
         document.body,
       )

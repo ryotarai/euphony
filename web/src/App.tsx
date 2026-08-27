@@ -14,7 +14,7 @@ import { ApiClient, ApiError } from "./api";
 import { FolderOpenIcon } from "lucide-react";
 import { AllSessionsDialog } from "./components/AllSessionsDialog";
 import { SessionNavigation } from "./components/SessionNavigation";
-import { flattenProjectSidebarSessions } from "./components/ProjectSidebar";
+import { flattenProjectSidebarSessions } from "./projectSidebarUtils";
 import { AgentsView } from "./components/AgentsView";
 import { flattenLegacySidebarSessions } from "./legacySidebarUtils";
 import {
@@ -308,8 +308,36 @@ function projectsEqual(left: Project[], right: Project[]): boolean {
     const other = right[index];
     return project.id === other?.id
       && project.path === other.path
-      && project.createdAt === other.createdAt;
+      && project.createdAt === other.createdAt
+      && project.order === other.order;
   });
+}
+
+function reorderItemsByIDs<T extends { id: string }>(items: T[], orderedIDs: string[]): T[] {
+  const byID = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const ordered: T[] = [];
+  for (const id of orderedIDs) {
+    const item = byID.get(id);
+    if (!item || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(item);
+  }
+  return [...ordered, ...items.filter((item) => !seen.has(item.id))];
+}
+
+function mergeOrderedItems<T extends { id: string }>(current: T[], ordered: T[]): T[] {
+  const orderedByID = new Map(ordered.map((item) => [item.id, item]));
+  return reorderItemsByIDs(current, ordered.map((item) => item.id)).map(
+    (item) => orderedByID.get(item.id) ?? item,
+  );
+}
+
+function terminalDeletionPreservesAgentSummary(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const candidate = data as { preserveAgentSummary?: unknown };
+  return candidate.preserveAgentSummary === true
+    || candidate.preserveAgentSummary === "true";
 }
 
 function isProjectList(value: unknown): value is Project[] {
@@ -318,7 +346,8 @@ function isProjectList(value: unknown): value is Project[] {
     const candidate = project as Record<string, unknown>;
     return typeof candidate.id === "string"
       && typeof candidate.path === "string"
-      && typeof candidate.createdAt === "string";
+      && typeof candidate.createdAt === "string"
+      && (candidate.order === undefined || typeof candidate.order === "number");
   });
 }
 
@@ -991,6 +1020,9 @@ export function App({
   const decomposedPinnedStatusFiltersRef = useRef<Set<string>>(null!);
   const previousSessionsRef = useRef<Session[]>([]);
   const previousSessionOrderRef = useRef<Session[]>([]);
+  const sessionStateRef = useRef<Session[] | null>(null);
+  const sidebarSessionOrderRequestRef = useRef(0);
+  const sidebarProjectOrderRequestRef = useRef(0);
   const sessionSnapshotRequestRef = useRef(0);
   const appliedSessionSnapshotRequestRef = useRef(0);
   const latestSessionSnapshotRef = useRef<Session[] | null>(null);
@@ -1021,6 +1053,9 @@ export function App({
     expiredFilterDeselectIDsRef.current ??= new Set();
     pendingAttentionAcknowledgementsRef.current ??= new Set();
   }, []);
+  useLayoutEffect(() => {
+    sessionStateRef.current = sessions;
+  }, [sessions]);
 
   const currentSelectionStateRef = useRef({
     selectedIDs,
@@ -1963,9 +1998,13 @@ export function App({
               event.type === "subscriber_lagged"
             ) {
               if (event.type === "terminal.deleted") {
-                const data = event.data as { id?: string; terminalId?: string };
+                const data = event.data as {
+                  id?: string;
+                  terminalId?: string;
+                  preserveAgentSummary?: boolean | string;
+                };
                 const deletedID = data?.id ?? data?.terminalId;
-                if (deletedID) {
+                if (deletedID && !terminalDeletionPreservesAgentSummary(data)) {
                   agentSummaryDeletedAtRef.current.set(deletedID, event.occurredAt);
                   bumpAgentSummaryRevision(deletedID);
                   setAgentSummaries((current) =>
@@ -3345,6 +3384,73 @@ export function App({
     }
   }
 
+  function reorderSidebarSessions(orderedIDs: string[]) {
+    if (!api || !sessions || !projectEndpointAvailableRef.current) return;
+    const previousOrderIDs = sessions.map((session) => session.id);
+    const optimistic = reorderItemsByIDs(sessions, orderedIDs);
+    if (
+      optimistic.length === previousOrderIDs.length
+      && optimistic.every((session, index) => session.id === previousOrderIDs[index])
+    ) return;
+    const requestID = ++sidebarSessionOrderRequestRef.current;
+    sessionStateRef.current = optimistic;
+    setSessions(optimistic);
+    previousSessionsRef.current = reorderItemsByIDs(previousSessionsRef.current, orderedIDs);
+    previousSessionOrderRef.current = reorderItemsByIDs(
+      previousSessionOrderRef.current,
+      orderedIDs,
+    );
+    void api.reorderSessions(orderedIDs).then((response) => {
+      if (requestID !== sidebarSessionOrderRequestRef.current) return;
+      const next = mergeOrderedItems(sessionStateRef.current ?? optimistic, response);
+      sessionStateRef.current = next;
+      previousSessionsRef.current = next;
+      previousSessionOrderRef.current = next;
+      setSessions(next);
+      setRequestError("");
+    }).catch((error: unknown) => {
+      if (requestID !== sidebarSessionOrderRequestRef.current) return;
+      const next = reorderItemsByIDs(
+        sessionStateRef.current ?? optimistic,
+        previousOrderIDs,
+      );
+      sessionStateRef.current = next;
+      previousSessionsRef.current = next;
+      previousSessionOrderRef.current = next;
+      setSessions(next);
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The session order could not be saved.",
+      );
+    });
+  }
+
+  function reorderSidebarProjects(orderedIDs: string[]) {
+    if (!api || !projects || !projectEndpointAvailableRef.current) return;
+    const previousOrderIDs = projects.map((project) => project.id);
+    const optimistic = reorderItemsByIDs(projects, orderedIDs);
+    if (
+      optimistic.length === previousOrderIDs.length
+      && optimistic.every((project, index) => project.id === previousOrderIDs[index])
+    ) return;
+    const requestID = ++sidebarProjectOrderRequestRef.current;
+    setProjects(optimistic);
+    void api.reorderProjects(orderedIDs).then((response) => {
+      if (requestID !== sidebarProjectOrderRequestRef.current) return;
+      setProjects((current) => mergeOrderedItems(current ?? optimistic, response));
+      setRequestError("");
+    }).catch((error: unknown) => {
+      if (requestID !== sidebarProjectOrderRequestRef.current) return;
+      setProjects((current) => reorderItemsByIDs(current ?? optimistic, previousOrderIDs));
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : "The project order could not be saved.",
+      );
+    });
+  }
+
   async function applySharedCloseSelection(
     snapshot: SelectionSnapshot,
     previousRevision: number | null,
@@ -4167,6 +4273,8 @@ export function App({
           void createSession(false, undefined, projectID);
         },
         onCreateAgent: startConfiguredAgent,
+        onReorderSessions: reorderSidebarSessions,
+        onReorderProjects: reorderSidebarProjects,
       }
     : {};
   const summaryByTerminalID = new Map(
@@ -4385,6 +4493,7 @@ export function App({
         onCreate={(cwd) => void createSession(false, cwd)}
         onArchive={(session) => void archiveSession(session)}
         onDelete={(session) => setPendingDelete([session])}
+        onRename={openRenameDialog}
         settings={settings}
         onSettingsChange={(next) => void persistSettings(next)}
         onOpenSettings={openSettings}

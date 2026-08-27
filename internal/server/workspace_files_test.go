@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -100,6 +101,44 @@ func TestWorkspaceEndpointsListSearchAndReadFromTerminalRoot(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEndpointDownloadsWorkspaceFile(t *testing.T) {
+	root := t.TempDir()
+	content := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02}
+	if err := os.WriteFile(filepath.Join(root, "preview.png"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	srv, err := New(Config{Token: "token", Shell: "/bin/sh"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close(t.Context()) })
+	terminal, err := srv.sessions.Create(t.Context(), "Workspace terminal", root)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	response := performRequest(
+		t,
+		srv,
+		http.MethodGet,
+		"/api/sessions/"+terminal.ID+"/workspace/file/content?path=preview.png",
+		"",
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("download status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("Content-Type = %q", response.Header().Get("Content-Type"))
+	}
+	if response.Header().Get("Content-Disposition") != "attachment; filename=preview.png" {
+		t.Fatalf("Content-Disposition = %q", response.Header().Get("Content-Disposition"))
+	}
+	if !bytes.Equal(response.Body.Bytes(), content) {
+		t.Fatalf("downloaded content = %v, want %v", response.Body.Bytes(), content)
+	}
+}
+
 func TestWorkspaceEndpointsReturnStableErrors(t *testing.T) {
 	root := t.TempDir()
 	writeGitChangesFile(t, root, "file.txt", "content")
@@ -153,6 +192,12 @@ func TestWorkspaceEndpointsReturnStableErrors(t *testing.T) {
 			code:   "workspace_path_type_mismatch",
 		},
 		{
+			name:   "directory requested as download",
+			path:   "/api/sessions/" + terminal.ID + "/workspace/file/content?path=folder",
+			status: http.StatusBadRequest,
+			code:   "workspace_path_type_mismatch",
+		},
+		{
 			name:   "blank file path",
 			path:   "/api/sessions/" + terminal.ID + "/workspace/file",
 			status: http.StatusBadRequest,
@@ -184,6 +229,7 @@ func TestWorkspaceEndpointsRequireBearerAuthentication(t *testing.T) {
 		"/api/sessions/missing/workspace",
 		"/api/sessions/missing/workspace/search?query=file",
 		"/api/sessions/missing/workspace/file?path=file.txt",
+		"/api/sessions/missing/workspace/file/content?path=file.txt",
 	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()

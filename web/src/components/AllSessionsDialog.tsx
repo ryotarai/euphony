@@ -103,7 +103,7 @@ function hasGenericTitle(title: string): boolean {
 
 function displayTitle(session: AllSession): string {
   const title = session.title.trim();
-  return title && !hasGenericTitle(title)
+  return title && (session.customName || !hasGenericTitle(title))
     ? title
     : `${displayAgent(session)} · ${sessionLocation(session)}`;
 }

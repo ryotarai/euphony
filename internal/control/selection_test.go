@@ -259,3 +259,26 @@ func TestServiceIgnoresOutOfOrderSessionChanges(t *testing.T) {
 	default:
 	}
 }
+
+func TestServiceMarksArchivedTerminalDeletionForSummaryRetention(t *testing.T) {
+	manager := session.NewManager("/bin/sh")
+	t.Cleanup(func() { _ = manager.Close(t.Context()) })
+	service, err := New(manager)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	events, unsubscribe := service.SubscribeEvents([]string{"terminal.deleted"})
+	defer unsubscribe()
+	metadata := session.Metadata{ID: "archived-terminal"}
+
+	service.publishSessionChange(session.Change{
+		Kind:                 session.ChangeDeleted,
+		Before:               &metadata,
+		PreserveAgentSummary: true,
+	})
+	event := <-events
+	deleted, ok := event.Data.(map[string]string)
+	if !ok || deleted["id"] != metadata.ID || deleted["preserveAgentSummary"] != "true" {
+		t.Fatalf("archived deletion event = %#v, want summary-retention marker", event.Data)
+	}
+}

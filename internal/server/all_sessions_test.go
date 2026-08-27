@@ -40,9 +40,9 @@ func TestAllSessionsListsPersistedAgentSessionsIncludingInProgressAgents(t *test
 	}
 	closedAt := time.Now().UTC().Add(-time.Minute)
 	if err := store.Save(t.Context(), session.Metadata{
-		ID: "closed-agent", Name: "Closed DB agent", State: session.StateExited,
+		ID: "closed-agent", Name: "Manual closed title", CustomName: true, State: session.StateExited,
 		CWD: t.TempDir(), Agent: "claude", ResumeAgent: "claude",
-		AgentSessionID: "session-db-only", AgentTitle: "Closed DB agent",
+		AgentSessionID: "session-db-only", AgentTitle: "AI guessed title",
 		Archived:  true,
 		CreatedAt: closedAt.Add(-time.Hour), UpdatedAt: closedAt, ExitedAt: &closedAt,
 	}); err != nil {
@@ -136,7 +136,7 @@ func TestAllSessionsListsPersistedAgentSessionsIncludingInProgressAgents(t *test
 	}
 	if closedItem == nil || closedItem.ID != "closed-agent" ||
 		closedItem.Agent != "claude" || closedItem.State != allSessionResume ||
-		closedItem.Title != "Closed DB agent" || !closedItem.Archived {
+		closedItem.Title != "Manual closed title" || !closedItem.CustomName || !closedItem.Archived {
 		t.Fatalf("closed DB all session = %#v", closedItem)
 	}
 	if !items[0].UpdatedAt.After(items[1].UpdatedAt) {

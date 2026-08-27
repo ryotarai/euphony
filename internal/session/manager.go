@@ -24,6 +24,7 @@ import (
 
 var (
 	ErrNotFound             = errors.New("session not found")
+	ErrInvalidOrder         = errors.New("invalid session order")
 	ErrAgentSummaryNotFound = errors.New("agent summary not found")
 	ErrAgentSummaryChanged  = errors.New("agent summary changed")
 	ErrAgentSessionNotReady = errors.New("agent session is not ready to archive")
@@ -39,10 +40,11 @@ const (
 )
 
 type Change struct {
-	Sequence uint64
-	Kind     ChangeKind
-	Before   *Metadata
-	After    *Metadata
+	Sequence             uint64
+	Kind                 ChangeKind
+	Before               *Metadata
+	After                *Metadata
+	PreserveAgentSummary bool
 }
 
 type Metadata struct {
@@ -54,6 +56,7 @@ type Metadata struct {
 	CWD                 string     `json:"cwd"`
 	RepoRoot            string     `json:"repoRoot"`
 	ProjectID           string     `json:"projectId,omitempty"`
+	Order               int64      `json:"order,omitempty"`
 	ProcessName         string     `json:"processName,omitempty"`
 	Agent               string     `json:"agent,omitempty"`
 	AgentStatus         string     `json:"agentStatus,omitempty"`
@@ -1820,6 +1823,7 @@ func (m *Manager) watch(item *entry) {
 				}
 				before := item.metadata
 				change := m.nextChangeLocked(ChangeDeleted, &before, nil)
+				change.PreserveAgentSummary = true
 				deleted = &change
 			}
 		}
@@ -2078,9 +2082,7 @@ func (m *Manager) ListCurrent() []Metadata {
 		result = append(result, item.metadata)
 	}
 	m.mu.RUnlock()
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.Before(result[j].CreatedAt)
-	})
+	sortMetadata(result)
 	return result
 }
 
@@ -2099,10 +2101,170 @@ func (m *Manager) ListStored() []Metadata {
 		result = append(result, metadata)
 	}
 	m.mu.RUnlock()
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.Before(result[j].CreatedAt)
-	})
+	sortMetadata(result)
 	return result
+}
+
+func sortMetadata(metadata []Metadata) {
+	sort.SliceStable(metadata, func(i, j int) bool {
+		if metadata[i].Order != metadata[j].Order {
+			if metadata[i].Order == 0 {
+				return false
+			}
+			if metadata[j].Order == 0 {
+				return true
+			}
+			return metadata[i].Order < metadata[j].Order
+		}
+		if metadata[i].CreatedAt.Equal(metadata[j].CreatedAt) {
+			return metadata[i].ID < metadata[j].ID
+		}
+		return metadata[i].CreatedAt.Before(metadata[j].CreatedAt)
+	})
+}
+
+type metadataOrderStore interface {
+	Reorder(context.Context, []string) error
+}
+
+type metadataOrderUpdate struct {
+	item   *entry
+	before Metadata
+	after  Metadata
+}
+
+func (m *Manager) ReorderCurrent(ctx context.Context, orderedIDs []string) ([]Metadata, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.mu.RLock()
+	entries, err := currentOrderEntriesLocked(m.sessions, orderedIDs)
+	m.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	lockEntries := append([]*entry(nil), entries...)
+	sort.Slice(lockEntries, func(i, j int) bool {
+		return lockEntries[i].metadata.ID < lockEntries[j].metadata.ID
+	})
+	lockedEntries := make([]*entry, 0, len(lockEntries))
+	for _, item := range lockEntries {
+		if err := item.metadataSaveMu.lock(ctx); err != nil {
+			for index := len(lockedEntries) - 1; index >= 0; index-- {
+				lockedEntries[index].metadataSaveMu.unlock()
+			}
+			return nil, err
+		}
+		lockedEntries = append(lockedEntries, item)
+	}
+	defer func() {
+		for index := len(lockedEntries) - 1; index >= 0; index-- {
+			lockedEntries[index].metadataSaveMu.unlock()
+		}
+	}()
+
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return nil, ErrManagerClosing
+	}
+	entries, err = currentOrderEntriesLocked(m.sessions, orderedIDs)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	updates := make([]Metadata, 0, len(entries))
+	orderUpdates := make([]metadataOrderUpdate, 0, len(entries))
+	changes := make([]Change, 0, len(entries))
+	for index, item := range entries {
+		before := item.metadata
+		after := before
+		after.Order = int64(index + 1)
+		if before == after {
+			continue
+		}
+		item.metadata = after
+		change := m.nextChangeLocked(ChangeUpdated, &before, &after)
+		updates = append(updates, after)
+		orderUpdates = append(orderUpdates, metadataOrderUpdate{
+			item: item, before: before, after: after,
+		})
+		changes = append(changes, change)
+	}
+	store := m.store
+	var operation storeOperation
+	if store != nil && len(updates) > 0 {
+		operation = m.reserveStoreOperation()
+	}
+	m.mu.Unlock()
+
+	if store != nil && len(updates) > 0 {
+		persist := func() error {
+			if reorderStore, ok := store.(metadataOrderStore); ok {
+				return reorderStore.Reorder(ctx, orderedIDs)
+			}
+			for _, metadata := range updates {
+				if err := store.Save(ctx, metadata); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if err := m.runStoreOperationContext(ctx, operation, persist); err != nil {
+			m.mu.Lock()
+			for _, update := range orderUpdates {
+				if update.item.metadata == update.after {
+					update.item.metadata = update.before
+				}
+			}
+			m.mu.Unlock()
+			for _, change := range changes {
+				m.skipChange(change)
+			}
+			return nil, err
+		}
+	}
+	for _, change := range changes {
+		m.emitChange(change)
+	}
+	return m.ListCurrent(), nil
+}
+
+func currentOrderEntriesLocked(
+	sessions map[string]*entry,
+	orderedIDs []string,
+) ([]*entry, error) {
+	if len(orderedIDs) == 0 {
+		for _, item := range sessions {
+			if !item.metadata.Archived && !item.archiveInProgress {
+				return nil, ErrInvalidOrder
+			}
+		}
+		return []*entry{}, nil
+	}
+	currentCount := 0
+	for _, item := range sessions {
+		if !item.metadata.Archived && !item.archiveInProgress {
+			currentCount++
+		}
+	}
+	if len(orderedIDs) != currentCount {
+		return nil, ErrInvalidOrder
+	}
+	seen := make(map[string]struct{}, len(orderedIDs))
+	entries := make([]*entry, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if _, duplicate := seen[id]; duplicate {
+			return nil, ErrInvalidOrder
+		}
+		item, ok := sessions[id]
+		if !ok || item.metadata.Archived || item.archiveInProgress {
+			return nil, ErrNotFound
+		}
+		seen[id] = struct{}{}
+		entries = append(entries, item)
+	}
+	return entries, nil
 }
 
 // ListPersisted returns stored metadata only when this manager has a backing
@@ -2967,6 +3129,7 @@ func (m *Manager) archiveAgentSession(
 	}
 	delete(m.sessions, id)
 	change := m.nextChangeLocked(ChangeDeleted, &before, nil)
+	change.PreserveAgentSummary = true
 	item.archiveInProgress = false
 	item.archiveReady = nil
 	m.archived[id] = archived
